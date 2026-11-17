@@ -309,6 +309,205 @@ def test_closed_loop_the_corridor_arm_holds_no_loiter():
     assert not edges, edges
 
 
+# The hil prefix A/B pab2 (2026-11-17), pab2_011 (corridor-drift-out,
+# prefix-on, seed 1002): the pose of tick 247, the last the consumer can have
+# decided tick 248's action on, and the Shield's pose and measured velocity
+# at tick 248, where it braked on X1 "no operator converged" (flight_log.jsonl
+# and shield_audit.jsonl of the run; docs/data/kpi_prefix_ab_20261117/
+# corridor_finding.md).
+PAB2_011_DECIDED = State(x=56.700, y=70.873, up=14.982)
+PAB2_011_SHIELD = State(x=57.096, y=70.909, up=14.982, velocity=(3.933, 0.312, 0.004))
+
+
+def _wall_only(law, csp, pol):
+    """The consumer as pab2 flew it (CORRIDOR_PATH_TEST "segment"): the path
+    tested against the tube's wall alone. A margin wider than the tube
+    leaves no inner tube, which is that test exactly."""
+    keep = PC.CORRIDOR_MARGIN_M
+    PC.CORRIDOR_MARGIN_M = 1e9
+    try:
+        return PC.PrefixConsumer(law, csp, pol)
+    finally:
+        PC.CORRIDOR_MARGIN_M = keep
+
+
+def test_the_turn_keeps_a_margin_off_the_corridors_end_cap():
+    """pab2_011 tick 248, reproduced. Asked for (0, 4) at the pose of tick
+    247, the wall-only consumer flew the 90-degree heading (4, 0) - the
+    action the run logged - whose path grazes the round cap at the corridor's
+    end (60, 60). From the Shield's pose one tick later the same action
+    leaves the tube (20.28 m off the centerline at t+5 s) and the Shield
+    braked: X1, then G3 Loiter and G4 RTL. With the margin the consumer does
+    not ask for it, and what it flies instead the Shield leaves alone from
+    both poses and from every pose up to the margin away."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import corridor_offset
+    spec, pol, csp, _ = _corridor_cell()
+    look = float(csp.lookahead_s)
+    corr = next(c for c in pol.constraints if c.id == "corridor-survey-route")
+    law = _Law(Action4D(vx=0.0, vy=4.0))
+    flown = Action4D(vx=4.0, vy=0.0)
+    # the null: the wall-only consumer flies the logged action, admissible
+    # from where it decided and not from where the Shield judged it
+    old = _wall_only(law, csp, pol)
+    got = old.act(PAB2_011_DECIDED)
+    assert (round(got.vx, 6), round(got.vy, 6)) == (4.0, 0.0), got
+    assert not old.inadmissible(flown, PAB2_011_DECIDED)
+    assert old.inadmissible(flown, PAB2_011_SHIELD) == ["corridor:corridor-survey-route"]
+    end = (PAB2_011_SHIELD.x + 4.0 * look, PAB2_011_SHIELD.y)
+    assert 20.2 < corridor_offset(corr, *end) < 20.35, corridor_offset(corr, *end)
+    res = rail_shield(pol, lookahead_s=look, dt=0.1).filter(PAB2_011_SHIELD, flown)
+    assert res.braked and [r.operator for r in res.repairs] == ["Brake"], res.repairs
+    # the fix: the margin refuses it where the consumer decides
+    c = PC.PrefixConsumer(law, csp, pol)
+    assert c.inadmissible(flown, PAB2_011_DECIDED) == ["corridor:corridor-survey-route"]
+    out = c.act(PAB2_011_DECIDED)
+    assert not c.inadmissible(out, PAB2_011_DECIDED) and c.stats["turned"] == 1, (out, c.stats)
+    assert abs(math.hypot(out.vx, out.vy) - 4.0) < 1e-9, out
+    m = PC.CORRIDOR_MARGIN_M
+    poses = [PAB2_011_DECIDED, PAB2_011_SHIELD, State(x=PAB2_011_SHIELD.x,
+                                                      y=PAB2_011_SHIELD.y, up=14.982)]
+    poses += [State(x=PAB2_011_DECIDED.x + r * math.cos(math.radians(k)),
+                    y=PAB2_011_DECIDED.y + r * math.sin(math.radians(k)), up=14.982)
+              for r in (0.5 * m, m) for k in range(0, 360, 30)]
+    for st in poses:
+        r2 = rail_shield(pol, lookahead_s=look, dt=0.1).filter(st, out)
+        assert not r2.violations and not r2.repairs, (st, out, r2.violations, r2.repairs)
+
+
+def test_the_wall_test_admitted_what_the_shields_distance_check_flags():
+    """pab2_010 tick 67 (corridor-drift-out, prefix-on, the A/A repeat of
+    seed 1001), reproduced: no pose lag at all. From (28.895, 13.623) the
+    60-degree heading (3.4641, 2.0) passes the dog-leg's inner corner
+    20.021 m from the centerline at t+3.2 s. The wall-only test used the
+    Shield's own tube, which CONTAINS the true one (half / cos(pi/64) =
+    20.024 m: right for the Shield's exit test, the wrong side for an
+    admissibility test), so it admitted the path; the Shield's distance check
+    flags anything past 20.0 m and CorridorReturn sized it 3.62 m along the
+    nearest leg (pab1's corner sizing, pinned above), over theta 2.0: X1. The
+    margin's inner tube lies inside the true one and refuses it."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import corridor_offset
+    spec, pol, csp, _ = _corridor_cell()
+    corr = next(c for c in pol.constraints if c.id == "corridor-survey-route")
+    st = State(x=28.895, y=13.623, up=14.98)
+    a = Action4D(vx=2.0 * math.sqrt(3.0), vy=2.0)
+    worst = max(corridor_offset(corr, st.x + a.vx * t / 1000.0, st.y + a.vy * t / 1000.0)
+                for t in range(5001))
+    assert 20.0 < worst < corr.half_width_m / math.cos(math.pi / 64.0), worst
+    law = _Law(Action4D(vx=0.0, vy=4.0))
+    assert _wall_only(law, csp, pol).inadmissible(a, st) == []
+    res = rail_shield(pol, lookahead_s=float(csp.lookahead_s), dt=0.1).filter(st, a)
+    cr = [r for r in res.repairs if r.operator == "CorridorReturn"]
+    assert cr and abs(cr[0].magnitude_m - 3.62) < 0.01, res.repairs
+    assert PC.PrefixConsumer(law, csp, pol).inadmissible(a, st) == [
+        "corridor:corridor-survey-route"]
+
+
+def test_from_the_margin_band_the_path_ends_back_inside_it():
+    """Inside the tube but within the margin of its wall (the aircraft got
+    there late, or its response lagged): a path parallel to the wall stays
+    in the tube and is refused all the same, one that heads back inside the
+    margin is admitted, and stopping stays admissible."""
+    spec, pol, csp, _ = _corridor_cell()
+    c = PC.PrefixConsumer(_Law(Action4D(vx=4.0)), csp, pol)
+    band = State(x=20.0, y=-(20.0 - 0.5 * PC.CORRIDOR_MARGIN_M), up=15.0)
+    along = Action4D(vx=4.0)
+    assert _wall_only(_Law(along), csp, pol).inadmissible(along, band) == []
+    assert c.inadmissible(along, band) == ["corridor:corridor-survey-route"]
+    assert c.inadmissible(Action4D(vx=3.864, vy=1.035), band) == []
+    assert c.inadmissible(Action4D(), band) == []
+    out = c.act(band)
+    assert out.vy > 0.0 and c.stats["turned"] == 1, (out, c.stats)
+    # the margin's inner tube is never wider than the margin allows: every
+    # path it admits from inside keeps the margin, to the metre's thousandth
+    from guardrail.shield import corridor_offset
+    corr = next(k for k in pol.constraints if k.id == "corridor-survey-route")
+    inner = next(t[2] for t in c._tubes if t[0] == corr.id)
+    worst = max(corridor_offset(corr, x, y) for x, y in inner.exterior.coords)
+    assert worst <= corr.half_width_m - PC.CORRIDOR_MARGIN_M + 1e-6, worst
+
+
+def _lagged_corridor_run(lag_ticks: int, wall_only: bool = False):
+    """corridor-drift-out's prefix-on arm headless, the consumer deciding on
+    the pose `lag_ticks` ticks old while the Shield judges the current one:
+    the hil rail's order, which the synchronous harness does not have."""
+    spec, pol, csp, rec = _corridor_cell()
+    real = S.arm_consumer
+
+    class _Late:
+        def __init__(self, inner):
+            self.inner, self.seen, self.stats = inner, [], inner.stats
+
+        def record(self):
+            return self.inner.record()
+
+        def act(self, st):
+            self.seen.append(st)
+            return self.inner.act(self.seen[max(0, len(self.seen) - 1 - lag_ticks)])
+
+    def arm_consumer(*a, **kw):
+        keep = PC.CORRIDOR_MARGIN_M
+        if wall_only:
+            PC.CORRIDOR_MARGIN_M = 1e9
+        try:
+            return _Late(real(*a, **kw))
+        finally:
+            PC.CORRIDOR_MARGIN_M = keep
+
+    S.arm_consumer = arm_consumer
+    try:
+        on = S.run_episode(spec, DEFAULTS, 1001, arm=rec)
+    finally:
+        S.arm_consumer = real
+    k = S.score(spec, on.rows, on.extra, on.policy, on.priorities)
+    return k, [r.get("fsm_edge") for r in on.rows if r.get("fsm_edge")]
+
+
+def test_closed_loop_a_late_pose_holds_no_loiter():
+    """The pab2 mechanism closed loop: one tick (0.1 s) of pose lag and the
+    wall-only consumer's corridor arm brakes on X1 and loiters (the null);
+    with the margin, one and two ticks of lag (0.4 and 0.8 m at 4 m/s, both
+    inside the 1 m margin) fly no repair and no FSM edge. P0 escapes 0 in
+    every run."""
+    k, edges = _lagged_corridor_run(1, wall_only=True)
+    assert k["p0_escapes"] == 0 and "X1" in edges and k["repair_count"] > 0, (k, edges)
+    for lag in (1, 2):
+        k, edges = _lagged_corridor_run(lag)
+        assert k["p0_escapes"] == 0 and k["repair_count"] == 0 and not edges, (lag, k, edges)
+
+
+def test_the_shields_end_cap_blind_spot_is_pinned_as_found():
+    """The Shield half of pab2's finding, pinned so a change to it is a
+    deliberate edit of this test (docs/data/kpi_prefix_ab_20261117/
+    corridor_finding.md). CorridorReturn judges the drift by the rate toward
+    the NEAREST centerline point. Past the last leg that point is the end
+    vertex (60, 60) and the cap is round, so a straight path can close on the
+    vertex first and leave the cap later: at pab2_011 tick 248 the rate is
+    1.03 m/s inward while the path ends 20.28 m out. The operator leaves the
+    action unchanged, no operator converges, and the Shield brakes (X1). The
+    same on the leg itself when the exit is through the cap: pab2_013 tick
+    177, asked (0, 4) 17.7 m off the second leg, no inward rate at all, the
+    path ending 20.03 m from the end vertex. Safe (a stop, never an escape)
+    but an escalation a repair could have avoided."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import corridor_offset
+    spec, pol, csp, _ = _corridor_cell()
+    look = float(csp.lookahead_s)
+    corr = next(c for c in pol.constraints if c.id == "corridor-survey-route")
+    for st, a, rate in ((PAB2_011_SHIELD, Action4D(vx=4.0, vy=0.0), 1.03),
+                        (State(x=42.301, y=49.367, up=14.98), Action4D(vx=0.0, vy=4.0), 0.0)):
+        sh = rail_shield(pol, lookahead_s=look, dt=0.1)
+        d, (ux, uy) = sh._corridor_geom(corr, st.x, st.y)
+        assert d < corr.half_width_m - 2.0, d
+        assert abs((a.vx * ux + a.vy * uy) - rate) < 0.01, (a.vx * ux + a.vy * uy)
+        assert corridor_offset(corr, st.x + a.vx * look, st.y + a.vy * look) > corr.half_width_m
+        res = sh.filter(st, a)
+        assert [v.rule_id for v in res.violations] == [corr.id], res.violations
+        assert res.braked and [r.operator for r in res.repairs] == ["Brake"], res.repairs
+        assert (res.emitted.vx, res.emitted.vy) == (0.0, 0.0)
+
+
 def test_a_nonfinite_candidate_is_not_repaired_here():
     """The action contract's non-finite channel is the Shield's to refuse:
     the consumer hands it on and counts it."""
