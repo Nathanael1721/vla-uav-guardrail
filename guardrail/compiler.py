@@ -125,6 +125,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from . import csp as _csp
+from . import terrain as _terrain
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
                   RuleDecision, Selection, TokenCounter)
@@ -439,6 +440,14 @@ def render_sentence(rule, show_priority: bool = False) -> str:
         "r": rule, "window": window_text(rule),
         "soft": rule.constraint_type == "soft",
         "show_priority": show_priority, "priority": rule.priority})
+
+
+def _with_note(sentence: str, note: str | None) -> str:
+    """`sentence` with `note` in brackets before its full stop."""
+    if not note:
+        return sentence
+    body = sentence[:-1] if sentence.endswith(".") else sentence
+    return f"{body} ({note})."
 
 
 def render_summary(rule) -> str:
@@ -2331,9 +2340,55 @@ def _mission_id(m: Mission) -> str:
     return "m-" + hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
 
 
+def _msl_view(constraints, ground, mission: Mission) -> tuple[list, dict]:
+    """(rules, notes): every MSL rule of `constraints` as the AGL band the
+    CSP states, and the words its sentence adds (X-11; compile_csp).
+
+    Converted over the ground the mission can reach - the box around its
+    start, target and any stated home, widened by the DEM's reach_m (a flat
+    ground: its one elevation). A keep-in band that comes out empty or of
+    zero width there (the declared band narrower than the relief under the
+    mission) is converted over the ground near the START instead
+    (GridGround.band_at), and the note says so; a keep-out band is always
+    the widened one."""
+    if _terrain.is_dem(ground):
+        pts = [(mission.start_x, mission.start_y), (mission.target_x, mission.target_y)]
+        if mission.home_x is not None:
+            pts.append((mission.home_x, mission.home_y))
+        r = float(getattr(ground, "reach_m", 0.0))
+        region = ground.band_box(min(p[0] for p in pts) - r, min(p[1] for p in pts) - r,
+                                 max(p[0] for p in pts) + r, max(p[1] for p in pts) + r)
+        start = ground.band_at(mission.start_x, mission.start_y)
+    else:
+        region = start = _terrain.ground_band(ground)
+    out, notes = [], {}
+    for c in constraints:
+        if not _terrain.is_msl(c):
+            out.append(c)
+            continue
+        a = _terrain.agl_rule(c, ground, region)
+        band, where = region, "under the mission"
+        if c.type not in _terrain.KEEP_OUT_TYPES and start != region:
+            lo_f, hi_f = _terrain.band_fields(a)
+            if getattr(a, hi_f) - getattr(a, lo_f) <= 0.0:
+                a = _terrain.agl_rule(c, ground, start)
+                band, where = start, ("near the mission start; the Shield "
+                                      "converts at each point")
+        out.append(a)
+        note = _terrain.msl_note(c, ground, band)
+        notes[c.id] = note if not _terrain.is_dem(ground) else f"{note} {where}"
+    return out, notes
+
+
 class ConstraintCompiler:
-    def __init__(self, policy: Policy):
+    def __init__(self, policy: Policy, ground=None):
+        """`ground` (X-11, 2026-11-17): the ground-elevation source the
+        flight's Shield is given (guardrail/terrain.py). With one, compile_csp
+        compiles an MSL rule as the AGL band over that ground and says so in
+        its sentence; without one (the default, every caller before) an MSL
+        rule is refused (CSPUnenforcedRules), as it always was."""
         self.policy = policy
+        self.ground = ground
 
     def lint_warnings(self, mission: Mission | None = None, now: datetime | None = None,
                       lookahead_s: float = DEFAULT_LOOKAHEAD_S,
@@ -2442,6 +2497,22 @@ class ConstraintCompiler:
                     cost_map: "CostMap | None" = None) -> CSP:
         """The Prefix Compiler: policy + mission + clock -> CSP (PDF p3).
 
+        An MSL rule (altitude_ref MSL) compiles only on a compiler given a
+        ground (ConstraintCompiler(policy, ground=...), the Shield's): it is
+        then filtered, graded and rendered as the AGL band over the ground
+        the MISSION can reach (_msl_view: the start, target and any home, by
+        the DEM's reach_m; terrain.agl_rule: a keep-in band narrowed, a
+        keep-out band widened by that ground's spread), its sentence states
+        that band beside the declared MSL one and the ground used
+        (terrain.msl_note), and the CSP keeps the declared policy's hash.
+        A keep-in band narrower than the relief under the mission has no AGL
+        band that holds over all of it (150-180 m MSL over 100-200 m ground):
+        it is then stated as the AGL band over the ground near the mission
+        START, and its sentence says so - the CSP's band is what holds where
+        the aircraft is when the prompt is issued, and the Shield converts
+        again at every query point. Only if no AGL band holds even there is
+        it a CSPAltitudeConflict, whose message names the declared MSL bands.
+
         cost_map        - a CostMap rasterised from THIS policy and generation,
                           at THIS clock (`now`) and at the mission's cruise
                           height (`ConstraintCompiler.cost_map(now=now,
@@ -2494,12 +2565,25 @@ class ConstraintCompiler:
         # height reference is not (Policy.unenforced_rules refuses it for
         # flight; a Policy built directly reached the compiler without that).
         unenforced = {c.id: c.type for c in pol.constraints if c.type not in RUNTIME_TYPES}
+        # Since 2026-11-17 (X-11) an MSL rule compiles over a ground the
+        # caller names (the opt-in); without one, or over a ground the Shield
+        # could not use, it is refused as before.
+        g_why = _terrain.ground_problem(self.ground)
         unenforced.update({c.id: f"{c.type} with altitude_ref MSL"
                            for c in pol.constraints
                            if getattr(c, "altitude_ref", None) == "MSL"
-                           and c.id not in unenforced})
+                           and c.id not in unenforced and g_why is not None})
         if unenforced:
             raise CSPUnenforcedRules(pol.policy_id, unenforced)
+        declared_hash = pol.policy_hash
+        declared_msl = {c.id: c for c in pol.constraints if _terrain.is_msl(c)}
+        msl_notes: dict = {}
+        if declared_msl:
+            # The AGL view the Shield enforces, over the ground the mission
+            # can reach (_msl_view), under the declared rules' ids; the CSP
+            # keeps the declared hash below.
+            conv, msl_notes = _msl_view(pol.constraints, self.ground, mission)
+            pol = pol.model_copy(update={"constraints": conv})
         if cost_map is not None:
             _check_cost_map_for(cost_map, pol, mission, now)
         # The CSP refers to rules by id (geometry_ref, relevance_explanations,
@@ -2565,7 +2649,8 @@ class ConstraintCompiler:
                 row.update(severity=sev, proximity=prox, time_critical=tc,
                            risk=_r4(w.severity * sev + w.proximity * prox
                                     + w.time_critical * tc),
-                           sentence=render_sentence(c, show_priority),
+                           sentence=_with_note(render_sentence(c, show_priority),
+                                               msl_notes.get(c.id)),
                            relevance=_relevance(c, acts[c.id], ctx))
                 row["tokens"] = counter.count(row["sentence"])
             rows[c.id] = row
@@ -2660,10 +2745,18 @@ class ConstraintCompiler:
             p2 = None                 # "only if budget allows"; selection says why
 
         in_scope_rules = [r["rule"] for r in rows.values() if "risk" in r]
-        allowed, forbidden = _action_sets(
-            in_scope_rules,
-            None if now is None else _in_force_sets(in_scope_rules, clock, now,
-                                                    lookahead_s))
+        try:
+            allowed, forbidden = _action_sets(
+                in_scope_rules,
+                None if now is None else _in_force_sets(in_scope_rules, clock, now,
+                                                        lookahead_s))
+        except CSPAltitudeConflict as e:
+            clash = [i for i in e.rule_ids if i in declared_msl]
+            if clash:
+                # The bands above are AGL; say what was declared.
+                e.args = (str(e) + "; declared MSL: " + ", ".join(
+                    f"{i} {msl_notes.get(i, '')}" for i in clash),)
+            raise
 
         decisions = []
         for c in pol.constraints:
@@ -2678,7 +2771,7 @@ class ConstraintCompiler:
 
         return CSP(
             csp_version=CSP_VERSION,
-            policy_hash=pol.policy_hash,
+            policy_hash=declared_hash,
             generation=pol.generation,
             issued_at=issued,
             mission_id=_mission_id(mission),

@@ -2127,8 +2127,9 @@ class Policy(BaseModel):
 
         An MSL height (X-11) is an OPT-IN: enforced since 2026-11-03 when the
         caller names the ground it flies over (`ground`, guardrail/terrain.py
-        FlatGround - the rail's stated elevation) and passes the same to the
-        Shield; refused, as before, when it names none."""
+        FlatGround - the rail's stated elevation, or since 2026-11-17 a
+        GridGround DEM) and passes the same to the Shield; refused, as
+        before, when it names none."""
         out: list[str] = []
         for c in self.constraints:
             if c.type not in RUNTIME_TYPES:
@@ -2139,6 +2140,13 @@ class Policy(BaseModel):
                 why = ground_problem(ground)
                 if why:
                     out.append(f"{c.id}: altitude_ref MSL - {why}")
+        if ground is not None:
+            # A DEM is placed in one frame: refused under a policy whose
+            # frame origin differs (terrain.origin_problem, 2026-11-17).
+            from .terrain import origin_problem
+            why = origin_problem(ground, self.frame_origin)
+            if why:
+                out.append(f"ground: {why}")
         return out
 
     def frame_problem(self) -> str | None:
