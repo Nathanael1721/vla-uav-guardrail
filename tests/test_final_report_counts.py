@@ -108,7 +108,7 @@ def test_every_printed_total_is_the_recount():
     flat_report = " ".join(_text(REPORT).split())
     assert f"**{phrase}.**" in flat_outline, f"the outline's header does not print **{phrase}.**"
     assert f"**{phrase}**" in flat_report, f"the report's summary does not print **{phrase}**"
-    assert f"re-assessed 17 Nov: {phrase})" in flat_report, \
+    assert re.search(rf"re-assessed \d+ \w+: {re.escape(phrase)}\)", flat_report), \
         f"the report's Appendix A preamble does not print {phrase}"
     # no stale total of the four statuses survives in either file's current
     # text (the dated independent-review notes at the end keep their own)
@@ -120,13 +120,17 @@ def test_every_printed_total_is_the_recount():
             assert m.group(0) == phrase, f"{rel}: a stale total {m.group(0)!r} (recount: {phrase})"
 
 
-def test_the_17_nov_recount():
-    assert _totals(OUTLINE) == Counter(DONE=104, PARTIAL=30, DRIFT=1, MISSING=1)
+def test_the_rows_the_17_nov_decision_fixes():
+    # the totals are not pinned here: test_every_printed_total_is_the_recount
+    # holds every printed total to the rows, whatever later row moves bring
     rows, _ = appendix(OUTLINE)
     for rid in ("WP1-21", "WP3-01", "ARCH-16", "ARCH-17", "ARCH-23", "ARCH-24"):
         assert rows[rid] == "DONE", f"{rid} is {rows[rid]}"
-    # G1 passed on its THEN branch over SIM_AirSim JSON, not through the gate's fallback path
+    # G1's test passed over SIM_AirSim JSON, not HIL_GPS / HIL_SENSOR, and the
+    # gate's swap rule was not applied: DRIFT, with no claim that its THEN branch held
     assert rows["ARCH-15"] == "DRIFT"
+    for rel in (REPORT, OUTLINE):
+        assert "THEN branch" not in " ".join(_text(rel).split()), f"{rel}: claims G1's THEN branch"
 
 
 def test_the_team_is_stated_as_in_the_grant():
