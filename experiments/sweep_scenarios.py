@@ -5428,6 +5428,35 @@ def hil_chain_problems(metrics: dict, required: bool | None) -> list[str]:
     return out
 
 
+_DESKTOP_REVISION: dict | None = None
+
+
+def desktop_revision() -> dict:
+    """This desktop's own revision record (guardrail.manifest.host_revision:
+    code_revision with its dirty flag, git describe, the machine), read ONCE
+    per process as manifest_base reads the sweep's: git status costs seconds
+    on this tree, and a campaign runs from one checkout."""
+    global _DESKTOP_REVISION
+    if _DESKTOP_REVISION is None:
+        from guardrail.manifest import host_revision
+        _DESKTOP_REVISION = host_revision(repo=ROOT)
+    return _DESKTOP_REVISION
+
+
+def record_desktop_revision(run_dir: Path) -> dict | None:
+    """Add this desktop - the harness, SITL's helper and the stressors - to a
+    fetched hil run's stack record (guardrail.manifest.add_host_revision,
+    ARCH-31), beside the Orin's own. Evidence only: a failure is printed and
+    the run is accepted and scored as before."""
+    from guardrail.manifest import ROLE_DESKTOP, add_host_revision
+    try:
+        return add_host_revision(run_dir, ROLE_DESKTOP, desktop_revision())
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [hil] stack_revisions.json: the desktop's revision not added "
+              f"({type(e).__name__}: {e})")
+        return None
+
+
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
             campaign: str, k: int, store: Path, *, extra_args=None,
             max_s_add: float = 0.0) -> dict:
@@ -5490,6 +5519,7 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         raise RuntimeError(f"mission {tag} exited {rc} and its run folder could not be "
                            f"fetched ({e}): {out[-400:]}") from e
     (run_dir / "mission_console.log").write_text(out, encoding="utf-8", newline="\n")
+    record_desktop_revision(run_dir)
     try:
         rows, metrics, _ = accept_hil_run(run_dir, nonce)
     except RuntimeError as e:

@@ -418,7 +418,8 @@ from guardrail.kpi import compute_from_dir, null_hover_mission        # noqa: E4
 from guardrail.manifest import (DEV_YAML_FLAG, MAX_HEADING_ERR_DEG,   # noqa: E402
                                 NO_VLA, TOPOLOGY_DEV, TOPOLOGY_HIL, build_manifest,
                                 flight_bundle_path, flight_policy_choice,
-                                is_kpi_grade)
+                                is_kpi_grade, projectairsim_simulator,
+                                write_stack_revisions)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
                               ObstacleClearance, SubjectStandoff)
 from guardrail.projection import LocalProjection                      # noqa: E402
@@ -4979,6 +4980,18 @@ def vla_manifest_model(VM, identity: dict | None, rec: dict) -> dict:
     return {"model_id": sid if sid.startswith("fake:") else f"fake:{sid}"}
 
 
+def write_stack_record(out: Path, manifest: dict, ev: dict | None, scene_path) -> dict | None:
+    """stack_revisions.json beside manifest.json (ARCH-31, guardrail.manifest
+    STACK_FILE): this host's revision, the autopilot's firmware as it named
+    itself (the hil evidence), and the simulator - Project AirSim's client
+    version and the scene file's digest when a scene flew. Best effort: a
+    failure is printed, never ends the run's records."""
+    return write_stack_revisions(
+        out, manifest, (ev or {}).get("topology_evidence"),
+        simulator=projectairsim_simulator(scene_path) if scene_path else None,
+        warn=lambda m: print(f"[node]   *** {m}"))
+
+
 def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, policy,
                          policy_source: dict, scene_path, sim_cfg, link, backend, srv,
                          identity, vla_rec: dict, warmup, frames, saver,
@@ -5020,6 +5033,7 @@ def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, poli
                               topology=cls["stamp"], **vla_manifest_model(VM, identity, vla_rec))
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    write_stack_record(out, manifest, ev, scene_path)
     print(f"[node]   *** REFUSED before arming ({exc.kind}): {exc}; metrics.json and "
           f"manifest.json say so")
     return metrics
@@ -8004,6 +8018,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         metrics["topology"] = manifest["topology"]
         (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        write_stack_record(out, manifest, ev, scene_path)
         kpi = compute_from_dir(out, policy)
         graded, why = is_kpi_grade(manifest, metrics)
         # What is_kpi_grade cannot see from the manifest: the scene DECLARES

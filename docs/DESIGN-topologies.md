@@ -246,6 +246,28 @@ file sets `VLAGUARD_EVIDENCE_OUT=deploy/evidence/incoming/`, which git ignores
 (`deploy/evidence/incoming/.gitignore`), and runs land in `demo/out/`, also
 ignored. Reviewed files are copied to the desktop and committed there.
 
+"The desktop and the Orin must be on the same commit" was a runbook check
+only until 2026-11-17: `manifest.json` carries one `code_revision`, the
+revision of the host that wrote it. Since then every rail that writes a
+manifest (the ROS 2 Shield and mission nodes, the Project AirSim rail) also
+writes `stack_revisions.json` beside it (`guardrail.manifest.STACK_FILE`,
+schema `vlaguard-stack-revisions/1`): the writing host's revision under its
+role (`companion` on a Jetson, by its device tree, else `desktop`), with the
+dirty flag and `git describe`; the autopilot's firmware as AUTOPILOT_VERSION
+names it (`ArduCopter V4.5.7 (2a3dc4b7)` on the pinned SITL: version and
+8-hex git hash); and the simulator build where known (ArduPilot SITL is the
+autopilot's own binary; Project AirSim records its client package version
+and the scene file's SHA-256, the simulator binary's build unresolved). The
+hil harness (`experiments/sweep_scenarios.py run_hil`) adds the desktop's own
+revision after it fetches the run, and the record says whether one clean SHA
+held across the hosts (`single_sha`, `problems`).
+
+`manifest.json` itself stays the grant's six fields. A run is read with
+`guardrail.manifest.load_run_manifest`: run manifest schema 1 is
+`manifest.json` alone (every run before 2026-11-17, unchanged), schema 2 is
+`manifest.json` plus `stack_revisions.json`. The record is evidence, not a
+gate: `is_kpi_grade()` does not read it, so no stored run's grade moves.
+
 ### 7. The label comes from evidence; the topology file only selects configuration
 
 `VLAGUARD_TOPOLOGY` in a topology file picks addresses, images and refusals.

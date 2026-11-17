@@ -457,7 +457,8 @@ from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa
                               verify_replay, write_replay, zone_dwell)
 from mavros_evidence import (get_params, initial_evidence,                # noqa: E402
                              note_mavros_state, param_value, poll_autopilot_version,
-                             poll_sim_speedup, record_link, topology_manifest)
+                             poll_sim_speedup, record_link, topology_manifest,
+                             write_stack_revisions)
 from sitl_stressors import (MARKER_TIMES_S, WATCHED_SIM_PARAMS,          # noqa: E402
                             marker_text)
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
@@ -5251,6 +5252,11 @@ if HAVE_ROS:
                                                    encoding="utf-8")
             (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2),
                                                     encoding="utf-8")
+            # Beside the six fields: this host's revision, the autopilot's
+            # firmware and the simulator build (ARCH-31; the hil harness adds
+            # the desktop's after it fetches the run).
+            write_stack_revisions(self.out, manifest, self.hil_evidence,
+                                  warn=self.get_logger().warn)
 
             kpi_res = compute_from_dir(self.out, self.policy)
             graded, why = is_kpi_grade(manifest, {**metrics, "det_hz": None,

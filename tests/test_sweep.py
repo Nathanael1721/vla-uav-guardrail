@@ -3095,6 +3095,11 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
         assert score["scenario"]["family"] == "hil-stress/kinematic_envelope/speed-cap/shield-on"
         assert score["metrics"]["shield"] == "on" and "kpi" in score
         assert (run_dir / "mission_console.log").is_file()
+        # The desktop's own revision joins the run's stack record (ARCH-31);
+        # this fake Orin wrote neither a manifest nor a record of its own.
+        stack = json.loads((run_dir / "stack_revisions.json").read_text(encoding="utf-8"))
+        assert list(stack["hosts"]) == ["desktop"], stack
+        assert stack["hosts"]["desktop"]["code_revision"] == S.desktop_revision()["code_revision"]
         assert res["speed-cap"]["mission_tag"] == "tst1_002_speed-cap"
         assert doc["_backend"] == "hil" and doc["_scope"]["hil"]["campaign"] == "tst1"
         assert rc in (0, 1), rc

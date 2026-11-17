@@ -116,7 +116,8 @@ from mavlink_adapter_node import (FIRST_WAYPOINT_SEQ, TOPIC_MISSION,     # noqa:
                                   TOPIC_STATUS, XYArgumentParser)
 from mavros_evidence import (get_params, initial_evidence,              # noqa: E402
                              note_mavros_state, poll_autopilot_version,
-                             poll_sim_speedup, record_link, topology_manifest)
+                             poll_sim_speedup, record_link, topology_manifest,
+                             write_stack_revisions)
 
 TICK_S = 0.1
 MAX_S = 180.0
@@ -251,6 +252,9 @@ def write_run_records(out: Path, metrics: dict, *, policy_hash: str, seed: int,
                                       encoding="utf-8")
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n",
                                        encoding="utf-8")
+    # Beside the six fields: this host's revision, the autopilot's firmware
+    # and the simulator build (ARCH-31, guardrail.manifest STACK_FILE).
+    write_stack_revisions(out, manifest, evidence, warn=warn)
     return manifest
 
 

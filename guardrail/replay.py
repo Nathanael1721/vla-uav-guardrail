@@ -169,6 +169,10 @@ EPISODE_FILES = {
     "metrics.json": False,
     "kpi.json": False,
     "manifest.json": False,
+    # Since 2026-11-17 (ARCH-31): the revision of each host, the autopilot's
+    # firmware and the simulator build, beside the six fields
+    # (guardrail.manifest.STACK_FILE). Absent from every earlier run.
+    "stack_revisions.json": False,
     # Since 2026-10-06: see "WHAT AN EPISODE HOLDS" above. The grant's name
     # since 2026-11-02; the old one for a run stored before then.
     "shield_audit.jsonl": False,
@@ -203,7 +207,7 @@ STALE_PATTERNS = ("shield_audit.jsonl", "audit.jsonl", "events.jsonl", "adapter_
                   # leave the previous flight's map beside its own CSP.
                   "costmap_csp_g*.npz", "costmap_csp_g*.json", "costmap_csp_g*.yaml",
                   "flight_log.jsonl", "metrics.json", "kpi.json",
-                  "manifest.json", "report.md", "prompt.yaml",
+                  "manifest.json", "stack_revisions.json", "report.md", "prompt.yaml",
                   "trajectory.json", "trajectory.png", "*.replay.tar.gz")
 PREVIOUS_DIR = "_previous"
 # A flight log WITHOUT episode ids (rows written before 2026-10-07) is bound to
