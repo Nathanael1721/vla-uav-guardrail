@@ -2422,7 +2422,15 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     Re-pinned 2026-11-06: on the default recovery law ("cap_all") that side
     exit flies at the 4 m/s cap and is out in 2.6 s, inside X6's T, so no
     RTL happens at all; the RTL this test is about is flown on the law it
-    was written on ("cap": the 2.0 m/s floor), which stays selectable."""
+    was written on ("cap": the 2.0 m/s floor), which stays selectable.
+    Re-pinned 2026-11-17: the Shield now enforces a spawned zone at the
+    micrometre view of its stored WGS84 (Shield._in_frame binds it to the
+    frame), each vertex up to 0.6 um from the metres the spawn computed, so
+    the centred spawn is no longer an exact tie (shield._TIE_M is 1e-9 m):
+    its escape takes a side edge nearer by about a micrometre, the forward
+    command is not escaping, and the FSM brakes (G1 at 5.0 s) and hands back
+    (G7 at 11.9 s). That centred run is the premise checked first; the side
+    spawn below, which this test is about, is not a tie either way."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):
@@ -2433,8 +2441,9 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
 
     spec = _cell("dyn-nfz-spawn-on-top", size_m=20, variant=0)
     centred = S.run_episode(spec, DEFAULTS, 0)
-    assert not (centred.extra.get("fsm") or {}).get("transitions"), \
-        "the centred spawn's forward command should already be the way out"
+    tr = (centred.extra.get("fsm") or {}).get("transitions") or []
+    assert [(t["edge"], t["t_s"]) for t in tr] == [("G1", 5.0), ("G7", 11.9)], \
+        f"the centred spawn, bound to the frame, escapes by a side edge: {tr}"
     orig_spawn = S._spawn_zone
 
     def beside(payload, k, st, heading):

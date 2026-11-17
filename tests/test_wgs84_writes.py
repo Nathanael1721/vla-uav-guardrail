@@ -18,19 +18,21 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
     scale / swap events; the snapshot reloads to the same hash and metres;
   * the round trip metres -> WGS84 -> metres is within 1 mm (in fact under a
     micrometre), and exact for metres on the micrometre grid;
-  * the enforcement geometry is what it was: the live Shield compiles the
-    same zone rings, float for float, builds the same CSP and takes the same
-    decisions as with the metre writes of before (`wgs84_writes = False`) -
-    computed, off-grid rings included; the snapshot reloads to the same hash
-    and the same metres (exact on the micrometre grid, else within 0.6 um);
+  * what the live Shield enforces is the lazy projection of what is stored
+    (since 2026-11-17 evening the only mode: the rule is bound to the
+    policy's frame as it is written): the signed snapshot, reloaded, reads
+    the same floats and compiles the same rings, bit for bit, computed
+    off-grid rings included;
+  * against the metre writes of before (`wgs84_writes = False`): the same
+    zone rings, CSP and decisions, float for float, for metres on the
+    micrometre grid (every REST body, every hand-written scenario); a
+    computed off-grid ring (rotate, a spawn at an off-grid vehicle position)
+    moves by at most 0.6 um;
   * a policy written only in metres (the legacy form) keeps metre writes, and
     no stored policy's hash moves;
   * a derived frame (no stated origin) is never moved by an event;
-  * the declared deviation of the default mode (live view = the metres
-    given, snapshot view = the micrometre view of the stored lat/lon, up to
-    0.6 um apart under one hash) and the opt-in that closes it
-    (Shield.wgs84_bind_frame, default off: live view = snapshot view, bit
-    for bit);
+  * no unbound mode is left (no Shield.wgs84_bind_frame, no
+    VLAGUARD_WGS84_BIND);
   * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
     agree with the Shield's writes; the 1-um consistency guard fires.
 
@@ -72,13 +74,10 @@ ZONE = {"id": "nfz-landslide-007", **RULE,
 
 
 def _pair(path=SITL):
-    """Two Shields over the same stored policy: the WGS84 writes (default)
-    and the metre writes of before 2026-11-17. Both in the default
-    (unbound) mode whatever VLAGUARD_WGS84_BIND says: these tests are about
-    that mode; the bound mode has its own below."""
+    """Two Shields over the same stored policy: the WGS84 writes (default,
+    bound to the frame) and the metre writes of before 2026-11-17."""
     new = Shield(load_policy(path))
     old = Shield(load_policy(path))
-    new.wgs84_bind_frame = old.wgs84_bind_frame = False
     old.wgs84_writes = False
     return new, old
 
@@ -138,6 +137,15 @@ def _close(a, b, tol) -> bool:
     return a == b
 
 
+# A computed off-grid metre point, bound to the frame, is enforced at the
+# micrometre view of its stored lat/lon: within 0.6 um of the metres the
+# edit computed. Compiled rings (buffered by the margin) carry it through.
+OFF_GRID_TOL_M = 0.6e-6
+RING_TOL_M = 1e-6
+# Over a chain of edits each computed from the previous bound view.
+CHAIN_TOL_M = 3e-6
+
+
 # ---------------------------------------------------------------- round trip
 
 def test_roundtrip_metres_wgs84_metres():
@@ -193,12 +201,19 @@ def test_rest_patch_edits_store_wgs84():
             api.apply_nfz_edit(sh, ZONE["id"], dict(body))
         _all_wgs84(new.policy)
         _reload_same(new.policy)
-        # the live rings: the same floats, the computed (rotated) ring too
-        assert _rings(new) == _rings(old), body
+        # the live rings: the same floats while every point is on the
+        # micrometre grid; the computed (rotated) ring within 1 um
+        given = [c for v in old.policy.constraints[-1].given_vertices() for c in (v.x, v.y)]
+        if all(round(c, 6) == c for c in given):
+            assert _rings(new) == _rings(old), body
+        else:
+            assert _close(_rings(new), _rings(old), RING_TOL_M), body
     a = [(v.x, v.y) for v in new.policy.constraints[-1].given_vertices()]
     b = [(v.x, v.y) for v in old.policy.constraints[-1].given_vertices()]
-    assert a == b, (a, b)
-    assert any(round(c, 6) != c for xy in a for c in xy), "rotate wrote no off-grid metre"
+    assert _close(a, b, OFF_GRID_TOL_M), (a, b)
+    assert any(round(c, 6) != c for xy in b for c in xy), "rotate wrote no off-grid metre"
+    # bound: the live view is the micrometre view of the stored lat/lon
+    assert all(round(c, 6) == c for xy in a for c in xy), a
 
 
 def test_rest_lat_lon_spawn_unchanged():
@@ -270,9 +285,10 @@ def test_harness_events_store_wgs84_same_geometry():
         r_old = apply_event(ev, es_old, st, heading, ev.at_sim_t)
         _all_wgs84(new.policy)
         _reload_same(new.policy)
-        # the record keeps its metres (rounded to the mm) and they agree
+        # the record keeps its metres (rounded to the mm) and they agree;
+        # the computed off-grid rings within 1 um
         assert r_new["vertices"] == r_old["vertices"], (ev.type, r_new, r_old)
-        assert _rings(new) == _rings(old), ev.type
+        assert _close(_rings(new), _rings(old), RING_TOL_M), ev.type
 
 
 def test_harness_swap_corridor_stores_wgs84():
@@ -432,17 +448,7 @@ def test_the_consistency_guard_refuses_a_bad_conversion():
         M.metres_to_wgs84 = good
 
 
-# -------------------------------------- opt-in: the frame binds the live view
-
-def _bound_pair(path=SITL):
-    """The default Shield (given metres enforced live) and one with
-    wgs84_bind_frame (the live view is the projection of the stored lat/lon)."""
-    dflt = Shield(load_policy(path))
-    bound = Shield(load_policy(path))
-    dflt.wgs84_bind_frame = False
-    bound.wgs84_bind_frame = True
-    return dflt, bound
-
+# ------------------------- the live view is the projection of what is stored
 
 def _snapshot(policy: Policy) -> Policy:
     return Policy.model_validate(json.loads(policy.model_dump_json()))
@@ -452,65 +458,117 @@ def _views(policy: Policy) -> list:
     return [[(v.x, v.y) for v in pts] for pts in _rule_points(policy, all_points=True)]
 
 
-def test_the_bind_flag_is_off_by_default():
-    """Default-off: it moves computed rings by up to 0.6 um, a flown change,
-    so it waits for a declared re-baseline (VLAGUARD_WGS84_BIND=1)."""
+def test_no_unbound_mode_is_left():
+    """Until the evening of 2026-11-17 (integrate/1117) the Shield by default
+    enforced the metres an event gave, not the projection of the lat/lon it
+    stored (opt-in Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1 closed the
+    gap). Binding is now the only mode: no flag, no environment switch."""
     import os
-    if os.environ.get("VLAGUARD_WGS84_BIND", "").strip() != "1":
-        assert Shield.wgs84_bind_frame is False
-        assert Shield(load_policy(SITL)).wgs84_bind_frame is False
+    assert not hasattr(Shield, "wgs84_bind_frame")
+    old = os.environ.get("VLAGUARD_WGS84_BIND")
+    os.environ["VLAGUARD_WGS84_BIND"] = "0"
+    try:
+        sh = Shield(load_policy(SITL))
+        api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
+        assert _views(_snapshot(sh.policy)) == _views(sh.policy)
+    finally:
+        if old is None:
+            os.environ.pop("VLAGUARD_WGS84_BIND", None)
+        else:
+            os.environ["VLAGUARD_WGS84_BIND"] = old
 
 
-def test_bound_live_view_is_the_snapshot_view_bit_for_bit():
-    """With wgs84_bind_frame the geometry the live Shield enforces is the
-    projection of what is stored: the signed snapshot, reloaded, reads the
-    same floats for every point - computed off-grid rings included - and the
-    same compiled rings. A FIRST write stores and hashes the same in both
-    modes; an edit computes its new ring from the current view, so after one
-    the modes part by up to 0.6 um (that is the flown change). In the
-    default mode the same events leave at least one point where live and
-    snapshot differ (the declared deviation, at most 0.6 um), which shows
-    the flag matters."""
-    dflt, bound = _bound_pair()
-    for sh in (dflt, bound):
-        api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
-    assert bound.policy.policy_hash == dflt.policy.policy_hash
-    assert _stored(bound.policy) == _stored(dflt.policy)
-    for sh in (dflt, bound):
-        api.apply_nfz_edit(sh, ZONE["id"], {"op": "rotate", "angle_deg": 30})
-    es_d, es_b = EventState(shields=[dflt]), EventState(shields=[bound])
+def test_live_view_is_the_snapshot_view_bit_for_bit():
+    """The geometry the live Shield enforces is the projection of what is
+    stored: the signed snapshot, reloaded, reads the same floats for every
+    point - computed off-grid rings included - and compiles the same rings,
+    after every write path (REST spawn and edits, the harness's events).
+    Against the metre writes of before, at least one computed point is not
+    the same float (that is the flown change this binding made, WP4-11's
+    price for bit-for-bit replay) and every point is within a few
+    micrometres: each write is within 0.6 um of what it computed, but an
+    edit computes its ring from the current (bound) view, so over a chain
+    of six edits (a rotate, a scale by 1.25, ...) the offsets compound - the
+    worst here is about 0.87 um."""
+    sh, old = _pair()
+    for s in (sh, old):
+        api.apply_dynamic_nfz(s, copy.deepcopy(ZONE))
+        api.apply_nfz_edit(s, ZONE["id"], {"op": "rotate", "angle_deg": 30})
+    back = _snapshot(sh.policy)
+    assert back.policy_hash == sh.policy.policy_hash
+    assert _views(back) == _views(sh.policy)
+    assert _rings(sh) == _rings(Shield(back))
+    es, es_old = EventState(shields=[sh]), EventState(shields=[old])
     st = State(x=3.141592653, y=-2.718281828, up=20.0)
     heading = (math.cos(0.3), math.sin(0.3))
     for ev in _events():
-        apply_event(ev, es_d, st, heading, ev.at_sim_t)
-        apply_event(ev, es_b, st, heading, ev.at_sim_t)
-        _all_wgs84(bound.policy)
-        back = _snapshot(bound.policy)
-        assert back.policy_hash == bound.policy.policy_hash
-        assert _views(back) == _views(bound.policy), ev.type
-        # the bound live rings are the rings a Shield over the snapshot compiles
-        assert _rings(bound) == _rings(Shield(back)), ev.type
-    live_d, snap_d = _views(dflt.policy), _views(_snapshot(dflt.policy))
-    assert live_d != snap_d, "the default mode showed no live/snapshot gap here"
-    for a, b in zip(live_d, snap_d):
+        apply_event(ev, es, st, heading, ev.at_sim_t)
+        apply_event(ev, es_old, st, heading, ev.at_sim_t)
+        _all_wgs84(sh.policy)
+        back = _snapshot(sh.policy)
+        assert back.policy_hash == sh.policy.policy_hash
+        assert _views(back) == _views(sh.policy), ev.type
+        assert _rings(sh) == _rings(Shield(back)), ev.type
+    live, metres = _views(sh.policy), _views(old.policy)
+    assert live != metres, "no computed point moved; the comparison proved nothing"
+    for a, b in zip(live, metres):
         for (p, q), (u, v) in zip(a, b):
-            assert abs(p - u) <= 0.6e-6 and abs(q - v) <= 0.6e-6, ((p, q), (u, v))
+            assert abs(p - u) <= CHAIN_TOL_M and abs(q - v) <= CHAIN_TOL_M, \
+                ((p, q), (u, v))
 
 
-def test_bound_mode_binds_a_lat_lon_body_too():
-    """A REST body in lat/lon with metres beside them: bound, the metres are
-    checked against the frame and dropped, so the live view is the frame's."""
-    _, bound = _bound_pair()
-    o = bound.policy.frame_origin
+def test_a_zone_centred_on_the_aircraft_escapes_straight_out_once_bound():
+    """A square zone written centred on an off-grid aircraft position is an
+    exact tie between its edges as written (the escape then follows the
+    heading: shield.escape_direction). Bound to the frame, its vertices move
+    by up to 0.6 um and the edge distances by up to 1.2 um, above
+    shield._TIE_M (1e-9 m), so the tie can break by geometry. Pinned here:
+    the escape is still straight out through one edge (a valid escape, never
+    a diagonal); the metre writes of before follow the heading every time;
+    and the bound zone breaks at least one of these ties away from the
+    heading - the known consequence (library cell
+    dyn-nfz-spawn-on-top@size_m=20, docs/data/wgs84_bind_default_20261117/)."""
+    from shapely.geometry import Polygon as _Poly
+    from guardrail import shield as SH
+    sh = Shield(load_policy(SITL))
+    rng = random.Random(20261117)
+    off_heading = 0
+    for _ in range(40):
+        cx, cy = rng.uniform(-200, 200), rng.uniform(-200, 200)
+        h = rng.uniform(5, 25)
+        ang = rng.uniform(0, 2 * math.pi)
+        c, s = math.cos(ang), math.sin(ang)
+        corners = [(cx + c * u - s * v, cy + s * u + c * v)
+                   for u, v in ((-h, -h), (h, -h), (h, h), (-h, h))]
+        z = DynamicNFZ.model_validate({**ZONE, "id": "on-top", "type": "dynamic_nfz",
+                                       "vertices": [{"x": x, "y": y} for x, y in corners]})
+        bound = _Poly([(v.x, v.y) for v in rule_in_wgs84(z, sh.policy.frame_origin).vertices])
+        metres = _Poly(corners)
+        normals = [(math.cos(ang + k * math.pi / 2), math.sin(ang + k * math.pi / 2))
+                   for k in range(4)]
+        for hx, hy in normals:             # heading straight at each edge
+            ux, uy = SH.escape_direction(cx, cy, metres, hx, hy)
+            assert ux * hx + uy * hy > 0.999999, ("metres", (ux, uy), (hx, hy))
+            ux, uy = SH.escape_direction(cx, cy, bound, hx, hy)
+            assert max(ux * nx + uy * ny for nx, ny in normals) > 0.999999, (ux, uy)
+            off_heading += ux * hx + uy * hy < 0.999
+    assert off_heading, "no bound tie broke away from the heading; re-check _TIE_M"
+
+
+def test_a_lat_lon_body_is_bound_too():
+    """A REST body in lat/lon with metres beside them: the metres are checked
+    against the frame and dropped, so the live view is the frame's."""
+    sh = Shield(load_policy(SITL))
+    o = sh.policy.frame_origin
     verts = []
     for x, y in ((10.1234567, 10), (18, 10.7654321), (18, 17)):
         lat, lon = metres_to_wgs84(o, x, y)
         verts.append({"lat": lat, "lon": lon, "x": x, "y": y})
-    api.apply_dynamic_nfz(bound, {**ZONE, "id": "ll", "vertices": verts})
-    z = bound.policy.constraints[-1]
+    api.apply_dynamic_nfz(sh, {**ZONE, "id": "ll", "vertices": verts})
+    z = sh.policy.constraints[-1]
     assert [(v.x, v.y) for v in z.vertices] == \
         [local_metres(o, v.lat, v.lon) for v in z.vertices]
-    assert _views(_snapshot(bound.policy)) == _views(bound.policy)
+    assert _views(_snapshot(sh.policy)) == _views(sh.policy)
 
 
 # ---------------------------------------------- the other write paths agree
@@ -602,6 +660,62 @@ def test_apply_zone_returns_the_rule_as_stored():
     got = rec.apply_zone(sh, fence, t=1.0)
     assert got is sh.policy.constraints[-1]
     assert all(v.geographic for v in got.vertices)
+
+
+# ------------------------------- tools/wgs84_bind_compare.py (the evidence)
+
+def _compare_tool():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import wgs84_bind_compare
+    return wgs84_bind_compare
+
+
+def test_the_compare_tool_classifies_and_aligns():
+    """The before/after tool of docs/data/wgs84_bind_default_20261117: a
+    float within 1e-6 is um_level, an int change a count, wall-clock fields
+    are ignored; audit logs align by monitor tick, a negated action reads
+    `mirrored`, a tick logged on one side only is named with its violation."""
+    import tempfile
+    W = _compare_tool()
+    rows = {f["field"]: f for f in W.diff_dicts(
+        {"a": 1.0, "n": 3, "runtime_s": 1, "same": 2},
+        {"a": 1.0000004, "n": 4, "runtime_s": 9, "same": 2})}
+    assert set(rows) == {"a", "n"}, rows
+    assert rows["a"]["kind"] == "um_level" and rows["n"]["kind"] == "count"
+    tmp = Path(tempfile.mkdtemp(prefix="bindcmp_"))
+
+    def log(d, recs):
+        d.mkdir()
+        (d / "shield_audit.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+
+    def rec(t, vx, vy, viol=()):
+        return {"monitor_tick": t, "emitted_action_world": {"vx": vx, "vy": vy},
+                "violations": [{"rule_id": v, "category": "geometric",
+                                "detail": "d", "predicted_at_s": 5.0} for v in viol]}
+    log(tmp / "b", [rec(1, 1.0, 0.0), rec(2, 3.0, -1.0), rec(3, 0.0, 0.0, ["z"])])
+    log(tmp / "a", [rec(1, 1.0 + 4e-8, 0.0), rec(2, -3.0, 1.0)])
+    got = W.audit_diff(tmp / "b", tmp / "a")
+    assert got["first_differing_tick"] == 1, got
+    assert got["ticks_emitted_differs_um_level"] == 1
+    assert got["ticks_emitted_differs_large"] == 1 and got["large"][0]["mirrored"]
+    one = got["ticks_audited_in_one_only"]
+    assert one == [{"tick": 3, "audited_in": "before", "fsm": [None, None],
+                    "violations": [{"rule_id": "z", "detail": "d", "predicted_at_s": 5.0}]}], one
+
+
+def test_the_bind_evidence_matches_its_readme():
+    """The committed diffs say what the README says: headline identical,
+    8 of 64 smoke episodes and 14 of 180 library episodes differ."""
+    d = ROOT / "docs" / "data" / "wgs84_bind_default_20261117"
+    smoke = json.loads((d / "smoke_diff.json").read_text(encoding="utf-8"))
+    lib = json.loads((d / "library_diff.json").read_text(encoding="utf-8"))
+    assert smoke["headline_identical"] and lib["headline_identical"]
+    assert (smoke["episodes_compared"], smoke["episodes_differing"]) == (64, 8)
+    assert (lib["episodes_compared"], lib["episodes_differing"]) == (180, 14)
+    assert smoke["headline_after"]["fail_safe_correctness"] == 1.0
+    cost = json.loads((d / "tick_cost.json").read_text(encoding="utf-8"))
+    assert all(v["view_reads"] == 0 for v in cost["projection_reads_during_ticks"].values())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2249 @@
+{
+ "headline_before": {
+  "episodes": 64,
+  "status": {
+   "known_failure": 2,
+   "pass": 56,
+   "tracked": 6
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   63,
+   63
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.619048,
+  "null_always_trigger": 0.380952,
+  "true_p0_flown_ticks": 1058,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1008
+ },
+ "headline_after": {
+  "episodes": 64,
+  "status": {
+   "known_failure": 2,
+   "pass": 56,
+   "tracked": 6
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   63,
+   63
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.619048,
+  "null_always_trigger": 0.380952,
+  "true_p0_flown_ticks": 1057,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1007
+ },
+ "headline_identical": false,
+ "episodes_compared": 64,
+ "episodes_differing": 9,
+ "episodes": [
+  {
+   "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
+   "scenario_id": "dyn-nfz-spawn-ahead",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 31.9,
+     "after": 32.0,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000142
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 31.9,
+     "after": 32.0,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000142
+    },
+    {
+     "field": "kpi.phase1_violation_ticks_dyn-nfz",
+     "before": 319,
+     "after": 320,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.repair_not_applied_autopilot_ticks",
+     "before": 317,
+     "after": 318,
+     "kind": "count",
+     "abs_diff": 1.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 320,
+    "audited_ticks_after": 321,
+    "first_differing_tick": 50,
+    "ticks_emitted_differs_um_level": 318,
+    "emitted_um_level_max_abs_diff_mps": 4.958093402507302e-08,
+    "ticks_emitted_differs_large": 1,
+    "ticks_emitted_differs_large_all_mirrored": true,
+    "large": [
+     {
+      "tick": 353,
+      "abs_diff_mps": 6.1174820854551495,
+      "mirrored": true,
+      "before": {
+       "vx": 2.577615779307156,
+       "vy": -3.058741063618619,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.5776158288880877,
+       "vy": 3.05874102183653,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 369,
+      "audited_in": "after",
+      "fsm": [
+       "RTL",
+       "RTL"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-223.7,-20.0) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-spawn-on-top@size_m=40,variant=0",
+   "scenario_id": "dyn-nfz-spawn-on-top",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_repair_magnitude_mps",
+     "before": null,
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.mean_repair_magnitude_mps",
+     "before": null,
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.mean_yaw_repair_dps",
+     "before": null,
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_count",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    },
+    {
+     "field": "kpi.repair_floored_ticks",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    },
+    {
+     "field": "kpi.repair_magnitude_breakdown_status",
+     "before": "no_repaired_tick",
+     "after": "measured",
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.mean_mps",
+     "before": null,
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
+     "before": null,
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_sum_mps",
+     "before": 0.0,
+     "after": 3e-06,
+     "kind": "magnitude",
+     "abs_diff": 3e-06
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_ticks",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.sum_mps",
+     "before": 0.0,
+     "after": 3e-06,
+     "kind": "magnitude",
+     "abs_diff": 3e-06
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.Recovery.ticks",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.floored.mean_mps",
+     "before": "<absent>",
+     "after": 0.0,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.floored.sum_mps",
+     "before": "<absent>",
+     "after": 3e-06,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.floored.ticks",
+     "before": "<absent>",
+     "after": 53,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repaired_ticks",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    },
+    {
+     "field": "kpi.repairs_per_episode",
+     "before": 0,
+     "after": 53,
+     "kind": "count",
+     "abs_diff": 53.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 0,
+    "audited_ticks_after": 53,
+    "first_differing_tick": 50,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 0,
+    "ticks_emitted_differs_large_all_mirrored": true,
+    "large": [],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 50,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 51,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 52,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 53,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 54,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 55,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 56,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 57,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 58,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 59,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 60,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 61,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 62,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 63,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 64,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 65,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 66,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 67,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 68,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 69,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 70,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 71,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 72,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 73,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 74,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 75,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 76,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 77,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 78,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 79,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 80,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 81,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 82,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 83,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 84,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 85,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 86,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 87,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 88,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 89,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 90,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 91,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 92,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 93,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 94,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 95,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 96,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 97,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 98,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 99,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 100,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 101,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 102,
+      "audited_in": "after",
+      "fsm": [
+       "Normal",
+       "Normal"
+      ],
+      "violations": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-translate@variant=0,zone_mps=2#canonical",
+   "scenario_id": "dyn-nfz-translate",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 2.9,
+     "after": 3.0,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000009
+    },
+    {
+     "field": "kpi.min_true_dist_to_fence_m",
+     "before": 1.37,
+     "after": 1.371,
+     "kind": "magnitude",
+     "abs_diff": 0.0009999999999998899
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 32,
+    "audited_ticks_after": 32,
+    "first_differing_tick": 73,
+    "ticks_emitted_differs_um_level": 17,
+    "emitted_um_level_max_abs_diff_mps": 4.900715233624453e-08,
+    "ticks_emitted_differs_large": 14,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 77,
+      "abs_diff_mps": 7.327207643222717,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350339,
+       "vy": 1.6056173141779175,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 78,
+      "abs_diff_mps": 7.327136571074426,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6635683086358077,
+       "vy": -1.6056017454937106,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 79,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723787,
+       "vy": 1.6056173631850645,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503417,
+       "vy": -1.6056173141779124,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 80,
+      "abs_diff_mps": 7.327136572021862,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934226,
+       "vy": 1.6056017456066112,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 85,
+      "abs_diff_mps": 7.327207643222722,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723814,
+       "vy": -1.6056173631850659,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503404,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 86,
+      "abs_diff_mps": 7.327136571074416,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635798,
+       "vy": -1.6056017454937077,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 87,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.605617363185064,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663603832350341,
+       "vy": -1.605617314177914,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 88,
+      "abs_diff_mps": 7.32713657202187,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6635682631284396,
+       "vy": -1.6056017839691241,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934305,
+       "vy": 1.6056017456066172,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 93,
+      "abs_diff_mps": 7.327207643222718,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503395,
+       "vy": 1.605617314177916,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 94,
+      "abs_diff_mps": 7.327136571074407,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635789,
+       "vy": -1.6056017454937013,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 95,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.6056173631850637,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503395,
+       "vy": -1.6056173141779158,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 96,
+      "abs_diff_mps": 7.327136572021878,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934377,
+       "vy": 1.6056017456066232,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 101,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350341,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 125,
+      "abs_diff_mps": 7.095905948273362e-05,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6217410078818193,
+       "vy": -3.656495057203614,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.621811966941302,
+       "vy": -3.6564635843784883,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 102,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-220.0,-44.9) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     },
+     {
+      "tick": 103,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-219.6,-45.6) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp0",
+   "scenario_id": "dyn-nfz-translate",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 2.9,
+     "after": 3.0,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000009
+    },
+    {
+     "field": "kpi.min_true_dist_to_fence_m",
+     "before": 1.37,
+     "after": 1.371,
+     "kind": "magnitude",
+     "abs_diff": 0.0009999999999998899
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 32,
+    "audited_ticks_after": 32,
+    "first_differing_tick": 73,
+    "ticks_emitted_differs_um_level": 17,
+    "emitted_um_level_max_abs_diff_mps": 4.900715233624453e-08,
+    "ticks_emitted_differs_large": 14,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 77,
+      "abs_diff_mps": 7.327207643222717,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350339,
+       "vy": 1.6056173141779175,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 78,
+      "abs_diff_mps": 7.327136571074426,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6635683086358077,
+       "vy": -1.6056017454937106,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 79,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723787,
+       "vy": 1.6056173631850645,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503417,
+       "vy": -1.6056173141779124,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 80,
+      "abs_diff_mps": 7.327136572021862,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934226,
+       "vy": 1.6056017456066112,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 85,
+      "abs_diff_mps": 7.327207643222722,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723814,
+       "vy": -1.6056173631850659,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503404,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 86,
+      "abs_diff_mps": 7.327136571074416,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635798,
+       "vy": -1.6056017454937077,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 87,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.605617363185064,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663603832350341,
+       "vy": -1.605617314177914,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 88,
+      "abs_diff_mps": 7.32713657202187,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6635682631284396,
+       "vy": -1.6056017839691241,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934305,
+       "vy": 1.6056017456066172,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 93,
+      "abs_diff_mps": 7.327207643222718,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503395,
+       "vy": 1.605617314177916,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 94,
+      "abs_diff_mps": 7.327136571074407,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635789,
+       "vy": -1.6056017454937013,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 95,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.6056173631850637,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503395,
+       "vy": -1.6056173141779158,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 96,
+      "abs_diff_mps": 7.327136572021878,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934377,
+       "vy": 1.6056017456066232,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 101,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350341,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 125,
+      "abs_diff_mps": 7.095905948273362e-05,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6217410078818193,
+       "vy": -3.656495057203614,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.621811966941302,
+       "vy": -3.6564635843784883,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 102,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-220.0,-44.9) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     },
+     {
+      "tick": 103,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-219.6,-45.6) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp1",
+   "scenario_id": "dyn-nfz-translate",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 2.9,
+     "after": 3.0,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000009
+    },
+    {
+     "field": "kpi.min_true_dist_to_fence_m",
+     "before": 1.37,
+     "after": 1.371,
+     "kind": "magnitude",
+     "abs_diff": 0.0009999999999998899
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 175.174911,
+     "after": 175.174966,
+     "kind": "magnitude",
+     "abs_diff": 5.5000000003246896e-05
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 32,
+    "audited_ticks_after": 32,
+    "first_differing_tick": 73,
+    "ticks_emitted_differs_um_level": 17,
+    "emitted_um_level_max_abs_diff_mps": 4.900715233624453e-08,
+    "ticks_emitted_differs_large": 14,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 77,
+      "abs_diff_mps": 7.327207643222717,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350339,
+       "vy": 1.6056173141779175,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 78,
+      "abs_diff_mps": 7.327136571074426,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6635683086358077,
+       "vy": -1.6056017454937106,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 79,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723787,
+       "vy": 1.6056173631850645,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503417,
+       "vy": -1.6056173141779124,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 80,
+      "abs_diff_mps": 7.327136572021862,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934226,
+       "vy": 1.6056017456066112,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 85,
+      "abs_diff_mps": 7.327207643222722,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723814,
+       "vy": -1.6056173631850659,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503404,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 86,
+      "abs_diff_mps": 7.327136571074416,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635798,
+       "vy": -1.6056017454937077,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 87,
+      "abs_diff_mps": 7.327207643222721,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.605617363185064,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663603832350341,
+       "vy": -1.605617314177914,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 88,
+      "abs_diff_mps": 7.32713657202187,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6635682631284396,
+       "vy": -1.6056017839691241,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934305,
+       "vy": 1.6056017456066172,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 93,
+      "abs_diff_mps": 7.327207643222718,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6636038323503395,
+       "vy": 1.605617314177916,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 94,
+      "abs_diff_mps": 7.327136571074407,
+      "mirrored": true,
+      "before": {
+       "vx": -3.663568262438618,
+       "vy": 1.6056017836668004,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.663568308635789,
+       "vy": -1.6056017454937013,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 95,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": -3.6636038108723796,
+       "vy": 1.6056173631850637,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.6636038323503395,
+       "vy": -1.6056173141779158,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 96,
+      "abs_diff_mps": 7.327136572021878,
+      "mirrored": true,
+      "before": {
+       "vx": 3.66356826312844,
+       "vy": -1.6056017839691235,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.6635683088934377,
+       "vy": 1.6056017456066232,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 101,
+      "abs_diff_mps": 7.327207643222719,
+      "mirrored": true,
+      "before": {
+       "vx": 3.6636038108723787,
+       "vy": -1.6056173631850694,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -3.663603832350341,
+       "vy": 1.6056173141779142,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 125,
+      "abs_diff_mps": 7.095905948273362e-05,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6217410078818193,
+       "vy": -3.656495057203614,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.621811966941302,
+       "vy": -3.6564635843784883,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 102,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-220.0,-44.9) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     },
+     {
+      "tick": 103,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "dyn-nfz",
+        "detail": "predicted pos (-219.6,-45.6) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "failsafe-loiter-timeout",
+   "scenario_id": "failsafe-loiter-timeout",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 31.8,
+     "after": 31.9,
+     "kind": "magnitude",
+     "abs_diff": 0.09999999999999787
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 31.8,
+     "after": 31.9,
+     "kind": "magnitude",
+     "abs_diff": 0.09999999999999787
+    },
+    {
+     "field": "kpi.phase1_violation_ticks_loiter-zone",
+     "before": 318,
+     "after": 319,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.repair_not_applied_autopilot_ticks",
+     "before": 317,
+     "after": 318,
+     "kind": "count",
+     "abs_diff": 1.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 319,
+    "audited_ticks_after": 320,
+    "first_differing_tick": 348,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 0,
+    "ticks_emitted_differs_large_all_mirrored": true,
+    "large": [],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 348,
+      "audited_in": "after",
+      "fsm": [
+       "RTL",
+       "RTL"
+      ],
+      "violations": [
+       {
+        "rule_id": "loiter-zone",
+        "detail": "predicted pos (-177.0,0.0) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "failsafe-low-battery",
+   "scenario_id": "failsafe-low-battery",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 4.65,
+     "after": 4.7,
+     "kind": "magnitude",
+     "abs_diff": 0.04999999999999982
+    },
+    {
+     "field": "kpi.phase1_violation_ticks_rtl-zone",
+     "before": 19,
+     "after": 20,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.repair_not_applied_autopilot_ticks",
+     "before": 92,
+     "after": 93,
+     "kind": "count",
+     "abs_diff": 1.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 95,
+    "audited_ticks_after": 96,
+    "first_differing_tick": 119,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 0,
+    "ticks_emitted_differs_large_all_mirrored": true,
+    "large": [],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 119,
+      "audited_in": "after",
+      "fsm": [
+       "RTL",
+       "RTL"
+      ],
+      "violations": [
+       {
+        "rule_id": "rtl-zone",
+        "detail": "predicted pos (-149.0,0.0) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "failsafe-rtl-zone@ahead_m=12,variant=0",
+   "scenario_id": "failsafe-rtl-zone",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 2.0,
+     "after": 1.9,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000009
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 2.0,
+     "after": 1.9,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000009
+    },
+    {
+     "field": "kpi.phase1_violation_ticks_rtl-zone",
+     "before": 20,
+     "after": 19,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.repair_not_applied_autopilot_ticks",
+     "before": 19,
+     "after": 18,
+     "kind": "count",
+     "abs_diff": 1.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 21,
+    "audited_ticks_after": 20,
+    "first_differing_tick": 49,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 0,
+    "ticks_emitted_differs_large_all_mirrored": true,
+    "large": [],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 49,
+      "audited_in": "before",
+      "fsm": [
+       "RTL",
+       "RTL"
+      ],
+      "violations": [
+       {
+        "rule_id": "rtl-zone",
+        "detail": "predicted pos (-178.6,8.5) inside NFZ at t+5.0s",
+        "predicted_at_s": 4.999999999999998
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "wind-beyond-authority@lane_y=15,wind_speed_mps=12",
+   "scenario_id": "wind-beyond-authority",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.autopilot_p0_flown_ticks",
+     "before": 137,
+     "after": 136,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.autopilot_p0_flown_ticks_by_mode.RTL",
+     "before": 3,
+     "after": 2,
+     "kind": "count",
+     "abs_diff": 1.0
+    },
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 5.4,
+     "after": 5.3,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000053
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 5.4,
+     "after": 5.3,
+     "kind": "magnitude",
+     "abs_diff": 0.10000000000000053
+    },
+    {
+     "field": "kpi.true_p0_flown_ticks",
+     "before": 137,
+     "after": 136,
+     "kind": "count",
+     "abs_diff": 1.0
+    }
+   ],
+   "audit": {
+    "audited_ticks_before": 66,
+    "audited_ticks_after": 66,
+    "first_differing_tick": 70,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 1,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 70,
+      "abs_diff_mps": 4.0,
+      "mirrored": false,
+      "before": {
+       "vx": -0.0,
+       "vy": 4.0,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 4.0,
+       "vy": 0.0,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [
+     {
+      "tick": 70,
+      "before": [
+       {
+        "rule_id": "nfz-square",
+        "detail": "currently INSIDE zone and not escaping",
+        "predicted_at_s": 0.0
+       }
+      ],
+      "after": []
+     }
+    ],
+    "ticks_audited_in_one_only": []
+   }
+  }
+ ],
+ "aggregates_differing": [
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.max_repair_magnitude_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_count_per_episode",
+   "before": 0.0,
+   "after": 53.0,
+   "kind": "magnitude",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.sole_ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_priority.floored.mean_mps",
+   "before": "<absent>",
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_by_priority.floored.ticks",
+   "before": "<absent>",
+   "after": 53,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.mean_repair_magnitude_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.repair_floored_ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_cell_rollup.wind_disturbance/wind-beyond-authority@lane_y=15,wind_speed_mps=12/shield-on.autopilot_p0_flown_ticks",
+   "before": 137,
+   "after": 136,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_cell_rollup.wind_disturbance/wind-beyond-authority@lane_y=15,wind_speed_mps=12/shield-on.autopilot_p0_flown_ticks_by_mode.RTL",
+   "before": 3,
+   "after": 2,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_families.wind_disturbance.autopilot_p0_flown_ticks",
+   "before": 137,
+   "after": 136,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_families.wind_disturbance.true_p0_flown_ticks",
+   "before": 137,
+   "after": 136,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_count_per_episode",
+   "before": 104.698,
+   "after": 105.54,
+   "kind": "magnitude",
+   "abs_diff": 0.842000000000013
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
+   "before": 4.9583,
+   "after": 3.3055,
+   "kind": "magnitude",
+   "abs_diff": 1.6528000000000005
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
+   "before": 4.9583,
+   "after": 3.3055,
+   "kind": "magnitude",
+   "abs_diff": 1.6528000000000005
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.sole_ticks",
+   "before": 106,
+   "after": 159,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.ticks",
+   "before": 106,
+   "after": 159,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.floored.mean_mps",
+   "before": 2.2407,
+   "after": 1.1308,
+   "kind": "magnitude",
+   "abs_diff": 1.1098999999999999
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.floored.ticks",
+   "before": 54,
+   "after": 107,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_mps",
+   "before": 7.017,
+   "after": 6.95,
+   "kind": "magnitude",
+   "abs_diff": 0.06700000000000017
+  },
+  {
+   "field": "_rollup._all_shield_on.repair_floored_ticks",
+   "before": 54,
+   "after": 107,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup._all_shield_on.true_state.autopilot_p0_flown_ticks",
+   "before": 1008,
+   "after": 1007,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_rollup._all_shield_on.true_state.autopilot_p0_flown_ticks_by_mode.RTL",
+   "before": 126,
+   "after": 125,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_rollup._all_shield_on.true_state.true_p0_flown_ticks",
+   "before": 1058,
+   "after": 1057,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_count_per_episode",
+   "before": 53.286,
+   "after": 60.857,
+   "kind": "magnitude",
+   "abs_diff": 7.570999999999998
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
+   "before": null,
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.sole_ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.floored.mean_mps",
+   "before": "<absent>",
+   "after": 0.0,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.floored.ticks",
+   "before": "<absent>",
+   "after": 53,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_mps",
+   "before": 5.4299,
+   "after": 4.7544,
+   "kind": "magnitude",
+   "abs_diff": 0.6754999999999995
+  },
+  {
+   "field": "_rollup.dynamic_nfz_movement.repair_floored_ticks",
+   "before": 0,
+   "after": 53,
+   "kind": "count",
+   "abs_diff": 53.0
+  },
+  {
+   "field": "_top_failures[4].repaired_action.vx",
+   "before": 2.3899408065013343,
+   "after": 2.3899408422765913,
+   "kind": "um_level",
+   "abs_diff": 3.577525697906481e-08
+  },
+  {
+   "field": "_top_failures[4].repaired_action.vy",
+   "before": 3.207519749186239,
+   "after": 3.2075197225298955,
+   "kind": "um_level",
+   "abs_diff": 2.6656343354858336e-08
+  },
+  {
+   "field": "_true_state.autopilot_p0_flown_ticks",
+   "before": 1008,
+   "after": 1007,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_true_state.autopilot_p0_flown_ticks_by_mode.RTL",
+   "before": 126,
+   "after": 125,
+   "kind": "count",
+   "abs_diff": 1.0
+  },
+  {
+   "field": "_true_state.true_p0_flown_ticks",
+   "before": 1058,
+   "after": 1057,
+   "kind": "count",
+   "abs_diff": 1.0
+  }
+ ]
+}

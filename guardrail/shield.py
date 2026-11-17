@@ -117,7 +117,6 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
 from __future__ import annotations
 
 import math
-import os
 import threading
 import time
 from collections import Counter, deque
@@ -556,6 +555,19 @@ class RuleClock:
 # Two boundary points whose distances differ by less than this are a tie: far
 # above the rounding of the distances (about 1e-14 m at the library's 200 m
 # coordinates), far below anything a position can be measured to.
+#
+# It is below the resolution of a zone an event writes into a policy with a
+# frame: since 2026-11-17 that zone is enforced at the micrometre view of its
+# stored lat/lon (Shield._in_frame), each vertex within 0.6 um of the metres
+# the event computed, so two edges equally near as computed can be up to
+# 1.2 um apart as enforced and no longer tie. Library cell
+# dyn-nfz-spawn-on-top@size_m=20 (a zone spawned exactly centred on the
+# aircraft) now escapes through a side edge: the FSM brakes, every repair
+# converges, P0 escapes stay 0, but the detour leaves its goal unreached
+# when the episode ends. Raising
+# this to 2e-6 m restores that cell but changes static-zone cells too
+# (gps-noise-within-margin x3, wind-beyond-authority lane 15 at 12 m/s), so it
+# is left for a decision of its own: docs/data/wgs84_bind_default_20261117/.
 _TIE_M = 1e-9
 
 
@@ -5567,34 +5579,36 @@ class Shield:
     # their replays) has no WGS84 position for a metre point, and its events
     # keep writing metres.
     #
-    # What is ENFORCED is not yet the projection of what is stored (a
-    # declared WP1-14 deviation, see models.rule_in_wgs84): by default each
-    # converted point keeps the metres it was given as its live view, so no
-    # flown ring moves, while the snapshot, reloaded, enforces the micrometre
-    # view of its lat/lon - the same floats on the micrometre grid, else up
-    # to 0.6 um away, under the same hash. `wgs84_bind_frame = True` binds the
-    # converted points to the frame instead (the live view is then the
-    # projection of the stored lat/lon, bit for bit what a reload reads); it
-    # moves computed rings by up to 0.6 um, a flown change, so it is off
-    # until the smoke profile and the pinned digests are re-baselined with it.
-    # The environment variable VLAGUARD_WGS84_BIND=1 turns it on for every
-    # Shield built in the process (for that re-baseline run).
+    # What is ENFORCED is the projection of what is stored: `_in_frame` binds
+    # every point of the rule to the policy's frame as it writes it
+    # (models.rule_in_wgs84), so the live Shield computes its metres lazily
+    # from the stored lat/lon (projection.local_metres) - bit for bit what a
+    # reload of the generation's signed snapshot reads, which is what makes a
+    # hot-applied run replayable bit for bit from its policy_g<N>.json
+    # (WP4-11). Metres on the micrometre grid (every REST body, every
+    # hand-written scenario) are enforced as given; a computed off-grid ring
+    # (rotate, scale, a spawn at an off-grid vehicle position) is enforced up
+    # to 0.6 um from the metres the edit computed. Until the evening of
+    # 2026-11-17 (integrate/1117 only, never on master) the default
+    # enforced the given metres instead, with binding opt-in
+    # (Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1); that mode is gone,
+    # since no policy needs it: a policy written only in metres has no frame,
+    # and its events keep writing metres either way. What the change moved in
+    # the smoke profile: docs/data/wgs84_bind_default_20261117/.
     #
-    # Both are CLASS defaults, overridable per instance (sh.wgs84_writes =
-    # False). `wgs84_writes = False` turns the conversion off and nothing
+    # `wgs84_writes` is a CLASS default, overridable per instance
+    # (sh.wgs84_writes = False), which turns the conversion off and nothing
     # else: the derived-frame refusal in `_commit` stays, so it is not master
     # as of 47b3fde (which accepted a lat/lon pre-start fence that moved a
     # derived frame origin); tests/test_wgs84_writes.py compares the
     # conversion on and off with it. No stored policy has a derived origin.
     wgs84_writes: bool = True
-    wgs84_bind_frame: bool = os.environ.get("VLAGUARD_WGS84_BIND", "").strip() == "1"
 
     def _in_frame(self, rule, op: str):
         if not self.wgs84_writes:
             return rule
         try:
-            return rule_in_wgs84(rule, self.policy.frame_origin,
-                                 bind=self.wgs84_bind_frame)
+            return rule_in_wgs84(rule, self.policy.frame_origin)
         except ValueError as e:                     # pydantic ValidationError too
             raise HotApplyRefused(f"{op} {getattr(rule, 'id', '?')!r}: {e}") from None
 

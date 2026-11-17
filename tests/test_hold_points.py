@@ -855,6 +855,17 @@ def test_a_cell_whose_hold_was_legal_flies_exactly_as_before():
 # so no hold is asked for and the cells are no longer c77c77d's flight in
 # either hold mode; test_the_opens_on_vehicle_cell_no_longer_needs_a_hold_at_all
 # pins that both modes fly them identically.
+#
+# dyn-nfz-rotate-spin@deg_per_s=9 re-pinned 2026-11-17 (was 89cf8aa54cdee7d4,
+# 164 rows): since then the Shield enforces a hot-applied zone at the
+# micrometre view of its stored WGS84 (Shield._in_frame binds it to the
+# frame), so the rotated ring is up to 0.6 um from the metres the rotation
+# computed. The flight is c77c77d's: positions and emitted actions agree to
+# 1e-14, every FSM edge at the same time. Only the repair RECORD changed on 8
+# Loiter ticks (t 11.9-13.2 s, emitted 0 either way): a second GeofenceSlide
+# pass that removes a 0.00 m/s into-zone component now appears or no longer
+# appears beside the ClearanceEscape record. docs/data/
+# wgs84_bind_default_20261117/README.md.
 C77_IN_PLACE_DIGESTS = {
     "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0": ("63646138a2a62da5", 98),
     "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0": ("c898fcf25f59ac80", 98),
@@ -864,7 +875,7 @@ C77_IN_PLACE_DIGESTS = {
     "three-simultaneous-violations@ask_mps=11,start_up=9,variant=0": ("2e681687ac0d0c13", 75),
     "dyn-nfz-rotate-spin@deg_per_s=3": ("92460e8154bb6297", 400),
     "dyn-nfz-rotate-spin@deg_per_s=6": ("c033359d0407a456", 400),
-    "dyn-nfz-rotate-spin@deg_per_s=9": ("89cf8aa54cdee7d4", 164),
+    "dyn-nfz-rotate-spin@deg_per_s=9": ("1cac6a6572420378", 164),
     "wind-beyond-authority@lane_y=15,wind_speed_mps=8": ("8284db4b0c8f5e0d", 284),
     "wind-beyond-authority@lane_y=15,wind_speed_mps=12": ("ed8c4ebf4ab6d1bb", 500),
     "wind-beyond-authority@lane_y=20,wind_speed_mps=8": ("825e114b339a7d7e", 284),

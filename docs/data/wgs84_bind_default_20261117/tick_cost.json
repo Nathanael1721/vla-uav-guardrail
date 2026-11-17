@@ -1,0 +1,43 @@
+{
+ "ticks_per_round": 400,
+ "rounds": 9,
+ "filter": {
+  "metres": {
+   "n": 3600,
+   "median_us": 417.2,
+   "p95_us": 4083.3,
+   "mean_us": 1320.1
+  },
+  "wgs84_bound": {
+   "n": 3600,
+   "median_us": 422.4,
+   "p95_us": 4079.2,
+   "mean_us": 1319.2
+  }
+ },
+ "hot_apply_spawn_plus_rotate": {
+  "metres": {
+   "n": 9,
+   "median_us": 890.7,
+   "p95_us": 944.9,
+   "mean_us": 886.7
+  },
+  "wgs84_bound": {
+   "n": 9,
+   "median_us": 1081.1,
+   "p95_us": 1222.1,
+   "mean_us": 1125.1
+  }
+ },
+ "projection_reads_during_ticks": {
+  "metres": {
+   "view_reads": 0,
+   "computed": 0
+  },
+  "wgs84_bound": {
+   "view_reads": 0,
+   "computed": 0
+  }
+ },
+ "filter_median_ratio_bound_over_metres": 1.012
+}
