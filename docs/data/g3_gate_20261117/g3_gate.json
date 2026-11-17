@@ -1,0 +1,940 @@
+{
+ "schema": "g3_gate/1",
+ "backends": [
+  {
+   "backend": "openvla_7b_4bit",
+   "label": "OpenVLA-7B, 4-bit NF4",
+   "class": "7B",
+   "in_flight": {
+    "flights": [],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "server_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "capture_to_answer_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     }
+    }
+   },
+   "orin_bench_open_loop": [],
+   "passes": false,
+   "why_not": [
+    "0 C2 flights on the Orin read, the gate asks for 3"
+   ]
+  },
+  {
+   "backend": "openvla_7b_bf16",
+   "label": "OpenVLA-7B, bf16 (unquantised)",
+   "class": "7B",
+   "in_flight": {
+    "flights": [],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "server_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "capture_to_answer_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "R1",
+     "p95_ms": 969.0432669594884,
+     "n": 50,
+     "file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json"
+    },
+    {
+     "what": "not R1: gate check, slowest answer after the first",
+     "p95_ms": null,
+     "slowest_ms": 999.4,
+     "n": 8,
+     "file": "deploy/evidence/hil/vla_bf16_check.json"
+    }
+   ],
+   "passes": false,
+   "why_not": [
+    "0 C2 flights on the Orin read, the gate asks for 3"
+   ]
+  },
+  {
+   "backend": "openvla_7b_int8wo",
+   "label": "OpenVLA-7B, int8 weight-only (torchao): an attempt",
+   "class": "7B",
+   "in_flight": {
+    "flights": [],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "server_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "capture_to_answer_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "attempt refused",
+     "p95_ms": null,
+     "stage": "import",
+     "cause": "torchao is not installed in this environment",
+     "file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json"
+    }
+   ],
+   "passes": false,
+   "why_not": [
+    "0 C2 flights on the Orin read, the gate asks for 3"
+   ]
+  },
+  {
+   "backend": "aerialvla_lora",
+   "label": "AerialVLA LoRA on OpenVLA-7B, 4-bit",
+   "class": "7B",
+   "in_flight": {
+    "flights": [],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "server_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "capture_to_answer_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     }
+    }
+   },
+   "orin_bench_open_loop": [],
+   "passes": false,
+   "why_not": [
+    "0 C2 flights on the Orin read, the gate asks for 3"
+   ]
+  },
+  {
+   "backend": "aerialvla_ft_run2",
+   "label": "AerialVLA + our QLoRA fine-tune (run2/epoch1), 4-bit",
+   "class": "7B",
+   "in_flight": {
+    "flights": [],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "server_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     },
+     "capture_to_answer_ms": {
+      "n": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+     }
+    }
+   },
+   "orin_bench_open_loop": [],
+   "passes": false,
+   "why_not": [
+    "0 C2 flights on the Orin read, the gate asks for 3"
+   ]
+  },
+  {
+   "backend": "aerialvla_bf16",
+   "label": "AerialVLA LoRA on OpenVLA-7B, bf16 (served over protocol v2)",
+   "class": "7B",
+   "in_flight": {
+    "flights": [
+     {
+      "tag": "pas_hil_aerialvla_c2_01_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.71,
+      "decision_hz_mission": 0.32,
+      "answers": 58,
+      "parsed": 56,
+      "round_trip_ms": {
+       "n": 58,
+       "p50": 1372.3,
+       "p95": 1547.9,
+       "p99": 1941.6,
+       "max": 2383.1
+      },
+      "server_ms": {
+       "n": 58,
+       "p50": 1363.5,
+       "p95": 1540.4,
+       "p99": 1930.7,
+       "max": 2374.9
+      },
+      "capture_to_answer_ms": {
+       "n": 58,
+       "p50": 1446.4,
+       "p95": 1614.2,
+       "p99": 2103.2,
+       "max": 2670.2
+      },
+      "capture_to_send_ms": {
+       "n": 58,
+       "p50": 68.7,
+       "p95": 115.6,
+       "p99": 190.9,
+       "max": 287.1
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 1547.9 ms > 100 ms",
+       "0.71 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_aerialvla_c2_02_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.62,
+      "decision_hz_mission": 0.02,
+      "answers": 2,
+      "parsed": 2,
+      "round_trip_ms": {
+       "n": 2,
+       "p50": 1558.4,
+       "p95": 1773.9,
+       "p99": 1793.0,
+       "max": 1797.8
+      },
+      "server_ms": {
+       "n": 2,
+       "p50": 1550.6,
+       "p95": 1766.1,
+       "p99": 1785.2,
+       "max": 1790.0
+      },
+      "capture_to_answer_ms": {
+       "n": 2,
+       "p50": 1726.3,
+       "p95": 2085.1,
+       "p99": 2117.0,
+       "max": 2125.0
+      },
+      "capture_to_send_ms": {
+       "n": 2,
+       "p50": 167.9,
+       "p95": 311.2,
+       "p99": 324.0,
+       "max": 327.2
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 1773.9 ms > 100 ms",
+       "0.62 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_aerialvla_c2_03_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.42,
+      "decision_hz_mission": 0.01,
+      "answers": 1,
+      "parsed": 1,
+      "round_trip_ms": {
+       "n": 1,
+       "p50": 2388.0,
+       "p95": 2388.0,
+       "p99": 2388.0,
+       "max": 2388.0
+      },
+      "server_ms": {
+       "n": 1,
+       "p50": 2379.8,
+       "p95": 2379.8,
+       "p99": 2379.8,
+       "max": 2379.8
+      },
+      "capture_to_answer_ms": {
+       "n": 1,
+       "p50": 2392.4,
+       "p95": 2392.4,
+       "p99": 2392.4,
+       "max": 2392.4
+      },
+      "capture_to_send_ms": {
+       "n": 1,
+       "p50": 4.4,
+       "p95": 4.4,
+       "p99": 4.4,
+       "max": 4.4
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 2388.0 ms > 100 ms",
+       "0.42 decisions/s while asked < 10"
+      ]
+     }
+    ],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 61,
+      "p50": 1374.5,
+      "p95": 1608.5,
+      "p99": 2385.0,
+      "max": 2388.0
+     },
+     "server_ms": {
+      "n": 61,
+      "p50": 1367.0,
+      "p95": 1595.6,
+      "p99": 2376.9,
+      "max": 2379.8
+     },
+     "capture_to_answer_ms": {
+      "n": 61,
+      "p50": 1447.0,
+      "p95": 1675.5,
+      "p99": 2503.5,
+      "max": 2670.2
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "not R1: bf16/sdpa/unmerged",
+     "p95_ms": 1537.8,
+     "n": 50,
+     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json"
+    },
+    {
+     "what": "not R1: bf16/sdpa/merged",
+     "p95_ms": 1099.6,
+     "n": 50,
+     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json"
+    },
+    {
+     "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+     "p95_ms": null,
+     "in_flight_p50_ms": [
+      1393.5,
+      1880.4
+     ],
+     "n": 6,
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+    }
+   ],
+   "passes": false,
+   "why_not": [
+    "pas_hil_aerialvla_c2_01_20261116: round trip p95 1547.9 ms > 100 ms; 0.71 decisions/s while asked < 10",
+    "pas_hil_aerialvla_c2_02_20261116: round trip p95 1773.9 ms > 100 ms; 0.62 decisions/s while asked < 10",
+    "pas_hil_aerialvla_c2_03_20261116: round trip p95 2388.0 ms > 100 ms; 0.42 decisions/s while asked < 10"
+   ]
+  },
+  {
+   "backend": "aiotvla_v10b",
+   "label": "AIoT-VLA v10b (the lab's own: frozen OWL-ViT + a trained head)",
+   "class": "smaller",
+   "in_flight": {
+    "flights": [
+     {
+      "tag": "pas_hil_feed_07",
+      "commit": "deac4b3",
+      "end_reason": "max_s reached",
+      "decision_hz_asked": 13.15,
+      "decision_hz_mission": 10.93,
+      "answers": 4648,
+      "parsed": 4648,
+      "round_trip_ms": {
+       "n": 4648,
+       "p50": 51.9,
+       "p95": 84.7,
+       "p99": 104.2,
+       "max": 124.6
+      },
+      "server_ms": {
+       "n": 4648,
+       "p50": 39.7,
+       "p95": 71.4,
+       "p99": 90.6,
+       "max": 114.7
+      },
+      "capture_to_answer_ms": {
+       "n": 4648,
+       "p50": 86.7,
+       "p95": 134.6,
+       "p99": 156.4,
+       "max": 204.1
+      },
+      "capture_to_send_ms": {
+       "n": 4648,
+       "p50": 29.1,
+       "p95": 66.9,
+       "p99": 76.9,
+       "max": 88.4
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": []
+     },
+     {
+      "tag": "pas_hil_aiot_c2_01_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 13.21,
+      "decision_hz_mission": 7.45,
+      "answers": 1568,
+      "parsed": 1568,
+      "round_trip_ms": {
+       "n": 1568,
+       "p50": 51.7,
+       "p95": 84.0,
+       "p99": 98.1,
+       "max": 222.6
+      },
+      "server_ms": {
+       "n": 1568,
+       "p50": 39.7,
+       "p95": 70.7,
+       "p99": 83.2,
+       "max": 209.9
+      },
+      "capture_to_answer_ms": {
+       "n": 1568,
+       "p50": 89.7,
+       "p95": 134.1,
+       "p99": 154.0,
+       "max": 275.9
+      },
+      "capture_to_send_ms": {
+       "n": 1568,
+       "p50": 32.9,
+       "p95": 66.4,
+       "p99": 77.3,
+       "max": 84.6
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": []
+     },
+     {
+      "tag": "pas_hil_feed_08",
+      "commit": "deac4b3",
+      "end_reason": "max_s reached",
+      "decision_hz_asked": 13.22,
+      "decision_hz_mission": 10.62,
+      "answers": 4500,
+      "parsed": 4500,
+      "round_trip_ms": {
+       "n": 4500,
+       "p50": 51.6,
+       "p95": 84.2,
+       "p99": 104.5,
+       "max": 180.2
+      },
+      "server_ms": {
+       "n": 4500,
+       "p50": 39.4,
+       "p95": 70.7,
+       "p99": 90.1,
+       "max": 162.9
+      },
+      "capture_to_answer_ms": {
+       "n": 4500,
+       "p50": 82.5,
+       "p95": 135.2,
+       "p99": 162.6,
+       "max": 236.0
+      },
+      "capture_to_send_ms": {
+       "n": 4500,
+       "p50": 25.8,
+       "p95": 65.3,
+       "p99": 76.9,
+       "max": 88.0
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": []
+     }
+    ],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 10716,
+      "p50": 51.7,
+      "p95": 84.5,
+      "p99": 103.8,
+      "max": 222.6
+     },
+     "server_ms": {
+      "n": 10716,
+      "p50": 39.6,
+      "p95": 71.0,
+      "p99": 89.6,
+      "max": 209.9
+     },
+     "capture_to_answer_ms": {
+      "n": 10716,
+      "p50": 85.4,
+      "p95": 134.9,
+      "p99": 158.9,
+      "max": 275.9
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "not R1: fp16/sdpa, own inputs",
+     "p95_ms": 41.7,
+     "n": 300,
+     "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json"
+    }
+   ],
+   "passes": true,
+   "why_not": []
+  },
+  {
+   "backend": "dronecats_2b",
+   "label": "DroneCATS-Cosmos3-Edge-2B (NAVER), bf16",
+   "class": "smaller",
+   "in_flight": {
+    "flights": [
+     {
+      "tag": "pas_hil_dronecats_c2_01_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.34,
+      "decision_hz_mission": 0.18,
+      "answers": 27,
+      "parsed": 27,
+      "round_trip_ms": {
+       "n": 27,
+       "p50": 2508.1,
+       "p95": 2895.7,
+       "p99": 14115.4,
+       "max": 18035.7
+      },
+      "server_ms": {
+       "n": 27,
+       "p50": 2490.5,
+       "p95": 2879.4,
+       "p99": 14099.9,
+       "max": 18020.6
+      },
+      "capture_to_answer_ms": {
+       "n": 27,
+       "p50": 2593.0,
+       "p95": 2941.7,
+       "p99": 14165.5,
+       "max": 18087.6
+      },
+      "capture_to_send_ms": {
+       "n": 27,
+       "p50": 48.9,
+       "p95": 122.9,
+       "p99": 126.0,
+       "max": 126.3
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 2895.7 ms > 100 ms",
+       "0.34 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_dronecats_c2_02_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.37,
+      "decision_hz_mission": 0.18,
+      "answers": 28,
+      "parsed": 28,
+      "round_trip_ms": {
+       "n": 28,
+       "p50": 2445.4,
+       "p95": 2746.4,
+       "p99": 13988.1,
+       "max": 18108.3
+      },
+      "server_ms": {
+       "n": 28,
+       "p50": 2433.0,
+       "p95": 2730.5,
+       "p99": 13972.6,
+       "max": 18093.5
+      },
+      "capture_to_answer_ms": {
+       "n": 28,
+       "p50": 2527.0,
+       "p95": 2789.6,
+       "p99": 14073.7,
+       "max": 18221.8
+      },
+      "capture_to_send_ms": {
+       "n": 28,
+       "p50": 76.3,
+       "p95": 112.9,
+       "p99": 114.8,
+       "max": 115.3
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 2746.4 ms > 100 ms",
+       "0.37 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_dronecats_c2_03_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.58,
+      "decision_hz_mission": 0.05,
+      "answers": 6,
+      "parsed": 6,
+      "round_trip_ms": {
+       "n": 6,
+       "p50": 1995.4,
+       "p95": 3115.9,
+       "p99": 3281.8,
+       "max": 3323.3
+      },
+      "server_ms": {
+       "n": 6,
+       "p50": 1981.4,
+       "p95": 3100.7,
+       "p99": 3267.2,
+       "max": 3308.8
+      },
+      "capture_to_answer_ms": {
+       "n": 6,
+       "p50": 2037.9,
+       "p95": 3130.7,
+       "p99": 3293.0,
+       "max": 3333.6
+      },
+      "capture_to_send_ms": {
+       "n": 6,
+       "p50": 32.3,
+       "p95": 67.7,
+       "p99": 72.8,
+       "max": 74.0
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 3115.9 ms > 100 ms",
+       "0.58 decisions/s while asked < 10"
+      ]
+     }
+    ],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 61,
+      "p50": 2475.3,
+      "p95": 2957.7,
+      "p99": 18064.7,
+      "max": 18108.3
+     },
+     "server_ms": {
+      "n": 61,
+      "p50": 2462.4,
+      "p95": 2940.7,
+      "p99": 18049.8,
+      "max": 18093.5
+     },
+     "capture_to_answer_ms": {
+      "n": 61,
+      "p50": 2541.5,
+      "p95": 3002.4,
+      "p99": 18141.3,
+      "max": 18221.8
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "not R1: bf16/sdpa",
+     "p95_ms": 17529.1,
+     "n": 50,
+     "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json"
+    },
+    {
+     "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+     "p95_ms": null,
+     "in_flight_p50_ms": [
+      1605.3999999999999,
+      2638.1
+     ],
+     "n": 3,
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+    }
+   ],
+   "passes": false,
+   "why_not": [
+    "pas_hil_dronecats_c2_01_20261116: round trip p95 2895.7 ms > 100 ms; 0.34 decisions/s while asked < 10",
+    "pas_hil_dronecats_c2_02_20261116: round trip p95 2746.4 ms > 100 ms; 0.37 decisions/s while asked < 10",
+    "pas_hil_dronecats_c2_03_20261116: round trip p95 3115.9 ms > 100 ms; 0.58 decisions/s while asked < 10"
+   ]
+  },
+  {
+   "backend": "racevla_7b",
+   "label": "RaceVLA drone6_all (Skoltech; an OpenVLA-7B fine-tune), bf16",
+   "class": "7B",
+   "in_flight": {
+    "flights": [
+     {
+      "tag": "pas_hil_racevla_c2_03_20261116",
+      "commit": "c7257f1",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.57,
+      "decision_hz_mission": 0.02,
+      "answers": 2,
+      "parsed": 2,
+      "round_trip_ms": {
+       "n": 2,
+       "p50": 1700.9,
+       "p95": 2070.1,
+       "p99": 2103.0,
+       "max": 2111.2
+      },
+      "server_ms": {
+       "n": 2,
+       "p50": 1690.6,
+       "p95": 2058.4,
+       "p99": 2091.1,
+       "max": 2099.3
+      },
+      "capture_to_answer_ms": {
+       "n": 2,
+       "p50": 1923.9,
+       "p95": 2405.4,
+       "p99": 2448.2,
+       "max": 2458.9
+      },
+      "capture_to_send_ms": {
+       "n": 2,
+       "p50": 223.0,
+       "p95": 335.3,
+       "p99": 345.2,
+       "max": 347.7
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 2070.1 ms > 100 ms",
+       "0.57 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_racevla_c2_04_20261116",
+      "commit": "63fffcf",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.62,
+      "decision_hz_mission": 0.03,
+      "answers": 3,
+      "parsed": 3,
+      "round_trip_ms": {
+       "n": 3,
+       "p50": 1375.5,
+       "p95": 2096.3,
+       "p99": 2160.4,
+       "max": 2176.4
+      },
+      "server_ms": {
+       "n": 3,
+       "p50": 1368.0,
+       "p95": 2088.3,
+       "p99": 2152.4,
+       "max": 2168.4
+      },
+      "capture_to_answer_ms": {
+       "n": 3,
+       "p50": 1429.0,
+       "p95": 2358.6,
+       "p99": 2441.2,
+       "max": 2461.9
+      },
+      "capture_to_send_ms": {
+       "n": 3,
+       "p50": 77.0,
+       "p95": 264.6,
+       "p99": 281.3,
+       "max": 285.5
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 2096.3 ms > 100 ms",
+       "0.62 decisions/s while asked < 10"
+      ]
+     },
+     {
+      "tag": "pas_hil_racevla_c2_06_20261117",
+      "commit": "89d2dc2",
+      "end_reason": "target_lost",
+      "decision_hz_asked": 0.62,
+      "decision_hz_mission": 0.02,
+      "answers": 2,
+      "parsed": 2,
+      "round_trip_ms": {
+       "n": 2,
+       "p50": 1547.0,
+       "p95": 1879.0,
+       "p99": 1908.6,
+       "max": 1915.9
+      },
+      "server_ms": {
+       "n": 2,
+       "p50": 1539.6,
+       "p95": 1872.5,
+       "p99": 1902.1,
+       "max": 1909.5
+      },
+      "capture_to_answer_ms": {
+       "n": 2,
+       "p50": 1764.6,
+       "p95": 2245.1,
+       "p99": 2287.9,
+       "max": 2298.5
+      },
+      "capture_to_send_ms": {
+       "n": 2,
+       "p50": 217.6,
+       "p95": 366.1,
+       "p99": 379.3,
+       "max": 382.6
+      },
+      "vla_host": "NVIDIA Jetson AGX Orin Developer Kit",
+      "misses": [
+       "round trip p95 1879.0 ms > 100 ms",
+       "0.62 decisions/s while asked < 10"
+      ]
+     }
+    ],
+    "pooled": {
+     "round_trip_ms": {
+      "n": 7,
+      "p50": 1375.5,
+      "p95": 2156.9,
+      "p99": 2172.5,
+      "max": 2176.4
+     },
+     "server_ms": {
+      "n": 7,
+      "p50": 1368.0,
+      "p95": 2147.6,
+      "p99": 2164.2,
+      "max": 2168.4
+     },
+     "capture_to_answer_ms": {
+      "n": 7,
+      "p50": 1429.0,
+      "p95": 2461.0,
+      "p99": 2461.7,
+      "max": 2461.9
+     }
+    }
+   },
+   "orin_bench_open_loop": [
+    {
+     "what": "not R1: bf16/sdpa",
+     "p95_ms": 843.4,
+     "n": 50,
+     "file": "deploy/evidence/hil/racevla_7b_bench_agx.json"
+    },
+    {
+     "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+     "p95_ms": null,
+     "in_flight_p50_ms": [
+      1133.1,
+      1216.9
+     ],
+     "n": 3,
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+    }
+   ],
+   "passes": false,
+   "why_not": [
+    "pas_hil_racevla_c2_03_20261116: round trip p95 2070.1 ms > 100 ms; 0.57 decisions/s while asked < 10",
+    "pas_hil_racevla_c2_04_20261116: round trip p95 2096.3 ms > 100 ms; 0.62 decisions/s while asked < 10",
+    "pas_hil_racevla_c2_06_20261117: round trip p95 1879.0 ms > 100 ms; 0.62 decisions/s while asked < 10"
+   ]
+  }
+ ],
+ "int8_on_orin": "refused",
+ "int8_note": "the precision the grant's candidate gate G3 names. One per-layer figure exists, on the Orin Nano (CHANGELOG 2026-10-28 (night): one 2048x6144 layer, int8 weight-only 7.7 ms against bf16 9.9 ms); the whole model has not been timed in int8 anywhere",
+ "table_source": {
+  "file": "deploy/evidence/vla_backend_table.json",
+  "created_utc": "2026-11-16T19:48:40Z"
+ },
+ "gate": {
+  "text": "If the chosen 7B-class VLA backend cannot produce 4-D actions at 10 Hz on the Orin in `int8` quantization, a gate could be added: \"if Orin inference latency > 100 ms p95 by 2026-08-01, swap to a smaller / quantized backend (e.g. BitVLA, TinyVLA).\" Whether to add this gate depends on Q2 measurement.",
+  "source": "kuanting-vla-uav-guardrail docs/04-risks-and-fallbacks/fallback-gates.md, Gate G3 candidate",
+  "threshold_p95_ms": 100.0,
+  "min_decisions_hz": 10.0,
+  "c2_flights": 3,
+  "latency_measure": "round trip of one request in flight (vla_steps.jsonl rtt_s: perception node to VLA server and back, both on the AGX Orin)",
+  "rate_measure": "answers parsed per second while the model was asked (the backend table's decision_hz_asked)"
+ },
+ "verdict": {
+  "passing": [
+   "aiotvla_v10b"
+  ],
+  "seven_b_passing": [],
+  "gate_met_by_a_learned_backend": true
+ }
+}

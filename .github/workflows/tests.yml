@@ -118,7 +118,9 @@
 #          fake projectairsim module, lab-only: it SKIPs here, where no job
 #          installs OpenCV or Pillow; the offline replay gate; and the
 #          follow's step-tracker smoothing with the motion comparison,
-#          tools/compare_motion.py), test_finetune_follow (the follow
+#          tools/compare_motion.py), test_g3_gate (gate G3, the Orin
+#          latency gate, judged from synthetic run folders and the
+#          committed docs/data/g3_gate_20261117 table), test_finetune_follow (the follow
 #          fine-tune's format-exact encoding, held-out metrics, checkpoint
 #          identity and adapter evaluation tool; its Pillow, torch and
 #          real-tokenizer checks SKIP here), test_aerialvla_codec (AerialVLA's
@@ -783,6 +785,7 @@ jobs:
               tests/test_demo_negative_xy.py \
               tests/test_vla_bridge.py \
               tests/test_vla_backend_table.py \
+              tests/test_g3_gate.py \
               tests/test_vla_server.py \
               tests/test_aerialvla_codec.py \
               tests/test_vla_fly.py \
