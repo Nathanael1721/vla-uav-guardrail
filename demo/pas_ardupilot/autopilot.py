@@ -587,11 +587,14 @@ class PymavlinkLink:
 
         `body` (--action-frame body, 2026-11-17, WP3-04 / ARCH-04): the
         emitted action in the BODY frame (forward, right, up, yaw rate rad/s),
-        the Shield's projection's output. This link is then the MAVLink
-        adapter the grant names: it turns the body action into local NED
-        here, AFTER the projection, at the heading it last read
-        (`body_to_world`, then `ned_setpoint`); `a` is the record copy only.
-        None: `a` is sent as it always was."""
+        the Shield's projection's output. The link then turns the body
+        action into local NED here, AFTER the projection, at the heading it
+        last read (`body_to_world`, then `ned_setpoint`); `a` is the record
+        copy only. This is one more body -> NED crossing beside the Shield's
+        own from_body / to_body round trip (whose repairs still act in the
+        world frame), not the grant's single adapter boundary
+        (guardrail/frames.py lists every crossing). None: `a` is sent as it
+        always was."""
         if body is not None:
             a = body_to_world(*body, self.snap.yaw or 0.0)
         f = ned_setpoint(a)

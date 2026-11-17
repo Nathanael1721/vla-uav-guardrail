@@ -51,9 +51,12 @@ updated.) As of that date:
     `Shield.filter()`, and the emitted action crosses back with `to_body` at
     that heading, to be published on /shield/setpoint. Until 2026-11-04 the
     node made those two crossings itself around `Shield.filter()`. With
-    `arc=True` (2026-11-17, opt-in) its forecast turns the action's
-    velocity with the heading at the yaw rate (`Shield._predict`), so the
-    world-frame action it judges is the body command's first instant only.
+    `arc=True` (2026-11-17, opt-in) its forecast also turns the action's
+    velocity with the heading at the yaw rate, judged beside the straight
+    line (`Shield._predict`, "the arc only adds"), so the world-frame action
+    it judges is the body command's first instant only. The repairs still
+    act in the world frame there: this is not the grant's single
+    body -> local-NED boundary.
   * `guardrail/hold_flight.py` (`body_command`, 2026-11-07): `to_body` of
     the hold's own leg - the GUIDED transit to a moved hold point and the
     Loiter held in GUIDED, a command the companion computes in world frame,
@@ -84,7 +87,9 @@ updated.) As of that date:
     `demo/pas_ardupilot/mavros_link.py` `MavrosLink.send(body=...)`
     (2026-11-17): the emitted body action turned into local NED after the
     projection, `from_body` at the link's heading (the adapter route
-    publishes it as it is, for `sitl/mavlink_adapter_node.py`).
+    publishes it as it is, for `sitl/mavlink_adapter_node.py`). These are
+    further crossings beside the Shield's own from_body / to_body round
+    trip, not the grant's single adapter boundary.
   * `experiments/sweep_scenarios.py` (run_episode `action_frame="body"`,
     2026-11-17, opt-in): the headless harness hands the Shield `to_body` of
     the pilot's action and flies `from_body` of what it emits.

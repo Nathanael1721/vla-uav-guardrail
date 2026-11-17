@@ -3322,6 +3322,14 @@ RAIL_STUB_PREFIX_FLAGS = ("--prefix", "--clock-start", "--max-s")
 # beside the scenario's own would fly another mission under its name.
 RAIL_HOTAPPLY_FLAGS = ("--hotapply-port", "--hotapply-host", "--hotapply-pki",
                        "--hotapply-server-cert", "--hotapply-client")
+# The Shield node's forecast switches a campaign (--rail-arc-forecast) or the
+# harness may add through the same `extra_args` (2026-11-17, WP3-04 /
+# ARCH-04), with the values each may take. Opt-in: a campaign without the
+# option sends none, and its missions are the ones they were. The node
+# records what it flew (metrics.json shield_forecast.arc), and
+# arc_forecast_problems refuses a run whose record disagrees - a node from an
+# older bundle would drop the flag without a word (parse_known_args).
+RAIL_FORECAST_FLAGS = {"--arc-forecast": ("on", "off")}
 # Where a campaign's per-mission files (events, scenario record) go, under
 # the checkout's demo/out (gitignored; the Orin mounts demo/out writable).
 CAMPAIGN_DIR = "demo/out/_campaign"
@@ -3939,23 +3947,60 @@ def check_rail_flags(args: list[str]) -> None:
 
 def rail_extra_args(extra_args) -> list[str]:
     """`extra_args` of run_hil / run_sitl, checked: `--flag=value` tokens of
-    RAIL_HOTAPPLY_FLAGS only, each declared by the Shield node (it reads its
-    arguments with parse_known_args, so an undeclared flag would vanish
-    without a word). [] for None. Raises UnsupportedScenario otherwise."""
+    RAIL_HOTAPPLY_FLAGS or RAIL_FORECAST_FLAGS (with one of that flag's
+    values, at most once) only, each declared by the Shield node
+    (it reads its arguments with parse_known_args, so an undeclared flag
+    would vanish without a word). [] for None. Raises UnsupportedScenario
+    otherwise."""
     out = [str(a) for a in (extra_args or ())]
     if not out:
         return []
-    bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in RAIL_HOTAPPLY_FLAGS]
+    allowed = set(RAIL_HOTAPPLY_FLAGS) | set(RAIL_FORECAST_FLAGS)
+    bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in allowed]
     if bad:
         raise UnsupportedScenario(
             f"extra rail arguments {bad}: only --flag=value forms of "
-            f"{list(RAIL_HOTAPPLY_FLAGS)} may be added to a scenario's own")
+            f"{sorted(allowed)} may be added to a scenario's own")
+    names = [a.split("=", 1)[0] for a in out]
+    twice = sorted({n for n in names if n in RAIL_FORECAST_FLAGS and names.count(n) > 1})
+    if twice:
+        raise UnsupportedScenario(f"extra rail arguments name {twice} more than once")
+    for a in out:
+        name, value = a.split("=", 1)
+        if name in RAIL_FORECAST_FLAGS and value not in RAIL_FORECAST_FLAGS[name]:
+            raise UnsupportedScenario(f"{name}={value}: one of "
+                                      f"{list(RAIL_FORECAST_FLAGS[name])}")
     node = sitl_node_flags(_REPO / SITL_NODE)
-    missing = sorted({a.split("=", 1)[0] for a in out} - node)
+    missing = sorted(set(names) - node)
     if missing:
         raise UnsupportedScenario(f"{SITL_NODE} does not declare {missing}: it would "
-                                  f"drop them and fly with no hot-apply listener")
+                                  f"drop them and fly without them")
     return out
+
+
+def rail_arc_asked(extra_args) -> bool:
+    """Did `extra_args` ask the Shield node for the arc forecast
+    (`--arc-forecast=on`)?"""
+    return "--arc-forecast=on" in [str(a) for a in (extra_args or ())]
+
+
+def arc_forecast_problems(metrics: dict, extra_args) -> list[str]:
+    """Fail closed on the arc forecast (2026-11-17, WP3-04 / ARCH-04): the
+    node's own record (metrics.json shield_forecast.arc; absent on a node
+    older than the flag, read as off) must say the arc was on exactly when
+    `extra_args` asked for it. A node from an older bundle parses with
+    parse_known_args and would drop --arc-forecast without a word, flying
+    the straight forecast under the arc arm's name; a node that arced
+    unasked would fly an arm no campaign named. [] when they agree."""
+    asked = rail_arc_asked(extra_args)
+    flown = (metrics.get("shield_forecast") or {}).get("arc")
+    if asked and flown is not True:
+        return [f"--arc-forecast=on was asked but metrics.json shield_forecast.arc is "
+                f"{flown!r}: the node did not fly the arc (an older node drops the flag)"]
+    if not asked and flown is True:
+        return ["metrics.json shield_forecast.arc is true but no --arc-forecast=on was "
+                "asked: not the arm this mission is named for"]
+    return []
 
 
 def _num(v: float) -> str:
@@ -5137,6 +5182,10 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
                    + prefix_generation_problems(meta, gens, rows))
     if not_the_arm:
         raise RuntimeError(f"{tag}: not the prefix arm's flight: " + "; ".join(not_the_arm))
+    arc_problems = arc_forecast_problems(metrics, extra_args)
+    if arc_problems:
+        # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
+        raise RuntimeError(f"{tag}: not the arc arm's flight: " + "; ".join(arc_problems))
     extra = sitl_extra(spec, rows, metrics, pol, gens,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(out_dir))
@@ -5559,6 +5608,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         # Fail closed: a mission that did not fly the arm it is named for is
         # an error, never a scored episode of that arm.
         problems.append("not the prefix arm's flight: " + "; ".join(not_the_arm))
+    arc_problems = arc_forecast_problems(metrics, extra_args)
+    if arc_problems:
+        # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
+        problems.append("not the arc arm's flight: " + "; ".join(arc_problems))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=meta["max_s"],
@@ -7890,6 +7943,14 @@ def main(argv: list[str] | None = None) -> int:
                          "(rail_gates_ardupilot), entering mid-flight (ardupilot) or "
                          "from a hover as a rail starts (ardupilot-rest); the ideal "
                          "verdict is kept beside it")
+    ap.add_argument("--rail-arc-forecast", choices=("on", "off"), default="off",
+                    help="--backend sitl / hil (2026-11-17, WP3-04 / ARCH-04): on hands "
+                         "every mission's Shield node --arc-forecast=on (a body action "
+                         "with a yaw rate forecast along its arc as well as its line), and "
+                         "a run whose metrics.json shield_forecast.arc is not true is an "
+                         "error, never scored (a node from an older bundle drops the "
+                         "flag). off (default): nothing is added. Recorded in sweep.json; "
+                         "a separate campaign, never merged with a straight-forecast one")
     ap.add_argument("--rescore-rail", nargs="+", default=None, metavar="RUN_GLOB",
                     help="re-score fetched rail runs (hil / sitl run folders with a "
                          "scenario record) with this checkout's scorer, against the "
@@ -8038,6 +8099,10 @@ def main(argv: list[str] | None = None) -> int:
             print("REFUSED: --hil-max-s-add chooses how long a campaign flies; "
                   "--rescore-rail reads each run's own length from its scenario record")
             return 2
+        if args.rail_arc_forecast != "off":
+            print("REFUSED: --rail-arc-forecast chooses what a campaign flies; "
+                  "--rescore-rail reads runs already flown")
+            return 2
         return rescore_rail_main(args.rescore_rail, episodes, lib.defaults,
                                  args.rail_gates, Path(args.out),
                                  labels_path=(Path(args.rail_labels)
@@ -8046,6 +8111,22 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: --rail-gates is for a rail's runs (--backend sitl / hil, "
               "--rescore-rail)")
         return 2
+    # The arc forecast on the rail's Shield node (--rail-arc-forecast): the
+    # flag every mission's node is handed, checked as rail_extra_args checks
+    # the harness's (each declared by the node), before a mission is spent.
+    rail_arc_args: list[str] = []
+    if args.rail_arc_forecast == "on":
+        if args.backend not in RAIL_BACKENDS:
+            print("REFUSED: --rail-arc-forecast is for a rail's flights (--backend sitl / hil)")
+            return 2
+        try:
+            rail_arc_args = rail_extra_args(["--arc-forecast=on"])
+        except UnsupportedScenario as e:
+            print(f"REFUSED: {e}")
+            return 2
+        info["rail_arc_forecast"] = "on"
+        print("ARC-FORECAST CAMPAIGN: every mission's Shield node flies --arc-forecast=on; "
+              "a separate campaign, never merged with a straight-forecast one\n")
     if args.rail_gates != "ideal" and profile is not None and profile.prefix_consumer:
         # The derived bounds come from a headless flight of the cell's own
         # pilot; a consuming pilot flies another flight.
@@ -8115,6 +8196,11 @@ def main(argv: list[str] | None = None) -> int:
                        # it and never merges a lengthened campaign with another.
                        "max_s_add": hil_max_s_add,
                        "flight_length": hil_flight_length(hil_max_s_add)}
+        if rail_arc_args:
+            # --rail-arc-forecast (2026-11-17): the arc forecast on every
+            # mission's Shield node; only then, so every other campaign's
+            # record is as it was.
+            info["hil"]["arc_forecast"] = "on"
         if args.hil_dry_run:
             print_hil_plan(plan, hil_cfg, hil_max_s_add)
             return 0
@@ -8193,7 +8279,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     hil_run = run_hil(spec, ep, ep.seed, lib.defaults, hil_cfg,
                                       hil_transport, hil_campaign, hil_k, hil_store,
-                                      max_s_add=hil_max_s_add)
+                                      max_s_add=hil_max_s_add,
+                                      extra_args=rail_arc_args or None)
                 except UnsupportedScenario:
                     hil_k -= 1
                     raise
@@ -8205,7 +8292,8 @@ def main(argv: list[str] | None = None) -> int:
                 arm_record = hil_run["meta"].get("arm_record")
             elif args.backend == "sitl":
                 got = run_sitl(spec, "sweep_" + ep.dir_name("x")[len("episode-x--"):],
-                               ep.seed, lib.defaults, episode=ep)
+                               ep.seed, lib.defaults, episode=ep,
+                               extra_args=rail_arc_args or None)
                 if got is None:
                     n_skip += 1
                     print(f"  SKIP  {label:<34} ArduPilot rail not available here")

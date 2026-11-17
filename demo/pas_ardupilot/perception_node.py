@@ -25,11 +25,12 @@ PER 10 Hz TICK
                bearing - never ground truth. With --action-frame body
                (2026-11-17, WP3-04 / ARCH-04; off by default) the Shield
                takes the BODY action itself (Shield.filter_body, a yaw-rate
-               command forecast along its arc), and step 7 sends the emitted
+               command forecast along its arc beside the straight line), and
+               step 7 sends the emitted
                BODY action, turned into local NED by the link after the
                projection (or by sitl/mavlink_adapter_node.py, --setpoint-via
                adapter).
-  6. FSM      with the Shield on, guardrail.fsm.EscalationFSM (the grant's
+  6. FSM       with the Shield on, guardrail.fsm.EscalationFSM (the grant's
                Brake -> Loiter -> RTL -> Land) steps on the Shield's decision,
                as sitl/run_sitl_demo.py and sitl/ros2_shield_node.py do. Its
                mode requests go to ArduPilot without blocking the loop

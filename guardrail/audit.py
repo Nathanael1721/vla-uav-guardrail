@@ -391,6 +391,12 @@ class AuditRecord(_Strict):
     # decision behind every action sent is on record. Omitted from the line
     # when None, so every other record is written exactly as before.
     decision_kind: Literal["stop_advised"] | None = None
+    # Since 2026-11-17 (WP3-04 / ARCH-04): True when the tick's forecasts
+    # added the ARC of the body-frame action's yaw rate (Shield.filter_body
+    # with the arc on; the decision trace's "forecast_arc"). Absent (None) on
+    # every other tick, omitted from the line, so every other record is
+    # written exactly as before.
+    forecast_arc: Literal[True] | None = None
 
 
 # The record kinds a caller may ask `AuditLogger.log` for (`decision_kind`).
@@ -610,6 +616,8 @@ class AuditLogger:
         out = rec.model_dump(by_alias=True)
         if out.get("decision_kind") is None:
             out.pop("decision_kind", None)
+        if out.get("forecast_arc") is None:
+            out.pop("forecast_arc", None)
         return out
 
     @classmethod
@@ -754,6 +762,8 @@ class AuditLogger:
         })
         if kind is not None:
             rec["decision_kind"] = kind
+        if trace.get("forecast_arc"):
+            rec["forecast_arc"] = True
         return AuditRecord.model_validate(rec)
 
     def log(self, tick: int, decision: ShieldDecision,

@@ -85,11 +85,12 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     the velocity. Without one, every decision is byte-identical (18,000
     seeded decisions against c77c77d, tests/test_own_velocity_forecast.py).
   * A BODY-frame action (`filter_body`, the grant's WP3-04 / ARCH-04 input
-    frame) can be forecast along its ARC (2026-11-17, `arc=True` or the
-    constructor's `arc_forecast`; off by default): its forward / right
-    velocity is held while the heading turns at its yaw rate, instead of
-    its world direction being held from t = 0. A zero yaw rate is forecast
-    bit-identically either way (tests/test_body_arc_forecast.py).
+    frame) can be forecast along its ARC as well (2026-11-17, `arc=True` or
+    the constructor's `arc_forecast`; off by default): its forward / right
+    velocity held while the heading turns at its yaw rate, judged BESIDE
+    its world direction held from t = 0, never in its place (THE ARC ONLY
+    ADDS, `_predict`). A zero yaw rate is forecast bit-identically either
+    way (tests/test_body_arc_forecast.py).
   * Since 2026-10-12 the repair stack runs as guardrail/repair.py's operator
     library: the chain above, decision for decision, each call recorded
     (`ShieldDecision.trace`, the audit record's `repair_passes`), with the
@@ -159,6 +160,13 @@ from .models import (
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
 
+# The smallest |yaw rate| (rad/s) the arc forecast turns a body-frame action
+# along (Shield._arc_rate); below it the straight forecast is used. At 1e-9
+# rad/s the arc leaves the line by v * w * t^2 / 2 = 5e-8 m after 5 s at
+# 4 m/s, far under every tolerance, and a subnormal rate can no longer reach
+# the arc's arithmetic (review 2026-11-17).
+ARC_MIN_RATE = 1e-9
+
 
 def _arc_offset(vx: float, vy: float, w: float, t: float) -> tuple[float, float]:
     """(dNorth, dEast) after `t` seconds of a body-frame velocity whose world
@@ -171,9 +179,21 @@ def _arc_offset(vx: float, vy: float, w: float, t: float) -> tuple[float, float]
     rotation by theta maps (n, e) to (n cos - e sin, n sin + e cos); its
     integral over [0, t] is ((n sin wt + e (cos wt - 1)) / w,
     (n (1 - cos wt) + e sin wt) / w). Turning right (w > 0) from North
-    drifts East."""
-    s, c = math.sin(w * t), math.cos(w * t)
-    return (vx * s + vy * (c - 1.0)) / w, (vx * (1.0 - c) + vy * s) / w
+    drifts East.
+
+    Near w * t = 0 (|w t| < 1e-3) the two quotients sin(wt) / w and
+    (1 - cos wt) / w are taken from their series in w t instead (review
+    2026-11-17: a subnormal w such as 5e-324 underflowed w * t, and the
+    division then read x = 0.0 m at 0.2 s where the line is at 0.8 m). Any
+    w, zero included, then gives the straight (vx t, vy t) in the limit."""
+    x = w * t
+    if abs(x) < 1e-3:
+        x2 = x * x
+        s_w = t * (1.0 - x2 / 6.0 + x2 * x2 / 120.0)             # sin(x) / w
+        c_w = t * x * (0.5 - x2 / 24.0 + x2 * x2 / 720.0)         # (1 - cos x) / w
+    else:
+        s_w, c_w = math.sin(x) / w, (1.0 - math.cos(x)) / w
+    return vx * s_w - vy * c_w, vx * c_w + vy * s_w
 
 
 def _field_name(c) -> str:
@@ -1116,7 +1136,15 @@ class TickRecord(NamedTuple):
     walked them (Shield._predict). Until that date the buffer kept no
     trajectory: it was "recomputable", and the checker never read the buffer.
     The forecast of the EMITTED action is still recomputable on demand
-    (`Shield.forecast(rec.state, rec.decision.emitted, pipe=rec.pipe)`).
+    (`Shield.forecast(rec.state, rec.decision.emitted, pipe=rec.pipe)`), with
+    `arc=rec.arc` for a tick forecast along the arc.
+
+    `arc` (2026-11-17, WP3-04 / ARCH-04): True when this tick's forecasts
+    added the ARC of the action's yaw rate (Shield.filter_body with the arc
+    on, a yaw rate over ARC_MIN_RATE; the decision's trace says
+    "forecast_arc" too). Its `trajectory` then holds the line's pose(s) then
+    the arc's at each grid time, and `forecast(..., arc=True)` rebuilds the
+    arc (the plain call, the line). False on every other tick.
 
     `elapsed_ms` is how long that `filter()` call took, wall clock. The grant
     budgets the monitor at 100 ms per tick (Safety Shield page) and no flight
@@ -1135,6 +1163,7 @@ class TickRecord(NamedTuple):
     elapsed_ms: float
     pipe: tuple | None = None
     trajectory: tuple | None = None
+    arc: bool = False
 
 
 class _Admitted(NamedTuple):
@@ -1204,11 +1233,12 @@ class SlidingWindow:
             return None
         return h.trajectory
 
-    def close(self, state, decision, elapsed_ms: float, pipe) -> TickRecord:
+    def close(self, state, decision, elapsed_ms: float, pipe, *,
+              arc: bool = False) -> TickRecord:
         """The decision on the admitted entry: kept as a TickRecord."""
         h, self._head = self._head, None
         rec = TickRecord(state, decision, elapsed_ms, pipe,
-                         h.trajectory if h is not None else None)
+                         h.trajectory if h is not None else None, bool(arc))
         self._records.append(rec)
         return rec
 
@@ -2207,9 +2237,13 @@ class Shield:
         rebuilt exactly whatever was sent since. Ignored without a measured
         velocity.
 
-        `arc`: forecast `action` as `filter_body(..., arc=True)` does - a
-        world-frame action that was a body-frame command, turned along the
-        arc of its yaw rate (`_arc_rate`). False: the straight forecast."""
+        `arc`: the ARC of `action` - a world-frame action that was a
+        body-frame command, turned along the arc of its yaw rate
+        (`_arc_rate`), one pose per grid time (the own-velocity one with a
+        measured velocity, as above). A `filter_body(..., arc=True)` tick
+        (TickRecord.arc) judged this AND the straight forecast (arc=False)
+        beside it (`_predict`, THE ARC ONLY ADDS). False: the straight
+        forecast."""
         prev_arc = getattr(self._local, "arc", False)
         self._local.arc = bool(arc)
         try:
@@ -2219,7 +2253,10 @@ class Shield:
 
     def _forecast(self, state: State, action: Action4D, pipe) -> list[tuple[float, State]]:
         kw = {"own_only": True} if self._velocity_of(state) is not None else {}
-        if pipe is None or not kw:
+        measured = bool(kw)
+        if self._arc_rate(action):
+            kw["arc_path"] = "arc"           # passed only then (the old signature)
+        if pipe is None or not measured:
             return [(t, State(x=p.x, y=p.y, up=p.up, yaw_deg=p.yaw_deg))
                     for t, p in self._predict(state, action, **kw)]
         prev = getattr(self._local, "pipe_override", None)
@@ -2405,7 +2442,8 @@ class Shield:
     # ---------------- violation checking ---------------- #
 
     def _predict(self, state: State, action: Action4D,
-                 horizon_s: float | None = None, *, own_only: bool = False):
+                 horizon_s: float | None = None, *, own_only: bool = False,
+                 arc_path: str | None = None):
         """The forecast (the grant Shield's 50-pose forecast at the default
         5 s / 0.1 s; a caller may pass a shorter one): the commanded velocity
         held from t = 0 for a State without a measured velocity, as it always
@@ -2429,18 +2467,33 @@ class Shield:
 
         THE ARC (2026-11-17, WP3-04 / ARCH-04). Inside `filter_body(...,
         arc=True)` (`_arc_rate`), an action with a non-zero yaw rate is a
-        body-frame command whose velocity turns with the heading, and its
-        horizontal displacement is the arc's (`_arc_offset`) instead of the
-        straight `v * t`. With the arc off, or a zero yaw rate, every pose is
-        computed by the very expressions it always was (bit-identical:
+        body-frame command whose velocity turns with the heading: its
+        horizontal displacement along the ARC is `_arc_offset` instead of the
+        straight `v * t`. THE ARC ONLY ADDS (review 2026-11-17), as the
+        measured velocity does: each grid time yields the straight pose(s)
+        the Shield always judged FIRST, then the arc's, so a rule is broken
+        if EITHER breaks it, at the earlier time. The arc in place of the
+        line held a yaw rate for the whole 5 s: a VLA whose yaw output
+        alternates sign flies nearly straight while every tick forecast a
+        tight circle, and a zone dead ahead was repaired 9-14 m later than on
+        the line (the test with a yaw rate alternating each tick). `arc_path`
+        "line" or "arc" yields one of the two paths alone (the segment test
+        and the clearance rule walk each in order, `_segment_paths`,
+        `_check_clearance`; `forecast(..., arc=True)` returns the arc). With
+        the arc off, or a yaw rate under ARC_MIN_RATE, every pose is computed
+        by the very expressions it always was (bit-identical:
         tests/test_body_arc_forecast.py)."""
-        if horizon_s is None and not own_only:
+        w0 = self._arc_rate(action)
+        w = 0.0 if arc_path == "line" else w0
+        # Which paths: the line always unless only the arc is asked for; the
+        # arc whenever there is one.
+        lines = not w or arc_path != "arc"
+        if horizon_s is None and not own_only and (arc_path is None or not w0):
             held = self._buffer.trajectory_for(self._tick_ctx(), state, action)
             if held is not None:
                 yield from held
                 return
         horizon = self.lookahead_s if horizon_s is None else horizon_s
-        w = self._arc_rate(action)
         t = 0.0
         # UNITS. State.yaw_deg is degrees; Action4D.yaw_rate is RADIANS per
         # second (models.py, docs/FINDING-the-contract-disagreed-with-itself-
@@ -2496,7 +2549,7 @@ class Shield:
             if tick is not None:
                 key = ("poses", state.x, state.y, state.up, state.yaw_deg, v,
                        action.vx, action.vy, action.vz_up, action.yaw_rate,
-                       horizon, bool(own_only), id(pre), w)
+                       horizon, bool(own_only), id(pre), w, lines)
                 hit = tick.committed.get(key)
                 if hit is not None:
                     yield from hit
@@ -2506,41 +2559,46 @@ class Shield:
             cx, cy = action.vx, action.vy
             out = []
             while True:
+                up = state.up + action.vz_up * t
+                yaw = state.yaw_deg + yaw_dps * t
                 if t < lag - 1e-12:
                     dx, dy = early(t)
+                    adx, ady = dx, dy
                 else:
                     ex, ey, _, _ = _response._approach(vxl, vyl, cx, cy, acc, t - lag)
                     dx, dy = dxl + ex, dyl + ey
+                    adx, ady = dx, dy
                     if w:
-                        # The arc, from when the command starts to act: the
-                        # response approaches the command, which turns from
-                        # then on; added as the arc's lead over the straight
-                        # command (exact once the response has converged).
+                        # The arc, from when the command starts to act (t -
+                        # lag): the response approaches the command, which
+                        # turns from then on; added as the arc's lead over
+                        # the straight command. AN APPROXIMATION: this
+                        # velocity turns from t - lag while the pose's
+                        # heading (yaw_deg) and the commanded arc below turn
+                        # from t = 0, so even once the response has converged
+                        # its direction trails the commanded arc's by
+                        # w * lag for the rest of the horizon. It is judged
+                        # beside the commanded arc and both lines, never
+                        # alone (THE ARC ONLY ADDS).
                         ax, ay = _arc_offset(cx, cy, w, t - lag)
-                        dx += ax - cx * (t - lag)
-                        dy += ay - cy * (t - lag)
-                out.append((t, _Pose(
-                    x=state.x + dx,
-                    y=state.y + dy,
-                    up=state.up + action.vz_up * t,
-                    yaw_deg=state.yaw_deg + yaw_dps * t,
-                )))
+                        adx += ax - cx * (t - lag)
+                        ady += ay - cy * (t - lag)
+                if lines:
+                    out.append((t, _Pose(x=state.x + dx, y=state.y + dy, up=up, yaw_deg=yaw)))
+                if w:
+                    out.append((t, _Pose(x=state.x + adx, y=state.y + ady, up=up, yaw_deg=yaw)))
                 if not own_only:
-                    if w:
-                        ax, ay = _arc_offset(action.vx, action.vy, w, t)
-                        out.append((t, _Pose(
-                            x=state.x + ax,
-                            y=state.y + ay,
-                            up=state.up + action.vz_up * t,
-                            yaw_deg=state.yaw_deg + yaw_dps * t,
-                        )))
-                    else:
+                    if lines:
                         out.append((t, _Pose(
                             x=state.x + action.vx * t,
                             y=state.y + action.vy * t,
                             up=state.up + action.vz_up * t,
                             yaw_deg=state.yaw_deg + yaw_dps * t,
                         )))
+                    if w:
+                        ax, ay = _arc_offset(action.vx, action.vy, w, t)
+                        out.append((t, _Pose(x=state.x + ax, y=state.y + ay, up=up,
+                                             yaw_deg=yaw)))
                 if t >= horizon - 1e-9:
                     break
                 t = min(t + self.dt, horizon)
@@ -2548,8 +2606,15 @@ class Shield:
                 tick.committed[key] = out
             yield from out
             return
-        if w:
-            while True:
+        while True:
+            if lines:
+                yield t, _Pose(
+                    x=state.x + action.vx * t,
+                    y=state.y + action.vy * t,
+                    up=state.up + action.vz_up * t,
+                    yaw_deg=state.yaw_deg + yaw_dps * t,
+                )
+            if w:
                 ax, ay = _arc_offset(action.vx, action.vy, w, t)
                 yield t, _Pose(
                     x=state.x + ax,
@@ -2557,16 +2622,6 @@ class Shield:
                     up=state.up + action.vz_up * t,
                     yaw_deg=state.yaw_deg + yaw_dps * t,
                 )
-                if t >= horizon - 1e-9:
-                    return
-                t = min(t + self.dt, horizon)
-        while True:
-            yield t, _Pose(
-                x=state.x + action.vx * t,
-                y=state.y + action.vy * t,
-                up=state.up + action.vz_up * t,
-                yaw_deg=state.yaw_deg + yaw_dps * t,
-            )
             if t >= horizon - 1e-9:
                 return
             t = min(t + self.dt, horizon)
@@ -2579,7 +2634,7 @@ class Shield:
         if not getattr(self._local, "arc", False):
             return 0.0
         w = action.yaw_rate
-        return float(w) if (math.isfinite(w) and w != 0.0) else 0.0
+        return float(w) if (math.isfinite(w) and abs(w) >= ARC_MIN_RATE) else 0.0
 
     # ---------------- the own-velocity forecast's helpers ---------------- #
 
@@ -2813,9 +2868,18 @@ class Shield:
         sampled on the grid until it is stationary (the last sample exactly
         at the stop, at most the lookahead). The stop the old form assumed
         at 3 m/s^2 after 0.1 s was 1.5 m shorter than the 14 Oct aircraft's
-        from 3.2 m/s."""
+        from 3.2 m/s.
+
+        Always a single path read in order: for an arced action (`_arc_rate`)
+        the commanded forecast here is the LINE, and the arc is judged
+        beside it (`_clear_arc_steps`; THE ARC ONLY ADDS). The own-velocity
+        "stop after one control period" forecast is not arced: its one
+        period of the command turns the velocity by at most w * dt."""
         v = self._velocity_of(state)
         if v is None:
+            if self._arc_rate(action):
+                return list(self._predict(state, action, self._clear_horizon_s(action),
+                                          arc_path="line"))
             return list(self._predict(state, action, self._clear_horizon_s(action)))
         resp = self.velocity_response
         dt, a = self.dt, resp.accel_mps2
@@ -2864,7 +2928,23 @@ class Shield:
         if (self._dist if f is None else f[0]) is None:
             return float("inf")
         steps = self._clear_steps(state, a)
-        return min(self._distance_at(p.x, p.y, f) for _, p in (steps[1:] or steps))
+        d = min(self._distance_at(p.x, p.y, f) for _, p in (steps[1:] or steps))
+        arc = self._clear_arc_steps(state, a)
+        if arc is not None:
+            # The arc beside the line (THE ARC ONLY ADDS): the nearer of the two.
+            d = min(d, min(self._distance_at(p.x, p.y, f) for _, p in (arc[1:] or arc)))
+        return d
+
+    def _clear_arc_steps(self, state: State, action: Action4D) -> "list | None":
+        """The clearance rule's ARC path for an arced action (`_arc_rate`)
+        from a state without a measured velocity: `action` along its arc over
+        `_clear_horizon_s`, judged beside the line `_clear_steps` returns.
+        None otherwise (no arc, or the own-velocity forecast, whose commanded
+        part is judged from the position: `_check_clearance`)."""
+        if not self._arc_rate(action) or self._velocity_of(state) is not None:
+            return None
+        return list(self._predict(state, action, self._clear_horizon_s(action),
+                                  arc_path="arc"))
 
     def _clear_dir_candidates(self, a: Action4D, cap: float):
         """Recovery headings: 12 bearings x 2 speeds, inheriting `a`'s vertical
@@ -3341,8 +3421,15 @@ class Shield:
         per tick.
 
         Not for an arced action (`_arc_rate`, filter_body with arc): this
-        shaping is a straight exit, and the arc forecast (`_predict`) is
-        what such an action flies, so every rule walks that instead."""
+        shaping is a straight exit (`_ring_exit_time` is a straight line),
+        so such an action is judged on the full 5 s line AND arc instead
+        (`_predict`, THE ARC ONLY ADDS). That brings back, for a body
+        command with a yaw rate escaping a zone that opened on the
+        aircraft, the behaviour of 69c27bd this shaping removed: a hard rule
+        within the cap's 5 s reach past the exit refuses the cap, and the
+        retries fly the fastest speed that re-checks clean
+        (tests/test_body_arc_forecast.py pins it in the library's own
+        geometry). Opt-in only: no rail flies the arc by default."""
         if self._velocity_of(state) is not None or self._arc_rate(action):
             return None
         h = math.hypot(action.vx, action.vy)
@@ -3580,7 +3667,16 @@ class Shield:
         measured velocity; for one with, the own-velocity path and the
         commanded path from the same position, separately - never the
         interleaved stream `_predict` yields, whose consecutive poses join
-        the two forecasts."""
+        the two forecasts. An arced action (`_arc_rate`) has the line and the
+        arc of each (`_predict`, THE ARC ONLY ADDS), each walked on its own
+        for the same reason."""
+        if self._arc_rate(action):
+            if self._velocity_of(state) is None:
+                return [list(self._predict(state, action, arc_path=p)) for p in ("line", "arc")]
+            pos = self._positional(state)
+            return ([list(self._predict(state, action, own_only=True, arc_path=p))
+                     for p in ("line", "arc")]
+                    + [list(self._predict(pos, action, arc_path=p)) for p in ("line", "arc")])
         if self._velocity_of(state) is None:
             return [poses if poses is not None else list(self._predict(state, action))]
         return [list(self._predict(state, action, own_only=True)),
@@ -3786,7 +3882,18 @@ class Shield:
             if own and old:
                 return own if own[0].predicted_at_s <= old[0].predicted_at_s else old
             return own or old
-        return self._clearance_verdict(c, steps, dists, alive)
+        line = self._clearance_verdict(c, steps, dists, alive)
+        arc = self._clear_arc_steps(state, action)
+        if arc is None:
+            return line
+        # THE ARC ONLY ADDS (_predict): an arced action is judged on its arc
+        # as well as on the line, each in order; the earlier breach is the
+        # answer, the line's on a tie.
+        av = self._clearance_verdict(c, arc, [self._distance_at(p.x, p.y, f) for _, p in arc],
+                                     alive)
+        if line and av:
+            return line if line[0].predicted_at_s <= av[0].predicted_at_s else av
+        return line or av
 
     def _clearance_verdict(self, c, steps, dists, alive) -> list[Violation]:
         """_check_clearance's test on one forecast (steps, dists)."""
@@ -6113,8 +6220,16 @@ class Shield:
             # for a tick that forecast from a measured velocity only.
             pipe = (tuple(self.pipe()) if self._velocity_of(dstate) is not None
                     else None)
+            # A tick forecast along the arc (filter_body with arc, a yaw rate
+            # over ARC_MIN_RATE): said in the trace, which the audit record
+            # copies (`forecast_arc`), and on the TickRecord, so the tick's
+            # forecast is rebuilt with forecast(..., arc=True). Absent on
+            # every other tick, which is recorded as it always was.
+            arced = bool(self._arc_rate(admitted))
+            if arced:
+                decision.trace = {**(decision.trace or {}), "forecast_arc": True}
         elapsed_ms = (time.perf_counter() - t0) * 1e3
-        self._buffer.close(dstate.model_copy(), decision, elapsed_ms, pipe)
+        self._buffer.close(dstate.model_copy(), decision, elapsed_ms, pipe, arc=arced)
         return decision
 
     def filter_body(self, state: State, body: Action4D, t: float | None = None,
@@ -6152,17 +6267,34 @@ class Shield:
         THE ARC (`arc`, 2026-11-17; None: the Shield's `arc_forecast`, off
         by default). A body-frame command holds its forward / right velocity
         while the heading turns at its yaw rate, so it flies an ARC; with
-        `arc` on, every forecast of this tick - the admitted action's, each
-        repair candidate's, the re-checks' - integrates the heading over the
-        lookahead (`_predict`, `_arc_offset`), and a zone the arc reaches
-        but the straight line misses is caught. With it off the forecast
+        `arc` on, the forecasts of this tick that `_predict` makes - the
+        admitted action's, each repair candidate's, the re-checks' - add the
+        ARC (the heading integrated over the lookahead, `_arc_offset`) to
+        the straight line, and a rule is broken if either breaks it (THE ARC
+        ONLY ADDS, review 2026-11-17: the arc in place of the line forecast
+        a held yaw rate for 5 s, so a jittering yaw output saw a zone dead
+        ahead 9-14 m late). A zone the arc reaches but the line misses is
+        caught; nothing the line catches is lost. With it off the forecast
         holds the action's world direction from t = 0, as it did before:
-        such a command is not forecast along its arc. A zero yaw rate is
-        forecast exactly as before either way (the arc IS the line). Every
-        repair's yaw rate is the action's own except the kinematic cap's,
-        which clamps it; each candidate is forecast on its own yaw rate.
-        The Shield's queries outside this call (state_is_unsafe,
-        recheck_commanded, advise, handback_unsafe) stay straight.
+        such a command is not forecast along its arc. A yaw rate under
+        ARC_MIN_RATE is forecast exactly as before either way (the arc IS
+        the line). Every repair's yaw rate is the action's own except the
+        kinematic cap's, which clamps it; each candidate is forecast on its
+        own yaw rate. The emitted body action's arc is recorded on the tick
+        (trace "forecast_arc", the audit record's `forecast_arc`,
+        TickRecord.arc).
+
+        WHAT STAYS STRAIGHT inside such a tick (each still judged, never on
+        the arc alone): the escape shaping for a zone that opened on the
+        aircraft (`_shaped_escape`: off for an arced action, which is then
+        judged on the full 5 s line and arc - the 69c27bd behaviour for that
+        case, pinned in tests/test_body_arc_forecast.py); `_ring_exit_time`,
+        `_opening_imposed` and the inside rule's escape point at the opening
+        (`t_open`); the own-velocity "stop after one control period"
+        clearance forecast (`_clear_steps` with a measured velocity); the
+        repair operators' own geometry (they steer in the world frame).
+        Outside this call the Shield's queries (state_is_unsafe,
+        recheck_commanded, advise, handback_unsafe) are straight.
 
         `t` and the other keyword arguments are `filter`'s."""
         raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)

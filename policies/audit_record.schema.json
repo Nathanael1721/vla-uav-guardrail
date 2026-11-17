@@ -944,6 +944,19 @@
       ],
       "default": null,
       "title": "Decision Kind"
+    },
+    "forecast_arc": {
+      "anyOf": [
+        {
+          "const": true,
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Forecast Arc"
     }
   },
   "required": [
