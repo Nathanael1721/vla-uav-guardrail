@@ -17,9 +17,14 @@ chunk). What is tested:
      yaw_rate) read body FLU -> the lateral step text, exactly, and the
      slots each statistics dimension reads.
   2. 4-D conformance, MEASURED: a seeded sweep of random native outputs per
-     family through the server's protocol core, the client's strict reader
-     and the StepTracker; every one must come out as a finite Action4D
-     (vx, vy, vz_up, yaw_rate). The figure is printed.
+     arm (CognitiveDrone 4-D and 7-D statistics, BitVLA) through the
+     server's protocol core, the client's strict reader and the StepTracker
+     in the launcher's rate execution (H 1 s); every one comes out as a
+     finite Action4D (vx, vy, vz_up, yaw_rate) - true by construction,
+     since encode_step clips into the codec's ranges - so what is checked
+     and printed is what the slot LOSES, per axis: the AerialVLA step codec
+     cannot carry vx < 0 (it is flown as 0) and caps the turn at 1.1 rad
+     per horizon; above the bin width every other axis keeps its sign.
   3. The same over TCP: the real client (strict identity) and
      RemoteVLABackend.act() -> Action4D, the identity naming the family.
   4. The switch: --model picks the family (build_family), the dashboard and
@@ -51,7 +56,8 @@ import vla_server_foreign as F                                       # noqa: E40
 from guardrail import aerialvla_codec as C                           # noqa: E402
 from guardrail.models import Action4D                                # noqa: E402
 from guardrail.vla_link import (Capture, Decision, Hint, Pose,       # noqa: E402
-                                RemoteVLA, Step, StepTracker, check_identity)
+                                RemoteVLA, Step, StepTracker, TrackerConfig,
+                                check_identity)
 
 SKIP = "SKIP"
 DIGEST = "c0ffee00" * 8
@@ -120,10 +126,23 @@ def _tok(idx: int) -> int:
     return F.OPENVLA_VOCAB_SIZE - (idx + 1)
 
 
-def _action4d(step_wire: dict, t0: float = 100.0) -> Action4D:
-    """A decoded step through the StepTracker, one tick after it was taken:
-    what the rail hands the Shield."""
-    tr = StepTracker()
+# The tracker the hil launcher flies both families with (deploy/orin/
+# run_pas_perception.sh FAMILY=cognitivedrone|bitvla: --vla-step-as-rate 1.0,
+# --vla-cruise-mps 4.5, --vla-speed-cap-mps 5; the follow executor's turn
+# while moving). Rate execution: speed fwd_m / H along the body heading,
+# right_m / H to its right, yaw rate dpsi_rad / H (TrackerConfig, RATE
+# EXECUTION). Left out: the follow mission's held altitude (its vz is then
+# recorded, not flown - kept out so vz's sign is checked here) and its
+# smoothing (it limits a change's size over ticks, never its sign).
+LAUNCHER_TRACKER = TrackerConfig(cruise_mps=4.5, speed_cap_mps=5.0, rate_horizon_s=1.0,
+                                 turn_while_moving=True)
+
+
+def _action4d(step_wire: dict, t0: float = 100.0, cfg: TrackerConfig | None = None) -> Action4D:
+    """A decoded step through the StepTracker (the launcher's rate execution
+    unless `cfg`), one tick after it was taken: what the rail hands the
+    Shield. Pose yaw 0, so vx is North = forward and vy East = right."""
+    tr = StepTracker(LAUNCHER_TRACKER if cfg is None else cfg)
     pose = Pose(0.0, 0.0, 10.0, 0.0)
     tr.accept(Decision.of(1, t0, pose, Step.from_wire(step_wire)), t0 + 0.05)
     return tr.tick(t0 + 0.15, pose).action
@@ -193,21 +212,40 @@ def test_malformed_native_outputs_are_refused_never_read_as_motion():
 
 # ====================================================== 2. 4-D conformance, measured
 
-def _random_native(family: str, rng: random.Random):
-    if family == "cognitivedrone":
-        return [_tok(rng.randrange(0, 255)) for _ in range(4)]
+def _random_native(arm: str, rng: random.Random):
+    if arm.startswith("cognitivedrone"):
+        return [_tok(rng.randrange(0, 255)) for _ in range(4 if arm.endswith("4d") else 7)]
     return [[rng.uniform(-1.5, 1.5) for _ in range(7)] for _ in range(8)]
 
 
-def conformance(family: str, n: int = SWEEP_N, seed: int = 20261117) -> dict:
-    """n seeded random native outputs of `family` through the server's
-    protocol core, the client's strict reader and the StepTracker: how many
-    came out as a finite 4-D Action4D."""
+ARMS = ("cognitivedrone_4d", "cognitivedrone_7d", "bitvla")
+# Above these (H = 1 s) the axis is past the codec's bin width and, for yaw,
+# the tracker's 0.05 rad heading tolerance; for vz the 0.3 m altitude
+# tolerance: the Action4D component must then carry the model's sign.
+SIGN_MIN = {"vx": 0.06, "vy": 0.11, "vz": 0.45, "omega": 0.08}
+
+
+def _sign(v: float) -> int:
+    return (v > 0) - (v < 0)
+
+
+def conformance(arm: str, n: int = SWEEP_N, seed: int = 20261117) -> dict:
+    """n seeded random native outputs of `arm` through the server's protocol
+    core, the client's strict reader and the StepTracker in the launcher's
+    rate execution (LAUNCHER_TRACKER). Counts: finite 4-D Action4D; the
+    codec's clips per axis (encode_step's record); vx < 0 flown as vx = 0
+    (the step codec has no backward step); and per axis, the samples above
+    SIGN_MIN whose Action4D component carries the model's sign (vx forward
+    = North, right = -vy = East, vz up, yaw clockwise = -omega)."""
     rng = random.Random(seed)
-    fam = _cd_family(4) if family == "cognitivedrone" else _bit_family()
-    outs = [_random_native(family, rng) for _ in range(n)]
+    fam = {"cognitivedrone_4d": lambda: _cd_family(4), "cognitivedrone_7d": lambda: _cd_family(7),
+           "bitvla": _bit_family}[arm]()
+    outs = [_random_native(arm, rng) for _ in range(n)]
     core, _ = _core(fam, outs)
-    ok, clipped = 0, 0
+    ok, clips = 0, {}
+    back = back_zero = 0
+    signs = {k: [0, 0] for k in SIGN_MIN}            # [carried, checked]
+    yaw_over_cap = 0
     for i in range(n):
         resp, _, _ = core.handle(_req(seq=i + 1, t=100.0 + i))
         if not (resp["ok"] and resp["parse_ok"] and len(resp["bins"]) == 4):
@@ -215,19 +253,66 @@ def conformance(family: str, n: int = SWEEP_N, seed: int = 20261117) -> dict:
         p = C.parse_action(resp["raw_text"], require_eos=True, lateral=True)
         if not (p.parse_ok and p.step.to_dict() == resp["step"]):
             continue
-        clipped += bool(resp["mapping"]["clipped"])
-        if _finite4(_action4d(resp["step"])):
-            ok += 1
-    return {"family": family, "n": n, "action4d_finite": ok, "clipped_recorded": clipped}
+        m = resp["mapping"]
+        g = m["geometry"]
+        for ax in m["clipped"]:
+            key = ax
+            if ax == "fwd_m":
+                key = "fwd_m(vx<0)" if g["vx"] < 0 else "fwd_m(vx>5)"
+            clips[key] = clips.get(key, 0) + 1
+        a = _action4d(resp["step"])
+        if not _finite4(a):
+            continue
+        ok += 1
+        if g["vx"] < 0:
+            back += 1
+            back_zero += abs(a.vx) < 1e-12
+        yaw_over_cap += abs(g["omega"]) > LAUNCHER_TRACKER.yaw_rate_cap_rad_s
+        for k, got, want in (("vx", a.vx, g["vx"]), ("vy", a.vy, -g["vy"]),
+                             ("vz", a.vz_up, g["vz"]), ("omega", a.yaw_rate, -g["omega"])):
+            if abs(want) <= SIGN_MIN[k] or (k == "vx" and want < 0):
+                continue
+            signs[k][1] += 1
+            signs[k][0] += _sign(got) == _sign(want)
+    return {"arm": arm, "n": n, "action4d_finite": ok, "clips_per_axis": clips,
+            "vx_negative": back, "vx_negative_flown_as_zero": back_zero,
+            "sign_carried": {k: f"{v[0]}/{v[1]}" for k, v in signs.items()},
+            "signs": signs, "omega_over_tracker_yaw_cap": yaw_over_cap}
 
 
-def test_every_native_output_of_both_families_becomes_a_finite_4_d_action():
-    for fam in ("cognitivedrone", "bitvla"):
-        r = conformance(fam)
-        print(f"      conformance {fam}: {r['action4d_finite']}/{r['n']} native outputs -> "
-              f"finite Action4D(vx, vy, vz_up, yaw_rate); {r['clipped_recorded']} clipped "
-              f"to the codec's ranges, recorded")
+def test_every_native_output_becomes_a_finite_4_d_action_and_the_losses_are_counted():
+    """The shape conforms (finite Action4D every time - guaranteed by
+    encode_step's clipping, so not the point by itself); what the slot LOSES
+    is counted and pinned: vx < 0 becomes 0, |omega H| > 1.1 rad is clipped.
+    Above SIGN_MIN every other axis keeps the model's sign."""
+    for arm in ARMS:
+        r = conformance(arm)
+        print(f"      conformance {arm}: {r['action4d_finite']}/{r['n']} -> finite Action4D "
+              f"(launcher rate execution H 1 s); clips per axis {r['clips_per_axis']}; "
+              f"vx<0 flown as 0: {r['vx_negative_flown_as_zero']}/{r['vx_negative']}; "
+              f"sign carried {r['sign_carried']}; |omega| over the tracker's 0.5 rad/s "
+              f"cap {r['omega_over_tracker_yaw_cap']}")
         assert r["action4d_finite"] == r["n"] == SWEEP_N, r
+        # every backward request lost its sign: the codec cannot carry it
+        assert r["vx_negative"] > 0 and r["vx_negative_flown_as_zero"] == r["vx_negative"], r
+        assert r["clips_per_axis"].get("fwd_m(vx<0)", 0) == r["vx_negative"], r
+        for k, (carried, checked) in r["signs"].items():
+            assert checked > 0 and carried == checked, (arm, k, r)
+        assert set(r["clips_per_axis"]) <= {"fwd_m(vx<0)", "dpsi_rad"}, r
+    assert conformance("bitvla")["clips_per_axis"].get("dpsi_rad", 0) > 0
+
+
+def test_the_step_codec_cannot_fly_backward_and_caps_the_turn_per_horizon():
+    """Pinned so the limitation stays visible: a backward velocity flies 0,
+    and a turn over 1.1 rad per horizon flies 1.1 rad."""
+    m = F.map_velocity4(-1.0, 0.0, 0.0, 0.0, horizon_s=1.0)
+    st = F.encode_step(m["fwd_m"], m["down_m"], m["dpsi_rad"], right_m=m["right_m"])
+    assert st["clipped"] == ["fwd_m"] and st["flown"]["fwd_m"] == 0.0, st
+    a = _action4d(C.parse_action(st["text"], require_eos=True, lateral=True).step.to_dict())
+    assert a.vx == 0.0 and abs(a.vy) < 0.06, a        # vy: right_m 0 within one bin
+    m = F.map_velocity4(0.0, 0.0, 0.0, 2.0, horizon_s=1.0)       # 2 rad/s ccw
+    st = F.encode_step(m["fwd_m"], m["down_m"], m["dpsi_rad"], right_m=m["right_m"])
+    assert st["clipped"] == ["dpsi_rad"] and abs(st["flown"]["dpsi_rad"] - -1.1) < 0.03, st
 
 
 # ====================================================== 3. over TCP, through the backend
@@ -256,7 +341,8 @@ def test_the_real_client_and_remote_backend_fly_both_families_as_action4d():
             state = State(x=0.0, y=0.0, up=10.0, yaw_deg=0.0)
             be = RemoteVLABackend(cli, lambda: Capture(time.monotonic(), Pose(0, 0, 10, 0),
                                                        b"jpg", None),
-                                  lambda cap: Hint("straight ahead ", "detector"), "a red car")
+                                  lambda cap: Hint("straight ahead ", "detector"), "a red car",
+                                  tracker=StepTracker(LAUNCHER_TRACKER))
             end, act = time.time() + 10.0, None
             while time.time() < end:
                 act = be.act(state)
@@ -284,7 +370,7 @@ def _args(model: str, weights: Path, *extra: str) -> argparse.Namespace:
 def _download(d: Path, family: str) -> Path:
     for name in F.REQUIRED_FILES[family]:
         if name == "dataset_statistics.json":
-            _stats(d, 4)
+            _stats(d, 4 if family == "cognitivedrone" else 7)
         elif name == "model.safetensors.index.json":
             (d / name).write_text(json.dumps({"weight_map": {"a": "model.safetensors"}}),
                                   encoding="utf-8")
@@ -303,8 +389,31 @@ def test_the_model_flag_switches_the_family_in_the_slot():
         w = _download(Path(d), "bitvla")
         fam = F.build_family(_args("bitvla", w), w)
         assert isinstance(fam, F.BitVLAFamily) and fam.unnorm_key == "cd_set"
-        assert [p.name for p in F.weight_files("bitvla", w)][-2:] == [
-            "dataset_statistics.json", "action_head--10000_checkpoint.pt"]
+        # the identity digest pins the remote code and config that run, too
+        assert [p.name for p in F.weight_files("bitvla", w)][-4:] == [
+            "dataset_statistics.json", "action_head--10000_checkpoint.pt", "config.json",
+            "bitvla_for_action_prediction.py"]
+        # BitVLA's chunk rows are 7 wide: 4-D statistics are refused
+        _stats(Path(d), 4)
+        try:
+            F.build_family(_args("bitvla", w), w)
+            raise AssertionError("bitvla accepted 4-D statistics")
+        except ValueError as exc:
+            assert "7-dimensional" in str(exc), exc
+    # --fake-native (a stand-in, no GPU) needs only the statistics, as RaceVLA's
+    with tempfile.TemporaryDirectory() as d:
+        for name, dim in (("cognitivedrone", 4), ("bitvla", 7)):
+            _stats(Path(d), dim)
+            fam = F.build_family(_args(name, Path(d), "--fake-native", "[1]"), Path(d))
+            assert fam.name == name
+            assert F.missing_files(name, Path(d), fake=True) == []
+            assert F.missing_files(name, Path(d)) != []
+    # a run of either keeps a name of its own in the backend table, never the
+    # row (no weights obtained; LIBERO weights are not follow evidence)
+    import vla_backend_table as VBT
+    for name in ("cognitivedrone", "bitvla"):
+        row, fam_name = VBT.backend_of_identity(_identity(name))
+        assert fam_name == name and row.startswith(f"{name}:") and row not in VBT.BACKENDS, row
     import todo as T
     import vla_mission as VM
     assert T.FOREIGN_FAMILIES == C.FOREIGN_FAMILIES

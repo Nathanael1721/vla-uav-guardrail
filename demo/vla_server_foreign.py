@@ -191,14 +191,23 @@ Checked on 2026-11-17: Hugging Face has no model repository for it (no
 model under ArtemLykov or SerValera other than RaceVLA_models), and
 cognitivedrone.github.io links the dataset (ArtemLykov/cognitiveDrone_dataset)
 and a data collector only. The paper gives no prompt, units, frame or bin
-count; the adapter reads it as its sibling RaceVLA does (same lab, same
-OpenVLA code): OpenVLA's prompt, the action tokens un-normalised with its
-dataset_statistics.json, the velocities body FLU (x forward, y LEFT, z up,
-omega + counter-clockwise), gains 1. A 4-D statistics file is read
+count; the adapter uses the same OpenVLA token reader and body-FLU reading
+as its sibling RaceVLA (same lab, same OpenVLA code): OpenVLA's prompt, the
+action tokens un-normalised with its dataset_statistics.json, the
+velocities body FLU (x forward, y LEFT, z up, omega + counter-clockwise).
+Unit gains and colour frames are ASSUMPTIONS, not RaceVLA's values (RaceVLA
+uses RACEVLA_GAINS and grey frames); so are the frame, the units and the
+sign of omega, since CognitiveDrone publishes no code. A 4-D statistics file is read
 (vx, vy, vz, omega) = a[0..3]; a 7-D one RaceVLA's way, a[0, 1, 2, 5].
 Rule cognitivedrone_velocity4/1: over the horizon T, fwd = vx T, right =
 -vy T (the lateral step, kept: the 4-D contract has vy), down = -vz T,
 dpsi = -omega T. To re-check against its code once released.
+  THE SLOT IS LOSSY (both families): the step goes through AerialVLA's step
+codec (RANGES), which cannot carry a backward step - fwd_m is 0..5 m, so
+vx < 0 is flown as vx = 0 - and caps a heading change at 1.1 rad per
+horizon (|omega T| > 1.1 rad is clipped); right_m is +-2.5 m and down_m
++-5 m. encode_step records each clip ("clipped", per axis); the shape
+conforms, the backward half of vx does not reach the Shield.
   BitVLA (ICT-CAS, arXiv 2506.07530; github.com/ustcwhy/BitVLA, MIT): a
 ternary (1.58-bit) 3 B VLA on the OpenVLA-OFT recipe: parallel decoding of
 an action CHUNK (NUM_ACTIONS_CHUNK x ACTION_DIM, un-normalised by the
@@ -324,14 +333,24 @@ REQUIRED_FILES = {
     "bitvla": ("config.json", "model.safetensors.index.json", "dataset_statistics.json",
                "bitvla_for_action_prediction.py", "action_head--*.pt"),
 }
+# BitVLA's code and config, run via trust_remote_code: in its identity digest
+# (weight_files) so the identity pins the code that runs, not only the weights
+BITVLA_CODE_FILES = ("config.json", "bitvla_for_action_prediction.py")
+# --fake-native (a scripted stand-in, no GPU) needs only the statistics the
+# family's reader is built from, as RaceVLA's stand-in does
+FAKE_REQUIRED_FILES = ("dataset_statistics.json",)
 
 
-def missing_files(family: str, weights_dir: str | Path) -> list[str]:
+def missing_files(family: str, weights_dir: str | Path, fake: bool = False) -> list[str]:
     """The REQUIRED_FILES of `family` not in `weights_dir` (all of them when
-    the folder does not exist); [] for a family with no list."""
+    the folder does not exist); [] for a family with no list. fake (the
+    --fake-native stand-in): only FAKE_REQUIRED_FILES of that list."""
     d = Path(weights_dir)
     out = []
-    for name in REQUIRED_FILES.get(family, ()):
+    names = REQUIRED_FILES.get(family, ())
+    if fake:
+        names = tuple(n for n in names if n in FAKE_REQUIRED_FILES)
+    for name in names:
         ok = (any(d.glob(name)) if "*" in name else (d / name).is_file()) if d.is_dir() \
             else False
         if not ok:
@@ -1412,7 +1431,9 @@ class AIOTVLAModel:
 def weight_files(family: str, weights_dir: str | Path) -> list[Path]:
     """What weights_sha256 covers: the shards model.safetensors.index.json
     names (vla_server_v2.base_weight_files), and for RaceVLA its
-    dataset_statistics.json, which changes every action."""
+    dataset_statistics.json, which changes every action. For BitVLA also the
+    code that runs (trust_remote_code: bitvla_for_action_prediction.py), its
+    config.json and the action head."""
     if family == "aiotvla":
         return [Path(weights_dir) / "head.pt"]
     files = S.base_weight_files(weights_dir)
@@ -1420,6 +1441,7 @@ def weight_files(family: str, weights_dir: str | Path) -> list[Path]:
         files.append(Path(weights_dir) / "dataset_statistics.json")
     if family == "bitvla":
         files.extend(sorted(Path(weights_dir).glob("action_head--*.pt")))
+        files.extend(Path(weights_dir) / n for n in BITVLA_CODE_FILES)
     return files
 
 
@@ -1638,7 +1660,11 @@ def _name_of(family: str, weights_dir: Path) -> str:
 
 
 def build_family(args, weights: Path):
-    missing = missing_files(args.model, weights)
+    fake = bool(getattr(args, "fake_native", None))
+    missing = missing_files(args.model, weights, fake=fake)
+    if missing and fake:
+        raise OSError(f"--fake-native for {args.model}: {missing} not in {weights} (the "
+                      f"stand-in reads only the statistics)")
     if missing:
         raise OSError(f"weights not obtained: {missing} not in {weights} (the {args.model} "
                       f"download: {UPSTREAM[args.model]['model'] or 'none published'}; "
@@ -1650,11 +1676,10 @@ def build_family(args, weights: Path):
                                     instruction=args.command or COGNITIVEDRONE_INSTRUCTION,
                                     horizon_s=args.horizon_s)
     if args.model == "bitvla":
-        doc = json.loads((weights / "dataset_statistics.json").read_text(encoding="utf-8"))
-        keys = sorted(doc) if isinstance(doc, dict) else []
-        key = args.unnorm_key or (keys[0] if len(keys) == 1 else None)
-        if key not in keys:
-            raise ValueError(f"unnorm key {key!r}: the file has {keys!r} (--unnorm-key)")
+        # its chunk rows are ACTION_DIM wide (BitVLAFamily.parse): statistics
+        # of any other dimension are not this checkpoint's
+        key, _ = load_action_stats(weights / "dataset_statistics.json", args.unnorm_key,
+                                   dims=(ACTION_DIM,))
         return BitVLAFamily(key, instruction=args.command or BITVLA_INSTRUCTION,
                             horizon_s=args.horizon_s)
     if args.model == "aiotvla":
@@ -1704,6 +1729,11 @@ def build_real(args, family, weights: Path):
                              f"{model.n_bins} bins) is not OpenVLA's ({family.vocab_size}, "
                              f"{family.n_bins}): the token reading would be wrong")
     cfg = {**family.describe(), "history_gap_s": args.history_gap_s}
+    if args.model == "bitvla":
+        # BitVLAModel never passes --attn on (its remote code picks its own);
+        # the identity's attn field stays (the protocol allows eager / sdpa
+        # only, vla_link.ATTN_IMPLS), and this says it was not applied
+        cfg["attn"] = "n/a (not applied: BitVLA's remote code picks its own attention)"
     if getattr(model, "checkpoint", None) is not None:
         cfg["checkpoint"] = model.checkpoint
     if getattr(model, "norm_stats", None) is not None and hasattr(family, "stats"):

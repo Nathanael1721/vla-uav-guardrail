@@ -1198,6 +1198,12 @@ def backend_of_identity(identity: dict | None) -> tuple[str, str | None]:
         if name == "run2/epoch1" and ident.get("precision") == "nf4":
             return "aerialvla_ft_run2", "aerialvla"
         return f"aerialvla_ft:{name}", "aerialvla"
+    if head in ("cognitivedrone", "bitvla"):
+        # 2026-11-17 (ARCH-06): adapters only, no weights obtained. Any run of
+        # theirs keeps a name of its own (other_records), never the row: the
+        # only BitVLA checkpoints are LIBERO arm fine-tunes, whose flight is
+        # not follow evidence, and CognitiveDrone has published none.
+        return f"{head}:{name}", head
     if head.startswith("fake"):
         return STAND_IN, None
     return (f"unidentified:{sid}" if sid else "unidentified"), None
