@@ -242,6 +242,14 @@ C2_LOST_THE_CAR = "target_lost"
 # the censoring and the null's own table below key on.
 C2_GATE_NEVER_PASSED = "the start gate never passed: no mission"
 C2_NULL_WHY = "the hand-written follow: C2's null, not a backend"
+C2_ESTIMATOR_NULL_WHY = ("the hand-written estimator follow: C2's estimator null, not a "
+                         "backend")
+# THE ESTIMATOR NULL (added 2026-11-17, FAMILY=estimator): the lab's
+# hand-written follow WITH its target estimator on the same rail. The values
+# the launcher gives it (--want-width, --speed-max) are agx_manual_20261103's,
+# the follow_vlm.py flight on simple_flight it stands in for; shown as the
+# runs record them, never a condition of C2.
+C2_ESTIMATOR_FAMILY = "estimator"
 # A flight that would be C2 but for a start gate that timed out is CENSORED:
 # shown beside its backend's C2 flights ("gate timed out N: censored, not
 # scored, not counted toward the 3"), never scored, never dropped; the
@@ -413,11 +421,32 @@ PROTOCOL = {
                     "value a run did not record is shown as '-', never as 0",
         "nulls": ["the hand-written follow on the same rail (--pilot servo, FAMILY=servo): "
                   "the no-learning reference as flown - the perception node's FollowPilot, a "
-                  "box-width P-servo with no target estimator, no target lock and no lost end"],
+                  "box-width P-servo with no target estimator, no target lock and no lost end",
+                  "the hand-written estimator follow on the same rail (--pilot servo "
+                  "--target-estimator, FAMILY=" + C2_ESTIMATOR_FAMILY + "; added 2026-11-17, "
+                  "after the C2 flights of 16 November): the lab's own no-learning follow - "
+                  "the perception node's EstimatorFollowPilot, follow_vlm.fly()'s servo on "
+                  "the target estimate with its strict lock and re-acquisition - kept apart "
+                  "from the box-servo null, with no lost end"],
+        "estimator_null_as_flown": (
+            "The estimator null is the perception node's EstimatorFollowPilot (demo/"
+            "pas_ardupilot/perception_node.py, --pilot servo --mission follow --identity "
+            "--target-estimator): demo/subject_track.SubjectTrack's target estimator, strict "
+            "lock and Reacquirer - the same ones the C2 VLA flights fly - and follow_vlm."
+            "fly()'s two track branches on them (the servo on the estimate, with the "
+            "line-of-sight and range feed-forwards, the catch-up and the stopped-subject "
+            "floor; else the box servo at the same metric stand-off), then a coast toward "
+            "the subject's memory and the servo pilot's sweep. The launcher gives it "
+            "--want-width 0.16 and --speed-max 5, the values of agx_manual_20261103 "
+            "(follow_vlm.py on simple_flight, 0.952 within 30 m). It is NOT all of fly(): "
+            "the trail approach, the search creep and planner, FenceGuard and the slew "
+            "limiter are not ported (the Shield and ArduPilot stand there). It has no lost "
+            "end: it flies to max_s and is replayed under the VLAs' end rule as the "
+            "box-servo null is"),
         "null_as_flown": (
             "The null is the perception node's FollowPilot (demo/pas_ardupilot/"
             "perception_node.py, --pilot servo --mission follow --identity, no "
-            "--target-estimator: the node refuses one for the servo): a box-width P-servo "
+            "--target-estimator: with one the run is the estimator null): a box-width P-servo "
             "(follow_vlm.servo) at the node's defaults, want_width 0.10 and speed_max 4.0 "
             "m/s, which deploy/orin/run_pas_perception.sh does not override. It has no "
             "target estimator, no target lock (with --identity and no estimator the "
@@ -425,7 +454,8 @@ PROTOCOL = {
             "forward 0, a yaw sweep - and flies on to max_s. It is NOT the follow_vlm "
             "estimator follow (want_width 0.16, speed_max 5.0, a target estimator, "
             "catch-up and a search planner, e.g. agx_manual_20261103 on simple_flight) "
-            "behind the older hand-written numbers of 0.95-0.98 within 30 m"),
+            "behind the older hand-written numbers of 0.95-0.98 within 30 m: that "
+            "follow's stand-in on this rail is the estimator null"),
         "null_under_the_vla_end_rule": (
             "the null has no lost end, so beside its share as flown each null flight is "
             "replayed under the VLAs' own end rule from its own files: a tick's wall time "
@@ -1108,7 +1138,11 @@ def check_claims(checks=None, root: Path = ROOT) -> list[dict]:
 # Which row a served model belongs to
 # --------------------------------------------------------------------------- #
 HAND_WRITTEN = "hand_written_follow"      # C2's null; not a table row
+# C2's estimator null (--pilot servo --target-estimator); not a table row
+HAND_WRITTEN_ESTIMATOR = "hand_written_estimator_follow"
 STAND_IN = "scripted_stand_in"            # a scripted server, never a VLA
+# C2's nulls, each with the words c2_exclusions writes for it.
+C2_NULLS = {HAND_WRITTEN: C2_NULL_WHY, HAND_WRITTEN_ESTIMATOR: C2_ESTIMATOR_NULL_WHY}
 
 
 def backend_of_identity(identity: dict | None) -> tuple[str, str | None]:
@@ -1142,14 +1176,20 @@ def backend_of_identity(identity: dict | None) -> tuple[str, str | None]:
     return (f"unidentified:{sid}" if sid else "unidentified"), None
 
 
-def backend_of_pilot(pilot: dict | None) -> tuple[str, str | None]:
+def backend_of_pilot(pilot: dict | None, params: dict | None = None) -> tuple[str, str | None]:
     """(row, family) of a run's pilot (metrics.json `pilot`): its server's
-    identity when a VLA flew, the hand-written controller otherwise."""
+    identity when a VLA flew, the hand-written controller otherwise - the
+    estimator follow when the run's params record the servo pilot with the
+    target estimator on (`params`: metrics.json params), else the box
+    servo."""
     pilot = pilot if isinstance(pilot, dict) else {}
     if pilot.get("kind") == "vla":
         return backend_of_identity(pilot.get("server_identity"))
     if pilot.get("kind") == "stub":
         return STAND_IN, None
+    params = params if isinstance(params, dict) else {}
+    if params.get("pilot") == "servo" and params.get("target_estimator") is True:
+        return HAND_WRITTEN_ESTIMATOR, None
     return HAND_WRITTEN, None
 
 
@@ -1388,8 +1428,8 @@ def c2_exclusions(f: dict, paraphrases: dict[str, str] | None = None) -> list[st
     if f.get("summary_only"):
         return ["only its committed summary is on this host (no run folder): the summary "
                 "holds no within-30 m share and not the options C2 fixes"]
-    if f.get("backend") == HAND_WRITTEN:
-        why.append(C2_NULL_WHY)
+    if f.get("backend") in C2_NULLS:
+        why.append(C2_NULLS[f["backend"]])
     if f.get("topology") != "hil":
         why.append(f"topology {f.get('topology')!r}, not hil")
     if f.get("kpi_grade") is not True:
@@ -1439,10 +1479,16 @@ def c2_exclusions(f: dict, paraphrases: dict[str, str] | None = None) -> list[st
                    f"follow-car-citylife-v<version>")
     if f.get("backend") == HAND_WRITTEN:
         # The null flies C2's --identity (its start gate and its boxes); the
-        # VLA-only options below - --target-estimator, which the node refuses
-        # for the servo, and the feed - are not its.
+        # VLA-only options below - --target-estimator, which the box servo
+        # does not fly (with it the run is the estimator null), and the feed -
+        # are not its.
         if not f.get("identity"):
             why.append("flown without --identity")
+    elif f.get("backend") == HAND_WRITTEN_ESTIMATOR:
+        # The estimator null flies C2's --identity and --target-estimator
+        # (the same SubjectTrack as the VLA flights'); the feed is a VLA's.
+        if not (f.get("identity") and f.get("target_estimator")):
+            why.append("flown without --identity and --target-estimator")
     else:
         if not (f.get("identity") and f.get("target_estimator")):
             why.append("flown without --identity and --target-estimator")
@@ -1470,7 +1516,7 @@ def c2_censored_by_gate(f: dict, paraphrases: dict[str, str] | None = None) -> b
     null is never censored: the null has no C2 count to stand beside."""
     if f.get("summary_only") or f.get("gate_outcome") != C2_GATE_TIMEOUT or f.get("ticks"):
         return False
-    if f.get("backend") == HAND_WRITTEN:
+    if f.get("backend") in C2_NULLS:          # a null has no C2 count either
         return False
     if f.get("grant_topology") != "hil":
         return False
@@ -1624,7 +1670,7 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
         return None
     kpi = _read_json(Path(run_dir) / "kpi.json") or {}
     pilot = m.get("pilot") or {}
-    backend, family = backend_of_pilot(pilot)
+    backend, family = backend_of_pilot(pilot, params)
     summary = pilot.get("summary") or {}
     obs = m.get("vla_observation") or {}
     ticks = int(m.get("ticks") or 0)
@@ -1724,9 +1770,10 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
     f["protocol"] = "C2" if not f["not_c2"] else "not C2"
     f["c2_censored"] = c2_censored_by_gate(f, paraphrases)
     # The replay under the VLAs' end rule (PROTOCOL C2 null_under_the_vla_end_rule):
-    # of the null's flights flown as C2, and of the C2 VLA flights it is checked on.
+    # of the nulls' flights flown as C2, and of the C2 VLA flights it is checked on.
     f["end_rule_replay"] = (replay_vla_end_rule(run_dir)
-                            if f["not_c2"] in ([], [C2_NULL_WHY]) else None)
+                            if f["not_c2"] in ([], *([w] for w in C2_NULLS.values()))
+                            else None)
     return f
 
 
@@ -3249,6 +3296,8 @@ def _other_label(backend) -> str:
     b = str(backend)
     if b == HAND_WRITTEN:
         return "Hand-written follow (no VLA)"
+    if b == HAND_WRITTEN_ESTIMATOR:
+        return "Hand-written estimator follow (no VLA)"
     if b == STAND_IN:
         return "Scripted stand-in (no VLA)"
     if b.startswith("aerialvla_ft:"):
@@ -3256,12 +3305,14 @@ def _other_label(backend) -> str:
     return f"{b} (not a row)"
 
 
-def _null_as_c2(f: dict) -> bool:
-    """A flight of C2's null that meets every condition of C2 that applies to
-    the null (c2_exclusions: --identity on; not the VLA-only --target-
-    estimator and feed): shown in the null's own table, never in a
-    backend's numbers."""
-    return f.get("backend") == HAND_WRITTEN and f.get("not_c2") == [C2_NULL_WHY]
+def _null_as_c2(f: dict, null: str | None = None) -> bool:
+    """A flight of one of C2's nulls (`null`: that one; None: either) that
+    meets every condition of C2 that applies to it (c2_exclusions: --identity
+    on, and for the estimator null --target-estimator too; never the VLA-only
+    feed): shown in its null's own table, never in a backend's numbers."""
+    b = f.get("backend")
+    return (b in C2_NULLS and (null is None or b == null)
+            and f.get("not_c2") == [C2_NULLS[b]])
 
 
 def _said(vals, fmt: str = "g", none: str = "not recorded") -> str:
@@ -3360,7 +3411,7 @@ def render_c2_censored(t: dict, flights: list[dict]) -> list[str]:
     is not listed here as counted beside anything - it is in the list of
     flights that are not C2, as every flight of such a backend is."""
     cens = sorted((f for f in flights if f.get("c2_censored") and f.get("_in_row")
-                   and f.get("backend") != HAND_WRITTEN),
+                   and f.get("backend") not in C2_NULLS),
                   key=lambda f: (f["_label"], f["tag"]))
     if not cens:
         return []
@@ -3401,22 +3452,35 @@ def render_c2_censored(t: dict, flights: list[dict]) -> list[str]:
     return out
 
 
-def render_c2_null(t: dict, flights: list[dict], c2_vla: list[dict]) -> list[str]:
-    """C2's null as flown (PROTOCOL C2 null_as_flown): its facts from the
+def render_c2_null(t: dict, flights: list[dict], c2_vla: list[dict],
+                   null: str = HAND_WRITTEN) -> list[str]:
+    """One of C2's nulls as flown (PROTOCOL C2 null_as_flown, or
+    estimator_null_as_flown for HAND_WRITTEN_ESTIMATOR): its facts from the
     runs' own records, its flights flown as C2 in a table of their own (with
     their share under the VLAs' end rule when the replay checks out), and
-    where the backends' C2 spans lie against it. Never in a backend's row."""
+    where the backends' C2 spans lie against it. Never in a backend's row,
+    and never in the other null's."""
     c2p = t["protocol"]["C2_follow_closed_loop"]
-    nulls = [f for f in flights if f.get("backend") == HAND_WRITTEN]
-    head = f"C2's null ({c2p['nulls'][0]})"
+    est = null == HAND_WRITTEN_ESTIMATOR
+    nulls = [f for f in flights if f.get("backend") == null]
+    head = (f"C2's estimator null ({c2p['nulls'][1]})" if est
+            else f"C2's null ({c2p['nulls'][0]})")
     if not nulls:
         return ["", f"{head}: no flight of it on disk."]
-    asc2 = sorted((f for f in nulls if _null_as_c2(f)), key=lambda f: f["tag"])
+    asc2 = sorted((f for f in nulls if _null_as_c2(f, null)), key=lambda f: f["tag"])
+    # A table built before the estimator null (its protocol lists one C2
+    # null) renders as it was built: the node then refused the estimator for
+    # the servo.
+    applies = ("--identity and --target-estimator among them; the family's feed, a VLA's, "
+               "does not" if est else
+               "--identity among them; the VLA-only ones - --target-estimator, which the "
+               "box servo does not fly (with it a run is the estimator null), and the "
+               "family's feed - do not" if len(c2p["nulls"]) > 1 else
+               "--identity among them; the VLA-only ones - --target-estimator, which the "
+               "node refuses for the servo, and the family's feed - do not")
     out = ["", f"{head}: {len(nulls)} hil follow{'s' if len(nulls) != 1 else ''} of it on "
                f"disk, {len(asc2)} flown as C2 (every condition of C2 that applies to the "
-               f"null, --identity among them; the VLA-only ones - --target-estimator, which "
-               f"the node refuses for the servo, and the family's feed - do not), listed "
-               f"here and in no backend's numbers"
+               f"null, {applies}), listed here and in no backend's numbers"
                + ("; the rest are in the list of flights that are not C2 below"
                   if len(asc2) < len(nulls) else "") + "."]
     if not asc2:
@@ -3435,7 +3499,7 @@ def render_c2_null(t: dict, flights: list[dict], c2_vla: list[dict]) -> list[str
             + _said([f.get("lock") for f in asc2]) + " (detector_selection.lock); ended "
             + ", ".join(f"{n} {e}" for e, n in sorted(ends.items())) + " after "
             + _said([f.get("mission_s") for f in asc2], ".0f") + " s (mission_s). "
-            + c2p["null_as_flown"] + "."]
+            + c2p["estimator_null_as_flown" if est else "null_as_flown"] + "."]
     check = end_rule_check(c2_vla)
     rule_col = check["ok"]
     out += ["", "| Flight | Commit | Ticks | Ended | Within 30 m, as flown "
@@ -3514,7 +3578,9 @@ def render_c2(t: dict) -> list[str]:
         out.append("No C2 flight is on disk.")
     out += render_c2_censored(t, flights)
     out += render_c2_null(t, flights, yes)
-    # the null's flights flown as C2 are in its own table above, not below
+    if len(c2p["nulls"]) > 1:             # a protocol with the estimator null
+        out += render_c2_null(t, flights, yes, HAND_WRITTEN_ESTIMATOR)
+    # each null's flights flown as C2 are in its own table above, not below
     no = [f for f in no if not _null_as_c2(f)]
     owed = [f"{r['label']}: {r['cells']['closed_loop_hil_c2']}" for r in t["rows"]
             if r.get("family") and not r["cells"]["closed_loop_hil_c2"].startswith("C2,")]
@@ -3721,7 +3787,8 @@ def render_markdown(t: dict) -> str:
             f"{t['protocol']['C1_closed_loop']['assist']} Nulls: "
             + "; ".join(t["protocol"]["C1_closed_loop"]["nulls"]) + ".",
             f"- **C2 (closed-loop follow, added {c2p['added']}):** {c2p['scenario']}; "
-            f"{c2p['rail']}. Reported: " + "; ".join(c2p["outputs"]) + ". Null: "
+            f"{c2p['rail']}. Reported: " + "; ".join(c2p["outputs"])
+            + (". Null: " if len(c2p["nulls"]) == 1 else ". Nulls: ")
             + "; ".join(c2p["nulls"]) + f". {c2p['added_after_the_choice']}.",
             f"- **Changes from vla-backend-protocol/1:** {t['protocol']['changes_from_1']}.",
             ""]

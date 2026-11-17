@@ -1280,7 +1280,12 @@ def test_c2_shows_its_null_as_flown_in_a_table_of_its_own_and_in_no_backend():
     assert said in sec
     assert ("4 hil follows of it on disk, 3 flown as C2 (every condition of C2 that applies "
             "to the null, --identity among them; the VLA-only ones - --target-estimator, "
-            "which the node refuses for the servo, and the family's feed - do not)") in sec, sec
+            "which the box servo does not fly (with it a run is the estimator null), and "
+            "the family's feed - do not)") in sec, sec
+    # the estimator null (2026-11-17) is a section of its own, with nothing on disk here
+    assert "C2's estimator null (the hand-written estimator follow" in sec
+    assert sec.split("C2's estimator null (")[1].split("\n")[0].endswith(
+        "no flight of it on disk."), sec
     # a value the params do not record is said so, never read as "off"
     assert V._said([None, None]) == "not recorded" and V._said([False]) == "off"
     # its own table: tag, commit, ticks, ended, within 30 m as flown
@@ -1431,6 +1436,124 @@ def test_the_null_is_replayed_under_the_vlas_end_rule_only_when_the_replay_check
     # the 'full' VLA flight (a box all along) ends its log on a fresh box
     assert rn["final_gap_s"] >= 90.0 and rn["final_gap_s"] == rn["max_gap_s"], rn
     assert V.replay_vla_end_rule(full)["final_gap_s"] < 1.5
+
+
+def _estimator_null_run(root: Path, tag: str, **kw) -> Path:
+    """A flight of C2's estimator null as FAMILY=estimator flies it
+    (2026-11-17): --pilot servo with --identity and --target-estimator, the
+    launcher's --want-width 0.16 and --speed-max 5, the strict lock, no VLA
+    mission block, to max_s."""
+    d = _null_run(root, tag, **kw)
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["params"].update(want_width=0.16, speed_max=5.0, target_estimator=True)
+    m["detector_selection"] = {"lock": {"kind": "TargetLock", "strict": True,
+                                        "gate_frac": 0.12}}
+    m["estimator_follow"] = {"on": True, "ticks_by_law": {"estimate": 3900, "box": 200,
+                                                          "memory": 50, "sweep": 48}}
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    return d
+
+
+def test_c2_keeps_the_estimator_null_apart_from_the_servo_null_and_from_every_backend():
+    """FAMILY=estimator (2026-11-17): a servo-pilot run whose params record
+    the target estimator on is C2's estimator null - its own backend key,
+    label, exclusion words, section and table, never in the box-servo null's
+    nor in a backend's; it must fly --identity AND --target-estimator; it is
+    replayed under the VLAs' end rule as the servo null is, and never
+    censored."""
+    # who it is: by the run's own params, the servo with the estimator on
+    assert V.backend_of_pilot(None, {"pilot": "servo", "target_estimator": True}) == \
+        (V.HAND_WRITTEN_ESTIMATOR, None)
+    for params in (None, {}, {"pilot": "servo", "target_estimator": False},
+                   {"pilot": "servo"}, {"pilot": "vla", "target_estimator": True}):
+        assert V.backend_of_pilot(None, params) == (V.HAND_WRITTEN, None), params
+    assert V.backend_of_pilot({"kind": "vla", "server_identity": {"id": "aiotvla/v10b@x"}},
+                              {"pilot": "vla", "target_estimator": True})[0] == "aiotvla_v10b"
+    c2p = V.PROTOCOL["C2_follow_closed_loop"]
+    assert len(c2p["nulls"]) == 2 and "FAMILY=estimator" in c2p["nulls"][1]
+    assert "--target-estimator" in c2p["nulls"][1] and "2026-11-17" in c2p["nulls"][1]
+    said = c2p["estimator_null_as_flown"]
+    for needed in ("EstimatorFollowPilot", "SubjectTrack", "servo on the estimate",
+                   "--want-width 0.16", "--speed-max 5", "agx_manual_20261103", "NOT all of",
+                   "no lost end"):
+        assert needed in said, needed
+    out = _tmp()
+    _pas_run(out, "pas_hil_c2_01")
+    _pas_run(out, "pas_hil_c2_02", w30=0.2694)
+    _pas_run(out, "pas_hil_c2_03", w30=0.211)
+    for i, w in enumerate((0.1051, 0.0653, 0.1108), 1):
+        _null_run(out, f"pas_hil_servo_c2_0{i}", w30=w)
+    for i, w in enumerate((0.61, 0.72, 0.55), 1):
+        _estimator_null_run(out, f"pas_hil_estimator_c2_0{i}", w30=w)
+    # one flown without --identity: not C2 for that, listed with the rest
+    d = _estimator_null_run(out, "pas_hil_estimator_c2_04", w30=0.9)
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["params"]["identity"] = False
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    _estimator_null_run(out, "pas_hil_estimator_shake_01", ticks=0, reached=False,
+                        kpi_grade=False, topology="projectairsim-ardupilot-mavros")
+    t = _build(demo_out=out)
+    est = {f["tag"]: f for f in t["other_records"]
+           if f.get("backend") == V.HAND_WRITTEN_ESTIMATOR}
+    servo = {f["tag"]: f for f in t["other_records"] if f.get("backend") == V.HAND_WRITTEN}
+    assert set(est) == {"pas_hil_estimator_c2_01", "pas_hil_estimator_c2_02",
+                        "pas_hil_estimator_c2_03", "pas_hil_estimator_c2_04",
+                        "pas_hil_estimator_shake_01"}, sorted(est)
+    assert set(servo) == {"pas_hil_servo_c2_01", "pas_hil_servo_c2_02",
+                          "pas_hil_servo_c2_03"}, sorted(servo)
+    assert est["pas_hil_estimator_c2_02"]["not_c2"] == [V.C2_ESTIMATOR_NULL_WHY]
+    assert est["pas_hil_estimator_c2_04"]["not_c2"] == [
+        V.C2_ESTIMATOR_NULL_WHY, "flown without --identity and --target-estimator"]
+    # never a backend's: no row holds it, the AIoT-VLA cell is as before
+    assert not any(f.get("backend") in V.C2_NULLS for r in t["rows"] for f in r["records"])
+    assert _row(t, "aiotvla_v10b")["cells"]["closed_loop_hil_c2"].startswith(
+        "C2, 3 flights (3 max_s reached): within 30 m 0.211-0.352")
+    # never censored, as the servo null is not
+    timed = dict(est["pas_hil_estimator_c2_02"], ticks=0, start_gate_reached=False,
+                 gate_outcome=V.C2_GATE_TIMEOUT, grant_topology="hil", kpi_grade=True)
+    assert not V.c2_censored_by_gate(timed)
+    md = V.render_markdown(t)
+    sec = md.split("## C2 on hil")[1].split("## C1 on hil")[0]
+    servo_sec = sec.split("C2's null (")[1].split("C2's estimator null (")[0]
+    est_sec = sec.split("C2's estimator null (")[1].split("hil follow flights that are not C2")[0]
+    assert ("5 hil follows of it on disk, 3 flown as C2 (every condition of C2 that applies "
+            "to the null, --identity and --target-estimator among them; the family's feed, "
+            "a VLA's, does not)") in est_sec, est_sec
+    assert ("pilot servo (params.pilot); want_width 0.16 and speed_max 5 m/s (params); "
+            "target estimator on (params.target_estimator); --identity on (params.identity)"
+            ) in est_sec, est_sec
+    assert said in est_sec
+    for i in (1, 2, 3):
+        assert f"| pas_hil_estimator_c2_0{i} |" in est_sec, est_sec
+        assert f"| pas_hil_estimator_c2_0{i} |" not in servo_sec
+        assert f"| pas_hil_servo_c2_0{i} |" in servo_sec and \
+            f"| pas_hil_servo_c2_0{i} |" not in est_sec
+    assert ("Within 30 m as flown, the null's 0.550-0.720 (median 0.610) against the "
+            "backends' C2 flights (each under its own end rule): wholly below it: "
+            "AIoT-VLA v10b (0.211-0.352).") in est_sec, est_sec
+    not_c2 = sec.split("hil follow flights that are not C2")[1]
+    assert "| pas_hil_estimator_c2_04 | Hand-written estimator follow (no VLA) |" in not_c2
+    assert "| pas_hil_estimator_shake_01 |" in not_c2
+    assert "| pas_hil_estimator_c2_01 |" not in not_c2
+    assert "Nulls: " in md and "FAMILY=estimator" in md
+    # replayed under the VLAs' end rule, from its own files, as the servo null
+    d1 = out / "pas_hil_estimator_c2_01"
+    _follow_logs(d1, seconds=60.0, box_until_s=1e9, range_m=lambda t: 20.0)
+    f1 = V.hil_follow_flight(d1)
+    assert f1["backend"] == V.HAND_WRITTEN_ESTIMATOR and f1["end_rule_replay"] is not None
+    assert f1["end_rule_replay"]["ends"] is False
+
+
+def test_a_table_built_before_the_estimator_null_renders_as_it_was_built():
+    """The committed table's JSON carries the protocol it was built under: one
+    C2 null. Rendered again it reads as it did (one 'Null:', the servo null's
+    words of then, no estimator section), so the committed md stays its JSON
+    re-rendered until the table is rebuilt."""
+    t = json.loads(json.dumps(_build()))       # a copy: the protocol is the module's
+    c2p = t["protocol"]["C2_follow_closed_loop"]
+    c2p["nulls"] = c2p["nulls"][:1]
+    md = V.render_markdown(t)
+    assert "C2's estimator null" not in md and ". Null: the hand-written follow" in md, md
 
 
 def test_a_flight_that_would_be_c2_but_for_a_timed_out_gate_is_censored_not_dropped():

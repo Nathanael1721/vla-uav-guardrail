@@ -473,10 +473,15 @@ def test_the_estimator_is_refused_where_it_cannot_run_as_follow_vlm_runs_it():
     a = _args(*VLA_FOLLOW, "--identity", "--target-estimator")
     pn.check_args(a)
     assert a.target_estimator and a.mission == "follow"
+    # The servo pilot's follow takes it too since 2026-11-17 (the estimator
+    # follow, tests/test_pas_estimator_follow.py), on the same terms.
+    s = _args("--identity", "--target-estimator")
+    pn.check_args(s)
+    assert s.pilot == "servo" and s.mission == "follow" and s.target_estimator
     for extra, word in ((VLA_FOLLOW + ("--target-estimator",), "--identity"),
-                        (("--identity", "--target-estimator"), "VLA follow"),
+                        (("--target-estimator",), "--identity"),
                         (("--pilot", "vla", "--mission", "approach", "--vla-server",
-                          "127.0.0.1:9", "--identity", "--target-estimator"), "VLA follow"),
+                          "127.0.0.1:9", "--identity", "--target-estimator"), "follow"),
                         (VLA_FOLLOW + ("--identity", "--target-estimator", "--no-lock-target"),
                          "--no-lock-target")):
         try:
