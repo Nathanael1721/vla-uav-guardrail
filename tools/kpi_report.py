@@ -3857,10 +3857,24 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
          f"`{man.get('code_revision')}`. Reproduce with:", "",
          "```", str(doc.get("_command") or "python experiments/sweep_scenarios.py"),
          "```", ""]
-    if doc.get("_not_kpi_grade"):
+    if doc.get("_not_kpi_grade") and scope.get("grant_profile_kpi_bearing") is False:
+        # The broad sweep (2026-11-17): its grant row is outside the KPIs on
+        # any rail, so "reproduces their scope, not their rail" would mislead.
+        L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. This profile's row in the "
+              f"grant's schedule is not KPI-bearing on any rail: the broad sweep is "
+              f"tracked for coverage, and its results are not part of the final KPI "
+              f"numbers.", ""]
+    elif doc.get("_not_kpi_grade"):
         L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. The grant's smoke and "
               f"nightly rows ask for sim_speedup 1.0 in the hil topology; this run "
               f"reproduces their scope, not their rail.", ""]
+    if doc.get("_resume"):
+        r = doc["_resume"]
+        L += [f"Merged from per-episode checkpoints (`{r.get('checkpoints')}`): "
+              f"{r.get('episodes_replayed')} replayed, "
+              f"{r.get('episodes_flown_by_this_process')} flown by the merging run; "
+              f"{r.get('episode_wall_s_total')} s of episode time "
+              f"({r.get('s_per_episode')} s per episode).", ""]
     add = max_s_add(scope.get("hil") if isinstance(scope.get("hil"), dict) else None)
     if add:
         L += [f"**LENGTHENED campaign:** every mission flew {add:g} s past the rail's cap "
