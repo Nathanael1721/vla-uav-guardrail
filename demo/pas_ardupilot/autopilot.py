@@ -579,10 +579,24 @@ class PymavlinkLink:
             raise RuntimeError(f"take-off did not reach {alt_m} m "
                                f"(rel_alt {self.snap.rel_alt})")
 
-    def send(self, a: Action4D, raw_body: tuple | None = None) -> dict:
+    def send(self, a: Action4D, raw_body: tuple | None = None,
+             body: tuple | None = None) -> dict:
         """Send the Shield's emitted action. `raw_body` is accepted for parity
         with MavrosLink (which publishes a record copy on /pas/raw_action_4d);
-        MAVLink has no place for it, and the flight log records it instead."""
+        MAVLink has no place for it, and the flight log records it instead.
+
+        `body` (--action-frame body, 2026-11-17, WP3-04 / ARCH-04): the
+        emitted action in the BODY frame (forward, right, up, yaw rate rad/s),
+        the Shield's projection's output. The link then turns the body
+        action into local NED here, AFTER the projection, at the heading it
+        last read (`body_to_world`, then `ned_setpoint`); `a` is the record
+        copy only. This is one more body -> NED crossing beside the Shield's
+        own from_body / to_body round trip (whose repairs still act in the
+        world frame), not the grant's single adapter boundary
+        (guardrail/frames.py lists every crossing). None: `a` is sent as it
+        always was."""
+        if body is not None:
+            a = body_to_world(*body, self.snap.yaw or 0.0)
         f = ned_setpoint(a)
         self.m.mav.set_position_target_local_ned_send(
             int((self.clock() * 1000) % 4294967295), self.target_system,

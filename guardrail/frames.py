@@ -50,7 +50,13 @@ updated.) As of that date:
     `from_body` at the heading of the same pose, goes through
     `Shield.filter()`, and the emitted action crosses back with `to_body` at
     that heading, to be published on /shield/setpoint. Until 2026-11-04 the
-    node made those two crossings itself around `Shield.filter()`.
+    node made those two crossings itself around `Shield.filter()`. With
+    `arc=True` (2026-11-17, opt-in) its forecast also turns the action's
+    velocity with the heading at the yaw rate, judged beside the straight
+    line (`Shield._predict`, "the arc only adds"), so the world-frame action
+    it judges is the body command's first instant only. The repairs still
+    act in the world frame there: this is not the grant's single
+    body -> local-NED boundary.
   * `guardrail/hold_flight.py` (`body_command`, 2026-11-07): `to_body` of
     the hold's own leg - the GUIDED transit to a moved hold point and the
     Loiter held in GUIDED, a command the companion computes in world frame,
@@ -72,8 +78,21 @@ updated.) As of that date:
     MAVLink setpoint on the way out.
   * `demo/pas_ardupilot/perception_node.py` (`VLAPilot.step`, --pilot vla,
     2026-10-23): `to_body` of the step tracker's world-frame action, for the
-    row's `body` and MAVROS's record copy only; the action itself enters the
-    Shield in world frame, never rotated.
+    row's `body` and MAVROS's record copy only; by default the action itself
+    enters the Shield in world frame, never rotated. With --action-frame
+    body (2026-11-17, opt-in) the BODY action enters the Shield
+    (`Shield.filter_body`, the arc on) and the link is sent the emitted body
+    action (`to_body` of a stop or a stop's answer at the tick's heading).
+  * `demo/pas_ardupilot/autopilot.py` `PymavlinkLink.send(body=...)` and
+    `demo/pas_ardupilot/mavros_link.py` `MavrosLink.send(body=...)`
+    (2026-11-17): the emitted body action turned into local NED after the
+    projection, `from_body` at the link's heading (the adapter route
+    publishes it as it is, for `sitl/mavlink_adapter_node.py`). These are
+    further crossings beside the Shield's own from_body / to_body round
+    trip, not the grant's single adapter boundary.
+  * `experiments/sweep_scenarios.py` (run_episode `action_frame="body"`,
+    2026-11-17, opt-in): the headless harness hands the Shield `to_body` of
+    the pilot's action and flies `from_body` of what it emits.
   * `demo/pas_ardupilot/mavros_link.py` (`--setpoint-via adapter`,
     2026-11-15): `to_body` of the Shield's emitted world-frame action, once,
     at the pose's heading, published on /shield/setpoint for
