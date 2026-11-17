@@ -91,7 +91,7 @@ VLA model".
    frame, `vlaguard_common`), then fold our Compiler + harness into the trunk
    as contributions.
 
-## Solo + agentic-AI + simulation
+## Simulation-first scope
 Most of the deliverable is software, KPIs and a report, and can be produced in
 simulation. Two exceptions:
 - **The final KPI report needs the *hil* topology** (Architecture constraints
@@ -101,7 +101,7 @@ simulation. Two exceptions:
 - **The *flight* topology is named for the final demos.** The grant says all
   three topologies are first-class.
 
-The grant staffs the project with 1 PI + 4 Master students (Grant overview
-p.1); one developer is doing it. Whether the desktop rail may stand in for hil,
-and whether the flight topology may be waived, are decisions for the PI, and
-they have not been asked yet.
+The grant staffs the project with 1 PI + 4 Master students, one team (Grant
+overview p.1). Whether the desktop rail may stand in for hil, and whether the
+flight topology may be waived, are decisions for the PI (the current state is
+in docs/FINAL-REPORT.md, sections 7 and 9).

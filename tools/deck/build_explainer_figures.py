@@ -812,7 +812,7 @@ def arch_shield() -> Fig:
         "G1 a repair within theta: 2.0 m lateral, 0.5 m vertical;  G2 N = 3 onsets in T = 5 s",
         "G3 a repair over theta;  G4 N new onsets in Loiter;  G5 30 s in Loiter;  G6 RTL fails",
         "G7, G8 back to Normal after T_recover = 2 s clear;  X6, X7 a position illegal or worse",
-        "Loiter is flown as ArduCopter BRAKE: LOITER sinks with no pilot on the throttle",
+        "Loiter is held in GUIDED on the plan's point by the companion",
     ]
     for i, s in enumerate(lines):
         f.text(60, sy + 134 + i * 26, s, size=SMALL, fill=SUB, owner=fsm["id"], kind="box")
@@ -825,8 +825,8 @@ def arch_shield() -> Fig:
     f.name_in("guardrail/fsm.py", "N-in-T counts violation ONSETS by default",
               "N-in-T persists (N new onsets since entry)", "operator-defined timeout",
               "RTL fails (battery / blocked path)")
-    f.name_in("sitl/mavlink_adapter_node.py", 'DEFAULT_HOLD_MODE = "BRAKE"',
-              "LOITER sinks with no pilot on the throttle")
+    f.name_in("guardrail/hold_flight.py", "A Loiter held in GUIDED",
+              "one held in GUIDED never hands over")
 
     ex = 40 + fw_ + 40
     f.box(ex, fy, 1560 - ex, fh, "Emitted action + audit",

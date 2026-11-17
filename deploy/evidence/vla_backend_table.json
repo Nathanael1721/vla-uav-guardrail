@@ -105,7 +105,7 @@
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-17T13:46:58Z",
+ "created_utc": "2026-11-17T23:14:29Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -480,7 +480,7 @@
      "source": {
       "file": "models/vla_policy_v2.metrics.json",
       "sha256": "91442029f993ac3e7128485494ebcd4f9a65a1f9b3da3187d0b4c0bd16d33810",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-09"
      }
     }
    ],
@@ -935,7 +935,7 @@
      "source": {
       "file": "deploy/evidence/hil/vla_bf16_check.json",
       "sha256": "5b9ab4aa66b30d325709a90a62ea4a8d1e575b005aa7c5c146133a7111c21cce",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-03"
      }
     }
    ],
@@ -1450,7 +1450,7 @@
      "source": {
       "file": "training/eval_base_deploy.json",
       "sha256": "10738bd6a7170310720b2df9a8b22e1804d4e9d5d840f66a7fdd0adf0360e374",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-17"
      }
     },
     {
@@ -1474,7 +1474,7 @@
      "source": {
       "file": "training/eval_baseline.json",
       "sha256": "3365b7e9cf7d67ce9a60c5f2c5fefba76177bad47e6a49966bdbcd1df7a4f7da",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-17"
      }
     }
    ],
@@ -1579,7 +1579,7 @@
      "source": {
       "file": "training/eval_ft2_deploy.json",
       "sha256": "024c26d0bcbd3a38aea5533f1899333b10914f76c9900210b89135fa638dca38",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-17"
      }
     },
     {
@@ -1603,7 +1603,7 @@
      "source": {
       "file": "training/eval_ft2_e1.json",
       "sha256": "c04c142da9be1ff2a31cb183552212bcbd9856fcc976b8f9c427296f68ab2a68",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-17"
      }
     },
     {
@@ -1627,7 +1627,7 @@
      "source": {
       "file": "training/eval_ft2_yg04.json",
       "sha256": "61abe931ac79f610bef7cbd20bf223e8445b953b511db42dba07ba9531ec6c64",
-      "file_date": "2026-11-17"
+      "file_date": "2026-07-17"
      }
     }
    ],
@@ -1709,7 +1709,7 @@
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json",
       "sha256": "9e9c616bb5c365fba8baed6907b1ba788dddd087dc29d4a6cd488c3784afe587",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-03"
      }
     },
     {
@@ -1746,7 +1746,7 @@
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json",
       "sha256": "97265fad42709b293185edf4797d55e3db0aafb7b81b1a0717f431a495105cc1",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-03"
      }
     },
     {
@@ -2213,7 +2213,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-17"
+      "file_date": "2026-10-28"
      }
     },
     {
@@ -2399,7 +2399,7 @@
      "source": {
       "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json",
       "sha256": "117157b7232894c90a2b905190f403bfa6b012a1183573bd55416d56dbbc15b8",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-06"
      }
     },
     {
@@ -5999,7 +5999,7 @@
      "source": {
       "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json",
       "sha256": "547f86644a7fe97eb1cd1c2cc9f4950e69c2a7713b6cd380137f6653f5c42a85",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-16"
      }
     },
     {
@@ -6460,7 +6460,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-17"
+      "file_date": "2026-10-28"
      }
     },
     {
@@ -6601,7 +6601,7 @@
      "source": {
       "file": "deploy/evidence/hil/racevla_7b_bench_agx.json",
       "sha256": "a3076dee1c7d79ab253f4d360143d990433ee6623bff3d58989c699ca38d8615",
-      "file_date": "2026-11-17"
+      "file_date": "2026-11-16"
      }
     },
     {
@@ -7355,7 +7355,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-17"
+      "file_date": "2026-10-28"
      }
     },
     {
@@ -7498,7 +7498,7 @@
    "source": {
     "file": "training/eval_ft3_deploy.json",
     "sha256": "4865cdcd105690aa8576661855fe8ff484e0f343b3fc643e872728ff6527e5b3",
-    "file_date": "2026-11-17"
+    "file_date": "2026-07-17"
    }
   },
   {
@@ -7522,7 +7522,7 @@
    "source": {
     "file": "training/eval_ft_e0.json",
     "sha256": "d4e0026630eb12ec68df9bea5f7bf3276e76e8cb8a7cb57592793af6b19c8077",
-    "file_date": "2026-11-17"
+    "file_date": "2026-07-17"
    }
   },
   {
@@ -7546,7 +7546,7 @@
    "source": {
     "file": "training/eval_ft_e1.json",
     "sha256": "64e25a06bcb6cf9505b3accba049231ba66e05bea724fe2f40fb406c7d1a97ad",
-    "file_date": "2026-11-17"
+    "file_date": "2026-07-17"
    }
   },
   {
@@ -7984,7 +7984,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -8042,7 +8042,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -8111,7 +8111,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -8169,7 +8169,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -8216,7 +8216,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -8263,7 +8263,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-17"
+    "file_date": "2026-10-28"
    }
   },
   {
@@ -9200,7 +9200,20 @@
   "int8_note": "the precision the grant's candidate gate G3 names. One per-layer figure exists, on the Orin Nano (CHANGELOG 2026-10-28 (night): one 2048x6144 layer, int8 weight-only 7.7 ms against bf16 9.9 ms); the whole model has not been timed in int8 anywhere",
   "decision": "not recorded by this tool"
  },
- "default_backend": null,
+ "default_backend": {
+  "backend": "aiotvla_v10b",
+  "label": "AIoT-VLA v10b (the lab's own: frozen OWL-ViT + a trained head)",
+  "scope": "the follow task",
+  "date": "2026-11-18",
+  "named_by": "the lab",
+  "recorded_with": "python tools/vla_backend_table.py table --default",
+  "set_newest_measurement": "2026-11-17",
+  "protocol_date": "2026-11-16",
+  "rate_orin": "not R1 - own inputs (aiot_frames), round trip through its server: p50 39.6 ms (25.3 Hz), p95 41.7 ms, n=300; the model alone p50 32.6 ms, p95 33.9 ms [deploy/evidence/hil/aiotvla_v10b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model aiotvla)",
+  "closed_loop_hil_c1": "cannot fly C1: a follow-only model. Its input is a camera frame and object words, the request's direction phrase is ignored (recorded under native.ignored), and it is given no goal coordinate. Its closed-loop test is C2",
+  "closed_loop_hil_c2": "C2, 3 flights (2 max_s reached, 1 target_lost): within 30 m 0.211-0.352 (median 0.269); decisions/s over the mission 7.45-10.9 (median 10.6); interventions per 100 ticks 4.13-7.91 (median 6.77); P0 escapes 0; KPI outcome 3 fail (unsafe_position_entered 3); ticks in a P0-unsafe position 3, 4, 21; P0 ticks not measurable / blind 0/-, 0/-, 0/-; 36 more hil follows outside C2 (see the C2 section)",
+  "confirmation": "this tool records no confirmation of the choice by anyone"
+ },
  "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "comparison_gaps": []
 }

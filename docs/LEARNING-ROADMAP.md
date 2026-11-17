@@ -1,7 +1,7 @@
 # Learning & Build Roadmap — VLA Drone Guardrail
 
 Roadmap pribadi untuk mengerjakan proyek dari nol. Centang `[x]` saat selesai.
-Asumsi: solo (tanpa pembagian tugas), simulasi-first (tanpa hardware), mulai dari nol
+Asumsi: simulasi-first (tanpa hardware), mulai dari nol
 (belum pernah Python/ROS/ArduPilot), OS Windows 11.
 
 **Prinsip utama:** dapatkan "kemenangan" cepat dengan Python murni dulu (inti Guardrail),

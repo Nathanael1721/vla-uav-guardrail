@@ -3,8 +3,7 @@ Prepared 2026-07-07, following the 07-07 demo meeting.
 
 ## 1. VIO / VSLAM integration — **POSTPONED → FUTURE WORK** (decided 2026-07-07)
 
-> Requires perception hardware and the perception team's stack; project is
-> currently executed solo. Kept here as future work; the adaptive-margin idea
+> Requires perception hardware and the perception team's stack. Kept here as future work; the adaptive-margin idea
 > below remains the guardrail-side contribution when this resumes.
 
 - Ownership confirmed as perception team (per kickoff split) — we consume, not build.

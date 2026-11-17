@@ -1,14 +1,14 @@
 # Meeting Action Items — Status & Evidence
-Compiled 2026-07-12. Owner: us (solo — covering all 4 grant student roles).
+Compiled 2026-07-12. Owner: the project team (1 PI + 4 Master students, as in the grant).
 Evidence = concrete files/commands in this repo, verifiable now.
 
-## Role coverage (grant said 4 students → 1 person)
-| WP | Grant role | Owner now | Status |
+## Work-package coverage
+| WP | Grant role | Owner | Status |
 |---|---|---|---|
-| WP1 | Policy DSL / IR | us | done (mini) — `guardrail/models.py`, `policies/*.yaml` |
-| WP2 | Prefix/Constraint Compiler | us | done (mini) — `guardrail/compiler.py` (prof repo: still Phase 2) |
-| WP3 | Safety Shield | us | done — `guardrail/shield.py`, 16 tests, 4 sim rails |
-| WP4 | Stress testing / data | us | done + beyond — `training/` auto-research, trained model |
+| WP1 | Policy DSL / IR | team | done (mini) — `guardrail/models.py`, `policies/*.yaml` |
+| WP2 | Prefix/Constraint Compiler | team | done (mini) — `guardrail/compiler.py` (prof repo: still Phase 2) |
+| WP3 | Safety Shield | team | done — `guardrail/shield.py`, 16 tests, 4 sim rails |
+| WP4 | Stress testing / data | team | done + beyond — `training/` auto-research, trained model |
 
 ## Action items from 2026-06-23 meeting
 
@@ -30,7 +30,7 @@ Evidence = concrete files/commands in this repo, verifiable now.
 | A | More complex scenarios + effect on path smoothness | ✅ DONE | urban world (`policies/urban_demo_policy.yaml`), multi/dynamic NFZ in `training/scenarios.py`, smoothing A/B in `finding-wobble-root-cause.md` |
 | B | External API for dynamic obstacle/NFZ + permissions | ✅ DONE (auth = TODO) | `guardrail/api.py` (`POST /nfz`), tested live `demo/out/urban_api_test2` |
 | C | 3-D NFZ (altitude constraints + viz) | ◑ PARTIAL | altitude floor/ceiling already in `PolygonFence`; full 3-D shapes + viz = future |
-| D | Technical integration + joint test w/ VOA team | ⬜ BLOCKED | needs the other team (solo now) |
+| D | Technical integration + joint test w/ VOA team | ⬜ BLOCKED | needs the other team |
 
 ## AI-flagged open items (2026-07-07)
 

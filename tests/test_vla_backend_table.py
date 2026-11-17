@@ -699,6 +699,15 @@ def test_the_committed_serving_summary_is_in_the_committed_table():
         assert c["n"] >= 30 and c["meets_gate"] == (c["p50_ms"] <= s["gate_p50_ms"]), c
 
 
+
+
+def _committed_default_ok(t):
+    """The committed default: AIoT-VLA v10b for the follow task, named by the lab on 18 Nov."""
+    d = t["default_backend"]
+    return (d is not None and d["backend"] == "aiotvla_v10b" and d["scope"] == "the follow task"
+            and d["date"] == "2026-11-18" and d["named_by"] == "the lab"
+            and d["date"] > d["set_newest_measurement"])
+
 # --------------------------------------------------------------------------- #
 # the committed table
 # --------------------------------------------------------------------------- #
@@ -706,7 +715,7 @@ def test_the_committed_table_still_matches_the_files_it_cites():
     if not COMMITTED_TABLE.is_file():
         return SKIP
     t = json.loads(COMMITTED_TABLE.read_text(encoding="utf-8"))
-    assert t["schema"] == V.TABLE_SCHEMA and t["default_backend"] is None
+    assert t["schema"] == V.TABLE_SCHEMA and _committed_default_ok(t)
     assert "KPI runs" not in json.dumps(t), "the dev-rail runs are not KPI-bearing"
     assert [r["backend"] for r in t["rows"]] == list(V.BACKENDS)
     checked = 0
@@ -2224,9 +2233,9 @@ def test_the_committed_table_is_protocol_2_with_real_cells_only():
     if not COMMITTED_TABLE.is_file():
         return SKIP
     t = json.loads(COMMITTED_TABLE.read_text(encoding="utf-8"))
-    assert t["protocol"]["id"] == "vla-backend-protocol/2" and t["default_backend"] is None
+    assert t["protocol"]["id"] == "vla-backend-protocol/2" and _committed_default_ok(t)
     md = (ROOT / "deploy" / "evidence" / "vla_backend_table.md").read_text(encoding="utf-8")
-    assert "**Default backend:** none." in md
+    assert "**Default backend:** AIoT-VLA v10b" in md and "named by the lab on 2026-11-18" in md
     assert t["protocol"]["C2_follow_closed_loop"]["added_after_the_choice"] in md
     benches = {r["source"]["file"]: r for r in V.extract_orin_benches(V.EVIDENCE)}
     for r in t["rows"]:
@@ -2285,7 +2294,7 @@ def test_the_committed_table_is_protocol_2_with_real_cells_only():
     assert t["comparison_gaps"] == V.comparison_gaps(t), t["comparison_gaps"]
     assert bool(t["comparison_gaps"]) == ("What the set lacks before" in md)
     assert t["comparison_gaps"] == [], t["comparison_gaps"]
-    assert t["default_backend"] is None and "**Default backend:** none." in md
+    assert _committed_default_ok(t) and "**Default backend:** AIoT-VLA v10b" in md
 
 
 def test_a_rate_result_under_another_protocol_is_listed_not_shown_as_r1():

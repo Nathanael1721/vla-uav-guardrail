@@ -16,6 +16,32 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-18 (the default backend named) — AIoT-VLA v10b for the follow task, after the measurement set; the team stated as in the grant across the docs
+
+#### Changed
+- **Default VLA backend named** (ARCH-30, X-04 → DONE;
+  deploy/evidence/vla_backend_table.md/.json).
+  - `tools/vla_backend_table.py table --default aiotvla_v10b --default-scope
+    "the follow task" --default-date 2026-11-18`, run after the set's newest
+    measurement (2026-11-17). The tool refuses the line unless every backend
+    that can fly C2 has an Orin timing and 3 C2 flights and the stub has its
+    R1 on the Orin.
+  - The table states its own C2 numbers beside it: within 30 m 0.211-0.352,
+    P0 escapes 0, KPI outcome 3 fail (unsafe_position_entered). It covers the
+    follow task only; OpenVLA-7B stays the text-reading backend for the CSP
+    experiments.
+  - tests/test_vla_backend_table.py checks the committed default (48/48).
+- **Final report and outline.** Section 6.4 names the default; decision 12 is
+  closed. **Appendix A: 107 DONE, 28 PARTIAL, 1 DRIFT, 0 MISSING.**
+- **Shield explainer figure.** The FSM box says Loiter is held in GUIDED on the
+  plan's point by the companion (guardrail/hold_flight.py), replacing the
+  stale "flown as ArduCopter BRAKE" line; docs/img/explainer_arch_shield.svg
+  and .png regenerated.
+- **Team wording.** docs/scope-clarification.md,
+  docs/meeting-action-items-status.md, docs/agenda-technical-discussion.md,
+  docs/LEARNING-ROADMAP.md and docs/PI-DECISIONS-2026-10-06.md state the team
+  as in the grant (1 PI + 4 Master students, one team).
+
 ### 2026-11-17 (wave 3 and the FC bench) — gate G3 judged on the AGX Orin, PathRepair in the default chain, MSL over a DEM, one geometry library, CognitiveDrone/BitVLA adapters, an AP_DDS path, the report's dated rows, and the real flight controller on the bench
 
 #### Added

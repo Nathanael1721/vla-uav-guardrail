@@ -86,7 +86,7 @@
 <text x="60" y="678" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G1 a repair within theta: 2.0 m lateral, 0.5 m vertical;  G2 N = 3 onsets in T = 5 s</text>
 <text x="60" y="704" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G3 a repair over theta;  G4 N new onsets in Loiter;  G5 30 s in Loiter;  G6 RTL fails</text>
 <text x="60" y="730" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G7, G8 back to Normal after T_recover = 2 s clear;  X6, X7 a position illegal or worse</text>
-<text x="60" y="756" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">Loiter is flown as ArduCopter BRAKE: LOITER sinks with no pilot on the throttle</text>
+<text x="60" y="756" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">Loiter is held in GUIDED on the plan's point by the companion</text>
 <rect x="1150" y="458" width="410" height="320" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
 <text x="1168" y="500.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Emitted action + audit</text>
 <text x="1168" y="532.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• the action, back to body frame</text>
