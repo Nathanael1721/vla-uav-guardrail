@@ -25,6 +25,24 @@
 # rail only" - and the run records `grant_profile_kpi_bearing: false` and
 # `kpi_bearing_this_run: false`, so nothing from it can be read as a KPI.
 #
+# RUNNING IT UNATTENDED (2026-11-17)
+#
+# The sweep checkpoints every finished episode (--resume DIR), can be split
+# into shards (--shard I/N) run side by side, and is merged into one
+# sweep.json and kpi_report.md (--merge-only) whose report says the profile
+# is outside the KPIs (experiments/sweep_scenarios.py, "UNATTENDED RUNS";
+# tests/test_sweep_resume.py). Measured on the desktop on 2026-11-17, on
+# shards of this profile (each shard takes every 300th episode, so its family
+# mix is the profile's): one process 1.95 s per episode (shard 1/300, 50
+# episodes, killed after 23 and resumed with the other 27 only); four shards
+# side by side 200 episodes in 109 s, 0.55 s per episode in aggregate (2.14 s
+# per episode per process). Scaled to 14 950 episodes, an estimate: about
+# 8.1 h in one process, about 2.3 h as four parallel shards. Each episode's
+# bundle is about 1.1 MB (about 16 GB for the profile) and its checkpoint
+# about 17 kB, so --resume, --runs and --out belong on a disk with room, and
+# --runs outside demo/out/stress_*, which tools/kpi_report.py reads by
+# default.
+#
 # HOW THE COUNT IS MADE
 #
 # Every family's full parameter_sweep (as nightly), and 92 seeded geometry
@@ -37,6 +55,10 @@
 # jitter), and the sweep says how many did.
 #
 #   python experiments/sweep_scenarios.py --profile broad
+#   python experiments/sweep_scenarios.py --profile broad --resume DIR --runs RUNS \
+#       --out OUT/sweep.json --shard I/4          # I = 1..4, side by side
+#   python experiments/sweep_scenarios.py --profile broad --resume DIR --runs RUNS \
+#       --out OUT/sweep.json --merge-only
 
 profile: broad
 cadence: nightly (coverage, not KPI)
