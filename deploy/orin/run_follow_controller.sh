@@ -55,7 +55,12 @@ args=(demo/follow_vlm.py --sim-address "$SIM"
       --citymap demo/out/citymap_citylife/occ_day.npz
       --identity --land-site --search-planner
       --level-car Car_10 --want-width 0.16 --start-max-range-m 30
-      --trail-follow --speed-max 5.0)
+      --trail-follow --speed-max 5.0
+      # FenceGuard measures and judges building clearance with the Shield
+      # (WP3-22 / X-13; the default and only value since 2026-11-18). Named
+      # so a Jetson checkout synced before then flies it too, not its old
+      # default grid scan.
+      --guard-field shield)
 [ "$SAVE_VIEW" = "1" ] && args+=(--save-view)
 # shellcheck disable=SC2206
 [ -n "${EXTRA:-}" ] && args+=($EXTRA)

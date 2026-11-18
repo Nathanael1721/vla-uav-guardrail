@@ -92,16 +92,17 @@ class GridScanGuard(FenceGuard):
         return nearest_cell_clearance(self.occ, px, py, cap_m)
 
 
-def flight_setup(lab: Path, policy_path: Path):
+def flight_setup(lab: Path, policy_path: Path, citymap: str = "citymap_citylife"):
     """(policy, map, the guard as flown before 2026-11-18 (GridScanGuard),
     the guard as follow_vlm.fly() builds it now) for this policy over the
-    CityLife day map."""
+    day map of demo/out/`citymap` (the CityLife map by default), banded and
+    with the street mask as fly() loads them."""
     import city_planner
     import occ_bands
     from follow_vlm import flight_shield
     from guardrail.models import AltitudeEnvelope, ObstacleClearance, load_policy
     pol = load_policy(policy_path)
-    cdir = lab / "demo" / "out" / "citymap_citylife"
+    cdir = lab / "demo" / "out" / citymap
     cmap = city_planner.load_occ(cdir / "occ_day.npz")
     if cmap is None:
         raise SystemExit(f"no map at {cdir / 'occ_day.npz'}")
@@ -123,6 +124,52 @@ def flight_setup(lab: Path, policy_path: Path):
     field = FenceGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
                        shield=shield)
     return pol, smap, grid, field
+
+
+def seeded_ticks(grid, n: int, seed: int):
+    """`n` seeded ticks (x, y, cvx, cvy) for a policy with no stored flight:
+    a position on a street cell of the guard's street mask (else on a free
+    cell of its obstacle map), jittered within the cell, a heading uniform
+    in [0, 2 pi) and a commanded speed uniform in [0.5, 5] m/s (the follow
+    controller's --speed-max default is 5)."""
+    import random
+    import numpy as np
+    rng = random.Random(seed)
+    if grid.street:
+        m = grid.street
+        cells = np.argwhere(np.asarray(m["street"]) > 0)
+    else:
+        m = grid.occ
+        cells = np.argwhere(np.asarray(m["occ"]) == 0)
+    res, ox, oy = float(m["res"]), float(m["ox"]), float(m["oy"])
+    out = []
+    for _ in range(n):
+        i, j = cells[rng.randrange(len(cells))]
+        x = ox + float(i) * res + rng.uniform(-0.5, 0.5) * res
+        y = oy + float(j) * res + rng.uniform(-0.5, 0.5) * res
+        h, v = rng.uniform(0.0, 2.0 * math.pi), rng.uniform(0.5, 5.0)
+        out.append((x, y, v * math.cos(h), v * math.sin(h)))
+    return out
+
+
+def compare_seeded(grid, field, ticks) -> dict:
+    """The decision counts of replay_run over seeded ticks (no log, so no
+    null against a logged mode)."""
+    n = mode_d = side_d = ms_d = brake_d = scale_d = skirt_old = skirt_now = 0
+    for x, y, cvx, cvy in ticks:
+        o = decide(grid, x, y, cvx, cvy)
+        w = decide(field, x, y, cvx, cvy)
+        n += 1
+        brake_d += int(o[2] != w[2])
+        scale_d += int(abs(o[3] - w[3]) > 1e-6)
+        mode_d += int(o[0] != w[0])
+        side_d += int(o[1] != w[1])
+        ms_d += int(o[0] != w[0] or o[1] != w[1])
+        skirt_old += int(o[0] == "skirt")
+        skirt_now += int(w[0] == "skirt")
+    return {"ticks": n, "scale_changed": scale_d, "building_brake_on_off_changed": brake_d,
+            "mode_changed": mode_d, "side_changed": side_d, "mode_or_side_changed": ms_d,
+            "skirt_ticks_grid": skirt_old, "skirt_ticks_shield": skirt_now}
 
 
 def decide(guard, x: float, y: float, cvx: float, cvy: float):
@@ -213,9 +260,30 @@ def main(argv=None) -> int:
                          "(the lab checkout: demo/out is gitignored)")
     ap.add_argument("--policy", default=str(ROOT / "policies" / "follow_car_citylife_nfz.yaml"))
     ap.add_argument("--json", default=None, help="write the per-run table here")
+    ap.add_argument("--citymap", default="citymap_citylife",
+                    help="the map directory under demo/out (default the CityLife map)")
+    ap.add_argument("--seeded", type=int, default=0,
+                    help="instead of stored runs, compare the two guards on this many "
+                         "seeded ticks (seeded_ticks) - for a policy no stored flight flew")
+    ap.add_argument("--seed", type=int, default=1118)
     a = ap.parse_args(argv)
     lab = Path(a.root)
-    _, _, grid, field = flight_setup(lab, Path(a.policy))
+    _, _, grid, field = flight_setup(lab, Path(a.policy), a.citymap)
+    if a.seeded:
+        res = compare_seeded(grid, field, seeded_ticks(grid, a.seeded, a.seed))
+        n = res["ticks"]
+        print(f"seeded {n} ticks ({Path(a.policy).name} over demo/out/{a.citymap}, seed "
+              f"{a.seed}): building brake on/off differs on "
+              f"{res['building_brake_on_off_changed']} ({res['building_brake_on_off_changed'] / n:.2%}), "
+              f"guard scale on {res['scale_changed']} ({res['scale_changed'] / n:.2%}), "
+              f"decision (mode or sidestep side) on {res['mode_or_side_changed']} "
+              f"({res['mode_or_side_changed'] / n:.2%}); skirt ticks {res['skirt_ticks_grid']} "
+              f"-> {res['skirt_ticks_shield']}")
+        if a.json:
+            Path(a.json).write_text(json.dumps({"seeded": res, "policy": Path(a.policy).name,
+                                                "citymap": a.citymap, "seed": a.seed},
+                                               indent=1), encoding="utf-8")
+        return 0
     out = []
     for name in a.runs:
         rd = lab / "demo" / "out" / name
