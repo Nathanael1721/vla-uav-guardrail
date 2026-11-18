@@ -17,10 +17,12 @@ machinery, decision for decision, on the map or subject of its class:
   * buildings == an obstacle_clearance on the same obstacle map;
   * roads     == an obstacle_clearance on a map that is the road mask (the
                  road field is read exactly as the obstacle field is);
-  * people    == a subject_standoff binding the tracked person, and not a
-                 car;
-  * a buildings or roads envelope without its map is REFUSED at
-    construction - never inert;
+  * people    == the clearance runtime over the people field since
+                 2026-11-18 (every reported person, the tracked subject among
+                 them while it is a person, not a car); the full pins are in
+                 tests/test_people_envelope.py;
+  * a buildings or roads envelope without its map, or a people envelope
+    without a people source, is REFUSED at construction - never inert;
   * the compiler renders it, and a policy file carrying it loads for flight.
 
 MSL: a rule with altitude_ref MSL is refused without a ground (loaders, the
@@ -116,8 +118,11 @@ def test_a_buildings_or_roads_envelope_without_its_map_is_refused_never_inert():
     _refused(lambda: Shield(pol, obstacle_map=BUILDINGS), "de-roads", "road_map")
     _refused(lambda: Shield(pol, road_map=ROADS), "de-buildings", "obstacle_map")
     Shield(pol, obstacle_map=BUILDINGS, road_map=ROADS)
-    # people needs no map: it binds to whatever person is tracked.
-    Shield(_policy(_de("people", 10)))
+    # people needs no map but a people source (since 2026-11-18): who tells
+    # the Shield where the people are. Before: accepted with none, the rule
+    # bound only a tracked person.
+    _refused(lambda: Shield(_policy(_de("people", 10))), "de-people", "people_source")
+    Shield(_policy(_de("people", 10)), people_source="test")
 
 
 def test_buildings_is_obstacle_clearance_decision_for_decision():
@@ -153,17 +158,21 @@ def test_roads_reads_the_road_map_as_clearance_reads_buildings():
     assert st["de-buildings"]["breach"] and not st["de-roads"]["breach"], st
 
 
-def test_people_is_a_standoff_from_the_tracked_person_and_not_a_car():
-    de = Shield(_policy(_de("people", 10, "rule")))
-    so = Shield(_policy({"id": "rule", "type": "subject_standoff", **H,
-                         "subject_class": "pedestrian", "min_range_m": 10.0}))
-    for sh in (de, so):
-        sh.set_subject(0.0, 0.0, "pedestrian")
-    n, diff = _same_decisions(de, so, _sweep(range(-12, 13, 4), range(-12, 13, 4)))
+def test_people_binds_the_tracked_person_as_one_of_the_people_and_not_a_car():
+    """Since 2026-11-18 people is the clearance runtime over the people field
+    (tests/test_people_envelope.py pins the rest). The tracked subject, while
+    it is a person, is one of the people: a Shield told the subject decides
+    exactly as one told the same position as a reported person. Before: a
+    stand-off from the subject (441 decisions equal to a subject_standoff)."""
+    de = Shield(_policy(_de("people", 10, "rule")), people_source="test")
+    listed = Shield(_policy(_de("people", 10, "rule")), people_source="test")
+    de.set_subject(0.0, 0.0, "pedestrian")
+    listed.set_people([(0.0, 0.0)])
+    n, diff = _same_decisions(de, listed, _sweep(range(-12, 13, 4), range(-12, 13, 4)))
     assert n == 441 and diff == 0, (n, diff)
     for cls, binds in (("pedestrian", True), ("person", True), ("car", False), (None, False)):
         de.set_subject(0.0, 0.0, cls)
-        r = de.filter(State(x=0.0, y=12.0, up=10.0), Action4D(vx=0.0, vy=-4.0))
+        r = de.filter(State(x=0.0, y=9.0, up=10.0), Action4D(vx=0.0, vy=-4.0))
         assert bool(r.violations) == binds, (cls, r.violations)
 
 
@@ -173,7 +182,7 @@ def test_the_compiler_renders_every_class_and_the_cost_map_says_what_it_cannot_d
     m = Mission(task_text="follow the person", start_x=0, start_y=20, target_x=50,
                 target_y=20, cruise_alt_m=10, speed_pref_mps=3)
     text = ConstraintCompiler(pol).compile_csp(m).natural_language_prompt
-    for want in ("Keep at least 10 m from the person you are following.",
+    for want in ("Keep at least 10 m from any person.",
                  "Keep at least 4 m from any building.",
                  "Keep at least 3 m from any road."):
         assert want in text, text

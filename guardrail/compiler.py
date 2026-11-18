@@ -134,8 +134,8 @@ from .ir import PolicyIR, is_moving
 from .planar import point_in_ring_xy, segment_distance
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
                      CorridorSwap, DistanceEnvelope, DynamicNFZ, KinematicEnvelope,
-                     ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
-                     TimeWindowSwitch)
+                     ObstacleClearance, PeopleClearance, Policy, PolygonFence,
+                     SubjectStandoff, TimeWindowSwitch)
 from .shield import (RuleClock, corridor_breached, corridor_in_band, corridor_offset,
                      corridor_wide, in_zone_band, zone_breached)
 
@@ -883,7 +883,8 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
         facts = {"length": math.hypot(tx - sx, ty - sy)}
     elif isinstance(rule, DistanceEnvelope):
         # WP1-07 (2026-11-03): the grant's class, enforced through the
-        # clearance runtime (buildings, roads) or the stand-off one (people).
+        # clearance runtime over its map (buildings, roads) or, since
+        # 2026-11-18, over the people the rail reports (people).
         facts = {"length": math.hypot(tx - sx, ty - sy), "cls": rule.object_class,
                  "follow": bool(_FOLLOW_WORDS.search(m.task_text))}
     elif isinstance(rule, SubjectStandoff):
@@ -1439,7 +1440,8 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
                        bounds: tuple[float, float, float, float] | None = None,
                        pad_m: float | None = None,
                        subject: tuple | None = None,
-                       obstacle_map: dict | None = None) -> CostMap:
+                       obstacle_map: dict | None = None,
+                       people: list | None = None) -> CostMap:
     """The cost-map adapter: the policy's constraints in force at one instant,
     rasterised onto a 2-D grid (Prefix Compiler PDF p4).
 
@@ -1469,6 +1471,13 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
                  Shield, and the header says so.
     obstacle_map {"occ", "res", "ox", "oy"} for obstacle_clearance, the
                  Shield's own map format. Without it the rule is inert.
+    people       [(x, y) or (x, y, age_s)]: the people a distance_envelope
+                 over people is measured from (Shield.set_people; the subject
+                 joins them while its class is a person), each drawn as the
+                 disc min_distance_m beyond its reach (guardrail/people.py).
+                 None, with no person subject either: the rule is not drawn,
+                 and the header says so (and holds no `people` key, so every
+                 map drawn without people keeps its ref).
 
     Layers (the grant's names first): nfz_hard (inf) / nfz_soft (50) for each
     keep-out zone with its margin ring; corridor_pref (0) for each keep-in
@@ -1540,9 +1549,27 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
             continue
         if isinstance(c, DistanceEnvelope):
             # WP1-07 (2026-11-03): drawn as the Shield enforces it, through
-            # its runtime rule (buildings: the clearance layer; people: the
-            # stand-off disc), under its own id. Roads are measured on the
-            # Shield's road map, which this map is not given.
+            # its runtime rule (buildings: the clearance layer; people: a
+            # disc round every person given, 2026-11-18), under its own id.
+            # Roads are measured on the Shield's road map, which this map is
+            # not given.
+            if c.object_class == "people":
+                from .people import as_person
+                who = [as_person(q) for q in (people or ())]
+                if subject is not None and PeopleClearance.is_person(
+                        subject[2] if len(subject) > 2 else None):
+                    who.append(as_person((float(subject[0]), float(subject[1]))))
+                if not who:
+                    not_drawn.append({"id": c.id, "type": c.type,
+                                      "why": "no person positions given; the rule "
+                                             "binds the people the rail's source "
+                                             "reports at run time, as in the Shield"})
+                    continue
+                geom = shapely.union_all([_disc(q.x, q.y, c.min_distance_m + q.reach_m())
+                                          for q in who])
+                drawn.append(("people_hard" if hard else "people_soft", c.id, geom,
+                              COST_HARD if hard else COST_SOFT))
+                continue
             if c.object_class == "roads":
                 not_drawn.append({"id": c.id, "type": c.type,
                                   "why": "distance to roads: measured on the "
@@ -1716,6 +1743,9 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
         "cost_sha256": _sha_array(cost),
         "layer_sha256": [_sha_array(m) for m in masks],
     }
+    if people is not None:
+        from .people import as_person, rows_people
+        core["people"] = rows_people([as_person(q) for q in people], ndigits=6)
     core = json.loads(json.dumps(core))         # exactly what the JSON will hold
     header = dict(core, ref=_cost_map_ref(core))
     return CostMap(cost=cost, layers=tuple(masks), header=header)
@@ -1769,8 +1799,11 @@ def cost_map_agreement(cm: CostMap, policy: Policy, *, n_points: int = 2000,
     if len(ages) > 1:
         raise ValueError("the Shield moves every authored zone on one clock; a map "
                          "with different ages per zone cannot be scored against it")
+    from .people import needs_people
     sh = Shield(policy, now=(lambda: now) if now is not None else None,
-                escalation=False, obstacle_map=obstacle_map, require_maps=False)
+                escalation=False, obstacle_map=obstacle_map, require_maps=False,
+                people_source="the cost map header" if needs_people(policy) else None)
+    sh.set_people(hdr.get("people") or [])
     alt = hdr.get("altitude_m")
     up = float(alt) if alt is not None else None
     age = ages.pop() if ages else 0.0

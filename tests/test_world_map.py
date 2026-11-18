@@ -22,8 +22,10 @@ WHAT IS PINNED
       map for one over buildings; for every policy without such a rule the
       helper returns None, so their Shields are the ones they were. Before:
       a roads envelope was refused on both.
-  (c) People: the rule binds the ONE tracked subject; a person beside a
-      tracked car is outside it (the recorded limit, models.DistanceEnvelope).
+  (c) People: since 2026-11-18 the rule binds every person the rail reports
+      (Shield.set_people), so a person beside a tracked car is inside it; on
+      17 Nov this pinned the opposite, the limit then recorded
+      (tests/test_people_envelope.py pins the rest).
 
 Throwaway signing keys only (guardrail.bundle.generate_signing_key into a
 temporary trust store); no rig step runs.
@@ -424,7 +426,14 @@ def test_the_real_citylife_street_mask_serves_as_a_road_map():
         return SKIP
     rmap, note = road_map_for(_roads_policy(), d)
     assert rmap is not None and int(rmap["occ"].sum()) > 0, note
+    # The whole-level map (rebuilt 4 Nov): 1010 x 870 cells at 2 m, and the
+    # one both city rails read by default (street.npz beside --citymap).
+    assert rmap["occ"].shape == (1010, 870) and rmap["res"] == 2.0, rmap["occ"].shape
     Shield(_roads_policy(), road_map=rmap)
+    for rail in ("demo/vla_fly.py", "demo/pas_ardupilot/perception_node.py"):
+        src = (ROOT / rail).read_text(encoding="utf-8")
+        assert ('DEFAULT_CITYMAP = ROOT / "demo" / "out" / "citymap_citylife" / '
+                '"occ_day.npz"') in src, rail
 
 
 def test_vla_fly_and_the_pas_rail_pass_the_road_map_to_their_shield():
@@ -476,24 +485,30 @@ def test_the_pas_rail_loads_the_obstacle_map_for_a_buildings_envelope():
 
 # --------------------------------------------------------- (c) the people limit
 
-def test_people_binds_the_tracked_subject_only_the_recorded_limit():
+def test_people_binds_every_reported_person_not_only_the_tracked_subject():
+    """Before (17 Nov, test_people_binds_the_tracked_subject_only_the_recorded_
+    limit): a person beside a tracked car was not passed to the Shield, so
+    nothing bound. Now the rail reports every person (Shield.set_people)."""
     pol = policy_from_raw({
         "policy_id": "de-p-test", "version": "0.1.0",
         "constraints": [{"id": "de-people", "type": "distance_envelope",
                          "constraint_type": "hard", "scope": "mission",
                          "priority": "P0", "violation_action": "project_fix",
                          "object_class": "people", "min_distance_m": 10.0}]})
-    sh = Shield(pol)
+    sh = Shield(pol, people_source="test")
     st = State(x=0.0, y=0.0, up=10.0)
-    # A tracked car 5 m away: a person standing beside it is not passed to
-    # the Shield (set_subject holds one subject), so nothing binds.
+    # A tracked car 5 m away binds nothing on its own...
     sh.set_subject(5.0, 0.0, "car")
     assert sh.state_is_unsafe(st) == []
-    # The same position tracked AS a person binds.
+    # ...the person standing beside it does, once the rail reports it.
+    sh.set_people([(5.0, 1.5)])
+    assert {v.rule_id for v in sh.state_is_unsafe(st)} == {"de-people"}
+    # The same position tracked AS a person binds with nobody else reported.
+    sh.set_people([])
     sh.set_subject(5.0, 0.0, "pedestrian")
     assert {v.rule_id for v in sh.state_is_unsafe(st)} == {"de-people"}
     doc = DistanceEnvelope.__doc__
-    assert "PEOPLE: THE RECORDED LIMIT" in doc and "40 pedestrians" in doc
+    assert "PEOPLE BEFORE 2026-11-18" in doc and "set_people" in doc
 
 
 if __name__ == "__main__":

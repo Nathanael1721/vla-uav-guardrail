@@ -12,7 +12,8 @@ declarable here, plus two of this project's own:
     kinematic_envelope  speed / climb-rate / turn-rate caps
     distance_envelope   min distance to a typed object class (people, buildings,
                         roads); enforced since 2026-11-03 through the
-                        clearance / stand-off runtime (DistanceEnvelope)
+                        clearance runtime (DistanceEnvelope; people: every
+                        known person since 2026-11-18)
     dynamic_nfz         polygon with motion, injected mid-flight
     time_window_switch  switches a referenced rule on/off
     corridor_swap       replaces an active corridor with another
@@ -1257,34 +1258,30 @@ class DistanceEnvelope(ConstraintBase):
       roads      the same runtime over a ROAD map (Shield(road_map=...), the
                  street mask demo/build_street_mask.py writes): distance to
                  the nearest road cell;
-      people     the stand-off runtime: min_distance_m from the tracked
-                 subject whenever perception classifies it as a person
-                 (PEOPLE_CLASSES), whatever it is told to follow.
+      people     the same runtime over the PEOPLE field (since 2026-11-18,
+                 guardrail/people.py): distance to the nearest person the
+                 Shield is told about (Shield.set_people) - every one, plus
+                 the tracked subject while perception classifies it as a
+                 person (PEOPLE_CLASSES) - each a disc as wide as the person
+                 may have walked since its fix.
 
-    What it does NOT see, stated rather than implied: the Shield knows one
-    subject (Shield.set_subject), so a person who is not the tracked subject
-    is outside this rule; and buildings and roads exist only where the maps
-    cover (off the map is unknown, Shield.off_map). A Shield is never built
-    over a buildings or roads envelope without its map (refused at
-    construction), so the rule is never inert where it claims to hold.
+    What it does NOT see, stated rather than implied: buildings and roads
+    exist only where the maps cover (off the map is unknown, Shield.off_map),
+    and people are only those the rail's source reports (Shield.people_source:
+    the detector's person boxes on the perception rail, the simulator's
+    pedestrian list on the city sim rails, the declared subject alone on the
+    SITL rails and the headless harness, whose worlds have no pedestrians).
+    A Shield is never built over an envelope without its source (refused at
+    construction: obstacle_map, road_map, people_source), so the rule is
+    never inert where it claims to hold.
 
-    PEOPLE: THE RECORDED LIMIT (2026-11-17, WP1-07). The grant's class is
-    every person; this rule holds min_distance_m from ONE: the position a
-    rail passes to Shield.set_subject, and only on ticks where it passes it
-    with a class in PEOPLE_CLASSES. Per rail: the city and PAS rails pass
-    their target estimate (demo/follow_vlm.py, demo/vla_fly.py,
-    demo/pas_ardupilot/perception_node.py), so the rule binds only when the
-    followed object IS a person; the SITL rails pass the declared --subject
-    (no perception). No rail passes any other person: the detectors are
-    prompted for the target alone, so the 40 pedestrians walking CityLife
-    are not seen by the Shield and not inside this rule, and a car follow
-    under a people envelope never binds it. Closing it needs a perception
-    feed of every detected person and a Shield that judges several subjects
-    (set_subject holds one, and its repairs, StandoffHold and
-    StandoffRecover, are built around one); neither exists. The rendered
-    rule says so ("the person you are following", guardrail/templates/
-    sentence/distance_envelope.j2), and tests/test_world_map.py pins it: a
-    person beside a tracked car is outside the rule."""
+    PEOPLE BEFORE 2026-11-18 (the recorded limit it closes, WP1-07). The rule
+    held min_distance_m from ONE position: the subject a rail passed to
+    Shield.set_subject, as a stand-off (PeopleStandoff, now removed), so a
+    person beside a tracked car was outside it and a car follow under a
+    people envelope never bound it; the detectors were prompted for the
+    target alone. No flight had carried a people envelope, so no flown
+    decision changed with it."""
     type: Literal["distance_envelope"]
     object_class: Literal["people", "buildings", "roads"]
     min_distance_m: float = Field(gt=0)
@@ -1300,11 +1297,8 @@ class DistanceEnvelope(ConstraintBase):
         # The scope is carried as it is: absent too, for a rule of an earlier
         # era's document (IR schema 4.0.0 made it required; era_context).
         ctx = era_context(None) if self.scope is None else None
-        if self.object_class == "people":
-            return PeopleStandoff.model_validate(
-                dict(type="subject_standoff", subject_class="people",
-                     min_range_m=self.min_distance_m, **base), context=ctx)
-        cls = RoadClearance if self.object_class == "roads" else EnvelopeClearance
+        cls = {"roads": RoadClearance, "people": PeopleClearance}.get(
+            self.object_class, EnvelopeClearance)
         return cls.model_validate(dict(type="obstacle_clearance",
                                        min_clearance_m=self.min_distance_m, **base),
                                   context=ctx)
@@ -1327,12 +1321,16 @@ class RoadClearance(EnvelopeClearance):
     MAP: ClassVar[str] = "roads"
 
 
-class PeopleStandoff(SubjectStandoff):
-    """The stand-off runtime of a distance_envelope over `people`: binds
-    whenever the tracked subject is classified as a person (PEOPLE_CLASSES).
-    Not an IR type, never in a policy."""
+class PeopleClearance(EnvelopeClearance):
+    """A distance_envelope over `people` (since 2026-11-18): measured on the
+    Shield's people field (guardrail/people.py PeopleField: every person
+    Shield.set_people names, and the tracked subject while it is classified
+    as a person, PEOPLE_CLASSES). Until then it was a stand-off from the
+    tracked subject alone (PeopleStandoff)."""
+    MAP: ClassVar[str] = "people"
 
-    def binds(self, subject_class: str | None) -> bool:
+    @staticmethod
+    def is_person(subject_class: str | None) -> bool:
         return subject_class is not None and subject_class.lower() in PEOPLE_CLASSES
 
 
