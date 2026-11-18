@@ -111,9 +111,14 @@ def test_the_tool_builds_signs_and_verifies_every_flight_bundle():
                    issued_at="2026-10-12T00:00:00Z")
     # Nine since the merge of 2026-10-23: master's eight and the AerialVLA
     # pilot's vla_goto_citylife; ten since 2026-11-17, the distance_envelope
-    # family's distance_envelope_sitl (WP1-07).
-    assert len(rows) == len(T.FLIGHT_POLICIES) == 10 and all(r["ok"] for r in rows), rows
+    # family's distance_envelope_sitl (WP1-07); twelve since 2026-11-18, the
+    # three-zone follow tasks' WGS84 bundles (WP1-14: they flew legacy metre
+    # bundles up to v0.1.1).
+    assert len(rows) == len(T.FLIGHT_POLICIES) == 12 and all(r["ok"] for r in rows), rows
     assert "distance-envelope-sitl-v0.1.0.tar.gz" in {Path(r["bundle"]).name for r in rows}
+    assert {"follow-car-citylife-nfz3-v0.1.3.tar.gz",
+            "follow-car-citylife-nfz3b-v0.1.3.tar.gz"} <= {Path(r["bundle"]).name
+                                                           for r in rows}
     for r in rows:
         pol, src = B.load_for_flight(r["bundle"], trust_store=trust)
         assert src["signature"] == B.SIG_VERIFIED, src
