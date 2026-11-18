@@ -61,6 +61,7 @@ from guardrail.manifest import (TOPOLOGY_DEV, TOPOLOGY_FLIGHT,       # noqa: E40
                                 TOPOLOGY_HIL, TOPOLOGY_PROJECTAIRSIM,
                                 build_manifest, check_hil_evidence,
                                 is_kpi_grade, sim_speedup_from_scene)
+from guardrail.frames import body_to_local_ned, local_ned_to_world  # noqa: E402
 from guardrail.models import Action4D, State                          # noqa: E402
 
 SKIP = "SKIP"
@@ -369,36 +370,34 @@ def test_the_wsl_script_is_lf_and_takes_its_arguments_from_rail():
 # autopilot.py - conversions and the pymavlink link
 # =========================================================================== #
 
-def test_body_to_world_rotates_by_the_autopilot_heading():
-    a = ap.body_to_world(2.0, 0.0, 0.5, 0.3, 0.0)
-    assert (round(a.vx, 9), round(a.vy, 9)) == (2.0, 0.0)
-    a = ap.body_to_world(2.0, 0.0, 0.5, 0.3, math.pi / 2)    # facing East
-    assert abs(a.vx) < 1e-9 and abs(a.vy - 2.0) < 1e-9
-    a = ap.body_to_world(0.0, 1.0, 0.0, 0.0, 0.0)            # right = East at heading 0
-    assert abs(a.vx) < 1e-9 and abs(a.vy - 1.0) < 1e-9
-    assert (a.vz_up, ap.body_to_world(0, 0, 0.5, 0.3, 1.0).yaw_rate) == (0.0, 0.3)
+def test_ned_setpoint_turns_the_body_action_by_the_autopilot_heading():
+    """The link is the rail's MAVLink adapter (WP3-04 / ARCH-04): it turns
+    the BODY action into local NED after the projection."""
+    f = ap.ned_setpoint((2.0, 0.0, 0.5, 0.3), 0.0)
+    assert (f["vx"], f["vy"]) == (2.0, 0.0)
+    f = ap.ned_setpoint((2.0, 0.0, 0.5, 0.3), math.pi / 2)    # facing East
+    assert abs(f["vx"]) < 1e-9 and abs(f["vy"] - 2.0) < 1e-9
+    f = ap.ned_setpoint((0.0, 1.0, 0.0, 0.0), 0.0)            # right = East at heading 0
+    assert abs(f["vx"]) < 1e-9 and abs(f["vy"] - 1.0) < 1e-9
 
 
 def test_ned_setpoint_negates_up_and_passes_yaw_rate_in_radians():
-    f = ap.ned_setpoint(Action4D(vx=1.0, vy=-2.0, vz_up=0.5, yaw_rate=0.2))
+    f = ap.ned_setpoint(Action4D(vx=1.0, vy=-2.0, vz_up=0.5, yaw_rate=0.2), 0.0)
     assert (f["vx"], f["vy"], f["vz"], f["yaw_rate"]) == (1.0, -2.0, -0.5, 0.2)
     assert (f["coordinate_frame"], f["type_mask"]) == (1, 1479)
 
 
 def test_the_rail_crosses_frames_through_the_project_s_one_frame_module():
-    """guardrail.frames is 'the one place a body-frame action becomes a
-    world-frame one'; tests/test_frame_contract.py pins it against the
-    reference. This rail must agree with it at every heading, so the two
-    can never drift apart in silence."""
-    from guardrail.frames import from_body, to_local_ned
+    """guardrail.frames.body_to_local_ned is the one body -> local-NED
+    function every rail's adapter calls (tests/test_frame_boundary.py). This
+    rail's link must BE that function at every heading, to the bit, so the
+    two can never drift apart in silence."""
+    from guardrail.frames import body_to_local_ned
     for hdg in (-170.0, -90.0, -33.0, 0.0, 47.0, 90.0, 135.0, 180.0):
         for body in ((2.0, 0.0, 0.5, 0.3), (0.0, 1.5, -0.4, -0.2), (1.0, -1.0, 0.0, 0.7)):
-            ours = ap.body_to_world(*body, math.radians(hdg))
-            ref = from_body(*body, hdg)
-            assert all(abs(getattr(ours, k) - getattr(ref, k)) < 1e-9
-                       for k in ("vx", "vy", "vz_up", "yaw_rate")), (hdg, body)
-            f = ap.ned_setpoint(ours)
-            assert (f["vx"], f["vy"], f["vz"], f["yaw_rate"]) == to_local_ned(ours)
+            f = ap.ned_setpoint(body, math.radians(hdg))
+            assert (f["vx"], f["vy"], f["vz"], f["yaw_rate"]) == body_to_local_ned(
+                body, math.degrees(math.radians(hdg))), (hdg, body)
 
 
 def test_the_type_mask_is_the_sitl_rail_s():
@@ -410,7 +409,7 @@ def test_the_type_mask_is_the_sitl_rail_s():
 
 
 def test_enu_position_target_swaps_axes_and_flips_yaw_rate():
-    f = ap.enu_position_target(Action4D(vx=3.0, vy=1.0, vz_up=0.5, yaw_rate=0.2))
+    f = ap.enu_position_target(Action4D(vx=3.0, vy=1.0, vz_up=0.5, yaw_rate=0.2), 0.0)
     assert f["velocity"] == (1.0, 3.0, 0.5), "ENU is (East, North, Up)"
     assert f["yaw_rate"] == -0.2, "ENU yaw rate is counter-clockwise positive"
 
@@ -718,11 +717,18 @@ def test_send_emits_ned_velocity_to_the_vehicle():
     fm = FakeMavutil([AP_HB])
     link = _link(fm)
     link.connect(timeout=5)
-    link.send(Action4D(vx=1.0, vy=2.0, vz_up=0.5, yaw_rate=0.1))
+    link.send(Action4D(vx=1.0, vy=2.0, vz_up=0.5, yaw_rate=0.1),
+              body=(1.0, 2.0, 0.5, 0.1))              # heading 0: body == NED axes
     name, a, _ = fm.master.mav.sent[-1]
     assert name == "set_position_target_local_ned_send"
     assert a[1:5] == (1, 1, 1, 1479), a[:5]
     assert a[8:11] == (1.0, 2.0, -0.5) and a[15] == 0.1, a
+    try:
+        link.send(Action4D(vx=1.0))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a world-frame action was sent without the body frame")
 
 
 # =========================================================================== #
@@ -815,7 +821,8 @@ def _mavros():
 
 def test_mavros_gets_a_position_target_in_enu_and_record_copies_off_the_grant_chain():
     link, node = _mavros()
-    link.send(Action4D(vx=3.0, vy=1.0, vz_up=0.5, yaw_rate=0.2), raw_body=(4.0, 0, 0.5, 0.2))
+    link.send(Action4D(vx=3.0, vy=1.0, vz_up=0.5, yaw_rate=0.2), raw_body=(4.0, 0, 0.5, 0.2),
+              body=(3.0, 1.0, 0.5, 0.2))              # heading 0: body == NED axes
     sp = node.pubs[ml.TOPIC_SETPOINT].msgs[-1]
     assert (sp.velocity.x, sp.velocity.y, sp.velocity.z) == (1.0, 3.0, 0.5)
     assert sp.yaw_rate == -0.2 and (sp.coordinate_frame, sp.type_mask) == (1, 1479)
@@ -1363,6 +1370,7 @@ class FakeLink:
         self.snap = ap.Snapshot()
         self.x, self.y, self.up, self.v = 35.0, -20.0, 8.0, Action4D()
         self.sent, self.sent_t, self.t_last = [], [], None
+        self.sent_body = []
         self.events, self.requested = [], []
         self.sim_speedup = 1.0
         self.takeover_at, self.fence, self.clock_rate = takeover_at, fence, clock_rate
@@ -1421,9 +1429,16 @@ class FakeLink:
         self._mode(name)
         return True
 
-    def send(self, a, raw_body=None):
-        self.v = a
-        self.sent.append(a)
+    def send(self, a=None, raw_body=None, body=None):
+        # As the real links (WP3-04 / ARCH-04): what is sent is the BODY action,
+        # turned into local NED here, after the projection, by the one body ->
+        # NED function, at the heading this link last read; `a` (the world
+        # record copy) is what the tests compare with the rows.
+        if body is None:
+            raise ValueError("FakeLink.send streams the BODY frame: pass body=")
+        self.v = local_ned_to_world(body_to_local_ned(body, math.degrees(self.snap.yaw or 0.0)))
+        self.sent.append(a if a is not None else self.v)
+        self.sent_body.append(body)
         self.sent_t.append(self.clock.t)
 
     def land(self):

@@ -85,12 +85,21 @@ which are North/East (guardrail/models.py), while the comment beside it called
 them body velocities. That is only right while the drone faces North: facing
 East, "forward" flew North (tests/test_real_vla_prompt.py shows it). The deltas
 are now read as (forward, right) at the heading the frame was CAPTURED with —
-the view the model actually saw — and cross into the world frame once, through
-`guardrail.frames.from_body`. At yaw 0 the output is unchanged. The crossing
-sits BEFORE the rate limiter and the Shield because this Shield's contract is
-world-frame (guardrail/frames.py says why); the reference converts after the
-repair, in its MAVLink adapter, and that choice belongs to the Shield node
-(WP3-09), not to this demo. Whether the Bridge arm's +y is the drone's right or
+the view the model actually saw. Since wf21 (WP3-04 / ARCH-04) that BODY
+action is what flies: the control tick turns it from the capture heading to
+its own (`OpenVLABackend.latest_for`, a body-frame turn by the heading
+change, so a turn during the ~1 s inference does not swing it), the rate
+limiter caps the change of its world reading (`frames.limit_in_world`), the
+Shield takes it (`Shield.filter_body`, at the heading of the control tick's
+pose) and hands back the emitted body action, and the adapter turns that
+into AirSim's NED velocity command after the projection
+(`guardrail.frames.body_to_local_ned`, the one body -> NED function of every
+rail). Before, the action was rotated into the world frame here
+(`guardrail.frames.from_body`) at the capture heading, before the limiter
+and the Shield; the velocity flown is the same (up to rounding). The step
+log still records the world reading at the capture heading (`world_action`,
+`openvla_raw_to_action`) for offline replay; it is a record, not what is
+flown. Whether the Bridge arm's +y is the drone's right or
 its left has NOT been checked; every step says so (`lateral_sign`).
 
 Run (vla-real env, model downloaded, AirSim NH running):
@@ -212,7 +221,8 @@ from guardrail.compiler import (DEFAULT_BUDGET_TOKENS,              # noqa: E402
 from guardrail.csp import (CSP, CSPBudgetExceeded,                  # noqa: E402
                            OpenVLATokenCounter, csp_content_hash, csp_hash,
                            openvla_token_counter)
-from guardrail.frames import from_body                              # noqa: E402
+from guardrail.frames import (body_to_local_ned, from_body,        # noqa: E402
+                              limit_in_world, rebase_body)
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import Action4D, Policy                       # noqa: E402
 from guardrail.replay import (DWELL_ZONE_TYPES, episode_row_fields,  # noqa: E402
@@ -828,8 +838,18 @@ def openvla_raw_to_body(raw, scale: float) -> tuple[float, float, float]:
             float(np.clip(r[2] * scale * 0.5, -2, 2)))
 
 
+def openvla_raw_to_body_action(raw, scale: float) -> Action4D:
+    """Raw OpenVLA output -> the BODY-frame Action4D the flight hands the
+    Shield (vx forward, vy right, vz_up up, no yaw rate)."""
+    fwd, right, up = openvla_raw_to_body(raw, scale)
+    return Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=0.0)
+
+
 def openvla_raw_to_action(raw, scale: float, yaw_deg: float) -> Action4D:
-    """Raw OpenVLA output -> world-frame Action4D at heading `yaw_deg`.
+    """Raw OpenVLA output -> world-frame Action4D at heading `yaw_deg`: the
+    step log's `world_action` RECORD and its offline replay (replay_step,
+    tools/prefix_eval.py). Not on the command path since wf21: the flight
+    hands the Shield the body action (openvla_raw_to_body_action).
 
     The rotation the old code left out: `Action4D` is North/East and AirSim's
     `moveByVelocityAsync` is world-frame, so a body-frame delta must be rotated
@@ -904,13 +924,20 @@ def replay_step(rec: dict) -> Action4D:
 # --------------------------------------------------------------------------- #
 
 class RateLimiter:
-    """Cap per-tick velocity change so action hand-offs blend, not snap."""
+    """Cap per-tick velocity change so action hand-offs blend, not snap.
+
+    The cap is per axis on the WORLD velocity. Called with `yaw_deg` the
+    action is a BODY action at that heading: its world reading is limited
+    and handed back in the body frame (frames.limit_in_world), the cap this
+    loop applied before wf21, when it limited the world action."""
 
     def __init__(self, dv_h: float = 0.25, dv_z: float = 0.15):
         self.dv_h, self.dv_z = dv_h, dv_z
         self.prev = Action4D()
 
-    def __call__(self, a: Action4D) -> Action4D:
+    def __call__(self, a: Action4D, yaw_deg: float | None = None) -> Action4D:
+        if yaw_deg is not None:
+            return limit_in_world(self, a, yaw_deg)
         p = self.prev
         out = Action4D(
             vx=p.vx + float(np.clip(a.vx - p.vx, -self.dv_h, self.dv_h)),
@@ -946,6 +973,9 @@ class OpenVLABackend:
         # Which inference produced `_last`: n >= 1; 0 = none has run yet;
         # None = `_last` is the zero held after a refusal (see latest()).
         self._last_inf: int | None = 0
+        # The heading (deg) of the frame `_last` was inferred from: its
+        # "forward" is the nose at that capture. None for a held zero.
+        self._last_yaw: float | None = None
         self._lock = threading.Lock()
         self._stop = False
         self._n_inf = 0
@@ -1062,6 +1092,7 @@ class OpenVLABackend:
         with self._lock:
             self._last = Action4D()
             self._last_inf = None
+            self._last_yaw = None
             peak = dict(self.vram_peak) if self.vram_peak else None
             rec = {"kind": "vram" if oom else "worker_error",
                    "detail": f"{type(e).__name__}: {e}", "after_inferences": self._n_inf}
@@ -1120,6 +1151,7 @@ class OpenVLABackend:
                     with self._lock:
                         self._last = Action4D()
                         self._last_inf = None
+                        self._last_yaw = None
                         self._n_refused += 1
                         k = self._n_refused
                     if log is not None:
@@ -1148,9 +1180,14 @@ class OpenVLABackend:
                         unnorm_key=UNNORM_KEY, do_sample=False)
                 infer_s = time.time() - t_inf
                 r = np.asarray(raw, dtype=float).flatten()
-                act = openvla_raw_to_action(r, self.scale, state.yaw_deg)
+                # The BODY action at the CAPTURE heading is what the control
+                # loop flies (WP3-04 / ARCH-04), turned to the heading of the
+                # tick that flies it (latest_for); the step record keeps the
+                # world reading at the capture heading too.
+                act = openvla_raw_to_body_action(r, self.scale)
                 with self._lock:
                     self._last = act
+                    self._last_yaw = state.yaw_deg
                     self._n_inf += 1
                     n = self._n_inf
                     self._last_inf = n
@@ -1164,7 +1201,7 @@ class OpenVLABackend:
                     log.flush()
                 if n % 5 == 1:
                     print(f"  [vla#{n}] yaw={state.yaw_deg:6.1f} raw={r[:3].round(4)} -> "
-                          f"act=({act.vx:.2f},{act.vy:.2f},{act.vz_up:.2f})")
+                          f"body=({act.vx:.2f},{act.vy:.2f},{act.vz_up:.2f})")
         except Exception as e:                   # noqa: BLE001 - recorded; the flight stops
             self._fail(e)
         finally:
@@ -1183,6 +1220,22 @@ class OpenVLABackend:
         the three can be mistaken for another."""
         with self._lock:
             return self._last, self._last_inf
+
+    def latest_for(self, yaw_deg: float) -> tuple[Action4D, int | None]:
+        """`latest()`, with the body action turned from the heading of the
+        frame it was inferred from to `yaw_deg`, the heading of the control
+        tick that flies it (frames.rebase_body, a body-frame turn by the
+        heading change). With ~1 s inference the aircraft can turn between
+        the capture and the tick; the model's "forward" means the nose it
+        SAW, so the velocity keeps that direction rather than swinging with
+        the nose - the world direction `world_action` records, which is
+        what this loop flew before wf21 too. A held zero (no inference yet,
+        a refusal, a dead worker) is returned as it is."""
+        with self._lock:
+            act, n, cap = self._last, self._last_inf, self._last_yaw
+        if cap is None:
+            return act, n
+        return rebase_body(act, cap, yaw_deg), n
 
 
 def _code_revision() -> str:
@@ -1547,17 +1600,27 @@ class CollisionWatch:
 
 
 def flight_row(tick: int, t: float, state: State, vla_action: Action4D,
-               raw: Action4D, d, inference: int | None, shield, policy: Policy) -> dict:
+               raw: Action4D, d, inference: int | None, shield, policy: Policy,
+               emitted_body: Action4D | None = None) -> dict:
     """One flight_log.jsonl row, in the shape guardrail/kpi.py reads: `raw` is
     what the Shield judged (the model's action after the rate limiter, as
     every rail logs the Shield's input), `vla` the model's own action before
     it; `emitted`, `violations`, `repairs`; the re-check of what FLEW (this
     demo flies `emitted` every tick: guardrail.replay.flown_fields, setpoint
-    pass) and the per-tick unsafe flags (episode_row_fields)."""
+    pass) and the per-tick unsafe flags (episode_row_fields).
+
+    Since wf21 (WP3-04 / ARCH-04) the Shield takes the BODY action: `vla`
+    and `raw_body` are the model's body action before and after the rate
+    limiter, `emitted_body` the Shield's emitted body action (what the
+    adapter turned into NED), `frame` "body"; `raw` / `emitted` stay the
+    world frame the Shield's checks read (its own reading of the body
+    action, `d.raw`), as every rail logs them."""
     row = {"tick": tick, "t": round(float(t), 3),
            "x": state.x, "y": state.y, "up": state.up, "yaw_deg": state.yaw_deg,
-           "inference": inference,
-           "vla": vla_action.model_dump(), "raw": raw.model_dump(),
+           "inference": inference, "frame": "body",
+           "vla": vla_action.model_dump(), "raw_body": raw.model_dump(),
+           "raw": d.raw.model_dump(),
+           "emitted_body": None if emitted_body is None else emitted_body.model_dump(),
            "emitted": d.emitted.model_dump(),
            "touched": d.touched, "braked": d.braked,
            "violations": [v.model_dump() for v in d.violations],
@@ -1886,9 +1949,14 @@ def main(argv: list[str] | None = None) -> int:
                 break
             tick += 1
             state = state_from_pose(client.simGetVehiclePose())   # heading included
-            raw, n_inf = vla.latest()             # never blocks; n_inf: see latest()
-            smooth = limiter(raw)                 # blend hand-offs BEFORE shield
-            d = shield.filter(state, smooth)      # shield = final authority
+            # never blocks; n_inf: see latest(); the body action at THIS
+            # tick's heading (latest_for: turned from its capture heading)
+            raw, n_inf = vla.latest_for(state.yaw_deg)
+            # blend hand-offs BEFORE shield; the limiter caps the WORLD
+            # reading's change, as before wf21 (frames.limit_in_world)
+            smooth = limiter(raw, state.yaw_deg)
+            # BODY in, BODY out (WP3-04 / ARCH-04); shield = final authority
+            d, e_body = shield.filter_body(state, smooth)
             audit.log(tick, d)
             if d.touched:
                 n_touched += 1
@@ -1896,11 +1964,14 @@ def main(argv: list[str] | None = None) -> int:
                          "yaw_deg": state.yaw_deg, "inference": n_inf,
                          "touched": d.touched})
             row = flight_row(tick, time.time() - t0, state, raw, smooth, d, n_inf,
-                             shield, policy)
+                             shield, policy, emitted_body=e_body)
             rows.append(row)
             log.write(json.dumps(row) + "\n")
             e = d.emitted
-            client.moveByVelocityAsync(e.vx, e.vy, -e.vz_up, duration=0.3)
+            # THE ADAPTER: the emitted BODY action into AirSim's NED command,
+            # after the projection (frames.body_to_local_ned).
+            v_n, v_e, v_d, _ = body_to_local_ned(e_body, state.yaw_deg)
+            client.moveByVelocityAsync(v_n, v_e, v_d, duration=0.3)
             collisions.poll(time.time() - t0)
             if tick % 50 == 0:
                 log.flush()

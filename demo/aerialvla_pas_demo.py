@@ -33,6 +33,7 @@ from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
+from guardrail.frames import body_action, body_to_local_ned         # noqa: E402
 from guardrail.geometry import (edge_distance, fence_polygon, ring_contains,  # noqa: E402
                                 ring_distance)
 from guardrail.models import (                                      # noqa: E402
@@ -420,9 +421,15 @@ async def fly(args) -> int:
             kin = drone.get_ground_truth_kinematics()
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
-            state = State(x=p["x"], y=p["y"], up=-p["z"])
+            # The aircraft's heading goes to the Shield (WP3-04 / ARCH-04).
+            state = State(x=p["x"], y=p["y"], up=-p["z"], yaw_deg=math.degrees(yaw))
             store.put_pose(p["x"], p["y"], yaw)
 
+            # The whole action below is composed in the BODY frame (vx
+            # forward, vy right of the nose: WP3-04 / ARCH-04, since wf21),
+            # the frame the VLA speaks and the Shield takes: the planner's
+            # goal vector is turned into it (frames.to_body), the depth
+            # avoider's strafe and the escape are body directions already.
             escaping = escape_until is not None and time.time() < escape_until
             if escaping:
                 # ESCAPE mode: move toward the FREEST direction the depth camera
@@ -430,21 +437,20 @@ async def fly(args) -> int:
                 dl, dr = last_dlr
                 if dl > 12.0 or dr > 12.0:
                     side = -1.0 if dl >= dr else 1.0
-                    esc = yaw + side * math.pi / 2       # strafe to open side
+                    esc_b = (0.0, 1.2 * side)             # strafe to open side
                 else:
-                    esc = yaw + math.pi                   # both blocked: back out
+                    esc_b = (-1.2, 0.0)                   # both blocked: back out
                 # climb HARD toward the ceiling — if the building is shorter
                 # than the altitude band's top, going over it clears the pin
                 # (shield clamps vz_up to the climb cap and alt to the ceiling)
-                raw = Action4D(vx=1.2 * math.cos(esc), vy=1.2 * math.sin(esc),
-                               vz_up=3.0, yaw_rate=0.0)
+                raw = Action4D(vx=esc_b[0], vy=esc_b[1], vz_up=3.0, yaw_rate=0.0)
                 avoid_state = prev_avoid = ""
             else:
                 if escape_until is not None:
                     escape_until = None
                     print("  [flight] ESCAPE window over — resuming VLA control")
                 fwd, dwn, yr, land = vla.latest()
-                vx, vy = fwd * math.cos(yaw), fwd * math.sin(yaw)
+                vx, vy = fwd, 0.0                     # body: forward, right
                 # goal target: in --follow mode, arc-length pure-pursuit along
                 # the planned polyline (monotonic projection -> no waypoint-pass
                 # loops) + corner slow-down; otherwise aim at the current waypoint.
@@ -471,11 +477,12 @@ async def fly(args) -> int:
                         last_d = math.hypot(waypoints[-1][0] - state.x,
                                             waypoints[-1][1] - state.y)
                         spd = min(spd, max(1.0, last_d))
-                        gvx = (goal[0] - state.x) / gd * spd
-                        gvy = (goal[1] - state.y) / gd * spd
-                        vx, vy = (1 - a) * vx + a * gvx, (1 - a) * vy + a * gvy
+                        g = body_action(Action4D(vx=(goal[0] - state.x) / gd * spd,
+                                                 vy=(goal[1] - state.y) / gd * spd),
+                                        state.yaw_deg)
+                        vx, vy = (1 - a) * vx + a * g.vx, (1 - a) * vy + a * g.vy
                 vz_up, yaw_rate = -dwn, yr * args.yaw_gain
-                # depth avoider: world-frame action, AFTER goal-blend, BEFORE
+                # depth avoider: body-frame action, AFTER goal-blend, BEFORE
                 # the RateLimiter — the Shield stays the final authority
                 avoid_state = ""
                 depth = store.get_depth()
@@ -502,19 +509,16 @@ async def fly(args) -> int:
                         if d_center < 8.0:
                             avoid_state = "climb+steer"
                             vz_up += 1.2
-                            # steer SIDEWAYS toward the freer side (world-frame
+                            # steer SIDEWAYS toward the freer side (a body
                             # strafe, not just yaw — actually moves off the wall)
                             side = -1.0 if d_left > d_right else 1.0
-                            sx = 2.0 * math.cos(yaw + side * math.pi / 2)
-                            sy = 2.0 * math.sin(yaw + side * math.pi / 2)
+                            sx, sy = 0.0, 2.0 * side
                             yaw_rate += side * 0.5
                             if d_center < 5.0:
                                 # kill the forward component entirely: only
                                 # strafe + climb until the nose sees space
-                                fdot = vx * math.cos(yaw) + vy * math.sin(yaw)
-                                if fdot > 0:
-                                    vx -= fdot * math.cos(yaw)
-                                    vy -= fdot * math.sin(yaw)
+                                if vx > 0:
+                                    vx = 0.0
                             vx, vy = vx + sx, vy + sy
                     last_dlr = (d_left, d_right)      # escape picks its direction
                     if avoid_state != prev_avoid:
@@ -528,7 +532,8 @@ async def fly(args) -> int:
                 # geometry the camera can't see.
                 sp = math.hypot(vx, vy)
                 if sp > 0.5:
-                    herr = (math.atan2(vy, vx) - yaw + math.pi) % (2 * math.pi) - math.pi
+                    # the velocity's angle off the nose (body frame)
+                    herr = math.atan2(vy, vx)
                     face_rate = float(np.clip(1.2 * herr, -0.9, 0.9))
                     yaw_rate = 0.75 * face_rate + 0.25 * yaw_rate
                     align = max(0.25, math.cos(min(abs(herr), math.pi / 2)))
@@ -545,14 +550,16 @@ async def fly(args) -> int:
                         sc = max(0.2, dmin / 8.0)
                         vx, vy = vx * sc, vy * sc
                 raw = Action4D(vx=vx, vy=vy, vz_up=vz_up, yaw_rate=yaw_rate)
-            smooth = limiter(raw)
+            # the limiter caps the WORLD reading's change, as before wf21
+            smooth = limiter(raw, state.yaw_deg)
             if args.no_shield:
                 # COMPARISON BASELINE: no guardrail. Emit the raw action as-is —
                 # the drone WILL enter no-fly-zones / bust the altitude band.
                 # (still rate-limited so the sim stays numerically stable.)
                 d = SimpleNamespace(emitted=smooth, touched=False)
+                e_body = smooth
             else:
-                d = shield.filter(state, smooth)
+                d, e_body = shield.filter_body(state, smooth)
                 audit.log(tick, d)
             if d.touched:
                 n_touched += 1
@@ -572,10 +579,12 @@ async def fly(args) -> int:
                     os.replace(live_tmp, live_path)
                 except Exception:
                     pass
-            e = d.emitted
+            # THE ADAPTER: the BODY action into the simulator's NED command,
+            # after the projection (frames.body_to_local_ned).
+            v_n, v_e, v_d, w = body_to_local_ned(e_body, state.yaw_deg)
             await drone.move_by_velocity_async(
-                e.vx, e.vy, -e.vz_up, duration=0.3,
-                yaw_is_rate=True, yaw=e.yaw_rate)
+                v_n, v_e, v_d, duration=0.3,
+                yaw_is_rate=True, yaw=w)
             # progress toward the CURRENT target: reset the no-progress timer only
             # when we get meaningfully closer. ESCAPE jitter never reduces target
             # distance, so a wedged waypoint's timer keeps growing and it SKIPS.
@@ -622,7 +631,7 @@ async def fly(args) -> int:
                 if _dm is not None:
                     dstat = f"min={float(np.nanmin(_dm)):.1f} shape={_dm.shape}"
                 print(f"  tick {tick}: pos=({state.x:5.1f},{state.y:5.1f},{state.up:4.1f}) "
-                      f"cmd=({e.vx:.1f},{e.vy:.1f}) shield={'HIT' if d.touched else '-'} "
+                      f"cmd_body=({e_body.vx:.1f},{e_body.vy:.1f}) shield={'HIT' if d.touched else '-'} "
                       f"depth[{dstat}]")
             await asyncio.sleep(TICK)
 

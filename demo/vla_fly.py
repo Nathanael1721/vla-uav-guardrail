@@ -164,6 +164,7 @@ for _p in (ROOT, ROOT / "demo"):
         sys.path.insert(0, str(_p))
 
 from guardrail.compiler import join_negative_xy                     # noqa: E402
+from guardrail.frames import body_to_local_ned, filter_world_as_body  # noqa: E402
 
 import vla_mission as VM                                             # noqa: E402
 
@@ -880,13 +881,16 @@ async def _transfer(drone, shield, State, Action4D, quat_yaw, target_xy, cruise_
             break
         v = min(1.5, 0.6 * dist)
         vz = max(-args.climb_max, min(args.climb_max, (cruise_up - st.up) * args.alt_gain))
-        dec = shield.filter(st, Action4D(vx=v * dx / dist, vy=v * dy / dist, vz_up=vz))
+        # In the BODY frame at the aircraft's heading (WP3-04 / ARCH-04), and
+        # back to NED by the adapter after the projection.
+        dec, _, e_body = filter_world_as_body(
+            shield, st, Action4D(vx=v * dx / dist, vy=v * dy / dist, vz_up=vz))
         rec["ticks"] += 1
         rec["shield_touched"] += int(dec.touched)
-        e = dec.emitted
         live.beat(detail=f"transfer to the mission start, {dist:.0f} m")
-        await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
-                                           yaw_is_rate=True, yaw=e.yaw_rate)
+        v_n, v_e, v_d, w = body_to_local_ned(e_body, st.yaw_deg)
+        await drone.move_by_velocity_async(v_n, v_e, v_d, duration=0.3,
+                                           yaw_is_rate=True, yaw=w)
         await asyncio.sleep(TICK)
     await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
     kin = drone.get_ground_truth_kinematics()
@@ -2163,8 +2167,11 @@ async def _fly(args, holder: dict) -> int:
                                      [round(subj_v[0], 2), round(subj_v[1], 2)])})
             e = res.flown
             cmd_times.append(time.time())
-            await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
-                                               yaw_is_rate=True, yaw=e.yaw_rate)
+            # THE ADAPTER: the BODY action into the simulator's NED command,
+            # after the projection (frames.body_to_local_ned).
+            v_n, v_e, v_d, w = body_to_local_ned(res.flown_body, state.yaw_deg)
+            await drone.move_by_velocity_async(v_n, v_e, v_d, duration=0.3,
+                                               yaw_is_rate=True, yaw=w)
             if level_car is not None:
                 # Truth for SCORING only: the level car against the aircraft.
                 try:

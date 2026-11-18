@@ -32,6 +32,10 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from guardrail.frames import body_to_local_ned                       # noqa: E402
+
 OUT = ROOT / "dataset" / "aerialvla_ft"
 
 CRUISE = 20.0
@@ -188,10 +192,12 @@ def main() -> int:
                     n += 1
 
             # --- act (expert flies body-frame like the VLA contract) ---
-            vx = fwd * math.cos(yaw)
-            vy = fwd * math.sin(yaw)
+            # turned into AirSim's NED command by the one body -> NED function
+            # every rail's adapter calls (WP3-04 / ARCH-04); `down` is NED down
+            v_n, v_e, v_d, _ = body_to_local_ned((fwd, 0.0, -down, yaw_rate),
+                                                 math.degrees(yaw))
             client.moveByVelocityAsync(
-                vx, vy, down, duration=0.3,
+                v_n, v_e, v_d, duration=0.3,
                 yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(yaw_rate)))
             time.sleep(0.1)
 

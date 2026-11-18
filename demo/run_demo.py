@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -53,6 +54,8 @@ sys.path.insert(0, str(ROOT))
 from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
 from guardrail.audit import AUDIT_FILE                                # noqa: E402
+from guardrail.frames import (body_action, body_to_local_ned,       # noqa: E402
+                              filter_world_as_body, limit_in_world)
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.models import PolygonFence, XY                          # noqa: E402
@@ -71,7 +74,12 @@ class RateLimiter:
     not whipsawed by the VLA-vs-Shield tug-of-war at zone edges (visible as
     wobble + lift-loss dips). Never applied to the raw VLA action — and the
     caller re-checks the smoothed action against the shield, so smoothing can
-    never smuggle a violation through."""
+    never smuggle a violation through.
+
+    The cap is per axis on the WORLD velocity. Since wf21 the loop's action is
+    the Shield's emitted BODY action; `smooth_body` / `resync_body` limit its
+    world reading at the heading and hand the result back in the body frame
+    (frames.limit_in_world), the shaping this loop applied before wf21."""
 
     def __init__(self, dv_h: float = 0.45, dv_z: float = 0.25):
         self.dv_h = dv_h            # max horizontal delta per tick (m/s)
@@ -95,6 +103,17 @@ class RateLimiter:
         )
         self.prev = sm
         return sm
+
+    def resync(self, a):
+        """Fall back to the strict action: it becomes the last one sent."""
+        self.prev = a
+        return a
+
+    def smooth_body(self, body, yaw_deg: float):
+        return limit_in_world(self.smooth, body, yaw_deg)
+
+    def resync_body(self, body, yaw_deg: float):
+        return limit_in_world(self.resync, body, yaw_deg)
 
 # The dynamic NFZ spawned by --dynamic: sits on the east-edge detour path the
 # drone takes around the static zone, so it forces a SECOND, wider reroute.
@@ -234,8 +253,15 @@ def main() -> int:
     while time.time() - t0 < MAX_S:
         tick += 1
         now = time.time() - t0
-        pos = client.simGetVehiclePose().position
-        state = State(x=pos.x_val, y=pos.y_val, up=-pos.z_val)
+        pose = client.simGetVehiclePose()
+        pos, q = pose.position, pose.orientation
+        # The heading goes to the Shield (WP3-04 / ARCH-04: the body frame at
+        # the real heading), from the NED quaternion as airsim's
+        # to_eularian_angles reads it: 0 = North, clockwise positive.
+        state = State(x=pos.x_val, y=pos.y_val, up=-pos.z_val,
+                      yaw_deg=math.degrees(math.atan2(
+                          2.0 * (q.w_val * q.z_val + q.x_val * q.y_val),
+                          1.0 - 2.0 * (q.y_val ** 2 + q.z_val ** 2))))
 
         # --- dynamic NFZ hot-apply (grant: dynamic_nfz + generation bump) ---
         if args.dynamic and spawn_t is None and now >= DYNAMIC_AT_S:
@@ -267,40 +293,48 @@ def main() -> int:
             break
 
         raw = vla.act(state)
+        # The stub's world action in the BODY frame at the aircraft's heading
+        # (WP3-04 / ARCH-04): the Shield takes and returns the body frame,
+        # and everything after it - the shaping, the re-check, the adapter -
+        # works on the BODY action.
         if shield_on:
-            decision = shield.filter(state, raw)
+            decision, body_in, emitted = filter_world_as_body(shield, state, raw)
             audit.log(tick, decision)        # reads the hash live (hot-applies)
-            emitted = decision.emitted
             if decision.touched:
                 n_touched += 1
                 n_braked += int(decision.braked)
         else:
-            emitted = raw                       # A/B: no protection
+            emitted = body_action(raw, state.yaw_deg)   # A/B: no protection
 
         # --- jerk shaping: smooth the safe action, then RE-CHECK it. If the
         # smoothed version would violate (e.g. delaying a brake), fall back to
         # the shield's exact output — safety always wins over comfort.
         final = emitted
         if not args.no_smooth:
-            sm = limiter.smooth(emitted)
-            if shield_on and shield._check(state, sm):
-                limiter.prev = emitted           # resync; use the strict action
+            sm = limiter.smooth_body(emitted, state.yaw_deg)   # world-frame cap
+            if shield_on and shield.check_body(state, sm):
+                limiter.resync_body(emitted, state.yaw_deg)  # use the strict action
             else:
                 final = sm
+        # THE ADAPTER: the BODY action into AirSim's NED velocity command,
+        # after the projection (frames.body_to_local_ned, every rail's one
+        # body -> NED function). The jitter figures read the NED (North,
+        # East) velocities, as they read the world action before wf21.
+        v_n, v_e, v_d, _ = body_to_local_ned(final, state.yaw_deg)
+        e_n, e_e, _, _ = body_to_local_ned(emitted, state.yaw_deg)
         if prev_cmd is not None:
-            dr = abs(emitted.vx - prev_cmd[0]) + abs(emitted.vy - prev_cmd[1])
-            do = abs(final.vx - prev_cmd[2]) + abs(final.vy - prev_cmd[3])
+            dr = abs(e_n - prev_cmd[0]) + abs(e_e - prev_cmd[1])
+            do = abs(v_n - prev_cmd[2]) + abs(v_e - prev_cmd[3])
             jitter_raw += dr
             jitter_out += do
             jit_max_raw = max(jit_max_raw, dr)
             jit_max_out = max(jit_max_out, do)
-        prev_cmd = (emitted.vx, emitted.vy, final.vx, final.vy)
+        prev_cmd = (e_n, e_e, v_n, v_e)
 
         traj.append({"t": round(now, 2), "x": state.x, "y": state.y,
                      "up": state.up,
                      "touched": shield_on and decision.touched})
-        client.moveByVelocityAsync(final.vx, final.vy, -final.vz_up,
-                                   duration=TICK * 2)
+        client.moveByVelocityAsync(v_n, v_e, v_d, duration=TICK * 2)
         time.sleep(TICK)
 
     # ---- gentle landing: slow controlled descent, camera keeps rolling.

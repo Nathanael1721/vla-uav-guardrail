@@ -20,7 +20,8 @@ converts it itself. For PositionTarget with FRAME_LOCAL_NED, setpoint_raw's
 local callback applies ftf::transform_frame_enu_ned to position, velocity and
 acceleration (x, y, z) -> (y, x, -z), and flips yaw_rate's sign, before it
 sends SET_POSITION_TARGET_LOCAL_NED. So the NED setpoint is computed with
-guardrail.frames (from_body, then to_local_ned) and then packed the way MAVROS
+guardrail.frames.body_to_local_ned (the one body -> NED function every rail's
+adapter calls) and then packed the way MAVROS
 expects: x = east, y = north, z = up, yaw_rate counter-clockwise. NED values
 written into the message unconverted would reach ArduPilot with north and
 east swapped and the vertical inverted. `mavros_sends()` reproduces MAVROS's
@@ -161,7 +162,7 @@ if str(ROOT) not in sys.path:
 
 from guardrail.delivery import (BEAT_PERIOD_S, SENT_QOS_DEPTH,          # noqa: E402
                                 sent_report)
-from guardrail.frames import from_body, to_local_ned                     # noqa: E402
+from guardrail.frames import body_to_local_ned                            # noqa: E402
 # time_controls and zone_clearance_m are re-exported: this module's callers
 # and tests read them here, where they lived until 2026-10-12.
 from guardrail.fence_export import (deferral, is_enforced, iter_zones,    # noqa: E402,F401
@@ -430,12 +431,12 @@ def heading_deg_from_enu_quaternion(qx: float, qy: float, qz: float,
 def body_to_ned(body: list | tuple, heading_deg: float) -> tuple:
     """Body [vx_fwd, vy_right, vz_up, yaw_rate_cw] -> (v_n, v_e, v_d, yaw_rate_cw).
 
-    The single body -> local-NED crossing: guardrail.frames.from_body (body to
-    our North/East/up contract) then to_local_ned (up -> down). Nothing else
-    in the stack rotates a command.
+    The ROS 2 rail's call of THE body -> local-NED crossing,
+    guardrail.frames.body_to_local_ned, which every rail's adapter calls
+    (tests/test_frame_boundary.py fails on any other crossing).
     """
     vx, vy, vz, wz = (float(v) for v in body[:4])
-    return to_local_ned(from_body(vx, vy, vz, wz, heading_deg))
+    return body_to_local_ned((vx, vy, vz, wz), heading_deg)
 
 
 def ned_to_mavros_enu(v_n: float, v_e: float, v_d: float,

@@ -976,8 +976,13 @@ def test_the_worker_feeds_the_csp_prompt_and_logs_a_replayable_step():
     assert rec["frame_index"] == 1 and rec["frame_file"] == "frames/run-test/000001.png"
     assert (out / rec["frame_file"]).read_bytes() == PNG
     assert _close(rec["world_action"]["vy"], 1.5) and _close(rec["world_action"]["vx"], 0.0)
+    # Since wf21 (WP3-04 / ARCH-04) the worker hands the control loop the
+    # BODY action, which the Shield takes at the tick's heading; the step
+    # record keeps the world reading at the capture heading for replay.
     act, n = b.latest()
-    assert n == 1 and act.model_dump() == rec["world_action"]
+    body = rec["body_action"]
+    assert n == 1 and act.model_dump() == {"vx": body["vx_fwd"], "vy": body["vy_right"],
+                                            "vz_up": body["vz_up"], "yaw_rate": 0.0}
     assert rv.replay_step(rec).model_dump() == rec["world_action"]
 
 
@@ -1039,6 +1044,36 @@ def test_the_worker_refuses_a_prompt_that_failed_and_holds_zero():
     assert ok["frame_file"] == "frames/run-test/000002.png" and (out / ok["frame_file"]).exists()
     assert not (out / "frames/run-test/000001.png").exists(), "a refused frame was kept"
     assert b.latest()[1] == 1, "inference resumed but the action is not credited to it"
+
+
+def test_latest_for_turns_the_body_action_from_its_capture_heading():
+    """WP3-04 / ARCH-04 (wf21 review): the worker infers from a frame captured
+    facing East (yaw 90); the control tick that flies the answer may face
+    elsewhere after ~1 s of inference. latest_for(yaw) hands the body action
+    turned from the CAPTURE heading to the tick's (frames.rebase_body), so
+    the velocity keeps the direction the model meant relative to what it
+    saw - the world direction `world_action` records - instead of swinging
+    with the nose. A held zero is returned as it is."""
+    out = Path(tempfile.mkdtemp())
+    fp = _fp(load_policy(URBAN), tokenizer=CharTokenizer())
+    fp.attach(out)
+    b = _backend(fp, out)
+    recs = _run_worker(b, _Sim(yaw=90.0, frames=1))
+    rec = recs[-1]
+    assert _close(rec["state"]["yaw_deg"], 90.0, 1e-9)
+    world = rec["world_action"]                         # East at 1.5 m/s
+    for yaw in (90.0, 0.0, 45.0, -170.0):
+        act, n = b.latest_for(yaw)
+        assert n == 1
+        w = rv.from_body(act.vx, act.vy, act.vz_up, act.yaw_rate, yaw)   # what it flies
+        assert _close(w.vx, world["vx"], 1e-12) and _close(w.vy, world["vy"], 1e-12),             (yaw, act, world)
+    act, _ = b.latest_for(0.0)
+    assert _close(act.vx, 0.0, 1e-12) and _close(act.vy, 1.5, 1e-12),         f"facing North, the East the model meant is to the right: {act}"
+    same, body = b.latest_for(rec["state"]["yaw_deg"])[0], b.latest()[0]
+    assert _close(same.vx, body.vx, 1e-12) and _close(same.vy, body.vy, 1e-12),         "at the capture heading it is the body action"
+    with b._lock:
+        b._last, b._last_inf, b._last_yaw = rv.Action4D(), None, None
+    assert b.latest_for(33.0) == (rv.Action4D(), None)
 
 
 # --------------------------------------------------------------------------- #

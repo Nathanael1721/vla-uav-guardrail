@@ -77,7 +77,8 @@ from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
-from guardrail.frames import filter_as_body                         # noqa: E402
+from guardrail.frames import (body_to_local_ned,                   # noqa: E402
+                              filter_world_as_body)
 from guardrail.manifest import (                                    # noqa: E402
     DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
     is_kpi_grade, model_hash, pilot_record,
@@ -4475,11 +4476,12 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         v = min(3.0, 0.6 * d)
         vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
                            -args.climb_max, args.climb_max))
-        # In the BODY frame at the Shield's heading (0 here), as the mission
-        # loop hands it (frames.filter_as_body, 2026-11-18).
-        dec = filter_as_body(shield, State(x=p["x"], y=p["y"], up=up),
-                             Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz,
-                                      yaw_rate=0.0))
+        # In the BODY frame at the aircraft's heading, as the mission loop
+        # hands it (frames.filter_world_as_body, WP3-04 / ARCH-04).
+        yaw_deg = math.degrees(quat_yaw(kin["pose"]["orientation"]))
+        dec, _, e_body = filter_world_as_body(
+            shield, State(x=p["x"], y=p["y"], up=up, yaw_deg=yaw_deg),
+            Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz, yaw_rate=0.0))
         n_touched += int(dec.touched)
         if pind is not None and recorder is not None:
             # The flight to the landing site goes through the Shield, so the
@@ -4500,9 +4502,10 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
             except Exception as exc:                            # noqa: BLE001
                 print(f"[hud] landing indicator stopped: {type(exc).__name__}: {exc}")
                 pind = None
-        e = dec.emitted
-        await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
-                                           yaw_is_rate=True, yaw=e.yaw_rate)
+        # The adapter: the emitted BODY action into NED after the projection.
+        vn, ve, vd, yr = body_to_local_ned(e_body, yaw_deg)
+        await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
+                                           yaw_is_rate=True, yaw=yr)
         await asyncio.sleep(0.1)
     await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
     kin = drone.get_ground_truth_kinematics()
@@ -5895,7 +5898,10 @@ async def fly(args) -> int:
             _ms_kin = (time.time() - _ta) * 1000
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
-            state = State(x=p["x"], y=p["y"], up=-p["z"])
+            # The aircraft's heading goes to the Shield (WP3-04 / ARCH-04: it
+            # takes the body frame at the real heading; until wf21 this rail
+            # gave it none, State.yaw_deg 0).
+            state = State(x=p["x"], y=p["y"], up=-p["z"], yaw_deg=math.degrees(yaw))
             # The aircraft's own horizontal velocity, for the yaw servo's
             # line-of-sight feed-forward; the last flown command stands in
             # when the kinematics carry no twist.
@@ -6812,15 +6818,11 @@ async def fly(args) -> int:
                     mode_label = ("VLA SEARCHING" if hier_rec.get("authority") == "vla_search"
                                   else "VLA HOLDING")
             _ta = time.time()
-            # Handed to the Shield in the BODY frame (2026-11-18, WP3-04 /
-            # ARCH-04: frames.filter_as_body, the arc off), at the heading the
-            # Shield turns it back with: `state`'s, 0 - this rail gives the
-            # Shield no heading - so both turns are the identity: the body
-            # action is the world action relabelled, not the aircraft's body
-            # frame. A tick whose round trip would change a bit (a zero's
-            # sign) goes to filter() as before; the decision is filter()'s
-            # to the bit (tests/test_rail_body_frame.py).
-            d = filter_as_body(shield, state, flown_in)
+            # Handed to the Shield in the BODY frame on every tick (WP3-04 /
+            # ARCH-04: frames.filter_world_as_body, the arc off), at the
+            # aircraft's heading (`state`'s); the emitted BODY action is what
+            # the adapter below turns into NED, after the projection.
+            d, _, e_body = filter_world_as_body(shield, state, flown_in)
             audit.log(tick, d)
             _ms_shield = (time.time() - _ta) * 1000
             pol = None
@@ -6968,9 +6970,13 @@ async def fly(args) -> int:
 
             _ta = time.time()
             cmd_times.append(_ta)
+            # THE ADAPTER (WP3-04 / ARCH-04): the emitted BODY action into the
+            # simulator's NED velocity command, after the projection, by the
+            # one body -> NED function every rail's adapter calls.
+            vn, ve, vd, yr = body_to_local_ned(e_body, state.yaw_deg)
             await drone.move_by_velocity_async(
-                e.vx, e.vy, -e.vz_up, duration=0.3,
-                yaw_is_rate=True, yaw=e.yaw_rate)
+                vn, ve, vd, duration=0.3,
+                yaw_is_rate=True, yaw=yr)
             stage_ms["cmd"].append((time.time() - _ta) * 1000)
             if recorder is not None:
                 # Hand over state only. The decode, draw and encode happen on the

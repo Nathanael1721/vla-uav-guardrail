@@ -3622,7 +3622,7 @@ class Shield:
         return list(self._predict(state, action, self._clear_horizon_s(action),
                                   arc_path="arc"))
 
-    def _clear_dir_candidates(self, a: Action4D, cap: float):
+    def _clear_dir_candidates(self, a: Action4D, cap: float, yaw_deg: float = 0.0):
         """Recovery headings: 12 bearings x 2 speeds, inheriting `a`'s vertical
         and yaw components (those were already repaired by the altitude operator,
         so they must not be re-invented here) — re-clamped so a candidate can
@@ -3638,8 +3638,18 @@ class Shield:
             # sites below.
             ymax = math.radians(k.yaw_rate_max_dps)
             yr = max(-ymax, min(ymax, yr))
+        # The bearings are the aircraft's own (WP3-04 / ARCH-04, 2026-11-18):
+        # every 30 degrees from its nose, `yaw_deg` the state's heading, so
+        # the candidates - and a tie between equal ones, which goes to the
+        # first - turn with the aircraft and the search is the same in the
+        # frame the VLA emits in at every heading (tests/
+        # test_frame_boundary.py). Until then they were every 30 degrees
+        # from North: the same at heading 0 (bit for bit), and at any other
+        # heading a different candidate set. A state without a heading
+        # (yaw_deg 0) searches from North, as before.
+        nose = math.radians(yaw_deg) if math.isfinite(yaw_deg) else 0.0
         for k in range(12):
-            ang = k * math.pi / 6.0
+            ang = nose + k * math.pi / 6.0
             ux, uy = math.cos(ang), math.sin(ang)
             for frac in (1.0, 0.5):
                 spd = cap * frac
@@ -3651,7 +3661,7 @@ class Shield:
         if (self._dist if f is None else f[0]) is None:
             return None
         best, best_key = None, None
-        for cand in self._clear_dir_candidates(a, cap):
+        for cand in self._clear_dir_candidates(a, cap, state.yaw_deg):
             key = (self._clear_min_dist(state, cand, f),
                    cand.vx * a.vx + cand.vy * a.vy)
             if best_key is None or key > best_key:
@@ -3673,7 +3683,7 @@ class Shield:
         clearance push and a stand-off ring disagreed the best effort could fly
         straight at the subject whose ring the aircraft was already inside."""
         clean = clean_key = best = best_key = None
-        for cand in self._clear_dir_candidates(a, cap):
+        for cand in self._clear_dir_candidates(a, cap, state.yaw_deg):
             key = (self._clear_min_dist(state, cand) if self._dist is not None else 0.0,
                    cand.vx * raw.vx + cand.vy * raw.vy)
             bkey = (-self._deepens(state, cand),) + key
@@ -7221,8 +7231,17 @@ class Shield:
         ShieldDecision, whose raw and emitted actions are in the world frame
         the logs and the audit record read, and the emitted action back in
         the body frame, for the MAVLink adapter to turn into local NED. That
-        conversion is the adapter's alone (`sitl/mavlink_adapter_node.py`,
-        frames.to_local_ned).
+        conversion is the adapter's alone (frames.body_to_local_ned, called
+        by every rail's adapter: `sitl/mavlink_adapter_node.py` on the ROS 2
+        rail; tests/test_frame_boundary.py).
+
+        BODY IN, BODY OUT (WP3-04 / ARCH-04). The projection computes in the
+        world frame its rules are written in, between the two rotations
+        below; its interface is the body frame on both sides. The round trip
+        is exact at a whole number of quarter turns and within a few ulp
+        elsewhere, and the same body action in a scene that turns with the
+        aircraft is repaired to the same body action at every heading
+        (tests/test_frame_boundary.py).
 
         The action is turned into the world frame at the state's heading
         (frames.from_body), filtered by `filter`, and turned back at the same
@@ -7236,10 +7255,20 @@ class Shield:
         rotates the repair with them; the speed cap is a norm, and the
         vertical and yaw caps do not involve the heading. So repairing the
         rotated action against the world geometry is the body-frame repair,
-        rotated, without rotating every rule's geometry on every tick. One
-        choice is not of that kind: a tie between equally near edges with no
-        heading to break it goes to the first along the ring's stored
-        (world) order (`escape_direction`).
+        rotated, without rotating every rule's geometry on every tick. The
+        grant's own reference implementation does the same per operator
+        (kuanting-vla-uav-guardrail safety_shield/repair.py: each operator
+        takes and returns the body action and turns it into the IR's ENU
+        plane for its geometry, `body_to_enu` ... `enu_to_body`); this turns
+        once around the stack. Pinned per rule family in tests/
+        test_frame_boundary.py (zone, envelopes, corridor, stand-off and its
+        overhead recovery, PathRepair's stand-off detour at any heading; the
+        clearance rule on a raster map and its direction search, whose
+        bearings are the aircraft's own since 2026-11-18, at the quarter
+        turns, where a raster turns exactly). One choice is not of that
+        kind: a tie between equally near edges with no heading to break it
+        goes to the first along the ring's stored (world) order
+        (`escape_direction`).
 
         THE ARC (`arc`, 2026-11-17; None: the Shield's `arc_forecast`, off
         by default). A body-frame command holds its forward / right velocity
@@ -7368,6 +7397,25 @@ class Shield:
                 return self._decide(self._decision_state(tick, state), raw)
         finally:
             self.n_floor_refused = n_refused
+
+    def advise_body(self, state: State, body: Action4D) -> tuple[ShieldDecision, Action4D]:
+        """`advise` with the action in the BODY frame, as `filter_body` is
+        `filter` (WP3-04 / ARCH-04): `body` turned into the world frame at
+        the state's heading, `advise`, and the emitted action turned back at
+        that heading. Returns `(decision, emitted_body)`, so a rail streams
+        the answer to a stop in the body frame its adapter converts."""
+        raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)
+        decision = self.advise(state, raw)
+        fwd, right, up, yaw_rate = _to_body(decision.emitted, state.yaw_deg)
+        return decision, Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+
+    def check_body(self, state: State, body: Action4D) -> list[Violation]:
+        """Every rule a BODY-frame action violates from `state` (`_check` on
+        it turned into the world frame at the state's heading): for a rail
+        that shapes the Shield's emitted body action after the projection and
+        re-checks the shaped one before streaming it (demo/run_demo.py)."""
+        return self._check(state, _from_body(body.vx, body.vy, body.vz_up,
+                                             body.yaw_rate, state.yaw_deg))
 
     def _begin_tick(self, t: float | None, state=None) -> _Tick:
         if t is None:

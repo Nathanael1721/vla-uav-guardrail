@@ -19,7 +19,8 @@ same setpoints.
 THE SAME ROTATION AS THE MAVLINK ADAPTER
 
 The body -> local-NED crossing is mavlink_adapter_node.setpoint_from_body
-(guardrail.frames.from_body then to_local_ned), called here unchanged, at the
+(guardrail.frames.body_to_local_ned, every rail's one body -> NED function),
+called here unchanged, at the
 heading the pose topic gives. The NED setpoint is then packed for AP_DDS's
 "map" frame. ArduPilot's AP_DDS_External_Control::handle_velocity_control
 takes a TwistStamped whose frame_id is "map" as ENU and converts it itself:

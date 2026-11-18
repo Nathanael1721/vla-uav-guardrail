@@ -59,6 +59,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from guardrail import aerialvla_codec as C                           # noqa: E402
+from guardrail.frames import filter_world_as_body                   # noqa: E402
 from guardrail.models import Action4D, State                         # noqa: E402
 from guardrail.vla_link import (                                      # noqa: E402
     NO_HINT, Capture, Hint, Pose, RemoteVLA, LinkError, ProtocolError, build_infer_fields,
@@ -1046,13 +1047,17 @@ class MissionMonitor:
 # --------------------------------------------------------------------------- #
 @dataclass
 class LoopTick:
-    flown: Action4D          # what to send to the autopilot
+    flown: Action4D          # what flies, in the world frame (the record copy)
     decision: Any            # the ShieldDecision (with the Shield off: its shadow)
     row: dict                # the flight_log.jsonl row
     hud: dict                # what the recorder draws
     end_reason: str | None
     hud_decision: Any = None  # what the policy indicator reads (hud_decision)
     det: Any = None           # the detector box this tick read (the recorder draws it)
+    # What to send to the autopilot, in the BODY frame (WP3-04 / ARCH-04):
+    # the adapter turns it into NED after the projection with
+    # frames.body_to_local_ned at the tick's heading (state.yaw_deg).
+    flown_body: Any = None
 
 
 def _r(v, n=3):
@@ -1141,7 +1146,9 @@ class MissionLoop:
     tick(state):
       1. backend.act(state): the step tracker's world-frame Action4D, its
          author in backend.last_tick (vla_step / hold / hover / none);
-      2. shield.filter(state, action): the Shield ALWAYS judges the action;
+      2. the Shield ALWAYS judges the action, handed over in the BODY frame
+         at the state's heading (frames.filter_world_as_body, WP3-04 /
+         ARCH-04; LoopTick.flown_body is what the adapter turns into NED);
          with shield_on the repaired `emitted` flies, with it off the
          backend's action flies unfiltered (the step tracker's, clamped to
          whatever altitude band the backend was built with:
@@ -1245,10 +1252,13 @@ class MissionLoop:
                 action = Action4D(vx=0.0, vy=0.0, vz_up=action.vz_up, yaw_rate=action.yaw_rate)
                 held_close = True
                 self.n_close_hold += 1
-        d = self.shield.filter(state, action)
-        flown = d.emitted if self.shield_on else action
+        d, body_in, emitted_body = filter_world_as_body(self.shield, state, action)
+        # The world-frame record of what flies (with the Shield off: its own
+        # reading of the body action handed in), and the BODY action sent.
+        flown = d.emitted if self.shield_on else d.raw
+        flown_body = emitted_body if self.shield_on else body_in
         ff = self._flown_fields(self.shield, state, d, shield_on=self.shield_on)
-        hd = hud_decision(d, action, shield_on=self.shield_on)
+        hd = hud_decision(d, flown, shield_on=self.shield_on)
         if self.audit is not None:
             try:
                 self.audit.log(self.n, d)
@@ -1286,8 +1296,11 @@ class MissionLoop:
             **decision_fields(tk, cur, step, hint_source=self.hint_source, link_failure=lf),
             # the Shield
             "shield": "on" if self.shield_on else "off",
-            "raw": action.model_dump(), "emitted": d.emitted.model_dump(),
+            # `raw` is what the Shield judged: its own world-frame reading of
+            # the body action it was handed (d.raw).
+            "raw": d.raw.model_dump(), "emitted": d.emitted.model_dump(),
             "flown_action": flown.model_dump(),
+            "flown_body": flown_body.model_dump(),
             "touched": d.touched, "braked": d.braked,
             "violations": [v.model_dump() for v in d.violations],
             "repairs": [r.model_dump() for r in d.repairs],
@@ -1314,7 +1327,7 @@ class MissionLoop:
                       cadence=getattr(self.backend, "cadence", None),
                       goal_dist_m=gd, box_frac=frac, end_reason=end, model=self.model_label)
         self.n += 1
-        return LoopTick(flown, d, row, hud, end, hd, det)
+        return LoopTick(flown, d, row, hud, end, hd, det, flown_body)
 
 
 # --------------------------------------------------------------------------- #

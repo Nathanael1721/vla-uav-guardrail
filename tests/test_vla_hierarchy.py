@@ -248,9 +248,9 @@ def test_off_by_default_and_the_flight_unchanged_when_off():
     pcall = _calls(fly, "perturber", "apply")[0]
     dcall = _calls(fly, "decider", "apply")[0]
     shield = next(n for n in ast.walk(fly) if isinstance(n, ast.Assign)
-                  and ast.unparse(n) == "d = filter_as_body(shield, state, flown_in)")
+                  and ast.unparse(n) == "(d, _, e_body) = filter_world_as_body(shield, state, flown_in)")
     assert pcall.lineno < dcall.lineno < c.lineno < shield.lineno
-    assert src.count("d = filter_as_body(shield, state, flown_in)") == 1, "the loop's Shield call moved"
+    assert src.count("d, _, e_body = filter_world_as_body(shield, state, flown_in)") == 1, "the loop's Shield call moved"
     # The limiter never sees what the VLA flies: its state stays the controller's.
     for n in ast.walk(fly):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "limiter":

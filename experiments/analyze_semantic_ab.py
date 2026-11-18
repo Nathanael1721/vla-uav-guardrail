@@ -223,6 +223,22 @@ def speed_gating(inf: dict, tx: float, ty: float) -> dict:
     return {"r": float(pearsonr(inf["fwd"], np.cos(beta)).statistic)}
 
 
+def _world_xy(rows: list[dict], key: str) -> tuple:
+    """The (North, East) velocity of each row's `key` action. Rows written
+    since wf21 carry demo/semantic_seek.py's actions in the BODY frame
+    (`frame` "body", forward / right of the heading `psi`), which this
+    offline reading turns with `psi`; older rows are North / East already."""
+    vx = np.array([r[key]["vx"] for r in rows], float)
+    vy = np.array([r[key]["vy"] for r in rows], float)
+    body = np.array([r.get("frame") == "body" for r in rows], bool)
+    if body.any():
+        psi = np.array([r["psi"] for r in rows], float)
+        c, s = np.cos(psi), np.sin(psi)
+        vx, vy = (np.where(body, vx * c - vy * s, vx),
+                  np.where(body, vx * s + vy * c, vy))
+    return vx, vy
+
+
 def tick_arrays(rows: list[dict], tx, ty, min_speed: float) -> dict:
     """Per-tick closing rate (M5) and shield deflection (M6), on PRE-shield actions.
 
@@ -232,10 +248,8 @@ def tick_arrays(rows: list[dict], tx, ty, min_speed: float) -> dict:
     y = np.array([r["y"] for r in rows], float)
     tx = np.asarray(tx, float)
     ty = np.asarray(ty, float)
-    rvx = np.array([r["raw"]["vx"] for r in rows], float)
-    rvy = np.array([r["raw"]["vy"] for r in rows], float)
-    evx = np.array([r["emitted"]["vx"] for r in rows], float)
-    evy = np.array([r["emitted"]["vy"] for r in rows], float)
+    rvx, rvy = _world_xy(rows, "raw")
+    evx, evy = _world_xy(rows, "emitted")
 
     # M5: cosine between the raw world velocity and the bearing to the target.
     # This is 'would the VLA, unopposed, be closing right now' — evaluated on the

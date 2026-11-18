@@ -44,7 +44,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail.frames import from_body, to_body           # noqa: E402
+from guardrail.frames import body_to_local_ned, from_body, to_body  # noqa: E402
 from guardrail.models import Action4D, Policy, State, load_policy  # noqa: E402
 from guardrail.shield import ARC_MIN_RATE, Shield, _arc_offset      # noqa: E402
 
@@ -384,10 +384,10 @@ def _pas_modules():
 
 
 def test_the_pymavlink_link_turns_the_body_action_into_ned_after_projection():
-    """--action-frame body on the PAS rail: the link is handed the Shield's
-    emitted BODY action and turns it into local NED itself, at the heading it
-    last read - the same setpoint the world route sends for the same action.
-    `a` is then only the record copy."""
+    """The PAS rail's link is handed the Shield's emitted BODY action and
+    turns it into local NED itself, at the heading it last read, with the one
+    body -> NED function (frames.body_to_local_ned), to the bit. `a` is only
+    the record copy; since wf21 nothing is sent without `body`."""
     AP, _, T = _pas_modules()
     fm = T.FakeMavutil([T.AP_HB])
     link = T._link(fm)
@@ -397,18 +397,16 @@ def test_the_pymavlink_link_turns_the_body_action_into_ned_after_projection():
         link.snap.yaw = math.radians(heading)
         link.send(Action4D(vx=99.0), body=body)
         got = fm.master.mav.sent[-1][1]
-        world = from_body(*body, heading)
-        link.send(world)
-        ref = fm.master.mav.sent[-1][1]
-        assert all(abs(x - y) < 1e-9 for x, y in zip(got[8:11], ref[8:11])), (heading, got, ref)
-        assert got[15] == 0.25 and got[1:5] == ref[1:5]
+        ref = body_to_local_ned(body, math.degrees(math.radians(heading)))
+        assert tuple(got[8:11]) == ref[:3] and got[15] == ref[3] == 0.25, (heading, got, ref)
+        assert got[1:5] == (1, 1, 1, 1479)
 
 
 def test_the_mavros_link_sends_the_body_action_as_it_is_or_turns_it():
     """On the adapter route the emitted BODY action goes to /shield/setpoint
     as it is (sitl/mavlink_adapter_node.py converts it after the projection);
     on the default route the link turns it into the PositionTarget itself.
-    Without `body` both routes send what they always did."""
+    Since wf21 neither route sends without `body`."""
     _, ML, T = _pas_modules()
 
     class Node(T.FakeNode):
@@ -437,16 +435,14 @@ def test_the_mavros_link_sends_the_body_action_as_it_is_or_turns_it():
 
 
 def test_the_perception_node_hands_the_shield_the_body_action():
-    """The PAS rail's --action-frame body path is wired: filter_body with the
-    arc, and the link given the emitted body action; the default flies the
-    world frame (link.send without `body`), the Shield handed the body
-    action through frames.filter_as_body with the arc off (2026-11-18,
-    tests/test_rail_body_frame.py)."""
+    """The PAS rail hands the Shield the pilot's body action on every tick
+    (filter_body; --action-frame body turns the arc on) and the link the
+    emitted body action (since wf21 there is no world-frame route)."""
     src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
     assert '"--action-frame", choices=["world", "body"], default="world"' in src
-    assert "shield.filter_body(" in src and "arc=True" in src
+    assert "shield.filter_body(" in src and "arc=bool(body_frame)" in src
     assert "link.send(flown, raw_body=body, body=fb)" in src
-    assert "d, emitted_body = filter_as_body(shield, st_sh, raw), None" in src
+    assert "filter_as_body" not in src and "body_to_world" not in src
 
 
 def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():
@@ -460,8 +456,8 @@ def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():
     forecast on), the Shield off (the raw action) - the body handed over is
     to_body of the flown (record-copy) action at the tick's heading, the
     Shield's emitted body action on a pass. metrics says the frame; with
-    the Shield on nothing flown re-checks dirty. Without the flag the link
-    is never handed a body action and the frame is "world"."""
+    the Shield on nothing flown re-checks dirty. Without the flag (since
+    wf21) the link is handed the body action too, the arc off."""
     _, _, T = _pas_modules()
 
     class BodyLink(T.FakeLink):
@@ -472,10 +468,10 @@ def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():
         def velocity(self):
             return (self.v.vx, self.v.vy), "the fake's own"
 
-        def send(self, a, raw_body=None, body=None):
+        def send(self, a=None, raw_body=None, body=None):
             h = math.degrees(self.yaw)
             self.bodies.append((a, body, h))
-            super().send(a if body is None else from_body(*body, h), raw_body)
+            super().send(a, raw_body, body=body)
 
     brake_pol = T.NFZ_AHEAD_POLICY.replace("violation_action: repair", "violation_action: brake")
     seen = set()
@@ -492,6 +488,8 @@ def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():
         assert len(link.bodies) == len(flown) > 0, (len(link.bodies), len(flown))
         for (a, body, h), r in zip(link.bodies, flown):
             assert body is not None, r["t"]
+            if isinstance(body, Action4D):
+                body = (body.vx, body.vy, body.vz_up, body.yaw_rate)
             ref = to_body(a, h)
             assert max(abs(x - y) for x, y in zip(body, ref)) < 1e-9, (body, ref, r["t"])
             assert a.model_dump() == r["flown_action"]
@@ -505,8 +503,9 @@ def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():
         assert kind in seen, (kind, seen)
     assert any(k[0] == "off" for k in seen), seen
     rc, run, link = T._fly("on", link_cls=BodyLink, policy=T.CAP_POLICY, link_kw={"yaw": 0.6})
-    assert rc == 0 and link.bodies and all(b is None for _, b, _ in link.bodies)
-    assert T._json(run, "metrics.json")["shield_forecast"]["action_frame"] == "world"
+    assert rc == 0 and link.bodies and all(b is not None for _, b, _ in link.bodies)
+    sf = T._json(run, "metrics.json")["shield_forecast"]
+    assert sf["action_frame"] == "world" and sf["arc"] is False and sf["shield_input"] == "body"
 
 
 def test_a_campaign_asks_the_node_for_the_arc_and_refuses_a_run_that_did_not_fly_it():
