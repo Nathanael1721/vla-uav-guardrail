@@ -20,11 +20,15 @@ What is pinned here:
         kpi.json, shield_audit.jsonl, as the sweep writes it) is re-flown
         `identical` by the revision's own rerun tool;
   * the check can fail: one audit float changed by one ulp in the world
-    frame reads `differs` (class `decision`) at that tick and field; the same
-    change in the body-frame action alone reads `differs` of class
-    `body_frame_rotation_last_digits`; a changed headless audit record and a
-    changed KPI figure read `differs`; a fields the replay does not
-    reproduce by design (`ts`, the node's fsm_*) is not compared;
+    frame reads `differs` (class `float_last_digits`) at that tick and
+    field; the same change in the body-frame action alone reads `differs` of
+    class `body_frame_rotation_last_digits`; a rule id changed reads class
+    `decision`; a changed headless audit record and a changed KPI figure read
+    `differs`; the fields the replay does not reproduce by design (`ts`, the
+    node's fsm_*) are not compared;
+  * a subject_standoff run with a DECLARED subject that metrics.json records
+    replays identical (set_subject as the node set it); with no record of
+    the subject's class it is not_replayable;
   * the replay bundle alone (a folder holding only <run>.replay.tar.gz)
     replays identical: it carries trajectory.json since 2026-11-18
     (guardrail.replay EPISODE_FILES), so the positions are the doubles the
@@ -66,6 +70,7 @@ import replay_at_revision as RA                                   # noqa: E402
 
 SKIP = "SKIP"
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
+PEDESTRIAN = ROOT / "policies" / "sitl_pedestrian.yaml"
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
 _TMP: list[Path] = []
@@ -103,15 +108,21 @@ def _head_holds_this_code() -> str | None:
 # episodes flown here, at HEAD's code
 # --------------------------------------------------------------------------- #
 
-def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22) -> None:
+def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
+              subject: tuple | None = None, record_subject: bool = True) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
-    inside), its audit written by AuditLogger as the rail writes it."""
+    inside), its audit written by AuditLogger as the rail writes it.
+    `subject` (x, y, class): a DECLARED subject set once before the first
+    tick, on the pedestrian policy, as the node's --subject does; metrics.json
+    records it unless `record_subject` is false."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
     run.mkdir(parents=True)
-    pol = load_policy(DEMO)
+    pol = load_policy(PEDESTRIAN if subject else DEMO)
     sh = rail_shield(pol, lookahead_s=5.0, dt=0.1)
+    if subject:
+        sh.set_subject(*subject)
     (run / "policy_g0.json").write_bytes(sh.policy.canonical_bytes())
     logger = AuditLogger.in_memory(sh.policy, episode_id="1234")
     rows, traj, audit = [], [], []
@@ -142,7 +153,8 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22) -> No
                      "violations": [v.model_dump() for v in d.violations],
                      "repairs": [r.model_dump() for r in d.repairs],
                      "touched": bool(d.touched), "braked": bool(d.braked),
-                     "generation": sh.policy.generation, "policy_hash": sh.policy.policy_hash})
+                     "generation": sh.policy.generation, "policy_hash": sh.policy.policy_hash,
+                     **({"tgt_x": subject[0], "tgt_y": subject[1]} if subject else {})})
         traj.append({"t": round(k * 0.1, 2), "x": x, "y": y, "up": up})
         x, y, up = x + 0.1 * d.emitted.vx, y + 0.1 * d.emitted.vy, up + 0.1 * d.emitted.vz_up
     with (run / "flight_log.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
@@ -152,7 +164,10 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22) -> No
     (run / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     (run / "metrics.json").write_text(json.dumps({
         "shield": "on", "shield_lookahead": {"horizon_s": 5.0, "dt_s": 0.1, "poses": 50},
-        "shield_forecast": {"mode": "commanded", "velocity_ticks": 0}}), encoding="utf-8")
+        "shield_forecast": {"mode": "commanded", "velocity_ticks": 0},
+        **({"subject": {"class": subject[2], "x": subject[0], "y": subject[1],
+                        "position_source": "declared"}} if subject and record_subject
+           else {})}), encoding="utf-8")
     (run / "manifest.json").write_text(json.dumps({
         "code_revision": rev, "policy_hash": pol.policy_hash, "random_seed": 0,
         "sim_speedup": 1.0, "topology": "dev"}), encoding="utf-8")
@@ -217,6 +232,14 @@ def _replayed() -> dict | str:
     _edit_jsonl(root / "rail_ts_fsm" / "shield_audit.jsonl", i,
                 lambda a: a.update(ts="1999-01-01T00:00:00.000+00:00",
                                    fsm_reason="another FSM", fsm_state_after="Brake"))
+    # a rule id changed on one record: not a float, a decision
+    shutil.copytree(root / "rail_ok", root / "rail_rule_id")
+    _edit_jsonl(root / "rail_rule_id" / "shield_audit.jsonl", i,
+                lambda a: a["violations"][0].__setitem__("rule_id", "another-rule"))
+    # a declared subject, recorded in metrics.json; and one that is not
+    _rail_run(root / "rail_subject", rev, subject=(20.0, 1.0, "pedestrian"))
+    _rail_run(root / "rail_subject_unrecorded", rev, subject=(20.0, 1.0, "pedestrian"),
+              record_subject=False)
     # the replay bundle alone: a folder holding nothing but <run>.replay.tar.gz
     from guardrail.replay import last_generation_policy, write_replay
     (root / "tar_only").mkdir()
@@ -370,15 +393,33 @@ def test_the_open_loop_replay_can_fail_and_says_where():
         return SKIP
     w = out["rail_world_ulp"]
     fd = w["first_difference"]
-    assert w["verdict"] == "differs" and w["difference_class"] == "decision", w
+    assert w["verdict"] == "differs" and w["difference_class"] == "float_last_digits", w
+    assert 0 < w["audit"]["fields_differing"]["emitted_action_world"]["max_abs"] < 1e-14, w
     assert (fd["where"], fd["tick"], fd["field"]) == (
         "shield_audit.jsonl", _CACHE["world_tick"], "emitted_action_world"), fd
     b = out["rail_body_ulp"]
     assert b["verdict"] == "differs", b
     assert b["difference_class"] == "body_frame_rotation_last_digits", b
     assert set(b["audit"]["fields_differing"]) == {"raw_action"}, b["audit"]
+    r = out["rail_rule_id"]
+    assert r["verdict"] == "differs" and r["difference_class"] == "decision", r
+    assert r["first_difference"]["field"] == "violations", r["first_difference"]
     # the wall time and the node's FSM verdict are not the Shield's to replay
     assert out["rail_ts_fsm"]["verdict"] == "identical", out["rail_ts_fsm"]
+
+
+def test_a_declared_subject_is_replayed_and_an_unrecorded_one_is_refused():
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    s = out["rail_subject"]
+    assert s["verdict"] == "identical", s
+    rows = [json.loads(x) for x in (_CACHE["root"] / "rail_subject" / "flight_log.jsonl")
+            .read_text(encoding="utf-8").splitlines()]
+    assert any(v["rule_id"].startswith("standoff") for r in rows for v in r["violations"]), \
+        "the subject never bound: the declared-subject replay is untested"
+    u = out["rail_subject_unrecorded"]
+    assert u["verdict"] == "not_replayable" and "subject_standoff" in u["why"], u
 
 
 def test_a_headless_episode_flown_at_head_is_reflown_identical_by_that_revisions_tool():
