@@ -1095,6 +1095,43 @@ def min_clearance_on_map(points, obstacle_map: dict | None = None,
     return best, n_off
 
 
+def altitude_band_report(shield: "Shield", points, tol_m: float = 0.5) -> dict | None:
+    """The post-flight altitude-band report of the semantic demo and semantic
+    seek, read off the Shield's own rows (Shield.rule_status, the policy's
+    first altitude_envelope - the band those reports always judged), or None
+    when the policy has none or there are no points. `points` are dicts with
+    "x", "y" and "up".
+
+      breach_ticks  points the Shield's altitude verdict breaches (its own
+                    comparison, Shield._alt_outside: 1e-9 m of slack, and
+                    only while the rule is in force)
+      worst_excursion_m  the most metres past either bound, from the row's
+                    distance_m (0.0 when never outside)
+      held          worst_excursion_m <= tol_m: a REPORTING tolerance on the
+                    Shield's measure, not a rule. tol_m = 0.5 m is the slack
+                    the reports' "altitude band held" has carried since they
+                    were written (the airframe's altitude hold oscillates
+                    round the band's edges); it decides nothing in flight.
+
+    Until 2026-11-18 each report compared the altitude with the band itself
+    (`alt_min_m - 0.5 <= up <= alt_max_m + 0.5`) - a second altitude
+    evaluator (WP3-22 / X-13). `held` gives that test's answer
+    (tests/test_shieldcore_onepath.py holds the old line as the null)."""
+    pts = list(points)
+    if not pts:
+        return None
+    breach, worst = 0, 0.0
+    for p in pts:
+        row = next((r for r in shield.rule_status(State(x=p["x"], y=p["y"], up=p["up"]))
+                    if r["type"] == "altitude_envelope"), None)
+        if row is None:
+            return None
+        breach += bool(row["breach"])
+        worst = max(worst, -row["distance_m"])
+    return {"breach_ticks": breach, "worst_excursion_m": worst, "held": worst <= tol_m,
+            "tol_m": tol_m}
+
+
 def nearest_cell_clearance(obstacle_map: dict, px: float, py: float, cap_m: float) -> float:
     """Metres from (px, py) to the nearest BLOCKED cell centre of
     `obstacle_map` within `cap_m`, `cap_m` when none: an exact Euclidean scan
@@ -1110,7 +1147,9 @@ def nearest_cell_clearance(obstacle_map: dict, px: float, py: float, cap_m: floa
     shows the answers bit-identical). It is NOT the field the Shield's
     obstacle_clearance verdict reads (`field_distance`: chamfer-scaled,
     bilinear, so up to 1.4 m nearer beside a face); guard_field="shield"
-    makes FenceGuard read that one instead, opt-in until flown."""
+    makes FenceGuard read that one instead, opt-in until flown. Moving it
+    here did not merge it: it is still a SECOND measure of the rule, and
+    tests/test_shieldcore_onepath.py names it so (_LIBRARY_CLEARANCE_MEASURES)."""
     occ, res = obstacle_map["occ"], obstacle_map["res"]
     ox, oy = obstacle_map["ox"], obstacle_map["oy"]
     n, m = occ.shape
@@ -2662,6 +2701,17 @@ class Shield:
         is inert and `off_map()` is False everywhere - a caller counting
         off-map ticks must say so rather than report 0."""
         return self._dist is not None
+
+    def blind_clearance_rules(self) -> list[str]:
+        """The clearance rules this Shield holds but cannot judge, "id: why":
+        an obstacle_clearance with no obstacle map, a distance_envelope over
+        roads with no road map. Empty for every Shield built with
+        require_maps=True and its maps; a reader that builds one with
+        require_maps=False (an offline counter) reports these rather than
+        count zero seconds for a rule that never ran."""
+        return [f"{c.id}: no {'road_map' if _field_name(c) == 'roads' else 'obstacle_map'}"
+                f" - the rule is inert here"
+                for c in self._rt.clear if self._field_for(c) is None]
 
     def off_map(self, x: float, y: float) -> bool:
         """True where (x, y) lies outside the obstacle map (more than half a

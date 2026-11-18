@@ -403,6 +403,13 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
     nearest cell (0 inside a building) - a second rule evaluator. The A/B
     tables in experiments/out were scored that way; their flight logs are no
     longer under demo/out, so they cannot be re-scored here.
+
+    A rule of these kinds that this count cannot judge is NAMED, not counted
+    as zero seconds: `unjudged_rules` lists a clearance rule whose map is
+    missing (Shield.blind_clearance_rules - the Shield is built with
+    require_maps=False, so a distance_envelope without its map is inert
+    here rather than refused) and a moving dynamic_nfz (no per-tick zone
+    position in this count).
     """
     from guardrail import Shield, State, load_policy
     import city_planner
@@ -438,6 +445,9 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
                 if any(s["breach"] for s in clear):
                     n_clear += 1
     tot = n_fence + n_alt + n_clear
+    unjudged = sh.blind_clearance_rules() + [
+        f"{c.id}: a moving {c.type} - no per-tick zone position in this count"
+        for c in pol.constraints if c.type == "dynamic_nfz" and c.id not in fence_ids]
     return {
         "viol_fence_s": round(n_fence * tick_s, 1),
         "viol_alt_s": round(n_alt * tick_s, 1),
@@ -448,6 +458,7 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
         "worst_clearance_m": (round(worst_clear, 1) if worst_clear < 1e9 else None),
         "clear_off_map_s": round(n_off * tick_s, 1),
         "clearance_measure": "shield_field",
+        "unjudged_rules": unjudged,
     }
 
 
@@ -527,6 +538,10 @@ def flight_metrics(tag: str, cfg: dict) -> dict | None:
         "integrity_clamps": m.get("integrity_clamps"),
         "alt_band_held": m.get("alt_band_held"),
         "min_building_dist_m": m.get("min_building_dist_m"),
+        # which measure that is: the flight's own key since 2026-11-18, else
+        # the nearest-cell read of city_planner.distance_field it used before
+        "min_building_dist_measure": m.get("min_building_dist_measure",
+                                           "distance_field_nearest_cell"),
         **lar,
         **follow,
         **actual_violations(rows, ROOT / cfg["defaults"]["policy"],
@@ -877,6 +892,11 @@ def main() -> int:
         # never let an incomplete batch read as a complete one
         print(f"[warn] {len(missing)} cell(s) have no logs and are EXCLUDED: "
               f"{', '.join(missing)}")
+    unjudged = sorted({u for r in res for u in r.get("unjudged_rules", ())})
+    if unjudged:
+        # a rule the P0 counter could not judge is not a rule with 0 s
+        print(f"[warn] viol_*_s does NOT cover {len(unjudged)} rule(s): "
+              + "; ".join(unjudged))
 
     table = emit_table(res)
     claims = score_claims(res, cfg)

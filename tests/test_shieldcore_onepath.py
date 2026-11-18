@@ -23,11 +23,18 @@ file no longer tests that copies agree; it tests that there is one:
   * the readers that ask a different question (the fence export, the RTL
     leg, FenceGuard, the dwell count, the CSP's action check) are seen to
     call the Shield's evaluator - a patched evaluator changes their answer;
-  * since 2026-11-18 no clearance measure outside the library evaluates a
-    rule: the follow controller's default grid scan is the library's
-    nearest_cell_clearance (bit-identical to the copy it replaced), and the
-    semantic demo's, semantic seek's and the semantic A/B counter's
-    clearance (and the counter's fence and altitude tests) ask the Shield.
+  * the clearance measures are pinned by what they do. Outside the library
+    only planning cost and target identity measure clearance: since
+    2026-11-18 the semantic demo's and semantic seek's minimum building
+    distance and altitude band, and the semantic A/B counter's fence,
+    altitude and clearance seconds, ask the Shield. The follow controller's
+    default grid scan was MOVED into the library unchanged
+    (nearest_cell_clearance, bit-identical), not merged: the library still
+    holds TWO measures of obstacle_clearance - field_distance (the Shield's
+    verdict) and nearest_cell_clearance (FenceGuard's flown default) - and
+    FenceGuard keeps two threshold tests of its own against
+    min_clearance_m. Both are named here: a third measure, a third
+    threshold test, or the default flipping (the entry going stale) fails.
 
 The Shield node's architecture (card WP3-23) is tested at the end: the
 sliding-window buffer holds the last 50 actions and their predicted
@@ -220,6 +227,9 @@ _DEFINED_ONLY_IN = {
     "corridor_offset": {"guardrail/shield.py"},
     "in_zone_band": {"guardrail/shield.py"},
     "band_holds": {"guardrail/shield.py"},
+    "nearest_cell_clearance": {"guardrail/shield.py"},
+    "altitude_band_report": {"guardrail/shield.py"},
+    "min_clearance_on_map": {"guardrail/shield.py"},
 }
 
 # name -> the files allowed to CALL it: primitives the Shield wraps. Anything
@@ -905,14 +915,17 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
 # a grid scan. These do that: every function outside the library that calls
 # city_planner.distance_field (a 5x5 chamfer, read by nearest-cell rounding)
 # or scans occupancy cells with hypot. Each is listed with what it is. None
-# evaluates a rule: since 2026-11-18 (WP3-22 / X-13) the four that did - the
-# follow controller's default grid scan (follow_vlm.grid_scan_clearance), the
+# evaluates a rule: since 2026-11-18 (WP3-22 / X-13) three that did - the
 # semantic demo's and semantic seek's minimum building distance and the
 # semantic A/B P0 counter (analyze_semantic_ab.actual_violations) - call the
-# library instead (guardrail/shield.py nearest_cell_clearance,
-# min_clearance_on_map, Shield.rule_status; tests below). What is left is
-# planning cost and target identity, which no rule reads. An entry marked
-# RULE fails, a new measure fails, and so does a stale entry.
+# library's (min_clearance_on_map, Shield.rule_status), and the fourth - the
+# follow controller's default grid scan (follow_vlm.grid_scan_clearance) -
+# moved into the library unchanged as nearest_cell_clearance. That move is
+# NOT a merge: it is still a second measure of the rule, pinned by name in
+# _LIBRARY_CLEARANCE_MEASURES below, and FenceGuard's own threshold tests in
+# _CLEARANCE_THRESHOLDS_OUTSIDE. What is left out here is planning cost and
+# target identity, which no rule reads. An entry marked RULE fails, a new
+# measure fails, and so does a stale entry.
 _CLEARANCE_OUTSIDE = {
     ("demo/city_planner.py", "inflate"):
         "planning: inflates the planner's grid by a clearance (route cost, no verdict)",
@@ -965,9 +978,10 @@ def clearance_of_their_own(tree_list=None) -> dict:
 
 def test_every_clearance_measure_outside_the_library_is_named():
     """No clearance measure outside the library but the listed ones, and none
-    of those evaluates a rule (no entry is marked RULE: WP3-22 / X-13 names
-    no exception). The null: a planted grid scan and a planted
-    distance_field reader are found."""
+    of those evaluates a rule (no entry is marked RULE). This does NOT say
+    the rule has one measure: the library holds two (the next test). The
+    null: a planted grid scan and a planted distance_field reader are
+    found."""
     rule = sorted(k for k, why in _CLEARANCE_OUTSIDE.items() if why.startswith("RULE"))
     assert not rule, f"a rule evaluator outside the library is still listed: {rule}"
     found = clearance_of_their_own()
@@ -989,6 +1003,192 @@ def test_every_clearance_measure_outside_the_library_is_named():
            "def fine(sh, x, y):\n    return sh.clearance_at(x, y)\n")
     got = clearance_of_their_own([("tools/mine.py", ast.parse(src))])
     assert set(got) == {("tools/mine.py", "scan"), ("tools/mine.py", "df")}, got
+
+
+# THE LIBRARY'S OWN CLEARANCE MEASURES, AND THE GUARD'S THRESHOLD TESTS
+# (review of 8df88ef). The scans above skip the library, so moving a measure
+# into guardrail/shield.py makes it vanish from them. These pin what is still
+# there. The grant (Safety Shield page): "exactly one rule-evaluation code
+# path in the system" - which these two lists say is NOT yet true of
+# obstacle_clearance (WP3-22 / X-13 stay PARTIAL):
+#
+#   * the library measures the rule twice: field_distance (the Shield's
+#     verdict reads it) and nearest_cell_clearance (FenceGuard's default,
+#     guard_field="grid", which every stored follow flight flew);
+#   * FenceGuard compares its clearance with min_clearance_m itself, twice,
+#     and the building ring does so with <=, so AT the limit it brakes where
+#     the Shield's d < min_clearance_m is not yet a breach.
+#
+# A third measure in the library, a third threshold test anywhere outside
+# it, or a stale entry fails. The SECOND MEASURE entry also fails once
+# FenceGuard's default leaves "grid" (--guard-field shield flown as the
+# default): then the entry - and this gap - must be rewritten.
+_LIBRARY_CLEARANCE_MEASURES = {
+    ("guardrail/shield.py", "field_distance"):
+        "THE measure: the Shield's obstacle_clearance verdict (signed chamfer "
+        "field, read bilinearly; Shield._distance_at, ClearanceField)",
+    ("guardrail/shield.py", "nearest_cell_clearance"):
+        "SECOND MEASURE (flown default until --guard-field shield is flown): "
+        "FenceGuard's guard_field='grid' scan to the nearest blocked cell centre, "
+        "moved from demo/follow_vlm.py grid_scan_clearance unchanged",
+}
+
+_CLEARANCE_THRESHOLDS_OUTSIDE = {
+    ("demo/follow_vlm.py", "_clear_of_obstacles"):
+        "SECOND THRESHOLD TEST: FenceGuard.slide's clear-of-buildings test, "
+        "clearance >= min_clearance_m (clear AT the limit, as the Shield)",
+    ("demo/follow_vlm.py", "guard_urgent"):
+        "SECOND THRESHOLD TEST: the building ring, last_obstacle_d <= "
+        "min_clearance_m (urgent AT the limit; the Shield breaches on <)",
+}
+
+
+def _bilinear_read(nodes) -> bool:
+    """One sum of four or more products that each index a 2-D grid
+    (`d[i0, j0] * (1 - ti) * (1 - tj) + ...`): a bilinear read of a field."""
+    for n in nodes:
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+            subs = [s for s in ast.walk(n) if isinstance(s, ast.Subscript)
+                    and isinstance(s.slice, ast.Tuple) and len(s.slice.elts) == 2]
+            if len(subs) >= 4 and any(isinstance(s, ast.BinOp) and isinstance(s.op, ast.Mult)
+                                      for s in ast.walk(n)):
+                return True
+    return False
+
+
+def _nearest_cell_read(nodes) -> bool:
+    """`int(round((x - ox) / res))` and a 2-D grid subscript in one function:
+    a field read at the nearest cell."""
+    rounded = any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "int" and n.args
+                  and isinstance(n.args[0], ast.Call)
+                  and getattr(n.args[0].func, "id", None) == "round" and n.args[0].args
+                  and any(isinstance(x, ast.BinOp) and isinstance(x.op, ast.Div)
+                          for x in ast.walk(n.args[0].args[0]))
+                  for n in nodes)
+    grid = any(isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Tuple)
+               and len(n.slice.elts) == 2 for n in nodes)
+    return rounded and grid
+
+
+def clearance_measures_in_library(tree_list=None) -> dict:
+    """{(file, function): (line, [what it does])} for every function IN the
+    library that measures clearance on a grid: a grid scan, a bilinear or
+    nearest-cell field read, or a city_planner.distance_field call."""
+    found = {}
+    for rel, tree in (tree_list if tree_list is not None else trees()):
+        if rel not in _LIBRARY:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            nodes = _own_nodes(fn)
+            what = set()
+            if _grid_scan(nodes):
+                what.add("grid scan")
+            if _bilinear_read(nodes):
+                what.add("bilinear field read")
+            if _nearest_cell_read(nodes):
+                what.add("nearest-cell field read")
+            if any(isinstance(n, ast.Call) and _called_name(n) == "distance_field"
+                   for n in nodes):
+                what.add("distance_field")
+            if what:
+                found[(rel, fn.name)] = (fn.lineno, sorted(what))
+    return found
+
+
+def clearance_thresholds_outside(tree_list=None) -> dict:
+    """{(file, function): (line, [comparison])} for every comparison with a
+    `min_clearance_m` operand outside the library."""
+    found = {}
+    for rel, tree in (tree_list if tree_list is not None else trees()):
+        if rel in _LIBRARY or rel.startswith("tests/"):
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            cmp = [n for n in _own_nodes(fn) if isinstance(n, ast.Compare)
+                   and any((isinstance(o, ast.Attribute) and o.attr == "min_clearance_m")
+                           or (isinstance(o, ast.Name) and o.id == "min_clearance_m")
+                           for o in [n.left] + n.comparators)]
+            if cmp:
+                found[(rel, fn.name)] = (min(c.lineno for c in cmp),
+                                         [ast.unparse(c) for c in cmp])
+    return found
+
+
+def test_the_librarys_clearance_measures_are_exactly_the_two_named():
+    """The library measures obstacle_clearance exactly twice: field_distance
+    (the Shield's verdict) and nearest_cell_clearance (the SECOND MEASURE,
+    FenceGuard's flown default). Not one measure: WP3-22 / X-13's gap. The
+    SECOND MEASURE entry holds only while FenceGuard's default is still
+    "grid" and its grid path still calls nearest_cell_clearance. The null:
+    a planted bilinear reader, grid scan and nearest-cell read in the
+    library are each found (a rounded sample count is not)."""
+    found = clearance_measures_in_library()
+    assert set(found) == set(_LIBRARY_CLEARANCE_MEASURES), (
+        "the library's clearance measures changed - name each (and say whether "
+        f"it is a second measure of the rule): found {sorted(found.items())}")
+    second = [k for k, why in _LIBRARY_CLEARANCE_MEASURES.items()
+              if why.startswith("SECOND MEASURE")]
+    assert second == [("guardrail/shield.py", "nearest_cell_clearance")], second
+    import inspect
+    sys.path.insert(0, str(ROOT / "demo"))
+    import follow_vlm as F
+    dflt = inspect.signature(F.FenceGuard.__init__).parameters["guard_field"].default
+    assert dflt == "grid", (
+        f"FenceGuard's default guard_field is now {dflt!r}: nearest_cell_clearance is no "
+        "longer the flown default - rewrite its SECOND MEASURE entry (and the WP3-22 gap)")
+    assert "nearest_cell_clearance" in _calls_in("demo/follow_vlm.py", "clearance")
+    src = ("import math\n"
+           "def bil(d, i, j, ti, tj):\n"
+           "    return (d[i, j] * (1 - ti) * (1 - tj) + d[i + 1, j] * ti * (1 - tj)\n"
+           "            + d[i, j + 1] * (1 - ti) * tj + d[i + 1, j + 1] * ti * tj)\n"
+           "def scan(occ, px, py):\n"
+           "    best = 9.0\n"
+           "    for i in range(3):\n"
+           "        for j in range(3):\n"
+           "            if occ[i, j]:\n"
+           "                best = min(best, math.hypot(i - px, j - py))\n"
+           "    return best\n"
+           "def cell(d, x, y, ox, oy, res):\n"
+           "    return d[int(round((x - ox) / res)), int(round((y - oy) / res))]\n"
+           "def count(t, s):\n"
+           "    return int(round(t / s))\n")
+    got = clearance_measures_in_library([("guardrail/shield.py", ast.parse(src))])
+    assert set(got) == {("guardrail/shield.py", n) for n in ("bil", "scan", "cell")}, got
+
+
+def test_fenceguards_own_threshold_tests_are_named():
+    """Outside the library, exactly FenceGuard's two comparisons with
+    min_clearance_m remain (second threshold tests of the rule beside the
+    Shield's). The ring's `<=` differs from the Shield's verdict AT the
+    limit: there the Shield reports no breach and guard_urgent brakes at
+    once. The null: a planted comparison is found."""
+    found = clearance_thresholds_outside()
+    assert set(found) == set(_CLEARANCE_THRESHOLDS_OUTSIDE), (
+        "comparisons with min_clearance_m outside the library changed: "
+        + "; ".join(f"{r}:{ln} {n}() {c}" for (r, n), (ln, c) in sorted(found.items())))
+    assert all(why.startswith("SECOND THRESHOLD TEST")
+               for why in _CLEARANCE_THRESHOLDS_OUTSIDE.values())
+    import numpy as np
+    sys.path.insert(0, str(ROOT / "demo"))
+    import follow_vlm as F
+    from guardrail import load_policy
+    pol = load_policy(ROOT / "policies" / "follow_car.yaml")
+    occ = np.zeros((40, 40), dtype=np.uint8)
+    occ[20:24, 20:24] = 1
+    om = {"occ": occ, "res": 1.0, "ox": 0.0, "oy": 0.0}
+    sh = Shield(pol, obstacle_map=om, escalation=False)
+    g = F.FenceGuard(pol, obstacle_map=om, min_clearance_m=5.0, shield=sh)
+    g.last_obstacle_d, g.last_fence_d = 5.0, None
+    at_limit = [r for r in sh.rule_status(State(x=0.0, y=0.0, up=10.0), clearance_m=5.0)
+                if r["type"] == "obstacle_clearance"]
+    assert at_limit and not any(r["breach"] for r in at_limit), at_limit
+    assert F.guard_urgent(g, False), "the ring no longer brakes at the limit: update the entry"
+    src = "def f(g, d):\n    return d < g.min_clearance_m\n"
+    got = clearance_thresholds_outside([("tools/mine.py", ast.parse(src))])
+    assert set(got) == {("tools/mine.py", "f")}, got
 
 
 # ------------------------- the four former evaluators call the library now
@@ -1068,12 +1268,17 @@ def test_the_follow_controllers_default_grid_scan_is_the_library_bit_for_bit():
     assert n == len(maps) * 400 * 5
 
     # stored follow flights, when this checkout has them (demo/out is gitignored)
+    # ONEPATH_FLIGHTS_ROOT: a checkout whose demo/out holds them (a worktree
+    # has none: point it at the lab checkout to replay them from here)
+    import os
     sys.path.insert(0, str(ROOT / "tools"))
     import onepath_guard_replay as R
-    runs = [ROOT / "demo" / "out" / r for r in R.DEFAULT_RUNS]
+    froot = Path(os.environ.get("ONEPATH_FLIGHTS_ROOT") or ROOT)
+    runs = [froot / "demo" / "out" / r for r in R.DEFAULT_RUNS]
     runs = [r for r in runs if (r / "flight_log.jsonl").is_file()]
-    if runs and (ROOT / "demo" / "out" / "citymap_citylife" / "occ_day.npz").is_file():
-        _, smap, grid, _ = R.flight_setup(ROOT, ROOT / "policies" / "follow_car_citylife_nfz.yaml")
+    if runs and (froot / "demo" / "out" / "citymap_citylife" / "occ_day.npz").is_file():
+        _, smap, grid, _ = R.flight_setup(froot,
+                                          ROOT / "policies" / "follow_car_citylife_nfz.yaml")
         k = 0
         for rd in runs:
             rows = [__import__("json").loads(line)
@@ -1130,8 +1335,9 @@ def test_the_semantic_reports_read_the_shields_clearance():
     import random
     for rel in ("demo/semantic_demo.py", "demo/semantic_seek.py"):
         called = _calls_in(rel, "fly")
-        assert "min_clearance_on_map" in called and "band_holds" in called, (rel, called)
-        assert "distance_field" not in called, rel
+        assert "min_clearance_on_map" in called and "altitude_band_report" in called, \
+            (rel, called)
+        assert "distance_field" not in called and "band_holds" not in called, rel
     sys.path.insert(0, str(ROOT / "demo"))
     import city_planner
     from guardrail import load_policy
@@ -1161,6 +1367,57 @@ def test_the_semantic_reports_read_the_shields_clearance():
     assert SH.min_clearance_on_map([{"x": x, "y": y} for x, y in pts], om) == want
     assert SH.min_clearance_on_map(pts) == (None, 0)
     assert SH.min_clearance_on_map(pts[:0], om) == (None, 0)
+
+
+def test_the_semantic_reports_altitude_band_is_the_shields_row():
+    """The semantic demo's and semantic seek's "altitude band held" reads the
+    Shield's altitude_envelope row (altitude_band_report over
+    Shield.rule_status). `held` is the old inline test's answer
+    (`alt_min_m - 0.5 <= up <= alt_max_m + 0.5`, kept here as the null) on
+    seeded altitudes over both stored semantic policies, with the band's
+    edges, the 0.5 m tolerance's edges and a hair either side included;
+    `breach_ticks` is the Shield's own verdict with no tolerance. The null:
+    a Shield whose altitude row is patched moves the report."""
+    import random
+    from guardrail import load_policy
+    rng = random.Random(1118)
+    n = n_held = n_broken = 0
+    for name in ("semantic_conflict.yaml", "urban_clearance.yaml"):
+        pol = load_policy(ROOT / "policies" / name)
+        band = [c for c in pol.constraints if c.type == "altitude_envelope"][0]
+        sh = Shield(pol, escalation=False)
+        lo, hi = band.alt_min_m, band.alt_max_m
+        edges = [lo, hi, lo - 0.5, hi + 0.5, lo - 0.5 - 1e-9, hi + 0.5 + 1e-9,
+                 lo - 1e-9, hi + 1e-9, lo + 1e-9, hi - 1e-9, lo - 2e-9, hi + 2e-9]
+        for k in range(300):
+            ups = [rng.uniform(lo - 3.0, hi + 3.0) for _ in range(rng.randint(1, 6))]
+            if k < len(edges):
+                ups = [edges[k]]
+            pts = [{"x": rng.uniform(-50, 50), "y": rng.uniform(-50, 50), "up": u} for u in ups]
+            rep = SH.altitude_band_report(sh, pts)
+            old = all(lo - 0.5 <= p["up"] <= hi + 0.5 for p in pts)
+            assert rep["held"] == old, (name, ups, rep)
+            assert rep["breach_ticks"] == sum(p["up"] < lo - 1e-9 or p["up"] > hi + 1e-9
+                                              for p in pts), (name, ups, rep)
+            n += 1
+            n_held += old
+            n_broken += not old
+    assert n == 600 and n_held > 50 and n_broken > 50, (n, n_held, n_broken)
+    assert SH.altitude_band_report(sh, []) is None
+    nob = Shield(_fenced(), escalation=False)
+    assert SH.altitude_band_report(nob, [{"x": 0.0, "y": 0.0, "up": 99.0}]) is None
+    orig = Shield.rule_status
+
+    def low(self, *a, **k):
+        return [dict(r, breach=True, distance_m=-9.0) if r["type"] == "altitude_envelope"
+                else r for r in orig(self, *a, **k)]
+    Shield.rule_status = low
+    try:
+        rep = SH.altitude_band_report(sh, [{"x": 0.0, "y": 0.0, "up": (lo + hi) / 2}])
+    finally:
+        Shield.rule_status = orig
+    assert rep == {"breach_ticks": 1, "worst_excursion_m": 9.0, "held": False,
+                   "tol_m": 0.5}, rep
 
 
 def test_the_ab_p0_counter_asks_the_shield():
@@ -1230,6 +1487,18 @@ def test_the_ab_p0_counter_asks_the_shield():
     finally:
         Shield.rule_status = orig
     assert got["viol_any_s"] == 0.0, "the counter judges ticks itself"
+    # a rule the counter cannot judge is named, not counted as 0 s
+    assert AB.actual_violations(rows, pol_p, map_p)["unjudged_rules"] == []
+    blind = AB.actual_violations(rows, pol_p, ROOT / "no_such_map.npz")
+    clear_ids = [c.id for c in pol.constraints if c.type == "obstacle_clearance"]
+    assert clear_ids and [u.split(":")[0] for u in blind["unjudged_rules"]] == clear_ids, blind
+    assert blind["viol_clear_s"] == 0.0
+    # the A/B row says which measure each flight's min_building_dist_m is
+    src = ast.unparse(next(n for n in ast.walk(dict(trees())[
+        "experiments/analyze_semantic_ab.py"]) if isinstance(n, ast.FunctionDef)
+        and n.name == "flight_metrics"))
+    assert ("'min_building_dist_measure': m.get('min_building_dist_measure', "
+            "'distance_field_nearest_cell')") in src
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E402
-                              band_holds, min_clearance_on_map)
+                              altitude_band_report, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
@@ -485,9 +485,14 @@ async def fly(args) -> int:
     dist = sum(math.hypot(traj[i]["x"] - traj[i - 1]["x"],
                           traj[i]["y"] - traj[i - 1]["y"])
                for i in range(1, len(traj)))
-    band = [c for c in policy.constraints if c.type == "altitude_envelope"]
-    alt_ok = all(band_holds(band[0].alt_min_m - 0.5, band[0].alt_max_m + 0.5, pt["up"])
-                 for pt in traj) if band and traj else True
+    # The altitude band as the Shield judges it (guardrail/shield.py
+    # altitude_band_report: the altitude_envelope row of Shield.rule_status at
+    # each tick). "held" keeps the reports' 0.5 m reporting tolerance on the
+    # Shield's measured excursion; the Shield's own verdict (no slack) is
+    # breach_ticks. Until 2026-11-18 this compared the altitude with the band
+    # itself - a second altitude evaluator (WP3-22 / X-13).
+    alt_rep = altitude_band_report(shield, traj)
+    alt_ok = alt_rep["held"] if alt_rep is not None else True
     # Minimum building distance as the Shield measures the obstacle_clearance
     # rule (guardrail/shield.py min_clearance_on_map: the flight Shield's own
     # field, else the same field over this map; signed, bilinear; ticks off
@@ -543,6 +548,8 @@ async def fly(args) -> int:
           f"shield interventions {n_touched} | NFZ {nfz_s:.1f}s -> "
           f"{'PASS' if nfz_s == 0 else 'FAIL'} | altitude band "
           f"{'held' if alt_ok else 'BROKEN'}"
+          + (f" (Shield breach {alt_rep['breach_ticks']} tick(s), worst "
+             f"{alt_rep['worst_excursion_m']:.2f} m past)" if alt_rep is not None else "")
           + (f" | min building distance {min_bld:.1f} m" if min_bld is not None else ""))
     print("[note] The pilot had NO coordinates and NO plan — only the camera and "
           "the sentence. The guardrail is what kept the flight legal.")
