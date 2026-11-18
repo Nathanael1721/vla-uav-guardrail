@@ -195,7 +195,7 @@ from typing import Any
 
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
-                     era_context, ir2_rule_view, load_policy)
+                     LEGACY_POINT_FORMS, era_context, ir2_rule_view, load_policy)
 from .projection import LOCAL_QUANTUM_M
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -2456,7 +2456,26 @@ def load_for_flight(bundle: str | Path | None = None,
     notes = pol.runtime_notes()
     if notes:
         rec["runtime_notes"] = notes
+    # The legacy metre read form is labelled where a run records its policy
+    # (WP1-14, 2026-11-18): it still flies, for the bundles and runs from
+    # before 2026-11-03, but a record never reads as the canonical WGS84
+    # form when it was not. A WGS84 or point-free policy (every policies/
+    # *.yaml since 2026-11-03) adds no key, so its record is what it was.
+    # The keys say how POINTS are stored; bundle.FRAME_FORM is unrelated
+    # (a hash form in a lock entry's migration record).
+    form = pol.point_form
+    if form in LEGACY_POINT_FORMS:
+        rec["point_form"] = form
+        rec["point_note"] = LEGACY_POINT_NOTE
     return pol, rec
+
+
+# What a flight record says of a policy stored in the legacy metre form.
+LEGACY_POINT_NOTE = (
+    "points stored as local metres: the legacy read form, kept loading for the "
+    "bundles, runs and lock recipes from before 2026-11-03; the canonical form "
+    "is WGS84 lat/lon about a stated origin (grant: 'the DSL itself never "
+    "carries projected coordinates'; WP1-14)")
 
 
 # --------------------------------------------------------------------------- #

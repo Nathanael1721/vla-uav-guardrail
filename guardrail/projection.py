@@ -26,7 +26,13 @@ models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
 metre form is not STORED, and the converted point is bound to the frame,
 so the live Shield enforces the micrometre view of its stored lat/lon (the
 metres given, on the micrometre grid; else within 0.6 um), the same floats
-a reload of the snapshot reads (models.rule_in_wgs84).
+a reload of the snapshot reads (models.rule_in_wgs84). Since 2026-11-18 the
+Mission Control GUI's policy writer (demo/gui_policy.py) converts the zones
+drawn on its map the same way, about the base policy's origin; until then it
+rewrote policies/gui_policy.yaml in metres with no origin. The legacy form is
+labelled where it is read: models.Policy.point_form, and the flight loader's
+record (bundle.load_for_flight `point_form` / `point_note`);
+tests/test_wgs84_ingest_writers.py checks every writer.
 
 THE LOCAL VIEW IS ROUNDED TO THE MICROMETRE
 
