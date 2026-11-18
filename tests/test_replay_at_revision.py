@@ -25,6 +25,13 @@ What is pinned here:
     `body_frame_rotation_last_digits`; a changed headless audit record and a
     changed KPI figure read `differs`; a fields the replay does not
     reproduce by design (`ts`, the node's fsm_*) is not compared;
+  * the replay bundle alone (a folder holding only <run>.replay.tar.gz)
+    replays identical: it carries trajectory.json since 2026-11-18
+    (guardrail.replay EPISODE_FILES), so the positions are the doubles the
+    Shield read, not the log's 1 mm;
+  * a sweep's headless bundle carries the grant's policy_bundle.tar.gz with
+    every generation's IR, and kpi.json `bundle_files` names the six
+    members, with why episode.bag2/ is not written;
   * the worktree is gone afterwards (not on disk, not in `git worktree
     list`), and a junction / symlink inside a folder is unlinked without
     deleting its target's files;
@@ -333,6 +340,7 @@ def test_a_sweep_bundle_carries_the_grants_policy_bundle_with_every_generation()
                 "--runs", str(d / "runs")])
     eps = sorted(p for p in (d / "runs").iterdir() if p.is_dir())
     assert eps, "the sweep wrote no bundle"
+    most = 0
     for ep in eps:
         names = {p.name for p in ep.iterdir()}
         assert {"manifest.json", "policy_bundle.tar.gz", "shield_audit.jsonl",
@@ -352,9 +360,8 @@ def test_a_sweep_bundle_carries_the_grants_policy_bundle_with_every_generation()
         assert any(m.startswith("injected/") for m in members), members
         man = json.loads((ep / "manifest.json").read_text(encoding="utf-8"))
         assert index["generations"][0]["policy_hash"] == man["policy_hash"], index
-    assert any(len(json.loads(tarfile.open(ep / "policy_bundle.tar.gz").extractfile(
-        "policy_bundle.json").read())["generations"]) >= 2 for ep in eps), \
-        "no hot-applied generation: the 'all generations' half is untested"
+        most = max(most, len(gens))
+    assert most >= 2, "no hot-applied generation: the 'all generations' half is untested"
 
 
 def test_the_open_loop_replay_can_fail_and_says_where():
