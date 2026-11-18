@@ -592,12 +592,16 @@ On SITL the node raises `FENCE_ALT_MAX` to the policy's ceiling plus 5 m
 when it sits below it. With `--ground` that ceiling is a height above home,
 the reference ArduPilot measures `FENCE_ALT_MAX` in: `msl-ceiling` gives
 624 - 584 = 40 m, `agl-band` gives 60 m over the grid's highest ground
-(605.26 m MSL after resampling), 81.26 m. Since 2026-11-18 (wf21) a hard
+(605.5 m MSL, `terrain.ground_band`), 81.5 m. Since 2026-11-18 (wf21) a hard
 MSL ceiling that no clock can switch off caps the figure
 (`mavlink_adapter_node.policy_ceiling_m`, THE MSL CEILING CAPS IT): no
 height above it is ever legal. The raise is therefore to 45 m above home
 (5 m over the MSL rule). Flights before wf21 (msl_dem_sitl_01..03) raised it
-to 86.26 m, 46 m over the rule. Before the first 2026-11-18 review fix the
+to 86.5 m, 46.5 m over the rule (their `metrics.json`: `policy_ceiling_m`
+81.5, `FENCE_ALT_MAX` 86.5). The same cap comes from the MSL ceiling of a
+hard keep-in corridor in force all flight: `msl_dem_corridor` raises to 31 m
+(610 m MSL less home, + 5 m). A keep-out MSL zone bounds nothing above or
+beside it, so `msl_dem_zone` keeps the AGL band's 81.5 m (raise to 86.5 m). Before the first 2026-11-18 review fix the
 624 m MSL ceiling was read as metres above home and the raise would have
 gone to 629 m. The GCS step (`GCS_BACKSTOP=1`) computes the same figure.
 
@@ -650,6 +654,28 @@ python experiments/sweep_scenarios.py --profile msl_dem --backend sitl --sitl-dr
 python experiments/sweep_scenarios.py --profile msl_dem --backend sitl
 ```
 
+On the hil rig the same profile flies through step 14's harness. The DEM is
+a tracked file, so the Orin's clean checkout at the desktop's commit (step
+7) holds it at the same repo-relative path, which the mission container
+mounts; the harness sends `--ground-sha256` with it, so a different file is
+refused before take-off. The replay bundle is written on the Orin and must
+carry the DEM (`guardrail.replay` refuses to write one without it), so
+check the file and build the three bundles there too before the campaign:
+
+```bash
+# on the desktop AND on the Orin (same commit, git status clean):
+sha256sum experiments/worlds/dem_cmac_wgs84.json   # 44ed8a16...d31e0 on both
+python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml     experiments/policies/msl_dem_zone.yaml experiments/policies/msl_dem_corridor.yaml     --ground experiments/worlds/dem_cmac_wgs84.json
+# then, from the desktop:
+python experiments/sweep_scenarios.py --profile msl_dem --backend hil --hil-dry-run
+python experiments/sweep_scenarios.py --profile msl_dem --backend hil --hil-campaign msl_dem_hil
+```
+
+Each fetched run's `metrics.json` `ground.file` must name the same path and
+sha256, and its `<tag>.replay.tar.gz` must list `ground/dem_cmac_wgs84.json`
+(`python -m guardrail.replay verify` re-derives the heights from it;
+`python tools/replay_from_bag.py <run>` compares the bag's heights over it).
+
 **2b. The hil rig.** SITL on the desktop at its default home (CMAC; no
 `--home`), from WSL:
 
@@ -681,7 +707,7 @@ the Shield judged), beside `up_home` (the pose) and `msl_m`; the policy
 source record names the ground; `alt_violation_s` judges `msl-ceiling`
 against `msl_m` and `agl-band` against `up` (a clean flight reads 0);
 `autopilot_fence.policy_ceiling_m` is 40 (above home, capped by
-msl-ceiling since wf21; 81.26 before), not 624; `metrics.json`
+msl-ceiling since wf21; 81.5 before), not 624; `metrics.json`
 `ground.file` names the path and sha256; the replay bundle carries the DEM
 as `ground/dem_cmac_wgs84.json` and `python -m guardrail.replay verify`
 re-derives every row's height above it from `msl_m`.

@@ -418,7 +418,7 @@ def test_the_fence_ceiling_is_above_home_with_a_ground():
     # DEM's highest ground, top - 584 above home. The higher of the two is
     # what an envelope that may be out of force needs, but msl-ceiling is a
     # hard MSL ceiling no clock switches off: it caps the figure (2026-11-18,
-    # THE MSL CEILING CAPS IT), 40 m above home, not 81.26 m.
+    # THE MSL CEILING CAPS IT), 40 m above home, not 81.5 m.
     assert 60.0 + top - 584.0 > 40.0
     assert abs(ceiling - 40.0) < 1e-9, (ceiling, top, src)
     assert "above home" in src and "capped by msl-ceiling" in src
