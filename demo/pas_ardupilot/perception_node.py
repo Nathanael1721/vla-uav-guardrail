@@ -654,6 +654,28 @@ DETECTOR_READY_TIMEOUT_S = 300.0
 # answer is dropped and counted, and a call the tick has no time left for is
 # not sent (metrics.json sim_rpc).
 SIM_RPC_WAIT_S = 0.05
+# THE LEVEL'S CROWD, RECORD ONLY (--level-peds; review 2026-11-18). A flight
+# under a distance_envelope over people that logs no de-people breach cannot
+# be told from a detector that missed the people, unless the record also
+# says where the level's pedestrians WERE. CrowdTruth reads them - every
+# tag in ONE World.get_object_poses call (the simulator loops the names on
+# its game thread, so 40 names cost more than one subject read) - at most
+# every CROWD_TRUTH_PERIOD_S, through the same RPC worker as the subject's
+# truth and after it, and keeps an answer that comes after the tick's
+# budget (OffLoopRpc.call on_late) instead of dropping it: a pedestrian
+# walks 1.4 m/s, so a read a second old is still a fix within ~1.5 m, and
+# each row says how old its read was. Nothing the Shield or the pilot sees
+# comes from here.
+CROWD_TRUTH_PERIOD_S = 1.0
+# The feed's recall is scored on the pedestrians that matter to a decision:
+# within the grant's 5 s lookahead at the 5 m/s cap of the CityLife follow
+# policies of the aircraft (and, separately, those inside the camera's field
+# of view too - the only ones the detector could have placed). A truth
+# pedestrian is MATCHED when a person the Shield was given on that tick lies
+# within CROWD_MATCH_M of it plus that fix's reach (people.Person.reach_m):
+# a box ranged by width at 20-30 m is placed a few metres off.
+CROWD_RECALL_RANGE_M = 25.0
+CROWD_MATCH_M = 3.0
 # A fence upload in flight blocks the 10 Hz loop (one mission-protocol round
 # trip per item, twice): each phase gets this long, so an autopilot that does
 # not answer costs at most about 6 ticks, not the 2 x 10 s of the pre-arm one.
@@ -3035,6 +3057,12 @@ class ProjectAirSimCamera:
         x, y, _ = self.object_pose(name)
         return x, y
 
+    def objects_xy(self, names: list[str]) -> list[tuple[float, float]]:
+        """(x North, y East) of each named level actor, in ONE
+        World.get_object_poses call (CrowdTruth); NaN for a name no actor
+        matches. For the RECORD only."""
+        return [pose_xy_yaw(p)[:2] for p in self.world.get_object_poses(list(names))]
+
     def stop(self) -> None:
         try:
             if self.client is not None:
@@ -3293,7 +3321,9 @@ class OffLoopRpc:
       ("ok", result) | ("error", exception)   answered in time
       ("late", None)   no answer within wait_s: the caller goes on, and the
                        answer, when it comes, is dropped (its duration is
-                       kept in `late_ms`)
+                       kept in `late_ms`) - or, given `on_late`, handed to
+                       on_late(status, value) on the worker thread
+                       (CrowdTruth keeps its slow reads that way)
       ("busy", None)   a late call is still running: nothing is sent
       ("spent", None)  the tick's budget is used up: nothing is sent
 
@@ -3343,10 +3373,17 @@ class OffLoopRpc:
             with self._cv:
                 box.update(status=status, value=val, ms=ms)
                 self.call_ms.append(ms)
+                late_cb = None
                 if box.get("abandoned"):
                     self.late_ms.append(ms)
+                    late_cb = box.get("on_late")
                 self._running = None
                 box["done"].set()
+            if late_cb is not None:
+                try:
+                    late_cb(status, val)
+                except Exception:                                 # noqa: BLE001
+                    traceback.print_exc()
 
     def begin_tick(self) -> None:
         """Open one tick's budget: wait_s from now, shared by the calls
@@ -3359,7 +3396,7 @@ class OffLoopRpc:
         with self._cv:
             self._deadline = None
 
-    def call(self, fn, *args):
+    def call(self, fn, *args, on_late=None):
         with self._cv:
             if self._running is not None or self._job is not None:
                 self.n_busy += 1
@@ -3370,7 +3407,7 @@ class OffLoopRpc:
                 if wait <= 0.0:
                     self.n_spent += 1
                     return "spent", None
-            box = {"done": threading.Event()}
+            box = {"done": threading.Event(), "on_late": on_late}
             self._job = (fn, args, box)
             self.n_calls += 1
             self._cv.notify()
@@ -3828,6 +3865,232 @@ def truth_view(rows: list[dict], hfov_deg: float | None, width_m: float | None =
                         f"median {np.median(gap_in_view):.0f} deg from the subject's")
     rec["verdict"] = verdict
     return rec
+
+
+class CrowdTruth:
+    """The level's pedestrians, read for the RECORD only (--level-peds,
+    CROWD_TRUTH_PERIOD_S): where the people a distance_envelope over people
+    is about really were, so a flight's people feed can be checked against
+    them. Nothing the Shield or the pilot sees comes from here.
+
+    resolve()   once, before the hover (nothing else is on the RPC worker
+                then): one read of every tag; the tags no actor answers are
+                dropped and named, and none answering refuses the flight
+                (SystemExit), as level_actors.LevelActors.resolve does - a
+                truth that is empty for the whole flight checks nothing.
+    poll(t)     in the tick's RPC block, after the subject's truth and the
+                frame check: one read when CROWD_TRUTH_PERIOD_S has passed,
+                through the worker (OffLoopRpc), its answer kept when it
+                comes after the tick's budget (on_late).
+    row(...)    the row's `people_truth`: {min_m: the true horizontal
+                distance from the aircraft to the nearest pedestrian of the
+                latest read, n: pedestrians in it, age_s: how old the read
+                is}; once per read also `recall`: the truth pedestrians
+                within CROWD_RECALL_RANGE_M (and of those, in the camera's
+                field of view) and how many a person the Shield was given
+                on this tick matches (CROWD_MATCH_M plus the fix's reach).
+    summary()   metrics.json people_feed.truth.
+
+    The read's positions are in the Shield's frame through the subject
+    truth's own projection (scene_to_anchor); a frame check that fails
+    quarantines them with the subject's (quarantine_crowd_rows)."""
+
+    def __init__(self, camera, names: list[str], scene_home, anchor,
+                 rpc: "OffLoopRpc | None" = None, period_s: float = CROWD_TRUTH_PERIOD_S,
+                 timer=time.perf_counter):
+        self.camera, self.scene_home, self.anchor, self.rpc = camera, scene_home, anchor, rpc
+        self.names = list(names)
+        self.period_s = float(period_s)
+        self.timer = timer
+        self.why_off = None
+        if not callable(getattr(camera, "objects_xy", None)):
+            self.why_off = ("this camera source reads no simulator poses (no "
+                            "pedestrian truth without Project AirSim)")
+        elif scene_home is None:
+            self.why_off = "no scene home-geo-point, so a simulator pose has no frame"
+        self.unresolved: list[str] = []
+        self._lock = threading.Lock()
+        self._latest = None           # (t_sent, [(x, y), ...]) in the Shield's frame
+        self._t_last = None
+        self._scored = None           # t_sent of the last read scored for recall
+        self.polls = self.reads = self.late = self.late_kept = 0
+        self.busy = self.spent = self.failures = self.nan = 0
+        self.read_ms: list[float] = []
+        self.rec = {"reads_scored": 0, "in_range": 0, "matched": 0,
+                    "in_view": 0, "matched_in_view": 0}
+
+    @property
+    def source(self) -> str | None:
+        return (None if self.why_off else
+                f"World.get_object_poses({len(self.names)} level tags "
+                f"{self.names[0] if self.names else ''}..) (Project AirSim), every "
+                f">= {self.period_s:g} s, record only - never a Shield input")
+
+    def _project(self, xy) -> list:
+        out = []
+        for x, y in xy:
+            if not (math.isfinite(x) and math.isfinite(y)):
+                self.nan += 1
+                continue
+            p = scene_to_anchor(x, y, self.scene_home, self.anchor)
+            if p is not None:
+                out.append(p)
+        return out
+
+    def resolve(self) -> int:
+        """One direct read before the mission; drops the tags no actor
+        answers. Returns how many resolved."""
+        if self.why_off:
+            return 0
+        xy = self.camera.objects_xy(self.names)
+        keep = [n for n, (x, y) in zip(self.names, xy)
+                if math.isfinite(x) and math.isfinite(y)]
+        self.unresolved = [n for n in self.names if n not in keep]
+        if not keep:
+            raise SystemExit(
+                f"[crowd] none of the {len(self.names)} pedestrian tag(s) resolved in "
+                f"the simulator ({', '.join(self.names[:8])}"
+                f"{' ...' if len(self.names) > 8 else ''}): the people feed would be "
+                f"checked against nobody. Fix --level-peds / --level-ped-prefix, or "
+                f"fly without them (the record then says the feed was not checked)")
+        if self.unresolved:
+            print(f"[crowd] {len(self.unresolved)} of {len(self.names)} tag(s) never "
+                  f"resolved and are dropped: {', '.join(self.unresolved)}")
+        self.names = keep
+        return len(keep)
+
+    def _read(self):
+        t0 = self.timer()
+        xy = self.camera.objects_xy(self.names)
+        return xy, (self.timer() - t0) * 1000.0
+
+    def _store(self, t_sent: float, status: str, val, late: bool = False) -> None:
+        if status != "ok":
+            with self._lock:
+                self.failures += 1
+            return
+        xy, ms = val
+        pts = self._project(xy)
+        with self._lock:
+            self.reads += 1
+            self.late_kept += late
+            self.read_ms.append(ms)
+            if self._latest is None or t_sent >= self._latest[0]:
+                self._latest = (t_sent, pts)
+
+    def poll(self, t_tick: float) -> None:
+        if self.why_off or (self._t_last is not None
+                            and t_tick - self._t_last < self.period_s):
+            return
+        self._t_last = t_tick
+        self.polls += 1
+        status, val = (self.rpc.call(self._read,
+                                     on_late=lambda st, v, t=t_tick: self._store(t, st, v, True))
+                       if self.rpc is not None else _direct_call(self._read))
+        if status in ("ok", "error"):
+            self._store(t_tick, status, val)
+        elif status == "late":
+            self.late += 1
+        elif status == "busy":
+            self.busy += 1
+        elif status == "spent":
+            self.spent += 1
+
+    def row(self, t_tick: float, state: State, people_now, hfov_deg: float | None):
+        """The row's people_truth (class docstring), or None before the
+        first read answered."""
+        with self._lock:
+            latest = self._latest
+        if latest is None:
+            return None
+        t_sent, pts = latest
+        dists = [math.hypot(px - state.x, py - state.y) for px, py in pts]
+        out = {"min_m": round(min(dists), 3) if dists else None, "n": len(pts),
+               "age_s": round(max(0.0, t_tick - t_sent), 3)}
+        if t_sent != self._scored:
+            self._scored = t_sent
+            fixes = [people_feed.as_person(q) for q in (people_now or ())]
+            rec = {"in_range": 0, "matched": 0, "in_view": 0, "matched_in_view": 0}
+            for (px, py), d in zip(pts, dists):
+                if d > CROWD_RECALL_RANGE_M:
+                    continue
+                hit = any(math.hypot(px - q.x, py - q.y) <= CROWD_MATCH_M + q.reach_m()
+                          for q in fixes)
+                seen = (hfov_deg is not None and abs(_wrap_deg(
+                    math.degrees(math.atan2(py - state.y, px - state.x)) - state.yaw_deg))
+                    <= hfov_deg / 2.0)
+                rec["in_range"] += 1
+                rec["matched"] += hit
+                rec["in_view"] += seen
+                rec["matched_in_view"] += hit and seen
+            self.rec["reads_scored"] += 1
+            for k, v in rec.items():
+                self.rec[k] += v
+            out["recall"] = rec
+        return out
+
+    def summary(self, rows: list[dict], min_distance_m: float | None,
+                point_s: list[float] | None = None) -> dict:
+        """metrics.json people_feed.truth: the reads, the true minimum
+        distance to any pedestrian over the flight and the time spent closer
+        than the envelope, and the feed's recall."""
+        if self.why_off:
+            return {"source": None, "why": self.why_off}
+        w = point_s if point_s is not None and len(point_s) == len(rows) else [None] * len(rows)
+        got = [(r["people_truth"], wi) for r, wi in zip(rows, w)
+               if isinstance(r.get("people_truth"), dict)
+               and r["people_truth"].get("min_m") is not None]
+        mins = [pt["min_m"] for pt, _ in got]
+        below = [(pt, wi) for pt, wi in got
+                 if min_distance_m is not None and pt["min_m"] < min_distance_m]
+        rr = self.rec
+        recall = {"range_m": CROWD_RECALL_RANGE_M, "match_m": CROWD_MATCH_M, **rr,
+                  "recall_in_range": (round(rr["matched"] / rr["in_range"], 4)
+                                      if rr["in_range"] else None),
+                  "recall_in_view": (round(rr["matched_in_view"] / rr["in_view"], 4)
+                                     if rr["in_view"] else None)}
+        out = {"source": self.source, "tags": len(self.names),
+               "unresolved": self.unresolved, "period_s": self.period_s,
+               "polls": self.polls, "reads": self.reads, "late": self.late,
+               "late_kept": self.late_kept, "busy": self.busy, "spent": self.spent,
+               "failures": self.failures, "nan": self.nan,
+               "read_ms": spread([round(v, 3) for v in self.read_ms]),
+               "rows_with_truth": len(got), "rows": len(rows),
+               "age_s": spread([pt["age_s"] for pt, _ in got]),
+               "min_distance_m": None if not mins else round(min(mins), 3),
+               "envelope_m": min_distance_m,
+               "below_envelope_ticks": len(below),
+               "below_envelope_s": (None if any(wi is None for _, wi in below)
+                                    else round(sum(wi for _, wi in below), 3)),
+               "recall": recall}
+        if not got:
+            out["verdict"] = ("no pedestrian truth was read on any tick: the people "
+                              "feed is unchecked")
+        elif below:
+            out["verdict"] = (f"the aircraft was closer than {min_distance_m:g} m to a "
+                              f"level pedestrian on {len(below)} of {len(got)} ticks "
+                              f"with truth (true minimum {out['min_distance_m']} m)")
+        else:
+            out["verdict"] = (f"the aircraft kept {min_distance_m:g} m from every level "
+                              f"pedestrian on all {len(got)} ticks with truth (true "
+                              f"minimum {out['min_distance_m']} m; reads up to "
+                              f"{max(pt['age_s'] for pt, _ in got):.2f} s old)")
+        return out
+
+
+def quarantine_crowd_rows(rows: list[dict], why: str) -> int:
+    """After a failed frame check (the subject truth's, whose projection the
+    crowd shares): take the pedestrians' distances out of the rows, kept
+    labelled under `people_truth_as_read`. Returns the rows changed."""
+    n = 0
+    for r in rows:
+        if r.get("people_truth") is None:
+            continue
+        r["people_truth_as_read"] = r["people_truth"]
+        r["people_truth"] = None
+        r["people_truth_why"] = why
+        n += 1
+    return n
 
 
 TRUTH_POSITION_FIELDS = ("subject_truth", "tgt_x", "tgt_y", "subject_range_m",
@@ -4989,6 +5252,15 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--people-stale-s", type=float, default=people_feed.PEOPLE_STALE_S,
                     help="a distance_envelope over people only: a person unseen for "
                          "longer is dropped (guardrail/people.py; default %(default)s s)")
+    ap.add_argument("--level-peds", type=int, default=0,
+                    help="a distance_envelope over people only, RECORD ONLY: read the "
+                         "level's N pedestrians (tags --level-ped-prefix plus a two-digit "
+                         "index) every CROWD_TRUTH_PERIOD_S, so the record says how close "
+                         "the aircraft truly came to any of them and how many the people "
+                         "feed placed (metrics people_feed.truth). Never a Shield input. "
+                         "Default 0: not read, and the record says the feed is unchecked")
+    ap.add_argument("--level-ped-prefix", default="Ped_",
+                    help="tag prefix for --level-peds (as follow_vlm's and vla_fly's)")
     ap.add_argument("--identity", action="store_true",
                     help="judge every candidate physically (demo/identity.py) at its "
                          "own frame's pose and depth; only an identity-OK box may "
@@ -6996,6 +7268,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                  if c.binds(subject_class) and not vla_goto]
         ring_m = max(rings) if rings else None
         print(f"[truth]  subject pose: {truth.source or truth.why_off}")
+        # The level's pedestrians, RECORD ONLY (CrowdTruth; --level-peds): a
+        # people envelope's feed checked against where the people were.
+        crowd = None
+        if people_source is not None and getattr(args, "level_peds", 0) > 0:
+            crowd = CrowdTruth(camera, [f"{args.level_ped_prefix}{i:02d}"
+                                        for i in range(args.level_peds)],
+                               scene_home, anchor, rpc=rpc)
+            crowd.resolve()
+            print(f"[crowd]  pedestrian truth: {crowd.source or crowd.why_off}")
+        elif getattr(args, "level_peds", 0) > 0:
+            print("[crowd]  --level-peds is read for a distance_envelope over people "
+                  "only; this policy has none, so nothing is read")
 
         # ---- the hover before the mission, watched (HoverWatch) ---------------
         # From the take-off to the mission clock the aircraft hovers in
@@ -7812,7 +8096,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         ex, ey = anchor.to_scene(s.lat, s.lon)
                         ekf_err.append(math.hypot(gx - ex, gy - ey))
                         truth.note_ekf_vs_sim(ekf_err[-1])
+                # The level's pedestrians (record only): last in the block,
+                # so a slow read never takes the subject's truth's share.
+                if crowd is not None:
+                    crowd.poll(t_tick)
                 rpc.end_tick()
+                crowd_row = (None if crowd is None else
+                             crowd.row(t_tick, st, people_now, hfov))
 
                 touched = bool(shield_on and d.touched)
                 n_touched += touched
@@ -7901,6 +8191,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     # [x, y, age of the fix in s].
                     **({} if people_now is None else
                        {"people": people_feed.rows_people(people_now)}),
+                    # Where the level's pedestrians truly were (--level-peds,
+                    # record only; CrowdTruth.row).
+                    **({} if crowd is None else {"people_truth": crowd_row}),
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
                     "yaw_deg": round(st.yaw_deg, 2),
                     # The autopilot's measured velocity (North, East, up, m/s)
@@ -8221,6 +8514,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         tsum = truth_summary(rows, truth, ring_m, TICK, hfov_deg=hfov, width_m=width_m,
                              point_s=traj_s)
         scored = tsum["scored"]
+        crowd_quarantined = None
         if tsum.get("as_read") is not None:
             # The truth's ranges are not ranges to the subject (its frame,
             # or the EKF): no offline scorer may read them from the rows
@@ -8228,6 +8522,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             tsum["rows_quarantined"] = quarantine_truth_rows(rows, (
                 frame_disagreement(tsum["frame_check"])
                 + "; the pose as read is in subject_truth_as_read"))
+            if crowd is not None:
+                crowd_quarantined = quarantine_crowd_rows(rows, (
+                    frame_disagreement(tsum["frame_check"])
+                    + "; the distances as read are in people_truth_as_read"))
+        # The level's pedestrians against the people envelope (record only):
+        # the true minimum distance and the feed's recall, or why unchecked.
+        crowd_sum = None
+        if people_mem is not None:
+            env_m = max((c.min_distance_m for c in policy.by_type(DistanceEnvelope)
+                         if c.object_class == "people"), default=None)
+            crowd_sum = (crowd.summary(rows, env_m, point_s=traj_s) if crowd is not None
+                         else {"source": None, "why": (
+                             "no --level-peds: the people feed was not checked against "
+                             "the level's pedestrians, so a flight with no de-people "
+                             "breach cannot be told from a detector that missed them")})
+            if crowd_quarantined:
+                crowd_sum["quarantined_rows"] = crowd_quarantined
+                crowd_sum["verdict"] = ("withheld: the truth's frame check failed, so "
+                                        "the pedestrians' distances are not distances "
+                                        "from the aircraft (people_truth_as_read)")
+            print(f"[crowd]  {crowd_sum.get('verdict') or crowd_sum.get('why')}")
         if dwell["nfz_moving_not_counted"]:
             print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
                   f"in nfz_s: the end-of-flight count has no per-tick position")
@@ -8364,6 +8679,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             **({} if people_mem is None else
                {"people_feed": {"source": people_source, "phrase": people_query,
                                 "range_m": people_feed.range_record(people_range),
+                                # Where the level's pedestrians truly were
+                                # (--level-peds, record only; CrowdTruth).
+                                "truth": crowd_sum,
                                 "placement": people_place, **people_mem.record(),
                                 "people_nonfinite": shield.n_people_nonfinite,
                                 "detector_frames": getattr(grounder, "n_people_frames", None),
