@@ -156,15 +156,23 @@ def parse_waypoints(text: str | None) -> list[tuple[float, float]]:
 
 
 def leg_check(shield, start: tuple[float, float, float], end: tuple[float, float, float],
-              step_m: float = LEG_STEP_M) -> dict:
+              step_m: float = LEG_STEP_M, terrain=None) -> dict:
     """Walk the straight leg start -> end (x, y, up) and ask the Shield, at
     every step, whether a stop there breaks a HARD, enforced rule
     (`state_is_unsafe` filtered by `hard_violations`, the escalation FSM's
     stop_illegal reading). The start itself is not judged here.
 
+    `terrain` (X-11, 2026-11-18; a guardrail.terrain.TerrainReference, the
+    node's --ground grid): the leg's heights are above HOME (a waypoint's
+    altitude, as AUTO flies it), so each step is handed to the Shield at its
+    height above the DEM under THAT step (TerrainReference.up): a leg level
+    above home over rising ground is judged against the ground along it.
+    None (every flight without a --ground grid): the heights as given.
+
     Returns {"legal": True} or {"legal": False, "rules": [...], "at_m":
     distance of the first illegal step, "first_illegal": (x, y, up),
-    "last_legal": (x, y, up) the step before it (the start if none)}."""
+    "last_legal": (x, y, up) the step before it (the start if none)}; the
+    points are always above home, the reference the waypoints are in."""
     sx, sy, su = start
     ex, ey, eu = end
     length = math.hypot(ex - sx, ey - sy)
@@ -173,7 +181,8 @@ def leg_check(shield, start: tuple[float, float, float], end: tuple[float, float
     for i in range(1, n + 1):
         f = i / n
         p = (sx + f * (ex - sx), sy + f * (ey - sy), su + f * (eu - su))
-        bad = shield.hard_violations(shield.state_is_unsafe(State(x=p[0], y=p[1], up=p[2])))
+        up = p[2] if terrain is None else terrain.up(p[2], p[0], p[1])
+        bad = shield.hard_violations(shield.state_is_unsafe(State(x=p[0], y=p[1], up=up)))
         if bad:
             return {"legal": False, "rules": sorted({v.rule_id for v in bad}),
                     "at_m": round(f * length, 2), "first_illegal": p, "last_legal": last}
@@ -195,15 +204,18 @@ def stop_short(start: tuple[float, float, float], verdict: dict,
 
 
 def check_plan(shield, home: tuple[float, float, float],
-               plan: list[tuple[float, float, float]]) -> tuple[list[dict], list[dict]]:
+               plan: list[tuple[float, float, float]], terrain=None
+               ) -> tuple[list[dict], list[dict]]:
     """Pre-execution: every leg of the plan, from `home` at cruise altitude.
     Returns (waypoints to upload, one record per leg). An illegal leg's
     waypoint becomes its stop-short point, held (HOLD_S): the mission then
-    stops there, as the GUIDED Shield stops short of a zone."""
+    stops there, as the GUIDED Shield stops short of a zone. `terrain`: as
+    leg_check (None without a --ground grid)."""
     out, legs = [], []
     prev = home
     for i, wp in enumerate(plan):
-        v = leg_check(shield, prev, wp)
+        v = leg_check(shield, prev, wp) if terrain is None else \
+            leg_check(shield, prev, wp, terrain=terrain)
         rec = {"index": i, "seq": FIRST_WAYPOINT_SEQ + i, "from": list(prev),
                "to": list(wp), "legal": v["legal"]}
         if v["legal"]:
@@ -225,6 +237,32 @@ def check_plan(shield, home: tuple[float, float, float],
             return out, legs
         legs.append(rec)
     return out, legs
+
+
+def mission_ground(args, bundle, yaml_path):
+    """(ground, file record, TerrainReference or None, Shield keywords) the
+    mission node flies over (X-11, 2026-11-18): --ground FILE named with
+    --ground-sha256 HEX (checked before it is read, terrain.ground_file) and,
+    over a DEM, --ground-home-msl M (the autopilot's home elevation, checked
+    against the DEM at home, the EKF origin: TerrainReference). As the GUIDED
+    Shield node takes them; a flat ground is the home's own and converts
+    nothing. (None, None, None, {}) without --ground: every flight before."""
+    from guardrail.terrain import TerrainReference, ground_from_args, is_dem
+    hmsl = getattr(args, "ground_home_msl", None)
+    if hmsl is not None and not getattr(args, "ground", None):
+        raise ValueError("--ground-home-msl is the home elevation of a --ground")
+    ground, gfile = ground_from_args(args, bundle, yaml_path, root=ROOT)
+    if ground is None:
+        return None, None, None, {}
+    if is_dem(ground):
+        terrain = TerrainReference(ground, hmsl, home_xy=(0.0, 0.0),
+                                   source="--ground-home-msl")
+        return ground, gfile, terrain, {"ground": ground, "up_ref": "terrain"}
+    e = float(ground.elevation_at())
+    if hmsl is not None and abs(float(hmsl) - e) > 1e-6:
+        raise ValueError(f"REFUSED before take-off: --ground-home-msl {float(hmsl):g} and "
+                         f"the flat ground {ground!r} differ")
+    return ground, gfile, None, {"ground": ground}
 
 
 def write_run_records(out: Path, metrics: dict, *, policy_hash: str, seed: int,
@@ -287,11 +325,18 @@ if HAVE_ROS:
             from guardrail.bundle import load_for_flight
             self.args, self.out = args, out
             bundle, yaml_path, choice = resolve_policy(args)
+            # The declared ground (--ground / --ground-sha256 /
+            # --ground-home-msl, X-11, 2026-11-18), as the GUIDED Shield node
+            # takes it (mission_ground). Without --ground: none, as before.
+            self.ground, self.ground_file, self.terrain, ground_kw = mission_ground(
+                args, bundle, yaml_path)
             self.policy, self.policy_source = load_for_flight(
-                bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
+                bundle, yaml_path, allow_unverified=args.allow_unverified_bundle,
+                **({} if self.ground is None else {"ground": self.ground}))
             self.policy_source.update(choice)
             self.policy_source.update(check_expected_hash(self.policy, args.expected_hash))
-            comp = ConstraintCompiler(self.policy)
+            comp = (ConstraintCompiler(self.policy) if self.ground is None
+                    else ConstraintCompiler(self.policy, ground=self.ground))
             self.mission = comp.parse_command(args.command or "fly to the northeast pad at 6 m/s")
             wps = parse_waypoints(args.waypoints)
             if args.target:
@@ -313,7 +358,7 @@ if HAVE_ROS:
                                      clock=self.clock, clock_record=self.clock_record)
             (out / "prompt.yaml").write_text(comp.build_prompt(self.mission), encoding="utf-8")
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                                      clock=self.clock)
+                                      clock=self.clock, **ground_kw)
             self._lock = threading.RLock()
             self.hot = None
             self.state: State | None = None
@@ -574,7 +619,8 @@ if HAVE_ROS:
             speed = float(self.mission.speed_pref_mps)
             cap = None if caps is None else caps.speed_max_mps
             speed_flown = min(speed, cap) if cap else speed
-            wps, legs = check_plan(self.shield, (0.0, 0.0, self.alt), self.plan)
+            wps, legs = check_plan(self.shield, (0.0, 0.0, self.alt), self.plan,
+                                   terrain=self.terrain)
             self.autopilot_wps = [dict(w) for w in wps]
             for leg in legs:
                 if leg.get("legal") is False:
@@ -683,7 +729,11 @@ if HAVE_ROS:
                 self._finish("time cap")
                 return
             t0 = time.perf_counter()
-            unsafe = self.shield.hard_violations(self.shield.state_is_unsafe(st))
+            # Over a --ground grid the Shield is told the height above the
+            # DEM under the aircraft (X-11); `st` itself stays above home,
+            # the reference the waypoints and the legs are in.
+            told = st if self.terrain is None else self.terrain.state(st)
+            unsafe = self.shield.hard_violations(self.shield.state_is_unsafe(told))
             unsafe_rules = sorted({v.rule_id for v in unsafe})
             idx = self._wp_index()
             verdict, repair = None, None
@@ -697,7 +747,8 @@ if HAVE_ROS:
             if idx is not None and flying and not self.held_unsafe:
                 planned = self.plan[idx]
                 pos = (st.x, st.y, st.up)
-                verdict = leg_check(self.shield, pos, planned)
+                verdict = (leg_check(self.shield, pos, planned) if self.terrain is None
+                           else leg_check(self.shield, pos, planned, terrain=self.terrain))
                 active = self.replaced.get(idx)
                 if not verdict["legal"]:
                     self.legal_since.pop(idx, None)
@@ -749,6 +800,13 @@ if HAVE_ROS:
                    "generation": self.policy.generation,
                    "policy_hash": self.policy.policy_hash,
                    "episode_id": self.rec.episode_id, "shield_ms": round(ms, 3)}
+            if self.terrain is not None:
+                # As the GUIDED node writes them (X-11): `up` is what the
+                # Shield judged (above the DEM), beside the pose's height
+                # above home and its MSL height. Absent without a grid.
+                row.update(up=round(told.up, 3), up_home=round(st.up, 3),
+                           msl_m=round(self.terrain.msl(told.up, st.x, st.y), 3),
+                           up_ref="terrain")
             self._log_fh.write(json.dumps(row) + "\n")
             self._log_fh.flush()
             # The end: the last waypoint reached, or the autopilot took it.
@@ -828,6 +886,13 @@ if HAVE_ROS:
                 # was metrics' `host` before).
                 "hil_evidence": self.hil_evidence,
             }
+            if self.ground is not None:
+                # The ground the Shield converted MSL rules over, named by
+                # its file and hash, as the GUIDED node records it (X-11).
+                metrics["ground"] = (self.terrain.record() if self.terrain is not None
+                                     else {"ground": self.ground.record(),
+                                           "up_ref": "home"})
+                metrics["ground"]["file"] = dict(self.ground_file)
             with open(self.out / "flight_log.jsonl", encoding="utf-8") as fh:
                 rows = [json.loads(line) for line in fh if line.strip()]
             metrics["position_unsafe_ticks"] = sum(1 for r in rows if r.get("unsafe"))
@@ -869,6 +934,16 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--clock-tz", default=None)
     ap.add_argument("--hotapply-port", type=int, default=None)
     ap.add_argument("--hotapply-host", default="127.0.0.1")
+    ap.add_argument("--ground", default=None, metavar="FILE",
+                    help="the declared ground (guardrail/terrain.py load_ground, "
+                         "repo-relative; X-11), as the GUIDED Shield node takes it: an "
+                         "MSL rule is flyable over it, and over a grid every leg step "
+                         "is judged at its height above the grid. Default: none")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 of the --ground file; it must hash to it")
+    ap.add_argument("--ground-home-msl", type=float, default=None, metavar="M",
+                    help="with a --ground grid: the autopilot's home elevation, m MSL "
+                         "(checked against the grid at home). Default: the grid's own")
     return ap
 
 
@@ -876,7 +951,14 @@ def main(argv: list[str] | None = None) -> None:
     args, ros_args = make_parser().parse_known_args(argv)
     try:
         parse_waypoints(args.waypoints)
-    except ValueError as e:
+        if args.ground or args.ground_sha256 or args.ground_home_msl is not None:
+            # Read before ROS starts, as the GUIDED node does: a bad file, a
+            # file that is not the one named, or a home off the grid is
+            # refused with no node built.
+            from ros2_shield_node import resolve_policy
+            b, y, _ = resolve_policy(args)
+            mission_ground(args, b, y)
+    except (ValueError, OSError) as e:
         raise SystemExit(f"[mission_shield] REFUSED: {e}")
     if not HAVE_ROS:
         raise SystemExit("ros2_mission_node needs rclpy and mavros_msgs: source "

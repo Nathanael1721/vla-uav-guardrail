@@ -290,9 +290,11 @@ def stub_policy(args):
     yaml_path = args.policy or (None if args.bundle else
                                 ROOT / "policies" / "sim_demo_policy.yaml")
     kw = {}
-    if getattr(args, "ground", None):
-        from guardrail.terrain import ground_for_flight
-        kw["ground"] = ground_for_flight(args.ground, bundle, yaml_path, root=ROOT)
+    if getattr(args, "ground", None) or getattr(args, "ground_sha256", None):
+        # Named by its file and, when given, the file's sha256 (the file
+        # must hash to it: terrain.ground_file), as the Shield node reads it.
+        from guardrail.terrain import ground_from_args
+        kw["ground"] = ground_from_args(args, bundle, yaml_path, root=ROOT)[0]
     return load_for_flight(bundle, yaml_path,
                            allow_unverified=args.allow_unverified_bundle, **kw)
 
@@ -312,6 +314,8 @@ def make_parser() -> argparse.ArgumentParser:
                          "load_ground): read here so a policy with an MSL rule passes "
                          "this node's flight gate too, and its CSP compiles over it. "
                          "Default: none, as before 2026-11-18")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 of the --ground file; it must hash to it")
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
     ap.add_argument("--target", default=None, metavar="X,Y[,UP]",
                     help="the target in the policy frame (metres North, East), with "

@@ -975,6 +975,8 @@ def make_parser():
                          "load_ground): read here so a policy with an MSL rule passes "
                          "this node's flight gate too, as in the VLA stub. Default: "
                          "none, as before 2026-11-18")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 of the --ground file; it must hash to it")
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s",
                     help="the mission text, as the Shield node's (its target is the goal)")
     ap.add_argument("--target", default=None, metavar="X,Y")
@@ -1066,9 +1068,9 @@ def resolve(args) -> tuple[BridgeConfig, dict]:
     # an MSL rule passes this node's flight gate as it does the Shield's and
     # the stub's. Without it: the call every run before 2026-11-18 made.
     kw = {}
-    if getattr(args, "ground", None):
-        from guardrail.terrain import ground_for_flight
-        kw["ground"] = ground_for_flight(args.ground, args.bundle, yaml_path, root=ROOT)
+    if getattr(args, "ground", None) or getattr(args, "ground_sha256", None):
+        from guardrail.terrain import ground_from_args
+        kw["ground"] = ground_from_args(args, args.bundle, yaml_path, root=ROOT)[0]
     policy, source = load_for_flight(
         args.bundle, yaml_path,
         allow_unverified=args.allow_unverified_bundle, **kw)

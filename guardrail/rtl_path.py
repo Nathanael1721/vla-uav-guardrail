@@ -192,10 +192,18 @@ def _is_exit(piece, shape, p, home) -> bool:
 
 
 def check_leg(x: float, y: float, up: float, home: tuple[float, float],
-              zones: Iterable[Zone], band: Band | None = None,
-              rtl_alt_m: float = RTL_ALT_M) -> LegCheck:
+              zones: Iterable[Zone], band=None,
+              rtl_alt_m: float = RTL_ALT_M, *, over: "LegGround | None" = None) -> LegCheck:
     """Is the straight RTL path from (x, y, up) to `home` clear of every zone
-    in `zones` and inside `band`? (Module docstring.)"""
+    in `zones` and inside `band`? (Module docstring.)
+
+    `over` (X-11, 2026-11-18): the DEM the rules' heights stand on, when
+    `up` is the height above the ground under the aircraft. The leg is then
+    judged along the ground (`_check_leg_over_ground`, THE LEG OVER A DEM),
+    and `band` may be a list of Bands, one per rule (bands_from_shield).
+    None - every caller without a DEM - is the check as it always was."""
+    if over is not None:
+        return _check_leg_over_ground(x, y, up, home, zones, band, rtl_alt_m, over)
     from shapely.geometry import Point
 
     from .geometry import point_distance, ring_contains, segment_in_ring
@@ -250,6 +258,143 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
                else "RTL_ALT")
         reasons.append(f"the return altitude {h:g} m ({why}) is outside "
                        f"{band.rule_id} [{band.alt_min_m:g}, {band.alt_max_m:g}] m")
+    return LegCheck(clear=not blocking, rtl_alt_m=h, blocking=tuple(blocking),
+                    reasons=tuple(reasons), starts_inside=tuple(inside))
+
+
+# --------------------------------------------------------------------------- #
+# THE LEG OVER A DEM (X-11, 2026-11-18)
+# --------------------------------------------------------------------------- #
+#
+# ArduCopter's RTL flies its return leg at RTL_ALT above HOME (RTL_ALT_TYPE 0,
+# the default and the SITL rails'), so over a varying ground the leg is level
+# in MSL and its height above the ground under it changes along the way:
+#
+#     up(q) = H - g(q),    H = h + g(aircraft)    (h: the return altitude in
+#                                                   the rules' reference at
+#                                                   the aircraft)
+#
+# Until this date check_leg judged the whole leg at h, the height above the
+# ground under the aircraft, so a leg home through rising ground read clear
+# while it flew into the AGL floor (or the ground) on the way. Over a DEM the
+# leg is now sampled at most `LegGround.step_m` apart, as the Shield's
+# forecast samples its poses (each over its own ground, Shield._over_ground):
+#
+#   * an AGL altitude band (an altitude_envelope) is judged at up(q) at
+#     every sample from the aircraft to home;
+#   * a zone's ring crossing is judged at up(q) at every sample of each
+#     stretch inside the ring (an AGL zone), or at H (an MSL zone);
+#   * a rule the policy declares in MSL (`LegGround.msl`, its declared
+#     band) is judged in MSL at H: exact everywhere on a level leg, so it
+#     needs no sample;
+#   * the climb at the aircraft is judged as before (the ground under it
+#     does not change), an MSL rule's in MSL.
+#
+# Sampled, not bounded: between two samples the ground can rise by at most
+# the DEM's slope x step / 2 above the line through them (0.1 m on
+# msl_dem_sitl's ridge at 1 m), which is the most a sample can miss.
+
+LEG_GROUND_STEP_M = 1.0
+
+
+class LegGround(NamedTuple):
+    """The ground a return leg is judged over (THE LEG OVER A DEM): `ground`
+    a DEM (terrain.GridGround), `msl` rule id -> (floor, ceiling) metres MSL
+    as the policy declares them (its MSL rules), `step_m` the sampling."""
+    ground: Any
+    msl: Any = None
+    step_m: float = LEG_GROUND_STEP_M
+
+
+def _samples(ax: float, ay: float, bx: float, by: float, step_m: float):
+    """Points from (ax, ay) to (bx, by), both ends included, at most
+    `step_m` apart."""
+    n = max(1, int(math.ceil(math.hypot(bx - ax, by - ay) / max(step_m, 1e-3))))
+    return [(ax + (bx - ax) * k / n, ay + (by - ay) * k / n) for k in range(n + 1)]
+
+
+def _check_leg_over_ground(x, y, up, home, zones, band, rtl_alt_m, over: LegGround
+                           ) -> LegCheck:
+    from shapely.geometry import Point
+
+    from .geometry import point_distance, ring_contains, segment_in_ring
+    from .shield import Shield, band_holds, zone_breached
+    g = over.ground.elevation_at
+    msl = dict(over.msl or {})
+    h = rtl_altitude(up, rtl_alt_m)
+    g0 = float(g(x, y))
+    leg_msl, now_msl = h + g0, float(up) + g0
+    p = Point(x, y)
+    blocking: list[str] = []
+    reasons: list[str] = []
+    inside: list[str] = []
+    seg = math.hypot(home[0] - x, home[1] - y) > _EPS_M
+    for z in zones:
+        in_footprint = ring_contains(z.shape, x, y)
+        if (zone_breached(z.rule, x, y, up, buffered=z.shape) if z.rule is not None
+                else in_footprint and band_holds(z.floor_m, z.ceiling_m, up)):
+            inside.append(z.rule_id)
+        already = z.rule_id in inside
+        z_msl = msl.get(z.rule_id)
+        # The climb, at (x, y): an MSL zone in MSL, an AGL one as before.
+        lo, hi, a, b, ref = ((z_msl[0], z_msl[1], now_msl, leg_msl, " MSL") if z_msl
+                             else (z.floor_m, z.ceiling_m, float(up), h, " above the ground"))
+        if h > up + _EPS_M and in_footprint and not already and lo <= b and hi >= a:
+            blocking.append(z.rule_id)
+            reasons.append(f"the climb to {b:g} m{ref} enters {z.rule_id} "
+                           f"({lo:g}-{hi:g} m{ref})")
+            continue
+        if not seg:
+            continue
+        parts = _pieces(segment_in_ring(z.shape, x, y, home[0], home[1]))
+        if already:
+            parts = [q for q in parts
+                     if not ((point_distance(Point(q.coords[0]), x, y) <= 1e-6
+                              or point_distance(Point(q.coords[-1]), x, y) <= 1e-6)
+                             and _is_exit(q, z.shape, p, home))]
+        hit = None
+        for piece in parts:
+            (ax, ay), (bx, by) = piece.coords[0], piece.coords[-1]
+            if z_msl:
+                if band_holds(z_msl[0], z_msl[1], leg_msl):
+                    hit = (ax, ay, leg_msl)
+            else:
+                for qx, qy in _samples(ax, ay, bx, by, over.step_m):
+                    uq = leg_msl - float(g(qx, qy))
+                    if band_holds(z.floor_m, z.ceiling_m, uq):
+                        hit = (qx, qy, uq)
+                        break
+            if hit is not None:
+                break
+        if hit is not None:
+            blocking.append(z.rule_id)
+            ends = (" and ends there: home is inside it"
+                    if ring_contains(z.shape, home[0], home[1]) else "")
+            at = (f"{hit[2]:g} m MSL" if z_msl else
+                  f"{hit[2]:.2f} m above the ground at ({hit[0]:.1f}, {hit[1]:.1f})")
+            reasons.append(f"the leg home at {leg_msl:g} m MSL crosses {z.rule_id} "
+                           f"({sum(q.length for q in parts):.1f} m inside its ring, "
+                           f"{at}{ends})")
+    bands = [] if band is None else (list(band) if isinstance(band, (list, tuple))
+                                     and not isinstance(band, Band) else [band])
+    pts = _samples(x, y, home[0], home[1], over.step_m) if seg else [(x, y)]
+    for bd in bands:
+        b_msl = msl.get(bd.rule_id)
+        if b_msl is not None:
+            env = Band(bd.rule_id, float(b_msl[0]), float(b_msl[1]))
+            if any(Shield._alt_outside(env, leg_msl)):
+                blocking.append(bd.rule_id)
+                reasons.append(f"the return altitude {leg_msl:g} m MSL is outside "
+                               f"{bd.rule_id} [{env.alt_min_m:g}, {env.alt_max_m:g}] m MSL")
+            continue
+        for qx, qy in pts:
+            uq = leg_msl - float(g(qx, qy))
+            if any(Shield._alt_outside(bd, uq)):
+                blocking.append(bd.rule_id)
+                reasons.append(f"the leg home at {leg_msl:g} m MSL is {uq:.2f} m above "
+                               f"the ground at ({qx:.1f}, {qy:.1f}), outside "
+                               f"{bd.rule_id} [{bd.alt_min_m:g}, {bd.alt_max_m:g}] m")
+                break
     return LegCheck(clear=not blocking, rtl_alt_m=h, blocking=tuple(blocking),
                     reasons=tuple(reasons), starts_inside=tuple(inside))
 
@@ -333,8 +478,9 @@ class RTLWatch:
         self._progress.reset()
 
     def assess(self, t: float, x: float, y: float, up: float,
-               zones: Iterable[Zone], band: Band | None = None, *,
-               up_home: float | None = None) -> RTLVerdict:
+               zones: Iterable[Zone], band=None, *,
+               up_home: float | None = None,
+               over: LegGround | None = None) -> RTLVerdict:
         """`up`: the height the rules (`zones`, `band`) are in. `up_home`:
         the height above HOME, the reference RTL_ALT is in, when the two
         differ (X-11: over a declared DEM the harness's `up` is the height
@@ -342,12 +488,15 @@ class RTLWatch:
         DEM, when they are the same. With it the climb's target is RTL_ALT
         above home in the rules' reference AT THE AIRCRAFT (rtl_alt_m + up -
         up_home) and the progress test counts the climb above home, as the
-        ROS 2 node's RTLFailureWatch.assess does (wf20)."""
+        ROS 2 node's RTLFailureWatch.assess does (wf20). `over` (2026-11-18):
+        the DEM the leg is judged along (check_leg, THE LEG OVER A DEM);
+        None, every caller without one, as before."""
         rtl_alt, up_rtl = self.rtl_alt_m, up
         if up_home is not None and math.isfinite(float(up_home)):
             rtl_alt = self.rtl_alt_m + (float(up) - float(up_home))
             up_rtl = float(up_home)
-        leg = check_leg(x, y, up, self.home, zones, band, rtl_alt)
+        leg = (check_leg(x, y, up, self.home, zones, band, rtl_alt) if over is None
+               else check_leg(x, y, up, self.home, zones, band, rtl_alt, over=over))
         stuck, why = self._progress.update(
             t, remaining_to_home(x, y, up_rtl, self.home, self.rtl_alt_m))
         batt = self.battery.critical(t)
@@ -392,3 +541,45 @@ def band_from_shield(shield, state) -> Band | None:
         lo, hi = max(lo, float(rule.alt_min_m)), min(hi, float(rule.alt_max_m))
         ids.append(rule.id)
     return Band("+".join(ids), lo, hi) if ids else None
+
+
+def bands_from_shield(shield, state) -> list[Band]:
+    """Every hard, enforced P0 altitude band in force now, one Band per rule
+    (band_from_shield intersects them into one; over a DEM each is judged in
+    its own reference, so they are kept apart: THE LEG OVER A DEM)."""
+    out = []
+    for row in shield.rule_status(state):
+        rule = row.get("rule")
+        if row.get("type") != "altitude_envelope" or not row.get("in_force") \
+                or rule is None or not _enforced_p0(shield, rule):
+            continue
+        out.append(Band(rule.id, float(rule.alt_min_m), float(rule.alt_max_m)))
+    return out
+
+
+def leg_ground_from_shield(shield, step_m: float = LEG_GROUND_STEP_M) -> LegGround | None:
+    """The LegGround of a Shield flying over a DEM (Shield(ground=dem,
+    up_ref="terrain")): its ground and the declared MSL band of each of its
+    policy's MSL rules. None for a Shield without a DEM (no ground, or a
+    flat one): its legs are judged as they always were."""
+    from . import terrain as TR
+    ground = getattr(shield, "ground", None)
+    if not TR.is_dem(ground):
+        return None
+    msl = {}
+    for c in getattr(getattr(shield, "policy", None), "constraints", None) or []:
+        if TR.is_msl(c):
+            lo, hi = TR.band_fields(c)
+            msl[c.id] = (float(getattr(c, lo)), float(getattr(c, hi)))
+    return LegGround(ground, msl, float(step_m))
+
+
+def leg_rules_from_shield(shield, state):
+    """(zones, band, over) for check_leg / RTLWatch.assess from one Shield:
+    without a DEM (zones_from_shield, band_from_shield, None) - the call
+    every caller made before 2026-11-18 - and over one (zones_from_shield,
+    bands_from_shield, leg_ground_from_shield)."""
+    over = leg_ground_from_shield(shield)
+    if over is None:
+        return zones_from_shield(shield), band_from_shield(shield, state), None
+    return zones_from_shield(shield), bands_from_shield(shield, state), over

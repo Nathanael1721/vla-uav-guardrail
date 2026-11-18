@@ -500,12 +500,12 @@ from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa
                               SubjectStandoff, XY)
 from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
-from guardrail.terrain import (TerrainReference, ground_for_flight,      # noqa: E402
+from guardrail.terrain import (TerrainReference, ground_from_args,       # noqa: E402
                                is_dem, is_msl)
 from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa: E402
                                 RTL_ALT_M, ProgressMonitor, band_from_shield,
                                 check_leg, home_reached, remaining_to_home,
-                                zones_from_shield)
+                                leg_rules_from_shield, zones_from_shield)
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
@@ -1436,7 +1436,7 @@ class RTLFailureWatch:
 
     def assess(self, t: float, x: float, y: float, up: float, mode: str | None,
                zones, band=None, battery: tuple = (None, ""), *,
-               up_home: float | None = None) -> RTLCheck:
+               up_home: float | None = None, over=None) -> RTLCheck:
         """`up`: the height the Shield's rules (`zones`, `band`) are in.
         `up_home`: the height above HOME, the reference RTL_ALT is in, when
         the two differ (X-11: with a --ground grid the Shield is told the
@@ -1444,9 +1444,11 @@ class RTLFailureWatch:
         without one, when they are the same. With it the climb's target is
         RTL_ALT above home expressed in the rules' reference AT THE AIRCRAFT
         (rtl_alt_m + up - up_home) and the progress test counts the climb
-        above home; the return leg's band is still judged at that one
-        height, exact at the aircraft, not along the leg over other
-        ground."""
+        above home. `over` (2026-11-18): the DEM the leg is judged along
+        (rtl_path.check_leg, THE LEG OVER A DEM: the leg level in MSL, each
+        sample's height above the ground under it, an MSL rule in MSL);
+        None, every flight without a --ground grid, judges the leg at the
+        one height, as before."""
         t = float(t)
         rtl_alt = self.rtl_alt_m
         up_rtl = up
@@ -1461,7 +1463,9 @@ class RTLFailureWatch:
         leg = None
         if zones is not None:          # None: the rules could not be read (note_error)
             try:
-                leg = check_leg(x, y, up, self.home, zones, band, rtl_alt)
+                leg = (check_leg(x, y, up, self.home, zones, band, rtl_alt)
+                       if over is None else
+                       check_leg(x, y, up, self.home, zones, band, rtl_alt, over=over))
             except Exception as e:                           # noqa: BLE001
                 self.note_error(t, e)
         if leg is not None and not leg.clear:
@@ -2619,9 +2623,12 @@ if HAVE_ROS:
             # converts it. Without --ground (the default) nothing below
             # differs from every flight before 2026-11-18: no ground, the
             # pose's height above home handed to the Shield as it was.
-            gpath = getattr(args, "ground", None)
-            self.ground = (ground_for_flight(gpath, bundle, yaml_path, root=ROOT)
-                           if gpath else None)
+            # --ground-sha256 (2026-11-18): the file must hash to it, checked
+            # before it is read (terrain.ground_file); either way its path
+            # and hash are recorded (metrics.json ground.file), which is what
+            # the replay bundle packs and checks.
+            self.ground, self.ground_file = ground_from_args(args, bundle, yaml_path,
+                                                             root=ROOT)
             self.policy, self.policy_source = load_for_flight(
                 bundle, yaml_path,
                 allow_unverified=args.allow_unverified_bundle,
@@ -3444,13 +3451,15 @@ if HAVE_ROS:
                 pos, pos_src = self.start_xy, "assumed home: no pose yet (on the pad)"
             fences, skipped = policy_fences(
                 self.policy, column_m=self.fence_column_m, position=pos,
-                margin_m=self.fence_margin_m, enforced=self.fences_enforced)
+                margin_m=self.fence_margin_m, enforced=self.fences_enforced,
+                **self._fence_ground_kw())
             self.deferred_fences = sorted(s["id"] for s in skipped
                                           if s.get("deferred"))
             # Zones over home (the local origin in SITL, --start's position
             # in the policy's frame): an RTL flies back into them. Recorded
             # and warned, not withheld.
-            every, _ = policy_fences(self.policy, column_m=self.fence_column_m)
+            every, _ = policy_fences(self.policy, column_m=self.fence_column_m,
+                                     **self._fence_ground_kw())
             over_home = zones_near(every, self.start_xy[0], self.start_xy[1],
                                    self.fence_margin_m)
             if over_home and over_home != self.zones_over_home:
@@ -3493,7 +3502,8 @@ if HAVE_ROS:
                 return
             _, skipped = policy_fences(self.policy, column_m=self.fence_column_m,
                                        position=(st.x, st.y),
-                                       margin_m=self.fence_margin_m)
+                                       margin_m=self.fence_margin_m,
+                                       **self._fence_ground_kw())
             still = {s["id"] for s in skipped if s.get("deferred")}
             cleared = [i for i in self.deferred_fences
                        if i not in still and i not in unsafe_rules]
@@ -3569,15 +3579,24 @@ if HAVE_ROS:
             if self.fsm is None or self.fsm.terminal or self.fsm.state is not FSMState.RTL:
                 self.rtl_watch.reset()
                 return None
+            over = None
             try:
-                zones, band = zones_from_shield(self.shield), band_from_shield(self.shield, st)
+                if self.terrain is None:
+                    zones, band = (zones_from_shield(self.shield),
+                                   band_from_shield(self.shield, st))
+                else:
+                    # Over a --ground grid (X-11) the leg home is judged
+                    # along the DEM under it, each rule in its own reference
+                    # (rtl_path, THE LEG OVER A DEM).
+                    zones, band, over = leg_rules_from_shield(self.shield, st)
             except Exception as e:                               # noqa: BLE001
-                zones = band = None
+                zones = band = over = None
                 self.rtl_watch.note_error(now, e)
             chk = self.rtl_watch.assess(
                 now, st.x, st.y, st.up, self.mode, zones, band,
                 self.battery.verdict(time.monotonic()),
-                up_home=(pose.up if pose is not None and pose is not st else None))
+                up_home=(pose.up if pose is not None and pose is not st else None),
+                **({} if over is None else {"over": over}))
             if chk.failed:
                 self.rec.event("rtl_failed", t=now, kinds=list(chk.kinds),
                                reasons=list(chk.reasons), mode=self.mode)
@@ -5549,6 +5568,7 @@ if HAVE_ROS:
                 metrics["ground"] = (self.terrain.record() if self.terrain is not None
                                      else {"ground": self.ground.record(),
                                            "up_ref": "home"})
+                metrics["ground"]["file"] = dict(self.ground_file)
             (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
                                                    encoding="utf-8")
             (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2),
@@ -5826,6 +5846,11 @@ def make_parser() -> argparse.ArgumentParser:
                          "agree with the grid's elevation at home within "
                          "terrain.GROUND_HOME_TOL_M. Default: the grid's own "
                          "elevation at home")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 of the --ground file (64 hex digits): the file "
+                         "must hash to it or the flight is refused before take-off "
+                         "(terrain.ground_file; the stress harness always sends it). "
+                         "Default: unpinned; the file's hash is recorded either way")
     ap.add_argument("--speed", type=float, default=None,
                     help="override the pilot's preferred speed, m/s")
     ap.add_argument("--seed", type=int, default=0,
@@ -5908,12 +5933,13 @@ def main(argv: list[str] | None = None) -> None:
             load_world(args.world, ROOT)
         if args.ground_home_msl is not None and not args.ground:
             raise ValueError("--ground-home-msl is the home elevation of a --ground")
-        if args.ground:
+        if args.ground or args.ground_sha256:
             # Read and placed in the policy's frame before ROS starts; the
-            # node reads it again with the policy (a bad file, or a ground
-            # in another frame, is refused with no node built).
+            # node reads it again with the policy (a bad file, a file that
+            # is not the --ground-sha256 named, or a ground in another
+            # frame, is refused with no node built).
             b, y, _ = resolve_policy(args)
-            ground_for_flight(args.ground, b, y, root=ROOT)
+            ground_from_args(args, b, y, root=ROOT)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:

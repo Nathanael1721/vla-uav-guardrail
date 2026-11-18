@@ -52,6 +52,19 @@ The Shield node reads the parameters again at take-off through MAVROS
 (hil_evidence.autopilot_fence) and records this file's summary beside them,
 so the run shows the same values from two processes on two links.
 
+A DECLARED GROUND (X-11, 2026-11-18). A bundle with an MSL rule loads only
+over the ground it flies over, so the GCS takes the Shield node's
+--ground FILE (with --ground-sha256 HEX, the file's hash, checked before it
+is read) and --ground-home-msl M (the autopilot's home elevation; required
+over a DEM - the GCS never guesses it). With them FENCE_ALT_MAX's ceiling
+is a height above home (mavlink_adapter_node.policy_ceiling_m: an MSL
+ceiling less home, and a hard MSL ceiling in force all flight caps it) and
+each zone's band is read above home before the column test
+(fence_export.iter_zones). The autopilot's own HOME_POSITION altitude, and
+over a DEM the DEM's elevation at home, must agree with --ground-home-msl
+within terrain.GROUND_HOME_TOL_M, or the step fails (exit 1) without
+uploading. Without --ground: as before.
+
 WHAT IT IS NOT
 
   * Not Mission Planner. It is the scripted equivalent of an operator's
@@ -103,17 +116,19 @@ GRANT_PARAMS = ("FENCE_ENABLE", "FENCE_TYPE", "FENCE_ACTION")
 PARAM_TOL = 1e-3
 
 
-def desired_params(parm: dict[str, float], policy, cruise_alt_m: float | None
-                   ) -> tuple[dict[str, float], dict]:
+def desired_params(parm: dict[str, float], policy, cruise_alt_m: float | None,
+                   ground_kw: dict | None = None) -> tuple[dict[str, float], dict]:
     """The values the GCS sets: the operator's fence file, with FENCE_ALT_MAX
     raised above the policy's ceiling when the file's value is below it.
     Returns `(values, alt_plan)`. A parameter the file does not give is
-    refused: the GCS sets what the operator wrote, never a guess."""
+    refused: the GCS sets what the operator wrote, never a guess.
+    `ground_kw` ({"ground", "home_msl_m"}, X-11): the ceiling above home over
+    a declared ground (policy_ceiling_m); None or {}: as before."""
     missing = [k for k in PARAM_ORDER if k not in parm]
     if missing:
         raise ValueError(f"the fence file gives no {', '.join(missing)}")
     vals = {k: float(parm[k]) for k in PARAM_ORDER}
-    ceiling, src = policy_ceiling_m(policy, cruise_alt_m)
+    ceiling, src = policy_ceiling_m(policy, cruise_alt_m, **(ground_kw or {}))
     plan = fence_alt_plan(ceiling, vals["FENCE_ALT_MAX"])
     if plan["raise_to"] is not None:
         vals["FENCE_ALT_MAX"] = float(plan["raise_to"])
@@ -305,6 +320,57 @@ def _pid(raw) -> str:
     return str(raw).rstrip("\x00")
 
 
+def gcs_ground(args) -> tuple[object, dict | None, dict]:
+    """(ground, its record, the policy_ceiling_m / policy_fences keywords)
+    from --ground / --ground-sha256 / --ground-home-msl (module docstring, A
+    DECLARED GROUND); (None, None, {}) without --ground. Over a DEM the home
+    elevation must be given: the GCS does not take one from the DEM."""
+    from guardrail.terrain import ground_from_args, is_dem
+    hmsl = getattr(args, "ground_home_msl", None)
+    if hmsl is not None and not getattr(args, "ground", None):
+        raise ValueError("--ground-home-msl is the home elevation of a --ground")
+    ground, gfile = ground_from_args(args, args.bundle, None, root=ROOT)
+    if ground is None:
+        return None, None, {}
+    if is_dem(ground):
+        if hmsl is None:
+            raise ValueError("over a DEM --ground the GCS needs --ground-home-msl (the "
+                             "autopilot's home elevation, m MSL): it never takes one "
+                             "from the DEM")
+        home = float(hmsl)
+    else:
+        home = float(ground.elevation_at())
+        if hmsl is not None and abs(float(hmsl) - home) > 1e-6:
+            raise ValueError(f"--ground-home-msl {float(hmsl):g} and the flat ground "
+                             f"{ground!r} differ")
+    if not math.isfinite(home):
+        raise ValueError(f"home elevation {home!r} is not finite")
+    rec = {"file": gfile, "ground": ground.record(), "home_msl_m": home}
+    return ground, rec, {"ground": ground, "home_msl_m": home}
+
+
+def home_ground_problem(ground, home_msl_m: float, home: dict,
+                        home_ne: tuple[float, float] | None) -> str | None:
+    """Why the autopilot's home does not stand where --ground-home-msl says
+    (None when it does): its HOME_POSITION altitude, and over a DEM the
+    DEM's elevation at home's policy-frame position, must each be within
+    terrain.GROUND_HOME_TOL_M of it."""
+    from guardrail.terrain import GROUND_HOME_TOL_M, is_dem
+    alt = home.get("alt_m")
+    if alt is not None and abs(float(alt) - home_msl_m) > GROUND_HOME_TOL_M:
+        return (f"the autopilot's home altitude {float(alt):g} m MSL is "
+                f"{abs(float(alt) - home_msl_m):.2f} m from --ground-home-msl "
+                f"{home_msl_m:g} (over {GROUND_HOME_TOL_M:g} m)")
+    if is_dem(ground):
+        ne = home_ne if home_ne is not None else (0.0, 0.0)
+        g = float(ground.elevation_at(ne[0], ne[1]))
+        if abs(g - home_msl_m) > GROUND_HOME_TOL_M:
+            return (f"the DEM's elevation at home ({ne[0]:.1f}, {ne[1]:.1f}) is "
+                    f"{g:.2f} m MSL, {abs(g - home_msl_m):.2f} m from "
+                    f"--ground-home-msl {home_msl_m:g} (over {GROUND_HOME_TOL_M:g} m)")
+    return None
+
+
 def run(args) -> tuple[int, dict]:
     from guardrail.bundle import load_for_flight
     from guardrail.compiler import ConstraintCompiler
@@ -313,15 +379,20 @@ def run(args) -> tuple[int, dict]:
                  "link": args.link, "gcs_sysid": GCS_SYSID, "gcs_compid": GCS_COMPID,
                  "router_endpoint": args.router_endpoint,
                  "t_start": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "ok": False}
-    policy, source = load_for_flight(args.bundle, None)
+    ground, ground_rec, gkw = gcs_ground(args)
+    policy, source = load_for_flight(args.bundle, None,
+                                     **({} if ground is None else {"ground": ground}))
     rec["bundle"] = {"path": str(args.bundle), "policy_id": policy.policy_id,
                      "version": policy.version, "policy_hash": policy.policy_hash,
                      "signature": source.get("signature")}
+    if ground_rec is not None:
+        rec["ground"] = ground_rec
     parm_path = Path(args.parm)
     parm = read_parm(parm_path)
-    cruise = ConstraintCompiler(policy).parse_command(
-        "fly to the northeast pad at 6 m/s").cruise_alt_m
-    want, alt_plan = desired_params(parm, policy, cruise)
+    comp = (ConstraintCompiler(policy) if ground is None
+            else ConstraintCompiler(policy, ground=ground))
+    cruise = comp.parse_command("fly to the northeast pad at 6 m/s").cruise_alt_m
+    want, alt_plan = desired_params(parm, policy, cruise, gkw)
     rec["fence_file"] = {"path": str(parm_path.relative_to(ROOT) if parm_path.is_relative_to(ROOT)
                                      else parm_path),
                          "values": {k: parm.get(k) for k in PARAM_ORDER}}
@@ -354,9 +425,17 @@ def run(args) -> tuple[int, dict]:
                         f"autopilot's home: the zones would be uploaded in the wrong place")
         rec["fence"] = fence
         return 1, rec
+    if ground is not None:
+        why = home_ground_problem(ground, gkw["home_msl_m"], home, off)
+        rec["ground"]["home_check"] = why or "ok"
+        if why:
+            fence["why"] = f"the declared ground does not stand under home: {why}"
+            rec["fence"] = fence
+            return 1, rec
     margin = params["FENCE_MARGIN"]["read_back"] or FENCE_MARGIN_M
     zones, skipped = policy_fences(policy, column_m=params["FENCE_ALT_MAX"]["read_back"],
-                                   position=tuple(home["local_ne"]), margin_m=margin)
+                                   position=tuple(home["local_ne"]), margin_m=margin,
+                                   **gkw)
     items = int_items(fence_items(zones, home["lat"], home["lon"],
                                   tuple(home["local_ne"])))
     fence.update({"zones": [z["id"] for z in zones], "skipped": skipped,
@@ -395,6 +474,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="seconds to wait for the autopilot's heartbeat")
     ap.add_argument("--home-timeout", type=float, default=120.0,
                     help="seconds to wait for the autopilot's home position")
+    ap.add_argument("--ground", default=None, metavar="FILE",
+                    help="the Shield node's declared ground (guardrail/terrain.py "
+                         "load_ground, repo-relative; X-11): a bundle with an MSL rule "
+                         "loads over it, and FENCE_ALT_MAX and the zones' column test "
+                         "are read above home over it. Default: none, as before")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 of the --ground file; it must hash to it")
+    ap.add_argument("--ground-home-msl", type=float, default=None, metavar="M",
+                    help="the autopilot's home elevation, m MSL (required over a DEM "
+                         "--ground; checked against HOME_POSITION and the DEM)")
     args = ap.parse_args(argv)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

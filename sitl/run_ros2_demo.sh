@@ -243,6 +243,24 @@ fi
 # uploaded. A bundle whose origin is CMAC changes nothing, a flight without a
 # bundle keeps CMAC, and SITL_HOME set by hand wins. Altitude 584 m is the
 # SITL ground every rail assumes (guardrail/terrain.py, FlatGround).
+#
+# A DECLARED GROUND (X-11, 2026-11-18). The flight's --ground FILE,
+# --ground-sha256 HEX and --ground-home-msl M (the Shield node's flags) are
+# handed by name to every reader below that loads the bundle: bundle_origin
+# (an MSL bundle passes the flight gate only over its ground) and the GCS
+# step. With --ground-home-msl SITL boots at that altitude, so the
+# autopilot's home is the elevation the Shield converts from; without it,
+# 584 m as before. No ground is ever guessed: none given, none used.
+GROUND_ARGS=()
+GROUND_HOME_MSL=""
+for ((i = 0; i < ${#EXTRA[@]}; i++)); do
+  case "${EXTRA[$i]}" in
+    --ground|--ground-sha256) GROUND_ARGS+=("${EXTRA[$i]}" "${EXTRA[$((i + 1))]}") ;;
+    --ground=*|--ground-sha256=*) GROUND_ARGS+=("${EXTRA[$i]}") ;;
+    --ground-home-msl) GROUND_HOME_MSL="${EXTRA[$((i + 1))]}" ;;
+    --ground-home-msl=*) GROUND_HOME_MSL="${EXTRA[$i]#--ground-home-msl=}" ;;
+  esac
+done
 if [ -z "${SITL_HOME:-}" ]; then
   FLIGHT_BUNDLE=""
   for ((i = 0; i < ${#EXTRA[@]}; i++)); do
@@ -252,10 +270,10 @@ if [ -z "${SITL_HOME:-}" ]; then
     esac
   done
   if [ -n "$FLIGHT_BUNDLE" ]; then
-    ORIGIN="$(cd "$ROOT" && "$PY" "$DIR/bundle_origin.py" "$FLIGHT_BUNDLE")" || {
+    ORIGIN="$(cd "$ROOT" && "$PY" "$DIR/bundle_origin.py" "$FLIGHT_BUNDLE" "${GROUND_ARGS[@]}")" || {
       echo "[home] REFUSED: could not read the frame origin of $FLIGHT_BUNDLE"; exit 2; }
     if [ -n "$ORIGIN" ]; then
-      export SITL_HOME="$ORIGIN,584,0"
+      export SITL_HOME="$ORIGIN,${GROUND_HOME_MSL:-584},0"
       echo "[home] SITL boots at the bundle's frame origin: $SITL_HOME"
     fi
   fi
@@ -430,7 +448,9 @@ if [ "$GCS_BACKSTOP" = "1" ]; then
   # router's GCS endpoint, sets the backstop and reads it back.
   echo "=== GCS: GeoFence set over the GCS link (udpin:127.0.0.1:$GCS_UDP_PORT) ==="
   GCS_RC=0
-  "$PY" "$DIR/gcs_backstop.py" --bundle "$GCS_BUNDLE" \
+  GCS_GROUND=("${GROUND_ARGS[@]}")
+  [ -n "$GROUND_HOME_MSL" ] && GCS_GROUND+=(--ground-home-msl "$GROUND_HOME_MSL")
+  "$PY" "$DIR/gcs_backstop.py" --bundle "$GCS_BUNDLE" "${GCS_GROUND[@]}" \
     --link "udpin:127.0.0.1:$GCS_UDP_PORT" \
     --router-endpoint "$MAVLINK_ROUTER, GCS endpoint (mission_planner) -> 127.0.0.1:$GCS_UDP_PORT" \
     --out "$OUT" > ~/sitl-run/gcs.log 2>&1 || GCS_RC=$?

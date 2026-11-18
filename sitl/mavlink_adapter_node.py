@@ -500,7 +500,8 @@ def setpoint_from_body(body: list | tuple, heading_deg: float) -> dict:
 
 def policy_fences(policy, column_m: float | None,
                   position: tuple[float, float] | None = None,
-                  margin_m: float = FENCE_MARGIN_M, enforced=None
+                  margin_m: float = FENCE_MARGIN_M, enforced=None, *,
+                  ground=None, home_msl_m: float | None = None
                   ) -> tuple[list[dict], list[dict]]:
     """The policy's keep-out zones the autopilot fence can enforce NOW.
 
@@ -523,9 +524,14 @@ def policy_fences(policy, column_m: float | None,
     `enforced` (id -> zone as last uploaded with success): a zone the
     autopilot already holds with that shape is never held back, since every
     upload replaces the whole list (guardrail.fence_export.defer_near).
+
+    `ground`, `home_msl_m` (X-11): the declared ground and home's elevation,
+    so each zone's band is read above home before the column test
+    (fence_export.iter_zones); without them, unchanged.
     """
     fences, skipped = [], []
-    for kind, entry in iter_zones(policy, column_m=column_m):
+    gkw = {} if ground is None else {"ground": ground, "home_msl_m": home_msl_m}
+    for kind, entry in iter_zones(policy, column_m=column_m, **gkw):
         if kind == "zone" and position is not None                 and not is_enforced(entry, enforced):
             held = deferral(entry, position, margin_m)
             if held is not None:
@@ -562,11 +568,26 @@ def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
     the ceiling itself). The highest of those, as without a ground. Until
     2026-11-18 an MSL ceiling (624 m for experiments/policies/msl_dem_sitl.
     yaml) was handed on as metres above home, and the node would have raised
-    SITL's FENCE_ALT_MAX to 629 m. Without `ground`: unchanged."""
+    SITL's FENCE_ALT_MAX to 629 m. Without `ground`: unchanged.
+
+    THE MSL CEILING CAPS IT (2026-11-18, X-11). The highest of those is the
+    right figure for rules that may be out of force somewhere (a scoped or
+    windowed envelope, or an AGL ceiling, which over a DEM stands higher
+    above home over high ground). An MSL ceiling of a hard altitude_envelope
+    that no clock can switch off (fence_export.time_controls: no time
+    window, no time_window_switch turning it off) and that is not
+    monitor_only is different: it holds everywhere, at every instant, at one
+    height above home, so no altitude above it is ever legal and the figure
+    is capped by it - the lowest such MSL ceiling less home's elevation.
+    On msl_dem_sitl: max(40, 81.26) = 81.26 m became min(81.26, 40) = 40 m,
+    so FENCE_ALT_MAX is raised to 45 m (fence_alt_plan's headroom), not
+    86.26 m: the autopilot's backstop now sits 5 m over the MSL rule instead
+    of 46 m. The source string names the capping rule."""
     envs = [c for c in getattr(policy, "constraints", [])
             if getattr(c, "type", "") == "altitude_envelope"
             and getattr(c, "alt_max_m", None) is not None]
     if envs and ground is not None:
+        from guardrail.fence_export import _rule_clock, time_controls
         from guardrail.terrain import ground_band, is_dem, is_msl
         top = float(ground_band(ground)[1])
         if home_msl_m is None:
@@ -575,9 +596,18 @@ def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
         home = float(home_msl_m)
         ceilings = [float(c.alt_max_m) - home if is_msl(c)
                     else float(c.alt_max_m) + (top - home) for c in envs]
-        return max(ceilings), (f"altitude_envelope, above home ({home:g} m MSL): MSL "
-                               f"ceilings less home, AGL ceilings plus the ground's "
-                               f"highest {top:g} m MSL less home")
+        src = (f"altitude_envelope, above home ({home:g} m MSL): MSL ceilings less "
+               f"home, AGL ceilings plus the ground's highest {top:g} m MSL less home")
+        clock = _rule_clock()(list(getattr(policy, "constraints", [])))
+        caps = sorted((float(c.alt_max_m) - home, c.id) for c in envs
+                      if is_msl(c) and getattr(c, "constraint_type", "hard") == "hard"
+                      and getattr(c, "violation_action", None) != "monitor_only"
+                      and not time_controls(c, clock.off_switches(c.id)))
+        if caps and caps[0][0] < max(ceilings):
+            return caps[0][0], (f"{src}; capped by {caps[0][1]}, a hard MSL ceiling "
+                                f"in force for the whole flight: {caps[0][0]:g} m "
+                                f"above home")
+        return max(ceilings), src
     ceilings = [float(c.alt_max_m) for c in envs]
     if ceilings:
         return max(ceilings), "altitude_envelope"
