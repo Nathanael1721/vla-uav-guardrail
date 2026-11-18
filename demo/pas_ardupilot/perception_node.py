@@ -18,7 +18,13 @@ PER 10 Hz TICK
                box is stale, its first swing toward the side the box was last
                seen on. The 4-D action leaves the pilot in the BODY frame.
   5. Shield    body -> scene frame once (autopilot.body_to_world, which is
-               guardrail.frames.from_body), then Shield.filter() with the
+               guardrail.frames.from_body) for the row and the Shield-off
+               arm; the Shield is handed the action in the BODY frame at its
+               own heading (guardrail.frames.filter_as_body, since 2026-11-18:
+               Shield.filter_body, the arc off, on each tick whose round
+               trip is exact, else Shield.filter as before: the same
+               decision as Shield.filter on the scene-frame action, to the
+               bit), with the
                grant's 5 s / 10 Hz lookahead and no FSM of its own
                (guardrail.replay.rail_shield). Stand-off rules get the
                subject's position from depth range (or apparent width) and
@@ -432,7 +438,7 @@ from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E4
 from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
                                     policy_zones, zone_clearance_m, zones_near)
 from guardrail.gc_pacing import GcPacer                               # noqa: E402
-from guardrail.frames import to_body                                  # noqa: E402
+from guardrail.frames import filter_as_body, to_body                  # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
@@ -4662,9 +4668,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "forecast.md). 'off' flies the commanded forecast and "
                          "BRAKE as before; the velocity is logged (state_v) either way")
     ap.add_argument("--action-frame", choices=["world", "body"], default="world",
-                    help="world (default; every flight before 2026-11-17): the pilot's "
-                         "body action is turned into the scene frame here and the "
-                         "Shield filters it there (Shield.filter). body (WP3-04 / "
+                    help="world (default; every flight before 2026-11-17): the link "
+                         "flies the Shield's emitted scene-frame action; the Shield is "
+                         "handed the action in the body frame at its own heading "
+                         "(frames.filter_as_body since 2026-11-18, the arc off, where "
+                         "the round trip is exact: the Shield.filter decision to the "
+                         "bit). body (WP3-04 / "
                          "ARCH-04): the Shield takes the pilot's BODY action itself "
                          "(Shield.filter_body), forecasts a command with a yaw rate "
                          "along its arc, and the link turns the emitted BODY action "
@@ -6407,7 +6416,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # ARCH-04): "body" hands the Shield the pilot's body action (filter_body,
     # its forecast along the arc of the yaw rate) and the link the emitted
     # body action, turned into local NED after the projection. "world" (the
-    # default) flies exactly as before.
+    # default) flies exactly as before: the link is sent the Shield's emitted
+    # scene-frame action; the Shield itself is handed the body frame on it
+    # too since 2026-11-18 (frames.filter_as_body, the arc off).
     body_frame = getattr(args, "action_frame", "world") == "body"
     vel_sources: dict = {}
     n_vel_used = n_hold_guided = n_stop_advised = 0
@@ -7349,7 +7360,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         st_sh, Action4D(vx=body[0], vy=body[1], vz_up=body[2],
                                         yaw_rate=body[3]), arc=True)
                 else:
-                    d, emitted_body = shield.filter(st_sh, raw), None
+                    # The default (2026-11-18, WP3-04 / ARCH-04): the scene-
+                    # frame action turned into the BODY frame at the heading
+                    # the Shield turns it back with (st_sh's) and handed over
+                    # in that frame (frames.filter_as_body: filter_body, the
+                    # arc off) where the round trip is exact, else as before;
+                    # the decision is Shield.filter's to the bit and the link
+                    # flies its emitted scene-frame action as before
+                    # (tests/test_rail_body_frame.py).
+                    d, emitted_body = filter_as_body(shield, st_sh, raw), None
                 # The rule clock's reading for this tick, taken with the
                 # Shield's: the trajectory point and the row carry this one,
                 # not a later reading after a send or a fence upload.

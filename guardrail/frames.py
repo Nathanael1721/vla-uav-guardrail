@@ -76,10 +76,32 @@ updated.) As of that date:
   * `demo/pas_ardupilot/autopilot.py` (`body_to_world`, used by
     `perception_node.py`): `from_body` on the way in, `to_local_ned` for the
     MAVLink setpoint on the way out.
+  * `filter_as_body` (2026-11-18), at the boundary of the four dev rails
+    whose producers speak the world frame: `demo/follow_vlm.py` (the city
+    follow rail, the mission loop and the leg to the landing site),
+    `sitl/run_sitl_demo.py` (pymavlink SITL), `demo/pas_ardupilot/
+    perception_node.py` (PAS ArduPilot, --action-frame world, the default)
+    and `experiments/sweep_scenarios.py` (the headless harness, run_episode
+    action_frame "world", the default). Each turns its world action into
+    the body frame with `to_body` at the heading the Shield is given and
+    hands the Shield that BODY action (`Shield.filter_body`, the arc off)
+    on every tick where the Shield's own `from_body` turns it back into the
+    world action bit for bit; on the other ticks (the rotations' rounding
+    would change a last bit, or a zero's sign) and on a non-finite
+    horizontal channel the world action goes to `Shield.filter` as it is
+    (`body_handover`). So the emitted action, every log row and every hash
+    are what `Shield.filter` gave before, to the bit, and a replayer that
+    calls `Shield.filter` on the logged raw action (tools/replay_q3.py,
+    tools/rerun_episode.py) reproduces these rails across the change
+    (tests/test_rail_body_frame.py). The heading is the aircraft's measured
+    one only on PAS ArduPilot; the harness uses the episode's heading (the
+    headless vehicle does not yaw), and the city follow and pymavlink SITL
+    rails give the Shield no heading (State.yaw_deg 0), so there the body
+    action is the world action relabelled, not the aircraft's body frame.
   * `demo/pas_ardupilot/perception_node.py` (`VLAPilot.step`, --pilot vla,
     2026-10-23): `to_body` of the step tracker's world-frame action, for the
-    row's `body` and MAVROS's record copy only; by default the action itself
-    enters the Shield in world frame, never rotated. With --action-frame
+    row's `body` and MAVROS's record copy; by default the Shield is handed
+    the scene-frame action through `filter_as_body` (above). With --action-frame
     body (2026-11-17, opt-in) the BODY action enters the Shield
     (`Shield.filter_body`, the arc on) and the link is sent the emitted body
     action (`to_body` of a stop or a stop's answer at the tick's heading).
@@ -105,6 +127,10 @@ updated.) As of that date:
     body frame (metres forward / right of the heading).
 
 `sitl/run_sitl_demo.py` does what `to_local_ned` documents without calling it.
+The other demo loops that call `Shield.filter` on a world-frame action
+(demo/aerialvla_demo.py, aerialvla_pas_demo.py, real_vla_demo.py,
+semantic_demo.py, semantic_seek.py, vla_fly.py, vla_mission.py, run_demo.py)
+are not among the dev rails above and still hand the Shield the world frame.
 `tests/test_frame_contract.py` pins the conversions themselves. The module is
 not exported from `guardrail/__init__.py`, which lists only the core contract
 types - `bundle`, `kpi`, `manifest`, `compiler`, `projection` and `audit` are
@@ -171,3 +197,81 @@ def to_local_ned(action: Action4D) -> tuple:
     straight through.
     """
     return (action.vx, action.vy, -action.vz_up, action.yaw_rate)
+
+
+def body_action(action: Action4D, yaw_deg: float) -> Action4D:
+    """`to_body` as an Action4D: vx forward, vy right, vz_up up, yaw_rate rad/s
+    - the form `Shield.filter_body` and /vla/action carry a body action in."""
+    fwd, right, up, yaw_rate = to_body(action, yaw_deg)
+    return Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+
+
+def _same_bits(a: Action4D, b: Action4D) -> bool:
+    """Every channel equal as a float AND in its sign bit (so -0.0 is not
+    0.0); for finite channels this is bit-for-bit equality."""
+    return all(x == y and math.copysign(1.0, x) == math.copysign(1.0, y)
+               for x, y in ((a.vx, b.vx), (a.vy, b.vy), (a.vz_up, b.vz_up),
+                            (a.yaw_rate, b.yaw_rate)))
+
+
+def body_handover(world: Action4D, yaw_deg: float) -> Action4D | None:
+    """The BODY action a dev rail hands the Shield for `world` at heading
+    `yaw_deg`, or None when that tick goes to `Shield.filter` in the world
+    frame (2026-11-18 review).
+
+    None when the round trip is not exact: the horizontal channels or the
+    heading are not finite (the rotation would spread a NaN to both
+    channels and the Shield would zero both), or `from_body(to_body(world))`
+    - exactly what `Shield.filter_body` computes - is not `world` bit for
+    bit. The second happens on most ticks at a heading whose cosine and sine
+    are not both exact (1302 of 2000 seeded random actions at random
+    headings; 624 of 1000 at 37 degrees; none of 1000 at 0, +-90 or +-180),
+    and changed the last bits of raw and emitted at ~1e-16; that
+    broke byte-identical re-flying of stored bundles and the replay tools'
+    exact comparison, so such a tick keeps the old call. At a heading of 0
+    only a zero's sign can differ, and those ticks keep the old call too; so
+    does a NaN vertical or yaw channel (NaN is not equal to itself)."""
+    body = body_action(world, yaw_deg)
+    if not all(math.isfinite(c) for c in (world.vx, world.vy, body.vx, body.vy)):
+        return None
+    back = from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, yaw_deg)
+    return body if _same_bits(back, world) else None
+
+
+def filter_as_body(shield, state, world: Action4D, t: float | None = None, **kw):
+    """A dev rail's world-frame action handed to the Shield in the BODY frame
+    (WP3-04 / ARCH-04, 2026-11-18) where that hand-over is exact. Returns the
+    tick's ShieldDecision, whose raw and emitted actions are in the world
+    frame, as `Shield.filter`'s are.
+
+    The rail's producer speaks the world frame (a world-frame controller, the
+    step tracker, the stub VLA), so the rail turns the action into the body
+    frame here, at its boundary, at the heading the Shield itself turns it
+    back with (`state.yaw_deg`), and hands the Shield that BODY action
+    (`Shield.filter_body`). The Shield's one body -> world turn does the
+    rest, so the rail flies `decision.emitted` as it always has.
+
+    EXACT, TO THE BIT. The body action is handed over only when the Shield's
+    `from_body` turns it back into `world` bit for bit (`body_handover`);
+    `filter_body` then calls `filter` on that same world action, so the
+    decision is `filter(state, world)`'s exactly. Otherwise - the rotations'
+    rounding would move a last bit, a zero's sign would change, or a
+    horizontal channel or the heading is not finite - the world action goes
+    to `Shield.filter` as it is, as every rail did before 2026-11-18. Either
+    way the rail's rows, logs and hashes are unchanged, so bundles flown
+    before this re-fly bit for bit and the replay tools' `Shield.filter`
+    calls reproduce the rails (tests/test_rail_body_frame.py). This is a
+    hand-over at the rails' boundary, not a body-frame repair: the Shield's
+    repairs still act on the world-frame action (WP3-04 / ARCH-04 PARTIAL).
+
+    The arc forecast is OFF here (`arc=False`, whatever the Shield's own
+    `arc_forecast` default): `Shield.filter` never arcs, and these rails fly
+    as they did.
+
+    Keyword arguments are `Shield.filter`'s (rtl_failed, home_reached,
+    landed, hold_off_m, hold_reach_m)."""
+    body = body_handover(world, state.yaw_deg)
+    if body is None:
+        return shield.filter(state, world, t, **kw)
+    decision, _ = shield.filter_body(state, body, t, arc=False, **kw)
+    return decision

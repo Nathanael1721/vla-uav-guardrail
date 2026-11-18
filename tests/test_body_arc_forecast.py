@@ -438,13 +438,15 @@ def test_the_mavros_link_sends_the_body_action_as_it_is_or_turns_it():
 
 def test_the_perception_node_hands_the_shield_the_body_action():
     """The PAS rail's --action-frame body path is wired: filter_body with the
-    arc, and the link given the emitted body action; the default stays
-    world (Shield.filter, link.send without `body`)."""
+    arc, and the link given the emitted body action; the default flies the
+    world frame (link.send without `body`), the Shield handed the body
+    action through frames.filter_as_body with the arc off (2026-11-18,
+    tests/test_rail_body_frame.py)."""
     src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
     assert '"--action-frame", choices=["world", "body"], default="world"' in src
     assert "shield.filter_body(" in src and "arc=True" in src
     assert "link.send(flown, raw_body=body, body=fb)" in src
-    assert "d, emitted_body = shield.filter(st_sh, raw), None" in src
+    assert "d, emitted_body = filter_as_body(shield, st_sh, raw), None" in src
 
 
 def test_the_pas_rail_flies_the_emitted_body_action_end_to_end():

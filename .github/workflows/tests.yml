@@ -44,7 +44,10 @@
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
 #          test_body_arc_forecast (2026-11-17: the body-frame action's arc
 #          forecast, its bit-identity at a zero yaw rate, and the rails'
-#          opt-in body-frame paths),
+#          opt-in body-frame paths), test_rail_body_frame (2026-11-18: the
+#          four dev rails hand the Shield the body frame where the round
+#          trip is exact, the decision the world-frame call's to the bit;
+#          its stored-flight replay SKIPs without demo/out/),
 #          test_fsm, test_hold_points, test_hold_transit, test_hold_horizon
 #          (how the rails and the harness's rail arm fly a hold: the moved
 #          hold's transit and its give-up, the Loiter held in GUIDED,
@@ -708,6 +711,7 @@ jobs:
               tests/test_bundle.py \
               tests/test_frame_contract.py \
               tests/test_body_arc_forecast.py \
+              tests/test_rail_body_frame.py \
               tests/test_harness_service.py \
               tests/test_harnesstruth_forecast.py \
               tests/test_harnesstruth_rtl.py \
