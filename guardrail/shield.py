@@ -6248,9 +6248,13 @@ class Shield:
     # (guardrail/api.py), the harness's scenario events (guardrail/
     # scenario_events.py) and the hil rail all call them - so a generation's
     # snapshot, its hash and its signature hold no projected coordinate. A
-    # policy written only in metres (the legacy form: old bundles, runs and
-    # their replays) has no WGS84 position for a metre point, and its events
-    # keep writing metres.
+    # policy with no frame origin (written only in metres, the legacy read
+    # form of old bundles, or with no point and no stated origin) has no
+    # WGS84 position for a metre point: since 2026-11-18 an event with points
+    # on it is REFUSED (models.NoFrameOrigin -> HotApplyRefused, a 422 over
+    # REST) and the policy is left as it was; until then its events kept
+    # writing metres. An event without points (a time_window_switch) is not
+    # affected.
     #
     # What is ENFORCED is the projection of what is stored: `_in_frame` binds
     # every point of the rule to the policy's frame as it writes it
@@ -6274,8 +6278,8 @@ class Shield:
     # enforced the given metres instead, with binding opt-in
     # (Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1); that mode is gone,
     # since no policy needs it: a policy written only in metres has no frame,
-    # and its events keep writing metres either way. What the change moved in
-    # the smoke profile: docs/data/wgs84_bind_default_20261117/.
+    # and its events are refused either way (since 2026-11-18). What the
+    # change moved in the smoke profile: docs/data/wgs84_bind_default_20261117/.
     #
     # `wgs84_writes` is a CLASS default, overridable per instance
     # (sh.wgs84_writes = False), which turns the conversion off and nothing

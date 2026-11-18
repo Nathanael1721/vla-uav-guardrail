@@ -2514,8 +2514,12 @@ def test_a_motion_swap_on_a_policy_zone_keeps_it_where_it_is():
         # A fresh Policy per Shield: a Shield edits the Policy it was built
         # on IN PLACE (Shield._commit - the REST app and the audit logger hold
         # it), so a second Shield built on the same object would start from
-        # the first one's edit.
-        return policy_from_raw({"policy_id": "drift", "constraints": [
+        # the first one's edit. It states a frame origin: since 2026-11-18
+        # (WP1-14) an edit's metres are written as WGS84 about it, and a
+        # policy with no frame origin refuses them.
+        return policy_from_raw({"policy_id": "drift",
+                                "origin": {"lat": 35.6895, "lon": 139.6917},
+                                "constraints": [
             {"id": "z", "type": "dynamic_nfz",
              "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
              "vertices": [{"x": 100, "y": 0}, {"x": 110, "y": 0},

@@ -550,7 +550,8 @@ def test_a_ring_hashes_the_same_whatever_order_it_is_written_in():
               "    priority: P0\n    violation_action: project_fix\n    vertices:\n"
               + "".join(f"      - {{x: {v['x']}, y: {v['y']}}}\n" for v in spellings[6]))
     src = load_policy(p)
-    back = B.check_bundle(B.write_bundle(src, _tmp("cw.tar.gz"), signer=None)).policy
+    back = B.check_bundle(B.write_bundle(src, _tmp("cw.tar.gz"), signer=None,
+                                          allow_legacy_metres=True)).policy
     assert back.policy_hash == src.policy_hash
     assert [(v.x, v.y) for v in back.constraints[0].vertices] == stored
 
@@ -1220,7 +1221,8 @@ def test_a_redeclared_lower_rule_stays_locked_to_its_lower_layer():
     by = {c.id: c for c in m.constraints}
     assert (by["airport"].layer, by["airport"].locked_by) == ("mission", ["regulation"])
     assert by["tube"].locked_by is None and by["crane"].locked_by is None
-    back = B.check_bundle(B.write_bundle(m, _tmp("locked.tar.gz"), signer=None)).policy
+    back = B.check_bundle(B.write_bundle(m, _tmp("locked.tar.gz"), signer=None,
+                                          allow_legacy_metres=True)).policy
     assert {c.id: c.locked_by for c in back.constraints} == \
         {c.id: c.locked_by for c in m.constraints}
     assert back.policy_hash == m.policy_hash
@@ -1724,7 +1726,8 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
         ref_pol = load_policy(REF_DEMO, runtime=False)    # representable
         cases.insert(0, (ref_pol, ref_pol.reference_hash()))
     for pol, want_ref in cases:
-        b = B.write_bundle(pol, _tmp("h.tar.gz"), signer=None)
+        b = B.write_bundle(pol, _tmp("h.tar.gz"), signer=None,
+                           allow_legacy_metres=want_ref is None)   # the metre case
         chk = B.check_bundle(b)
         assert chk.manifest["policy_hash"] == pol.policy_hash, "our hash did not move"
         assert chk.hashes == {HASH_SCHEME: pol.policy_hash, REFERENCE_FORM: want_ref}
@@ -1843,7 +1846,8 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     assert any(n.startswith("dz: the frame origin") for n in pol.runtime_notes()), \
         pol.runtime_notes()
     assert Shield(pol).state_is_unsafe(State(x=1.0, y=-3.0, up=10.0))
-    b = B.write_bundle(pol, _tmp("dz.tar.gz"), signer=None)
+    b = B.write_bundle(pol, _tmp("dz.tar.gz"), signer=None,
+                       allow_legacy_metres=True)          # a metre fixture
     _refused(lambda: B.load_for_flight(b, allow_unverified=True), "nfz_s")
     _refused(lambda: B.load_bundle(b, require_signature=False), "nfz_s")
     assert B.load_bundle(b, require_signature=False, runtime=False).policy_hash == pol.policy_hash
@@ -1864,7 +1868,8 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     p2 = _yaml(json.dumps(raw), "sw.json")
     flies = load_policy(p2)
     assert flies.flight_problems() == []
-    flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None),
+    flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None,
+                                                allow_legacy_metres=True),
                                  allow_unverified=True)
     assert flown.policy_hash == flies.policy_hash
 
@@ -2028,7 +2033,7 @@ def test_check_bundle_runs_the_lint():
     one id hashes correctly (write_bundle does not lint) and must still be
     refused on read."""
     dup = Policy.model_validate(_raw(constraints=[OUR_FENCE, {**OUR_FENCE}]))
-    b = B.write_bundle(dup, _tmp("dup.tar.gz"), signer=None)
+    b = B.write_bundle(dup, _tmp("dup.tar.gz"), signer=None, allow_legacy_metres=True)
     _refused(lambda: B.check_bundle(b), "does not pass the DSL lint", "used by 2 rules")
 
 

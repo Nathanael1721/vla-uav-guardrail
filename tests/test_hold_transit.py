@@ -70,6 +70,10 @@ HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
+# The frame origin a fixture that receives events states (the Project AirSim
+# home-geo-point): since 2026-11-18 (WP1-14) an event's metres are written as
+# WGS84 about it, and a policy with no frame origin refuses them.
+FRAME = {"lat": 35.6895, "lon": 139.6917}
 DENSE = 1000
 SKIP = "SKIP"
 KIN = {"id": "kin", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
@@ -281,7 +285,7 @@ def test_a_turning_zone_and_a_walking_person_are_judged_where_they_will_be():
     kin = {"id": "kin", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
            "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
            "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
-    sh = Shield(Policy.model_validate({"policy_id": "spin", "constraints": [kin]}),
+    sh = Shield(Policy.model_validate({"policy_id": "spin", "origin": FRAME, "constraints": [kin]}),
                 escalation=False)
     sh.spawn_nfz(spin, t=0.0)
     sh.filter(st, Action4D(), t=0.0)
@@ -508,7 +512,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
                 else datetime(2026, 10, 19, 10, 2, 0))
         t0 = edge - timedelta(seconds=rng.uniform(-1.0, 6.0))
         now = (lambda t0=t0: t0)
-    sh = Shield(Policy.model_validate({"policy_id": kind, "constraints": cons}),
+    sh = Shield(Policy.model_validate({"policy_id": kind, "origin": FRAME, "constraints": cons}),
                 escalation=False, obstacle_map=omap, now=now)
     if kind == "zones" or rng.random() < 0.3:
         for j in range(rng.randint(1, 3)):

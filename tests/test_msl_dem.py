@@ -37,14 +37,22 @@ H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
 
 
-def _slope_dem(reach=10.0):
-    """Ground rising 0.5 m per metre east from 100 m MSL at x = 0."""
+def _slope_dem(reach=10.0, origin=None):
+    """Ground rising 0.5 m per metre east from 100 m MSL at x = 0; `origin`
+    the WGS84 frame it is placed in (None: a metre-only world)."""
     xs = [-50.0 + 10.0 * i for i in range(21)]
     elev = [[100.0 + 0.5 * (x + 50.0) for x in xs] for _ in range(11)]
-    return terrain.GridGround(-50.0, -50.0, 10.0, elev, "test slope", reach_m=reach)
+    return terrain.GridGround(-50.0, -50.0, 10.0, elev, "test slope", reach_m=reach,
+                              origin=origin)
 
 
-def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0)):
+# The frame origin a policy that receives events states (the Project AirSim
+# home-geo-point): since 2026-11-18 (WP1-14) an event's metres are written as
+# WGS84 about it, and a policy with no frame origin refuses them.
+FRAME = (35.6895, 139.6917)
+
+
+def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0), origin=None):
     env_r = {"id": "env", "type": "altitude_envelope", **H,
              "alt_min_m": env[0], "alt_max_m": env[1]}
     zone_r = {"id": "zone", "type": "polygon_fence", **H, "margin_m": 1.0,
@@ -53,7 +61,10 @@ def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0)):
               "altitude_floor_m": zone[0], "altitude_ceiling_m": zone[1]}
     if ref:
         env_r["altitude_ref"] = zone_r["altitude_ref"] = ref
-    return {"policy_id": "msl-dem-test", "constraints": [env_r, zone_r]}
+    out = {"policy_id": "msl-dem-test", "constraints": [env_r, zone_r]}
+    if origin is not None:
+        out["origin"] = {"lat": origin[0], "lon": origin[1]}
+    return out
 
 
 def test_grid_ground_is_bilinear_bounded_and_round_trips():
@@ -137,8 +148,8 @@ def test_the_band_is_read_at_the_query_point_not_the_whole_dem():
 
 
 def test_an_msl_zone_band_follows_the_ground_and_hot_apply_works_over_a_dem():
-    g = _slope_dem(reach=5.0)
-    sh = Shield(policy_from_raw(_raw(), ground=g), ground=g, up_ref="terrain",
+    g = _slope_dem(reach=5.0, origin=FRAME)
+    sh = Shield(policy_from_raw(_raw(origin=FRAME), ground=g), ground=g, up_ref="terrain",
                 escalation=False)
     # Zone 0-180 m MSL over x 60..80 (ground 155..165): at 170 MSL the
     # aircraft is in the band and must be stopped short; at 190 it overflies.

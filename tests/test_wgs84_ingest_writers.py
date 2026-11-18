@@ -36,9 +36,11 @@ closes the one writer that still produced the metre form:
     its derived frame origin, not PAS_HOME;
   * the legacy metre READ form is labelled: Policy.point_form, and
     bundle.load_for_flight records `point_form` / `point_note` for it; a
-    WGS84 policy's flight record is unchanged (no key added); what can still
-    write the legacy form is listed (derived recipes on a metre base,
-    gen_random_scenario --metres, deprecated);
+    WGS84 policy's flight record is unchanged (no key added); since
+    2026-11-18 nothing writes the legacy form (an event on a policy with no
+    frame origin, a new derivation on a metre base and gen_random_scenario
+    --metres are refused; tests/test_wgs84_frameless_writers.py), and the
+    lock's derived recipes on a metre base are only read back;
   * no stored policy hash moves: every policies/*.yaml hashes to its lock
     entry and check_lock() is clean.
 """
@@ -430,20 +432,29 @@ def test_point_form_labels_every_form():
                                             {"x": 31, "y": 14}]})
     snap = Policy.model_validate(json.loads(sh.policy.model_dump_json()))
     assert snap.point_form == POINTS_LEGACY_MIXED
-    # an event on a metre-only policy keeps writing metres (no WGS84 frame)
+    # an event on a metre-only policy is refused since 2026-11-18 (no WGS84
+    # frame to write it in; tests/test_wgs84_frameless_writers.py), so the
+    # policy stays as it was loaded
     leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)))
-    api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
-                                "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
-                                             {"x": 60, "y": 9}]})
-    assert leg.policy.point_form == POINTS_LEGACY_METRES
+    try:
+        api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
+                                    "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
+                                                 {"x": 60, "y": 9}]})
+    except api.ApiError as e:
+        assert e.status == 422 and "no WGS84 frame origin" in e.detail, e.detail
+    else:
+        raise AssertionError("an event on a metre-only policy wrote metres")
+    assert leg.policy.point_form == POINTS_LEGACY_METRES and leg.policy.generation == 0
 
 
-def test_writers_still_producing_the_legacy_form():
-    """The inventory's other side: what can still WRITE the metre form.
-    The lock's derived recipes rebuilt on a metre base (no frame) keep
-    metres; no recipe records `wgs84_writes: false` today; and
-    demo/gen_random_scenario.py --metres is the one opt-in file writer,
-    labelled deprecated."""
+def test_the_legacy_form_is_only_read_back():
+    """The inventory's other side. Until 2026-11-18 three writers could still
+    produce the metre form; now none does (tests/test_wgs84_frameless_writers.py
+    proves each refusal). What is left is READING: the lock's derived recipes
+    on a metre base are rebuilt as the recorded runs flew them (bundle.derive
+    legacy_read, which policy_candidates passes), in the legacy form; no
+    recipe records `wgs84_writes: false` today; demo/gen_random_scenario.py
+    has no metre writer (--metres is refused by name)."""
     lock = load_lock()
     derived = lock.get("derived") or []
     assert not any(d.get("wgs84_writes") is False for d in derived), derived
@@ -451,9 +462,10 @@ def test_writers_still_producing_the_legacy_form():
     forms = {d["name"]: by_name[d["name"]].point_form for d in derived if d["name"] in by_name}
     assert len(forms) == len(derived), (forms, [d["name"] for d in derived])
     assert all(f in LEGACY_POINT_FORMS for f in forms.values()), forms
-    print(f"  derived lock recipes: {forms}")
+    print(f"  derived lock recipes (read back): {forms}")
     src = (ROOT / "demo" / "gen_random_scenario.py").read_text(encoding="utf-8")
-    assert "DEPRECATED (WP1-14)" in src and "--metres is deprecated" in src
+    assert "METRES_REMOVED" in src and "DEPRECATED (WP1-14)" not in src
+    assert "write = policy_yaml" not in src
 
 
 def test_flight_record_labels_only_the_legacy_form():

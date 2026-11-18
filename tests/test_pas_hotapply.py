@@ -57,6 +57,13 @@ SKIP = "SKIP"
 HARD_P0 = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
            "violation_action": "project_fix"}
 
+# The caps policy with a stated frame origin, the scene's home-geo-point (the
+# fake link's FrameAnchor): since 2026-11-18 (WP1-14) an event's metres are
+# written as WGS84 about it, and a policy with no frame origin refuses them.
+FRAMED_CAP_POLICY = T.CAP_POLICY.replace(
+    "version: 0.1.0\n", "version: 0.1.0\norigin: {lat: 35.6895, lon: 139.6917}\n", 1)
+assert FRAMED_CAP_POLICY != T.CAP_POLICY
+
 
 def _zone(zid, x0, y0, x1, y1, **kw):
     """A POST /dynamic_nfz body: a static zone over the whole fence column."""
@@ -275,7 +282,7 @@ def test_an_event_lands_between_two_ticks_and_is_a_generation():
             return FakeListener.last.post(A.apply_dynamic_nfz,
                                           _zone("nfz-rest", -5, -60, 75, 20))
         clk = PostClock(P, 1.0, spawn)
-        rc, run, link = T._fly("off", extra=["--hotapply-port", "18071"], clk=clk)
+        rc, run, link = T._fly("off", policy=FRAMED_CAP_POLICY, extra=["--hotapply-port", "18071"], clk=clk)
     assert rc == 0
     assert clk.done and clk.done[0] is not None, "the request waited on the lock in a sleep"
     status, body = clk.done[0]
@@ -328,7 +335,7 @@ def test_an_event_lands_while_the_tick_reads_the_link_without_waiting_for_it():
                         A.apply_dynamic_nfz, _zone("nfz-far", 200, 200, 210, 210),
                         wait_s=2.0))
                 return super().state(anchor)
-        rc, run, link = T._fly("off", link_cls=StateLink,
+        rc, run, link = T._fly("off", policy=FRAMED_CAP_POLICY, link_cls=StateLink,
                                extra=["--hotapply-port", "18072"])
     assert rc == 0 and done, done
     assert done[0] is not None, "the request waited on the lock while the tick read the link"
@@ -353,7 +360,7 @@ def test_the_geofence_follows_the_new_generation_with_a_near_zone_held_back():
             b = L.post(A.apply_dynamic_nfz, _zone("nfz-over", 25, -30, 45, -10))
             return a, b
         clk = PostClock(P, 1.0, spawn)
-        rc, run, link = T._fly("off", link_cls=FenceLink,
+        rc, run, link = T._fly("off", policy=FRAMED_CAP_POLICY, link_cls=FenceLink,
                                extra=["--hotapply-port", "18072"], clk=clk)
     assert rc == 0 and [a[0] for a in clk.done[0]] == [200, 200], clk.done
     m = T._json(run, "metrics.json")
@@ -429,7 +436,7 @@ def test_over_real_http_an_event_reaches_the_flying_pas_shield():
             return httpx.post(f"{url}/dynamic_nfz", json=_zone("nfz-http", 25, -30, 45, -10),
                               timeout=10)
         clk = PostClock(P, 1.0, spawn)
-        rc, run, link = T._fly("off", extra=["--hotapply-port", str(port)], clk=clk)
+        rc, run, link = T._fly("off", policy=FRAMED_CAP_POLICY, extra=["--hotapply-port", str(port)], clk=clk)
     assert rc == 0 and clk.done[0].status_code == 200, clk.done[0].text
     m = T._json(run, "metrics.json")
     assert m["hot_apply"]["n_applied"] == 1 and m["hot_apply"]["endpoint"]["url"] == url

@@ -274,7 +274,7 @@ def _bundle_of(yaml_text: str, bundles: Path) -> tuple[Path, Path]:
     y.write_text(yaml_text, encoding="utf-8")
     pol = load_policy(y)
     b = flight_bundle_path(pol, bundles)
-    write_bundle(pol, b, signer=None)
+    write_bundle(pol, b, signer=None, allow_legacy_metres=True)   # metre fixtures
     return y, b
 
 

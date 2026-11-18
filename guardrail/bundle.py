@@ -1689,8 +1689,17 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 
 def write_bundle(policy: Policy, out_path: str | Path,
                  changelog: str = "initial", *, issued_at=None,
-                 signer="auto", ir_form: str = "ours", previous=None) -> Path:
+                 signer="auto", ir_form: str = "ours", previous=None,
+                 allow_legacy_metres: bool = False) -> Path:
     """Write a tar.gz containing the canonical IR, the manifest and the signature.
+
+    WGS84 only (WP1-14, 2026-11-18): a policy whose points are stored in a
+    legacy metre form (Policy.point_form) is refused, so no bundle a tool
+    issues carries projected coordinates; until then any policy was
+    bundled. `allow_legacy_metres=True` writes such a policy as it is: for
+    rebuilding a bundle recorded before 2026-11-03 byte for byte, and for
+    test fixtures that stand for one. No tool in tools/, demo/, sitl/ or
+    experiments/ passes it.
 
     `previous`: the version this bundle replaces (a Policy, a bundle path,
     read with load_bundle's checks, or a policy file), recorded in the
@@ -1712,6 +1721,15 @@ def write_bundle(policy: Policy, out_path: str | Path,
     it into the manifest; an explicit `issued_at` that names another instant is
     refused, because the bundle would then contradict the document it ships.
     """
+    form = policy.point_form
+    if form in LEGACY_POINT_FORMS and not allow_legacy_metres:
+        raise ValueError(
+            f"{policy.policy_id}@{policy.version}: its points are stored as {form}. "
+            f"A bundle is issued in the canonical WGS84 form only; the DSL never "
+            f"carries projected coordinates (grant, Policy DSL page; WP1-14). "
+            f"Convert the policy first (tools/convert_policies_wgs84.py states "
+            f"the origin and raises the version), or fly its WGS84 successor "
+            f"(tools/bundle_census.py lists them)")
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     sgn = _resolve_signer(signer)
@@ -2967,7 +2985,7 @@ def update_lock(policies_dir: str | Path | None = None,
 
 def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
            *, ir_schema_version: str | None = None,
-           wgs84_writes: bool = True) -> Policy:
+           wgs84_writes: bool = True, legacy_read: bool = False) -> Policy:
     """Rebuild a hot-applied policy exactly as Shield.hot_apply produces it:
     each rule appended, generation bumped once per rule.
 
@@ -2975,10 +2993,18 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     metre points are written as WGS84 about the base's frame origin, as
     Shield._in_frame writes them since 2026-11-17 (WP1-14,
     models.rule_in_wgs84), so the rebuilt policy hashes as the live one did.
-    A recipe for a run flown on a base with a frame BEFORE that date, when
-    the Shield still wrote metres, records `wgs84_writes: false` in its lock
-    entry (policy_candidates passes it here). On a metre base (no frame)
-    nothing is converted, either way.
+
+    On a base with no frame (a policy written only in metres, the legacy
+    read form) a rule with points is REFUSED (models.NoFrameOrigin), as the
+    live Shield refuses it since 2026-11-18: a new derivation never writes
+    the metre form. `legacy_read=True` is the one exception, and it is a
+    READ: the rebuild of a run that was already flown and recorded under
+    such a base (the lock's `derived` recipes; policy_candidates passes it),
+    whose rules are kept in metres as they flew so the rebuilt policy
+    hashes as the recorded one. A recipe for a run flown on a base with a
+    frame BEFORE 2026-11-17, when the Shield still wrote metres, records
+    `wgs84_writes: false` in its lock entry; that is a read as well, so
+    `wgs84_writes=False` needs `legacy_read=True`.
 
     `ir_schema_version` is the IR schema the recipe was recorded under; None
     (every recipe in the lock before 2026-11-02) means 2.x. A 2.x recipe may
@@ -2989,16 +3015,21 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     flew (models.era_context); under 4.0.0 a recipe states it."""
     from pydantic import TypeAdapter
     from .models import IR2_RULE_DEFAULTS, Constraint, rule_in_wgs84
+    if not wgs84_writes and not legacy_read:
+        raise ValueError("derive(wgs84_writes=False) rebuilds a recorded run's metre "
+                         "writes, a read of the legacy form: pass legacy_read=True; "
+                         "a new derivation writes WGS84 (WP1-14)")
     ir2 = _semver_key(ir_schema_version or "2.0.0") < (3, 0, 0)
     pol = base.model_copy(deep=True)
     ta = TypeAdapter(Constraint)
     era = era_context(ir_schema_version)
+    frame = base.frame_origin
     for raw in hot_apply:
         if ir2 and isinstance(raw, dict):
             raw = {**IR2_RULE_DEFAULTS, **raw}
         rule = ta.validate_python(raw, context=era)
-        if wgs84_writes:
-            rule = rule_in_wgs84(rule, base.frame_origin)
+        if wgs84_writes and not (legacy_read and frame is None):
+            rule = rule_in_wgs84(rule, frame)
         pol.constraints.append(rule)
         pol.generation += 1
     if generations is not None and pol.generation != base.generation + generations:
@@ -3051,10 +3082,13 @@ def policy_candidates(policies_dir: str | Path | None = None,
         base = by_key.get(d.get("base"))
         if base is None:
             continue
+        # A recipe records a run already flown: rebuilding it is a READ, so
+        # a metre base keeps the metres it flew (derive: legacy_read).
         out.append((d["name"], derive(base, d.get("hot_apply") or [],
                                       d.get("generations"),
                                       ir_schema_version=d.get("ir_schema_version"),
-                                      wgs84_writes=d.get("wgs84_writes", True))))
+                                      wgs84_writes=d.get("wgs84_writes", True),
+                                      legacy_read=True)))
     if policies_dir is None:
         # Experiment profiles that fly only with their declared ground (an
         # MSL rule, experiments/policies/msl_dem_sitl.yaml) live beside their

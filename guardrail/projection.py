@@ -212,6 +212,19 @@ def _is_metric_point(node) -> bool:
             and "x" in node and "y" in node)
 
 
+def metre_point_count(node) -> int:
+    """How many points under `node` are written in local metres ({x, y}
+    without lat/lon), depth first: the projected coordinates the grant's DSL
+    never carries (WP1-14). For a writer that must refuse or convert them."""
+    if _is_metric_point(node):
+        return 1
+    if isinstance(node, dict):
+        return sum(metre_point_count(v) for v in node.values())
+    if isinstance(node, list):
+        return sum(metre_point_count(v) for v in node)
+    return 0
+
+
 def geo_points(node) -> list[tuple[float, float]]:
     """Every (lat, lon) under `node`, depth first, in document order."""
     out: list[tuple[float, float]] = []

@@ -78,7 +78,9 @@ before; it is the READ form of old bundles, runs and lock recipes, and
 `Policy.point_form` labels it (POINTS_LEGACY_METRES / POINTS_LEGACY_MIXED). Every
 writer into a policy with a frame converts metre input at ingest about its
 frame origin (rule_in_wgs84; projection.raw_points_in_wgs84; demo/gui_policy.py);
-Policy.point_form lists what can still write the legacy form. Altitude is metres above ground by default; `altitude_ref: MSL` is
+since 2026-11-18 a write with points into a policy with NO frame origin is
+refused (NoFrameOrigin), so no writer produces the legacy form any more; it is
+only read back. Altitude is metres above ground by default; `altitude_ref: MSL` is
 declarable and refused for flight (the Shield has no ground-elevation source).
 
 docs/DESIGN-policy-dsl-grant-form.md records the decisions and what still
@@ -1646,15 +1648,19 @@ class Policy(BaseModel):
 
         The two legacy forms keep loading and hashing exactly as before, for
         the pre-3-Nov bundles, the runs flown under them and the lock recipes
-        that rebuild them. What can still WRITE them: an event applied to a
-        policy written only in metres (it has no WGS84 position for its
-        frame's (0, 0), so rule_in_wgs84 with no origin keeps metres; this is
-        how bundle.derive rebuilds a recipe on a metre base), a lock recipe
-        recording `wgs84_writes: false`, and demo/gen_random_scenario.py
-        --metres (deprecated, opt-in). Every writer into a policy with a frame
-        converts (models.rule_in_wgs84, projection.raw_points_in_wgs84,
-        demo/gui_policy.py). The flight loader records the legacy forms
-        (bundle.load_for_flight: `point_form`, `point_note`).
+        that rebuild them. Since 2026-11-18 nothing WRITES them: an event
+        with points on a policy with no frame origin is refused
+        (rule_in_wgs84 raises NoFrameOrigin; Shield: HotApplyRefused), as is
+        a new bundle.derive on a metre base, tools/geo_to_policy.py ingest of
+        metre rules onto a frameless base or of a whole metre document, and
+        demo/gen_random_scenario.py --metres (removed). They are only READ
+        back: a lock recipe on a metre base or recording `wgs84_writes:
+        false` is rebuilt as its run flew (bundle.derive legacy_read). Every
+        writer into a policy with a frame converts (models.rule_in_wgs84,
+        projection.raw_points_in_wgs84, demo/gui_policy.py). The flight
+        loader records the legacy forms (bundle.load_for_flight:
+        `point_form`, `point_note`); tools/bundle_census.py lists the
+        bundles stored in them and the WGS84 bundle to fly instead.
 
         This labels how POINTS are stored; it is not bundle.FRAME_FORM, the
         name of a hash form in a lock entry's migration record."""
@@ -2393,12 +2399,47 @@ def _rule_points(policy: Policy, all_points: bool = False):
                 yield v.geographic
 
 
+class NoFrameOrigin(ValueError):
+    """A rule with points offered to a policy that has no WGS84 frame origin
+    (WP1-14, 2026-11-18): a policy written only in metres (the legacy read
+    form) or one with no point and no stated `origin`. Its points cannot be
+    written in the canonical WGS84 form, and the grant's DSL never carries
+    projected coordinates, so the write is refused rather than stored in
+    metres. A ValueError, so every writer that already turns a ValueError
+    into a refusal (Shield._in_frame: HotApplyRefused, an HTTP 422 on the
+    REST endpoint) reports it as one."""
+
+
+def rule_has_points(rule) -> bool:
+    """True for a rule class that places points (a fence, a dynamic zone, a
+    corridor or corridor swap); False for envelopes, switches and the rest."""
+    return isinstance(rule, (CircleFence, PolygonFence, DynamicNFZ, Corridor,
+                             CorridorSwap))
+
+
+def no_frame_message(what: str) -> str:
+    """The one wording every writer refuses a frameless write with."""
+    return (f"{what}: the policy it goes into has no WGS84 frame origin (no "
+            f"stated `origin` and no point in lat/lon), so its points cannot be "
+            f"written in the canonical WGS84 form, and a policy may not carry "
+            f"projected coordinates (grant, Policy DSL page; WP1-14). State "
+            f"`origin: {{lat, lon}}` in the policy, or fly its WGS84 successor "
+            f"bundle (v0.1.2 or later; tools/bundle_census.py lists them); the "
+            f"local-metre form is a read form only")
+
+
 def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     """`rule` with every metre point written in WGS84 about `origin` ((lat,
     lon), the frame origin of the policy the rule goes into) and every point
-    bound to that frame; `rule` itself when there is no frame (`origin`
-    None: a policy written only in metres, the legacy form, which has no
-    WGS84 position for a metre point).
+    bound to that frame.
+
+    No frame (`origin` None: a policy written only in metres, the legacy
+    read form, or one with no point and no stated origin): a rule that
+    places points raises NoFrameOrigin, since there is no WGS84 position
+    for a metre point and a lat/lon point would silently become the frame
+    the policy's metres are read in; a rule without points (an envelope, a
+    switch) comes back unchanged. Until 2026-11-18 a rule with points came
+    back unchanged too, so an event on a metre-only policy stored metres.
 
     WHY (WP1-14, 2026-11-17). Since 2026-11-03 every stored policy is WGS84
     with a stated origin, but the REST hot-apply endpoint, the Shield's own
@@ -2453,6 +2494,10 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     any load - unless they are no longer the stored vertices (a ring
     replaced after validation), when the stored ones are taken."""
     if origin is None:
+        if rule_has_points(rule):
+            raise NoFrameOrigin(no_frame_message(
+                f"{getattr(rule, 'type', type(rule).__name__)} "
+                f"{getattr(rule, 'id', '?')!r}"))
         return rule
     fo = (float(origin[0]), float(origin[1]))
     if isinstance(rule, CircleFence):
