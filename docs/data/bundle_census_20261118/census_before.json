@@ -1,0 +1,859 @@
+{
+  "bundles": [
+    {
+      "file": "aiot_v10bs_01.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "aiot_v10bs_02.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "aiot_v10bs_03.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "corridor-survey-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-12T05:30:30Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:912bfb652fee305796f8ea5ffbe601fa0c5c2a786461439814787dbb7ba11c90",
+      "policy_id": "corridor-survey",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "corridor-survey-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:63c344475673261ef02d7f49bf93e5dd5b025b25524225ee72436ed5e92688fc",
+      "policy_id": "corridor-survey",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "corridor-survey-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:fc35249beda5c9a25aa68d55648f2b1a7d03382056ebf3a35f9c3cf2efd3464f",
+      "policy_id": "corridor-survey",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "corridor-survey-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
+      "policy_id": "corridor-survey",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "fase3-sim-demo-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-12T05:30:30Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:ffe7c527a55f9bf8b4e541544c900dbac43701dea8dd781220ab226d8be992d2",
+      "policy_id": "fase3-sim-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "fase3-sim-demo-v0.1.2.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:fbdd64502b6071cf211ab9165a84bdbf6c44cfc7875c5cefc0ad3931638b71a2",
+      "policy_id": "fase3-sim-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "fase3-sim-demo-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+      "policy_id": "fase3-sim-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "fase3-sim-demo-v0.1.4.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "policy_id": "fase3-sim-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.4"
+    },
+    {
+      "file": "follow-car-citylife-nfz-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-12T05:30:30Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:8c0f7487a829687446aa7383eee51883c66adae2e8913dc6f4b8a27b0c373d07",
+      "policy_id": "follow-car-citylife-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "follow-car-citylife-nfz-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:f2f42c86697f00763c9f0e9fa5b36a4b9f4a2cd256413e7137fcdd4c4a71f468",
+      "policy_id": "follow-car-citylife-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-citylife-nfz-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:12b62007c2ea2fa354a2efe14ab8b0a45238778e65c1fe7ef58b9a2bf39abd0f",
+      "policy_id": "follow-car-citylife-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-citylife-nfz-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+      "policy_id": "follow-car-citylife-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "follow-car-citylife-nfz3-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-28T03:25:46Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:3f8c3c1fff6c058ae5dff472eace4e49af0eec32e054e1896eb00f71fbb0a425",
+      "policy_id": "follow-car-citylife-nfz3",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "follow-car-citylife-nfz3-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:15Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:c19c708664a115294d0e1c06114f5ed8de5a274657530bbc35440bef7c3fd716",
+      "policy_id": "follow-car-citylife-nfz3",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-citylife-nfz3-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:411dc340ce8ed5421ba82ed6ad3a6b6d089f942fc17c4b6eef99a786ecd76d01",
+      "policy_id": "follow-car-citylife-nfz3",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-citylife-nfz3b-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-28T03:56:47Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:8b57425aa1f29311805fef18a7f77f728fc291b1df5f42d2c516a5f63a28d333",
+      "policy_id": "follow-car-citylife-nfz3b",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "follow-car-citylife-nfz3b-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:15Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:22874499d9f235b9f25007a17b2095d9cdb3baceea3159a3f23af09e73d55ee6",
+      "policy_id": "follow-car-citylife-nfz3b",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-citylife-nfz3b-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:b85c1bac43a5e1b736bd714c0f828591675b609301795765cde32f43f45e70c6",
+      "policy_id": "follow-car-citylife-nfz3b",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-citylife-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-12T05:30:30Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:e2eb8a148ee81b1a4e34dc20f5423a2ef00925a53c0c9d00fed3309e66de3117",
+      "policy_id": "follow-car-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "follow-car-citylife-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:1e0ec57989eb800b69ffe7617a8769521da41761857e0b04976c455b941d385d",
+      "policy_id": "follow-car-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-citylife-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:67154c8d6b3ff1bc23169fff3a4142d0a8bf99d96e1c29f1f65fd4f0efa42097",
+      "policy_id": "follow-car-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-citylife-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
+      "policy_id": "follow-car-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "follow-car-nfz-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:63270d0b26903a11c7bf6fffb9d4e81bbee98fb2b6957f4eb7ba3c8ce7def182",
+      "policy_id": "follow-car-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-nfz-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:49381fad1e5a842596ae9760432622ad91c2207470bb7917dd7ab327d1dc64b3",
+      "policy_id": "follow-car-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-nfz-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
+      "policy_id": "follow-car-nfz",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "follow-car-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:11403d09cae41e2a7bb67842fc5dfece57a8d8551fd3cbc2430ee6225f9c95d3",
+      "policy_id": "follow-car",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-car-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:fa8f54afff9cf865185da54783f8baea54d833f95f5077e315275c75f26f0c36",
+      "policy_id": "follow-car",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-car-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
+      "policy_id": "follow-car",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "follow-pedestrian-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:c119754a3cf38d29926eec8c58ee5875dae2cea099466a2104e1546ba64cb3d2",
+      "policy_id": "follow-pedestrian",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "follow-pedestrian-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:86e7bfb5396a6adc1a4cd23254d5b67a330609512aaab67425ff9439cfd96159",
+      "policy_id": "follow-pedestrian",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "follow-pedestrian-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
+      "policy_id": "follow-pedestrian",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "hil_smoke_03.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "msl-dem-sitl-v0.1.0.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-18T04:59:54Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d",
+      "policy_id": "msl-dem-sitl",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "poly-test-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:34e47cd27e0602a69aa935d1f0cb2e417f591af8130a8fdaff5e321ebe960cc3",
+      "policy_id": "poly-test",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "retarget_demo.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "retarget_demo2.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "retarget_fixed.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "retarget_smooth.replay.tar.gz",
+      "kind": "replay"
+    },
+    {
+      "file": "sitl-pedestrian-standoff-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:dcf2e41dd4910c0cd9c2214ddcb253e00543caebedee914378a69f456d674745",
+      "policy_id": "sitl-pedestrian-standoff",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "sitl-pedestrian-standoff-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        -35.363261,
+        149.16523
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-07T06:33:39Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "no-points",
+      "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
+      "policy_id": "sitl-pedestrian-standoff",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "vla-goto-citylife-v0.1.0.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-22T17:48:20Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:88ee8e5eeb5d5716151295d879368e21b0ffd3d75c062b9457f2256490fbda04",
+      "policy_id": "vla-goto-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "vla-goto-citylife-v0.1.1.tar.gz",
+      "frame": "none",
+      "frame_origin": null,
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-02T17:50:09Z",
+      "kind": "policy",
+      "legacy": true,
+      "point_form": "local-metres (legacy read form)",
+      "policy_hash": "sha256:897779576d4582eff29871a8249515b7f97f29f09c2e0e00dffa40dc91de0fdc",
+      "policy_id": "vla-goto-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "vla-goto-citylife-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:16Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:e76c102f5477ee207505ca988e99d93f73d6ede9d6baeba47f8647e282eff053",
+      "policy_id": "vla-goto-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    },
+    {
+      "file": "vla-goto-citylife-v0.1.3.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        35.6895,
+        139.6917
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+      "policy_id": "vla-goto-citylife",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.3"
+    },
+    {
+      "file": "wgs84-taipei-demo-v0.1.0.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        25.04245,
+        121.5314
+      ],
+      "hash_form": "sha256-canonical-v3/ir-2.x",
+      "issued_at": "2026-10-12T05:30:30Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:15b57dcd1ee9cb31875a2384c3b84cacc16531692e6085d8c515190e8ed770ff",
+      "policy_id": "wgs84-taipei-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.0"
+    },
+    {
+      "file": "wgs84-taipei-demo-v0.1.1.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        25.04245,
+        121.5314
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-04T09:32:15Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:e316a6736564fcd0e0322899d5450e36fef4a26eb944a83477190534a9de28f2",
+      "policy_id": "wgs84-taipei-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.1"
+    },
+    {
+      "file": "wgs84-taipei-demo-v0.1.2.tar.gz",
+      "frame": "stated",
+      "frame_origin": [
+        25.04245,
+        121.5314
+      ],
+      "hash_form": "sha256-canonical-v3",
+      "issued_at": "2026-11-06T20:26:25Z",
+      "kind": "policy",
+      "legacy": false,
+      "point_form": "wgs84",
+      "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
+      "policy_id": "wgs84-taipei-demo",
+      "signature": "verified",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "version": "0.1.2"
+    }
+  ],
+  "dir": "lab checkout bundles/ on 2026-11-18, before this row",
+  "legacy_tasks": [
+    {
+      "current_bundle": "corridor-survey-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/corridor_survey.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "corridor-survey-v0.1.0.tar.gz",
+        "corridor-survey-v0.1.1.tar.gz"
+      ],
+      "policy_id": "corridor-survey",
+      "refly_from": "corridor-survey-v0.1.3.tar.gz",
+      "successor": "corridor-survey-v0.1.3.tar.gz"
+    },
+    {
+      "current_bundle": "fase3-sim-demo-v0.1.4.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/sim_demo_policy.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.4",
+      "legacy_bundles": [
+        "fase3-sim-demo-v0.1.1.tar.gz",
+        "fase3-sim-demo-v0.1.2.tar.gz"
+      ],
+      "policy_id": "fase3-sim-demo",
+      "refly_from": "fase3-sim-demo-v0.1.4.tar.gz",
+      "successor": "fase3-sim-demo-v0.1.4.tar.gz"
+    },
+    {
+      "current_bundle": "follow-car-citylife-nfz-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/follow_car_citylife_nfz.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "follow-car-citylife-nfz-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car-citylife-nfz",
+      "refly_from": "follow-car-citylife-nfz-v0.1.3.tar.gz",
+      "successor": "follow-car-citylife-nfz-v0.1.3.tar.gz"
+    },
+    {
+      "current_bundle": null,
+      "current_bundle_on_disk": false,
+      "current_file": "policies/follow_car_citylife_nfz3.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "follow-car-citylife-nfz3-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz3-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car-citylife-nfz3",
+      "refly_from": "follow-car-citylife-nfz3-v0.1.2.tar.gz",
+      "successor": "follow-car-citylife-nfz3-v0.1.2.tar.gz"
+    },
+    {
+      "current_bundle": null,
+      "current_bundle_on_disk": false,
+      "current_file": "policies/follow_car_citylife_nfz3b.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "follow-car-citylife-nfz3b-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car-citylife-nfz3b",
+      "refly_from": "follow-car-citylife-nfz3b-v0.1.2.tar.gz",
+      "successor": "follow-car-citylife-nfz3b-v0.1.2.tar.gz"
+    },
+    {
+      "current_bundle": "follow-car-nfz-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/follow_car_nfz.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "follow-car-nfz-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car-nfz",
+      "refly_from": "follow-car-nfz-v0.1.3.tar.gz",
+      "successor": "follow-car-nfz-v0.1.3.tar.gz"
+    },
+    {
+      "current_bundle": "vla-goto-citylife-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/vla_goto_citylife.yaml",
+      "current_point_form": "wgs84",
+      "current_version": "0.1.3",
+      "legacy_bundles": [
+        "vla-goto-citylife-v0.1.0.tar.gz",
+        "vla-goto-citylife-v0.1.1.tar.gz"
+      ],
+      "policy_id": "vla-goto-citylife",
+      "refly_from": "vla-goto-citylife-v0.1.3.tar.gz",
+      "successor": "vla-goto-citylife-v0.1.3.tar.gz"
+    }
+  ],
+  "problems": [
+    "follow-car-citylife-nfz3: legacy bundle(s) ['follow-car-citylife-nfz3-v0.1.0.tar.gz', 'follow-car-citylife-nfz3-v0.1.1.tar.gz']; the current version 0.1.3 (policies/follow_car_citylife_nfz3.yaml) has no WGS84 bundle in lab checkout bundles/ on 2026-11-18, before this row: build it (python tools/build_flight_bundles.py follow_car_citylife_nfz3)",
+    "follow-car-citylife-nfz3b: legacy bundle(s) ['follow-car-citylife-nfz3b-v0.1.0.tar.gz', 'follow-car-citylife-nfz3b-v0.1.1.tar.gz']; the current version 0.1.3 (policies/follow_car_citylife_nfz3b.yaml) has no WGS84 bundle in lab checkout bundles/ on 2026-11-18, before this row: build it (python tools/build_flight_bundles.py follow_car_citylife_nfz3b)"
+  ],
+  "summary": {
+    "bundles": 50,
+    "frameless_bundles": 17,
+    "legacy_metre_bundles": 13,
+    "legacy_tasks": 7,
+    "point_forms": {
+      "local-metres (legacy read form)": 13,
+      "no-points": 13,
+      "wgs84": 16
+    },
+    "policy_bundles": 42,
+    "replay_bundles": 8,
+    "unreadable": 0
+  }
+}

@@ -102,7 +102,14 @@
 #          write path into a framed policy stores WGS84),
 #          test_wgs84_ingest_writers (2026-11-18, WP1-14: the writer
 #          inventory over every shipped policy, the Mission Control GUI's
-#          writer, the legacy metre read form labelled, no hash moved).
+#          writer, the legacy metre read form labelled, no hash moved),
+#          test_wgs84_frameless_writers (2026-11-18, WP1-14: every write with
+#          points into a policy with no frame origin is refused - Shield,
+#          REST, ScenarioEvent, gRPC dry run, derive, write_bundle, the ingest
+#          tool, the generator's removed --metres), test_bundle_census
+#          (2026-11-18, WP1-14: tools/bundle_census.py on built fixtures and
+#          the committed census of the lab's bundles/; its live check of
+#          that folder SKIPs where it is absent).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
@@ -748,6 +755,8 @@ jobs:
               tests/test_sweep_resume.py \
               tests/test_wgs84_writes.py \
               tests/test_wgs84_ingest_writers.py \
+              tests/test_wgs84_frameless_writers.py \
+              tests/test_bundle_census.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \
