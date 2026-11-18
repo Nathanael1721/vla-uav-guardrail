@@ -16,8 +16,8 @@ WHAT IS PINNED
       without a ground (the plumbing is neutral); without a ground nothing
       is added to the rows, events or record. Over the CMAC DEM the SITL
       profile's MSL rule binds and no tick breaks it (oracle without a
-      Shield). The SITL / hil rails refuse a scenario ground (their
-      post-flight scoring has none).
+      Shield). Since wf21 the SITL / hil rails take a scenario ground,
+      named by path and sha256 (tests/test_msl_readers.py pins how).
   (c) sitl/ros2_shield_node.py --ground on the stand-in ROS stack: the MSL
       policy is refused without it, flown with it (the Shield told the
       height above the DEM, the row carrying the pose's height above home
@@ -202,15 +202,12 @@ def test_a_scenario_ground_loads_the_policy_with_it_and_stays_its_own():
     # from the same PolicyRef carries no ground.
     plain = _spec()
     assert plain.ground is None and plain.policy._ground is None
-    # A rotated mission with a ground is refused (the relief would not turn).
-    try:
-        ScenarioSpec.model_validate({**spec.model_dump(mode="json", by_alias=True),
-                                     "mission": {**spec.mission.model_dump(mode="json"),
-                                                 "rotate_deg": 30.0}})
-    except ValueError as e:
-        assert "rotated mission" in str(e), e
-    else:
-        raise AssertionError("a ground with a rotated mission was accepted")
+    # A rotated mission flies over the same ground (since wf21: the ground
+    # is the world's, like the zones, which a rotation never turns).
+    rot = ScenarioSpec.model_validate({**spec.model_dump(mode="json", by_alias=True),
+                                       "mission": {**spec.mission.model_dump(mode="json"),
+                                                   "rotate_deg": 30.0}})
+    assert rot.ground == DEM and rot.policy._ground == DEM
 
 
 def test_without_a_ground_nothing_is_added_to_the_record():
@@ -325,16 +322,16 @@ def test_the_identity_evidence_and_its_compare_tool():
     assert r["identical_episodes"] == 0
 
 
-def test_the_rails_refuse_a_scenario_ground():
+def test_the_rails_take_a_scenario_ground_by_name():
+    """Since wf21 (2026-11-18): refused until then; now the ground goes to
+    both nodes as path + sha256 + the home elevation on it."""
     import msl_dem_rail as M
     import sweep_scenarios as S
     spec = M.spec_for("level-cross", 0.0, M.POLICY_REL)
-    try:
-        S.rail_node_args(spec, 1001, LIBRARY.defaults, backend="sitl")
-    except S.UnsupportedScenario as e:
-        assert "flown headless only" in str(e), e
-    else:
-        raise AssertionError("a scenario ground was sent to a rail whose scoring has none")
+    args = S.rail_node_args(spec, 1001, LIBRARY.defaults, backend="sitl")
+    sha = terrain.ground_file(DEM, root=ROOT)["sha256"]
+    assert f"--ground={DEM}" in args and f"--ground-sha256={sha}" in args, args
+    assert any(a.startswith("--ground-home-msl=") for a in args), args
 
 
 # ------------------------------------------------------------------ (c)
@@ -418,16 +415,19 @@ def test_the_fence_ceiling_is_above_home_with_a_ground():
     ceiling, src = N.policy_ceiling_m(node.policy, 20.0, **kw)
     top = terrain.ground_band(g)[1]
     # msl-ceiling: 624 - 584 = 40 m above home; agl-band: 60 m over the
-    # DEM's highest ground, top - 584 above home. The higher of the two, as
-    # without a ground (an envelope may be scoped or windowed).
-    assert abs(ceiling - max(624.0 - 584.0, 60.0 + top - 584.0)) < 1e-9, (ceiling, top)
-    assert ceiling < 100.0 and "above home" in src
+    # DEM's highest ground, top - 584 above home. The higher of the two is
+    # what an envelope that may be out of force needs, but msl-ceiling is a
+    # hard MSL ceiling no clock switches off: it caps the figure (2026-11-18,
+    # THE MSL CEILING CAPS IT), 40 m above home, not 81.26 m.
+    assert 60.0 + top - 584.0 > 40.0
+    assert abs(ceiling - 40.0) < 1e-9, (ceiling, top, src)
+    assert "above home" in src and "capped by msl-ceiling" in src
     if str(ROOT / "sitl") not in sys.path:
         sys.path.insert(0, str(ROOT / "sitl"))
     from mavlink_adapter_node import FENCE_ALT_HEADROOM_M
     plan = N.fence_alt_plan(ceiling, 30.0)
     assert abs(plan["raise_to"] - (ceiling + FENCE_ALT_HEADROOM_M)) < 1e-9
-    assert plan["raise_to"] < 100.0, plan
+    assert abs(plan["raise_to"] - 45.0) < 1e-9, plan
     # The MSL rule alone: 40 m above home + the headroom.
     only_msl = node.policy.model_copy(update={"constraints": [
         c for c in node.policy.constraints if c.id != "agl-band"]})
@@ -465,7 +465,7 @@ def test_without_ground_the_node_hands_the_shield_the_pose_itself():
     st = State(x=1.0, y=2.0, up=15.0)
     assert node._shield_pose(st) is st
     src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert "ground_for_flight(args.ground, b, y, root=ROOT)" in src   # main() reads it first
+    assert "ground_from_args(args, b, y, root=ROOT)" in src   # main() reads it first
 
 
 def test_the_stub_and_the_bundle_builder_take_the_ground():
