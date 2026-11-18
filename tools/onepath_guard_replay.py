@@ -25,14 +25,16 @@ What is replayed, honestly:
     to the log's rounding (scale >= 0.05 only). Where it skirted, guard_in is
     `cv * scale + slide_speed * urgency * side` with side perpendicular to
     cv; the replay solves that for cv with the default --slide-speed 2.5 (two
-    mirror solutions) and keeps the one whose grid-scan replay gives back the
-    logged decision (skirt). A skirt tick neither solution reproduces is
+    mirror solutions) and keeps the one whose replay on the guard the run
+    flew gives back the logged decision (skirt). A skirt tick neither
+    solution reproduces is
     counted as not reconstructed and left out;
   * the decision compared per tick is the flight loop's: the mode it would
     log (clear / near / hold / skirt), the sidestep's side, and the building
     brake (gate's building half scale < 1);
-  * the grid replay of the reconstructed ticks is also checked against the
-    logged fence_mode: the share that agree is printed (the null);
+  * the replay of the guard the run FLEW (metrics.json "guard_field",
+    "grid" when absent) is checked against the logged fence_mode: the share
+    that agree is printed (the null); a skirt tick is solved with that guard;
   * the policy is the repository's policies/follow_car_citylife_nfz.yaml
     (the flights flew that file or a signed bundle of it) and the map
     demo/out/citymap_citylife/occ_day.npz banded as follow_vlm selects it,
@@ -202,9 +204,24 @@ def skirt_candidates(gi, sc):
             for sgn in (1.0, -1.0)]
 
 
+def flown_guard_field(run_dir: Path) -> str:
+    """What the run's FenceGuard flew: metrics.json "guard_field" ("shield"
+    since 2026-11-18); a run without the key flew the grid scan."""
+    m = run_dir / "metrics.json"
+    try:
+        return json.loads(m.read_text(encoding="utf-8")).get("guard_field") or "grid"
+    except (OSError, ValueError):
+        return "grid"
+
+
 def replay_run(run_dir: Path, grid, field) -> dict:
+    """The decision counts over one stored run. Its commanded velocity on a
+    skirt tick is solved with the guard the run FLEW (flown_guard_field),
+    and the null is that guard's mode against the logged one."""
     rows = [json.loads(line) for line in (run_dir / "flight_log.jsonl").open(encoding="utf-8")]
-    n = n_skirt = unrec = agree = 0
+    flown_name = flown_guard_field(run_dir)
+    flown = field if flown_name == "shield" else grid
+    n = n_skirt = unrec = agree = agree_flown = 0
     mode_d = side_d = ms_d = brake_d = scale_d = 0
     skirt_now = skirt_old = 0
     by_logged = {}
@@ -216,21 +233,21 @@ def replay_run(run_dir: Path, grid, field) -> dict:
         if fm == "skirt":
             got = None
             for cvx, cvy, _ in skirt_candidates(gi, sc):
-                o = decide(grid, x, y, cvx, cvy)
-                if o[0] == "skirt":
-                    got = (cvx, cvy, o)
+                if decide(flown, x, y, cvx, cvy)[0] == "skirt":
+                    got = (cvx, cvy)
                     break
             if got is None:
                 unrec += 1
                 continue
-            cvx, cvy, o = got
+            cvx, cvy = got
             n_skirt += 1
         else:
             cvx, cvy = gi[0] / sc, gi[1] / sc
-            o = decide(grid, x, y, cvx, cvy)
+        o = decide(grid, x, y, cvx, cvy)
         w = decide(field, x, y, cvx, cvy)
         n += 1
         agree += int(o[0] == fm)
+        agree_flown += int((w if flown is field else o)[0] == fm)
         ob, wb = o[2], w[2]
         brake_d += int(ob != wb)
         scale_d += int(abs(o[3] - w[3]) > 1e-6)
@@ -244,7 +261,8 @@ def replay_run(run_dir: Path, grid, field) -> dict:
         k[1] += int(o[0] != w[0] or o[1] != w[1])
     return {"run": run_dir.name, "ticks_logged": len(rows), "ticks_replayed": n,
             "skirt_reconstructed": n_skirt, "skirt_not_reconstructed": unrec,
-            "grid_replay_agrees_with_log": agree,
+            "grid_replay_agrees_with_log": agree, "flown_guard": flown_name,
+            "flown_replay_agrees_with_log": agree_flown,
             "scale_changed": scale_d, "building_brake_on_off_changed": brake_d,
             "mode_changed": mode_d, "side_changed": side_d, "mode_or_side_changed": ms_d,
             "skirt_ticks_grid": skirt_old, "skirt_ticks_shield": skirt_now,
@@ -294,13 +312,15 @@ def main(argv=None) -> int:
         out.append(res)
         print(f"{name}: replayed {res['ticks_replayed']}/{res['ticks_logged']} ticks "
               f"({res['skirt_reconstructed']} skirt reconstructed, "
-              f"{res['skirt_not_reconstructed']} not); grid replay = logged mode on "
-              f"{res['grid_replay_agrees_with_log']}; decision (mode or side) changed "
+              f"{res['skirt_not_reconstructed']} not); flew {res['flown_guard']}, its "
+              f"replay = logged mode on {res['flown_replay_agrees_with_log']}; "
+              f"decision (mode or side) changed "
               f"{res['mode_or_side_changed']}, building brake on/off changed "
               f"{res['building_brake_on_off_changed']}, skirt ticks grid "
               f"{res['skirt_ticks_grid']} -> shield {res['skirt_ticks_shield']}")
     keys = ("ticks_replayed", "skirt_reconstructed", "skirt_not_reconstructed",
-            "grid_replay_agrees_with_log", "scale_changed", "building_brake_on_off_changed",
+            "grid_replay_agrees_with_log", "flown_replay_agrees_with_log",
+            "scale_changed", "building_brake_on_off_changed",
             "mode_changed", "side_changed", "mode_or_side_changed", "skirt_ticks_grid", "skirt_ticks_shield")
     tot = {k: sum(r[k] for r in out) for k in keys}
     bym = {}
@@ -313,8 +333,9 @@ def main(argv=None) -> int:
     n = tot["ticks_replayed"]
     if n:
         print(f"ALL {len(out)} runs: replayed {n} ticks ({tot['skirt_not_reconstructed']} skirt "
-              f"ticks not reconstructed); grid replay = logged mode on "
-              f"{tot['grid_replay_agrees_with_log'] / n:.2%}")
+              f"ticks not reconstructed); the flown guard's replay = logged mode on "
+              f"{tot['flown_replay_agrees_with_log'] / n:.2%} (flew: "
+              f"{sorted({r['flown_guard'] for r in out})})")
         print(f"  shield field vs grid scan: building brake on/off differs on "
               f"{tot['building_brake_on_off_changed']} ({tot['building_brake_on_off_changed'] / n:.2%}), "
               f"guard scale on {tot['scale_changed']} ({tot['scale_changed'] / n:.2%}), "
