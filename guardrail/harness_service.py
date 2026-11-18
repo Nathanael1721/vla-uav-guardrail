@@ -1219,6 +1219,46 @@ NO_EPISODE_BAG = ("not written: the headless backend runs no ROS 2 graph, so the
                   "its run folder, bag/)")
 
 
+REPLAY_INPUT_FILES = ("metrics.json", "trajectory.json")
+
+
+def bundle_replay_inputs(run_dir: str | Path, ep_dir: str | Path) -> dict:
+    """What a replay of a rail episode reads beyond the grant's six names,
+    put beside them so the bundle alone replays (WP4-11,
+    tools/replay_at_revision.py; until 2026-11-18 a rail session's bundle
+    named its run folder instead): metrics.json (the Shield's forecast, arm
+    and subject), trajectory.json (the position's own doubles, which
+    flight_log.jsonl rounds to 1 mm) and the run's signed
+    `<tag>.replay.tar.gz`, each byte for byte (the archive as a hard link
+    when the two folders share a volume). Returns {name: what was done}; a
+    file the run lacks is said, not made up."""
+    import shutil
+    src, dst = Path(run_dir), Path(ep_dir)
+    out: dict[str, str] = {}
+    for name in REPLAY_INPUT_FILES:
+        if (src / name).is_file():
+            shutil.copyfile(src / name, dst / name)
+            out[name] = "written: the run's, byte for byte"
+        else:
+            out[name] = f"not written: the run folder {src.name} has no {name}"
+    tars = sorted(src.glob("*.replay.tar.gz"))
+    if tars:
+        t = tars[0]
+        try:
+            if (dst / t.name).exists():
+                (dst / t.name).unlink()
+            os.link(t, dst / t.name)
+            how = "a hard link"
+        except OSError:
+            shutil.copyfile(t, dst / t.name)
+            how = "a copy"
+        out[t.name] = f"written: the run's signed replay bundle, as {how}"
+    else:
+        out["<tag>.replay.tar.gz"] = (f"not written: the run folder {src.name} has no "
+                                      f"replay bundle")
+    return out
+
+
 def _blob_is(blob: bytes, recorded: str) -> bool:
     """Is `blob` the canonical IR the hash `recorded` names? Its SHA-256, or
     (an older run's shortened hash) the policy it parses to matching it."""
@@ -3334,6 +3374,11 @@ class Harness:
           kpi.json              the KPI table, the verdict, and `harness`
                                 (which of the six were written, and why not).
 
+        Beside them since 2026-11-18 (bundle_replay_inputs, kpi.json
+        harness.replay_files): metrics.json, trajectory.json and the run's
+        signed <tag>.replay.tar.gz, so the bundle alone can be replayed at
+        its flown revision (tools/replay_at_revision.py).
+
         A file the run folder lacks is NOT made up: kpi.json's
         harness.bundle_files says "not written" and why."""
         import shutil
@@ -3474,6 +3519,7 @@ class Harness:
                                            f"has no shield_audit.jsonl")
         if e.keep_log and (run_dir / "flight_log.jsonl").is_file():
             shutil.copyfile(run_dir / "flight_log.jsonl", ep_dir / "flight_log.jsonl")
+        replay_files = bundle_replay_inputs(run_dir, ep_dir)
 
         # harness_events.jsonl
         shield = "on" if spec.shield else "off"
@@ -3542,7 +3588,8 @@ class Harness:
                        "t", "at_sim_t", "method", "url", "event", "op", "rule_id",
                        "generation", "policy_hash", "refused", "code", "reason", "rtt_ms")}
                        for r in forwarded],
-                   "bundle_files": files, "episode_bag": bag_info}
+                   "bundle_files": files, "episode_bag": bag_info,
+                   "replay_files": replay_files}
         kpi_doc = _json_safe({
             **common, "status": status, "gates_failed": bad, "kpi_grade": bool(grade),
             "kpi_grade_reasons": why_not, "arm_record": e.arm_record,

@@ -158,6 +158,11 @@ NODE_FSM_PREFIX = "fsm_"
 # cos / sin, not a decision (difference_class).
 BODY_FRAME_FIELDS = ("raw_action", "emitted_action")
 BODY_FRAME_ULP_TOL = 1e-12
+# A difference in floats only - every rule id, operator, verdict and string
+# equal - of at most this much (m/s or m) is classed `float_last_digits`: the
+# arithmetic of another host (the Orin's aarch64 libm against this desktop's),
+# not a decision. Any larger, or any other kind of difference, is `decision`.
+FLOAT_LAST_DIGITS_TOL = 1e-9
 # harness_events.jsonl: where the flying checkout read the policy file from.
 EVENT_HOST_FIELDS = (("policy_source", "path"),)
 SKIP_DIRS = {"bag", "episode.bag2", "vla_frames", "vla_captures", "vla_record", "view",
@@ -968,7 +973,9 @@ def _open_loop(run: Path, code_root: Path) -> dict:
         from guardrail.models import Action4D, State
         from guardrail.shield import Shield
     except ImportError as e:
-        raise Refused(f"this revision cannot import the Shield's replay pieces: {e}") from None
+        what = getattr(e, "name", None) or str(e).split(" (")[0]
+        raise Refused(f"this revision cannot import the Shield's replay pieces "
+                      f"({what}: not at this revision)") from None
     _check_imported_from(code_root, RP, sys.modules["guardrail.shield"])
     rail_shield = getattr(RP, "rail_shield", None)
     limits: list[str] = []
@@ -1046,10 +1053,23 @@ def _open_loop(run: Path, code_root: Path) -> dict:
     if maps:
         raise Refused(f"a map rule ({', '.join(maps)}): the map the flight gave the Shield "
                       f"is not stored with the episode")
+    # A subject: replayable when the rail DECLARED it (ground truth, set once
+    # with its class before the first tick, as the ROS 2 node does with
+    # --subject) and metrics.json records that class and place, which every
+    # row's tgt_x / tgt_y repeats. A subject that moved (perception) is not.
+    subject = None
     if types & set(SUBJECT_RULES) and any(r.get("tgt_x") is not None or r.get("subject")
                                           for r in rows):
-        raise Refused("a subject_standoff rule with a subject on the rows, and the class "
-                      "the rail gave Shield.set_subject is not recorded")
+        ms = metrics.get("subject") if isinstance(metrics.get("subject"), dict) else {}
+        declared = (ms.get("position_source") == "declared"
+                    and isinstance(ms.get("class"), str)
+                    and all(isinstance(ms.get(k), (int, float)) for k in ("x", "y")))
+        if not declared or not all(r.get("tgt_x") == ms["x"] and r.get("tgt_y") == ms["y"]
+                                   and not r.get("subject") for r in rows):
+            raise Refused("a subject_standoff rule with a subject on the rows, and the class "
+                          "the rail gave Shield.set_subject is not recorded (metrics.json "
+                          "has no declared subject that every row repeats)")
+        subject = (float(ms["x"]), float(ms["y"]), ms["class"])
     clocks = None
     if all(isinstance(r.get("clock"), str) for r in rows):
         clocks = [_dt.fromisoformat(r["clock"]) for r in rows]
@@ -1123,6 +1143,10 @@ def _open_loop(run: Path, code_root: Path) -> dict:
                              clock=clock, **kw)
     cfg["path_repair"] = getattr(shield, "path_repair", None)
     cfg["path_repair_from"] = "metrics.json" if isinstance(pr, bool) else "revision default"
+    if subject is not None:
+        if not hasattr(shield, "set_subject"):
+            raise Refused("this revision's Shield has no set_subject")
+        shield.set_subject(subject[0], subject[1], subject[2])
     state_fields = getattr(State, "model_fields", {})
 
     def install(target) -> None:
@@ -1183,6 +1207,7 @@ def _open_loop(run: Path, code_root: Path) -> dict:
 
     current = gens[0]
     log_counts: dict[str, int] = {}
+    emitted_max = 0.0
     not_logged: dict[str, int] = {}
     first_log = None
     replayed_audit: list[dict] = []
@@ -1228,8 +1253,11 @@ def _open_loop(run: Path, code_root: Path) -> dict:
                 elif bool(row[nm]) != bool(getattr(dec, nm)):
                     diffs.append((nm, row[nm], bool(getattr(dec, nm))))
             em = [float(getattr(dec.emitted, k)) for k in VEC]
-            if _vec(row.get("emitted")) != em:
+            lv = _vec(row.get("emitted"))
+            if lv != em:
                 diffs.append(("emitted", row.get("emitted"), dict(zip(VEC, em))))
+                if lv is not None:
+                    emitted_max = max(emitted_max, max(abs(a - b) for a, b in zip(lv, em)))
         for f, lv, gv in diffs:
             log_counts[f] = log_counts.get(f, 0) + 1
             if first_log is None:
@@ -1275,6 +1303,14 @@ def _open_loop(run: Path, code_root: Path) -> dict:
             # equal), same code: only the writer's turn into the body frame
             # (cos / sin of the heading) differs, in the last digits.
             cls = "body_frame_rotation_last_digits"
+        elif (not touched_without_record and not orphans
+              and all(f.get("max_abs") is not None and f["max_abs"] <= FLOAT_LAST_DIGITS_TOL
+                      for f in fd.values())
+              and set(log_counts) <= {"emitted"} and emitted_max <= FLOAT_LAST_DIGITS_TOL):
+            # The same rules violated, the same operators, the same touched /
+            # braked, every string equal: only floats differ, by at most the
+            # tolerance (reported per field as max_abs).
+            cls = "float_last_digits"
         else:
             cls = "decision"
     if not_logged:
@@ -1292,6 +1328,7 @@ def _open_loop(run: Path, code_root: Path) -> dict:
         "audit": audit,
         "log": {"rows": len(rows), "source": src_rows,
                 "ticks_differing_by_field": log_counts,
+                "emitted_max_abs_diff": emitted_max,
                 "first_difference": first_log},
         "generations": sorted(set(gens)),
         "arm": arm,
