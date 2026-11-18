@@ -27,7 +27,10 @@
 #          rails fly a distance_envelope, the city rails' road map, the
 #          people limit; one SKIP where the CityLife street mask is absent),
 #          test_msl_rail (2026-11-18, X-11: a WGS84 DEM, the headless
-#          harness's opt-in ground and the ROS 2 Shield node's --ground).
+#          harness's opt-in ground and the ROS 2 Shield node's --ground),
+#          test_terrain_forecast (2026-11-18, X-11: the Shield's forecast
+#          judged over the DEM under each predicted pose, the AGL-band
+#          margin, RTL judged above home; a stored SITL row replay).
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
 #          test_prefix_eval, test_paraphraser, test_paraphraser_service (its
 #          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
@@ -764,6 +767,7 @@ jobs:
               tests/test_msl_dem.py \
               tests/test_world_map.py \
               tests/test_msl_rail.py \
+              tests/test_terrain_forecast.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
               tests/test_vla_link.py \
