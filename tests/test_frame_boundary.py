@@ -622,8 +622,22 @@ VEL_SINKS = {"move_by_velocity_async", "moveByVelocityAsync", "moveByVelocityZAs
 VEL_NAME = re.compile(r"^[a-z]?v_?(x|y|n|e)$")
 
 
+def _tracked_py():
+    """The repository's own .py files: git's list when there is one, so a
+    gitignored tree in the lab checkout (airsim_lab/, source/ - third-party
+    and scratch code, not the system) is not scanned; rglob otherwise."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "-c", "core.quotepath=off",
+                              "ls-files", "*.py"],
+                             capture_output=True, check=True).stdout
+        return sorted(ROOT / f for f in out.decode("utf-8").splitlines() if f)
+    except (OSError, subprocess.CalledProcessError):
+        return sorted(ROOT.rglob("*.py"))
+
+
 def _modules():
-    for p in sorted(ROOT.rglob("*.py")):
+    for p in _tracked_py():
         rel = p.relative_to(ROOT).as_posix()
         if rel.startswith(SCAN_EXCLUDE) or "/build/" in rel or "/install/" in rel:
             continue

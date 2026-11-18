@@ -408,14 +408,16 @@ def test_a_bundle_policy_reruns_from_the_extras_alone():
     # The signed bundle is a build product (bundles/ is gitignored and the lab
     # key is not committed), so a clean clone - GitHub CI - has none: say so
     # instead of failing on a missing file (CI, 2026-10-13).
-    if not (ROOT / "bundles" / "fase3-sim-demo-v0.1.1.tar.gz").is_file():
-        print("      needs bundles/fase3-sim-demo-v0.1.1.tar.gz: run "
+    # v0.1.4, the WGS84 bundle: since wf21 load_for_flight refuses the
+    # legacy metre form of v0.1.1 (WP1-14).
+    if not (ROOT / "bundles" / "fase3-sim-demo-v0.1.4.tar.gz").is_file():
+        print("      needs bundles/fase3-sim-demo-v0.1.4.tar.gz: run "
               "tools/build_flight_bundles.py where the lab key is")
         return SKIP
     d = FAMILIES["nfz-head-on"].first.spec.model_dump(mode="json", by_alias=True)
     d.pop("paraphrase", None)
     d["ab"] = False
-    d["policy"] = {"bundle_path": "bundles/fase3-sim-demo-v0.1.1.tar.gz"}
+    d["policy"] = {"bundle_path": "bundles/fase3-sim-demo-v0.1.4.tar.gz"}
     spec = ScenarioSpec.model_validate(d)
     run = S.run_episode(spec, LIBRARY.defaults, 0)
     ex = json.loads(json.dumps(S.episode_extras(spec, LIBRARY.defaults, 0, run)))
