@@ -2543,7 +2543,7 @@ def _pas_perception(args: list[str], cwd: str | None = None, script: Path | None
             if k not in ("VLAGUARD_DRY_RUN", "G1_VERDICT", "TAG", "BUNDLE", "VLA_PORT",
                          "FRONT_CAPTURE_INTERVAL_S", "SECONDS_", "FAMILY", "VLA_FEED",
                          "STRESS", "PREFIX", "AB_PAIR", "CAMPAIGN", "N_PAIRS", "ARMS",
-                         "SEED", "PAUSE_S")}
+                         "SEED", "PAUSE_S", "AA", "OPENVLA_DIR")}
     full.update({"VLAGUARD_DRY_RUN": "1", "G1_VERDICT": g1.as_posix()})
     for k, v in env.items():
         if v is None:
@@ -2839,11 +2839,33 @@ def test_the_prefix_ab_flies_both_arms_of_each_pair_on_one_seed_in_abba_order():
     assert arms == ["csp", "off", "neutral", "neutral", "off", "csp"], arms
     assert {options(shlex.split(ln[5:]))["--seed"] for ln in r.stdout.splitlines()
             if ln.startswith("EXEC:")} == {"7"}
-    # refused: no campaign, no off arm, a family with no VLA, a flag it sets
+    # AA=1: the csp arm flown again in each pair (its A/A repeat, tag _csp_aa,
+    # rotated with the others); AerialVLA's neutral arm names the tokenizer
+    # it is matched with (OPENVLA_DIR, default ~/models/openvla-7b)
+    r = _pas_perception([], script=RUN_PAS_PREFIX_AB, CAMPAIGN="pab_a", N_PAIRS="2",
+                        ARMS="csp off neutral", AA="1", FAMILY="aerialvla")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    got = [(options(shlex.split(ln[5:]))["--tag"], options(shlex.split(ln[5:]))["--vla-prefix"],
+            options(shlex.split(ln[5:]))["--ab-pair"])
+           for ln in r.stdout.splitlines() if ln.startswith("EXEC:")]
+    assert got == [("pab_a_p1_csp", "csp", "pab_a_p1"), ("pab_a_p1_off", "off", "pab_a_p1"),
+                   ("pab_a_p1_neutral", "neutral", "pab_a_p1"),
+                   ("pab_a_p1_csp_aa", "csp", "pab_a_p1"),
+                   ("pab_a_p2_csp_aa", "csp", "pab_a_p2"),
+                   ("pab_a_p2_neutral", "neutral", "pab_a_p2"),
+                   ("pab_a_p2_off", "off", "pab_a_p2"), ("pab_a_p2_csp", "csp", "pab_a_p2")], got
+    assert "models/openvla-7b/tokenizer.json" in r.stdout, r.stdout
+    r = _pas_perception([], script=RUN_PAS_PREFIX_AB, CAMPAIGN="pab_a", N_PAIRS="1",
+                        ARMS="csp off neutral", FAMILY="aerialvla", OPENVLA_DIR="/m/ov")
+    assert r.returncode == 0 and "/m/ov/tokenizer.json" in r.stdout, (r.stdout, r.stderr)
+    # refused: no campaign, no off arm, a family with no VLA, a flag it sets,
+    # an A/A with no csp arm to repeat, an AA that is not 0 or 1
     for env, args in (({"CAMPAIGN": None}, []), ({"CAMPAIGN": "x", "ARMS": "csp neutral"}, []),
                       ({"CAMPAIGN": "x", "FAMILY": "servo"}, []),
                       ({"CAMPAIGN": "x"}, ["--seed", "3"]),
-                      ({"CAMPAIGN": "x", "N_PAIRS": "0"}, [])):
+                      ({"CAMPAIGN": "x", "N_PAIRS": "0"}, []),
+                      ({"CAMPAIGN": "x", "ARMS": "neutral off", "AA": "1"}, []),
+                      ({"CAMPAIGN": "x", "AA": "2"}, [])):
         r = _pas_perception(args, script=RUN_PAS_PREFIX_AB, **env)
         assert r.returncode != 0 and "EXEC:" not in r.stdout, (env, args, r.stdout)
     # run_pas_perception.sh alone: nothing added unless asked, refused for servo
