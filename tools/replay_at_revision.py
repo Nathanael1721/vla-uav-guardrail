@@ -111,13 +111,18 @@ WHAT THIS IS NOT
 
 An open-loop replay judges each tick where the flown aircraft was; it is the
 Shield's half of the episode at the flown code, not a re-flight of the
-autopilot and simulator, which needs the rig (docs/RUNBOOK-orin-hil.md). The
-replay runs on this desktop's interpreter and libm, not the companion's that
-flew a hil episode (aarch64 on the Orin); each record names both
-(`flown_on`, `replayed_on`), and a last-digit difference between them would
-be read as that, not hidden. The rows log no velocity the Shield did not
-use and no pipe clock: an episode whose Shield read either is refused, not
-approximated.
+autopilot and simulator, which needs the rig (docs/RUNBOOK-orin-hil.md): it
+does not reproduce the trajectory (the grant's data-flow.md "Replay path"),
+and it does not compare the node's escalation FSM fields (fsm_*), which step
+on the autopilot's mode. The replay runs on the interpreter and libm it is
+started under (--python), not the companion's that flew a hil episode
+(aarch64 on the Orin); each record names both (`flown_on`: host and, where
+the run recorded it, the Python version; `replayed_on`), so a last-digit
+difference can be put to the host or to the interpreter only by replaying
+under the other - on this desktop the interpreter (--python), on the Orin
+the host (a rig step) - never by assumption. The rows log no velocity the
+Shield did not use and no pipe clock: an episode whose Shield read either
+is refused, not approximated.
 
 Exit code: 0 every replayed episode identical, 1 one differs, 2 nothing
 could be replayed or the arguments are wrong.
@@ -130,6 +135,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -138,7 +144,7 @@ import tarfile
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -154,14 +160,17 @@ NODE_FSM_PREFIX = "fsm_"
 # The audit record's body-frame actions: the writer turns the Shield's
 # world-frame raw / emitted into the body frame at the tick's heading
 # (guardrail.audit._body). A difference in these alone, under the size below,
-# with the world-frame actions and the heading equal, is the platform's
-# cos / sin, not a decision (difference_class).
+# with the world-frame actions and the heading equal, is in the cos / sin of
+# the heading, not a decision (difference_class); whose cos / sin - the
+# host's libm or the interpreter's - the class does not say.
 BODY_FRAME_FIELDS = ("raw_action", "emitted_action")
 BODY_FRAME_ULP_TOL = 1e-12
 # A difference in floats only - every rule id, operator, verdict and string
-# equal - of at most this much (m/s or m) is classed `float_last_digits`: the
-# arithmetic of another host (the Orin's aarch64 libm against this desktop's),
-# not a decision. Any larger, or any other kind of difference, is `decision`.
+# equal - of at most this much (m/s or m) is classed `float_last_digits`:
+# arithmetic in the last digits, not a decision. The class names no cause
+# (the host's libm, the interpreter's float routines, or the replay itself);
+# replaying under another interpreter (--python) or host tells them apart.
+# Any larger, or any other kind of difference, is `decision`.
 FLOAT_LAST_DIGITS_TOL = 1e-9
 # harness_events.jsonl: where the flying checkout read the policy file from.
 EVENT_HOST_FIELDS = (("policy_source", "path"),)
@@ -274,11 +283,61 @@ def read_manifest(run: Path) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
-def manifest_date(run: Path) -> date | None:
+EPISODE_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}Z")
+FLIGHT_DATE_BASES = ("the episode folder's UTC stamp",
+                     "events.jsonl's first wall time (UTC)",
+                     "manifest.json's file time (local; the run records no flight time)")
+
+
+def _first_wall(data: bytes | None) -> date | None:
+    if not data:
+        return None
+    for line in data.decode("utf-8", "replace").splitlines()[:5]:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        wall = rec.get("wall") if isinstance(rec, dict) else None
+        if isinstance(wall, str):
+            try:
+                t = datetime.fromisoformat(wall.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if t.tzinfo is not None:
+                t = t.astimezone(timezone.utc)
+            return t.date()
+    return None
+
+
+def flight_date(run: Path) -> tuple[date | None, str | None]:
+    """(the date the episode flew, how it was read). From the flight's own
+    records, never from a file time a copy, a restore, a sync or a re-sign
+    can change (until 2026-11-18 the window read manifest.json's
+    modification time alone): the UTC stamp the harness put in the episode
+    folder's name (episode-<UTC>--...), else the first wall time in the
+    run's events.jsonl (in the folder, or in its replay bundle), in UTC.
+    Only a run holding neither falls back to manifest.json's file time,
+    and says so (FLIGHT_DATE_BASES)."""
+    m = EPISODE_STAMP.search(run.name)
+    if m:
+        try:
+            return date.fromisoformat(m.group(1)), FLIGHT_DATE_BASES[0]
+        except ValueError:
+            pass
+    ev = run / "events.jsonl"
+    data = None
+    if ev.is_file():
+        with open(ev, "rb") as fh:
+            data = b"".join(fh.readline() for _ in range(5))
+    else:
+        data, _ = read_run_file(run, "events.jsonl")
+    d = _first_wall(data)
+    if d is not None:
+        return d, FLIGHT_DATE_BASES[1]
     p = run / "manifest.json"
     if not p.is_file():
-        return None
-    return datetime.fromtimestamp(p.stat().st_mtime).date()
+        return None, None
+    return datetime.fromtimestamp(p.stat().st_mtime).date(), FLIGHT_DATE_BASES[2]
 
 
 def _jsonl_bytes(data: bytes) -> list[dict]:
@@ -404,8 +463,8 @@ def parse_window(text: str) -> tuple[date, date]:
 
 
 def select(runs: list[Path], windows: list[tuple], topologies: list[str]) -> list[tuple]:
-    """(run, manifest, why selected) for each run in a window (the manifest's
-    modification date) or of a named topology; every run when neither is
+    """(run, manifest, why selected) for each run in a window (the date it
+    flew, flight_date) or of a named topology; every run when neither is
     given."""
     out = []
     for run in runs:
@@ -413,7 +472,7 @@ def select(runs: list[Path], windows: list[tuple], topologies: list[str]) -> lis
         if man is None:
             continue
         why = []
-        d = manifest_date(run)
+        d, _ = flight_date(run)
         for lo, hi in windows:
             if d is not None and lo <= d <= hi:
                 why.append(f"window {lo.isoformat()}:{hi.isoformat()}")
@@ -431,9 +490,9 @@ def plan(selected: list[tuple], repo: Path, root: Path | None) -> tuple[dict, li
     resolved: dict[str, str | None] = {}
     for run, man, why in selected:
         name = (run.relative_to(root) if root is not None else Path(run.name)).as_posix()
-        d = manifest_date(run)
+        d, basis = flight_date(run)
         rec = {"run": name, "dir": str(run), "selected_by": why,
-               "manifest_date": d.isoformat() if d else None,
+               "flight_date": d.isoformat() if d else None, "flight_date_basis": basis,
                "topology": man.get("topology"),
                "code_revision_flown": man.get("code_revision"),
                "kind": ("refly" if str(man.get("topology", "")).startswith("headless")
@@ -542,13 +601,17 @@ def _chunks(items: list, n: int) -> list[list]:
 
 
 def run_driver(wt: Path, jobs: list[dict], scratch: Path, n_proc: int,
-               python: str) -> list[dict]:
+               python: str, dump: Path | None = None) -> list[dict]:
     """The driver over `jobs` in `n_proc` interpreters at once, each started
-    isolated (-I) with the worktree as its code root."""
+    isolated (-I) with the worktree as its code root (`python`: which
+    interpreter; `dump`: where an open-loop episode that differs writes all
+    of its differences, _dump_differences)."""
     def one(i: int, chunk: list[dict]) -> list[dict]:
         job = scratch / f"job_{wt.name}_{i}.json"
         out = scratch / f"out_{wt.name}_{i}.jsonl"
-        job.write_text(json.dumps({"runs": chunk}), encoding="utf-8")
+        job.write_text(json.dumps({"runs": chunk,
+                                   "dump_dir": str(dump) if dump else None}),
+                       encoding="utf-8")
         r = subprocess.run([python, "-I", "-X", "utf8", str(TOOL), "--driver",
                             "--code-root", str(wt), "--job", str(job), "--out", str(out)],
                            cwd=str(wt), capture_output=True, text=True, encoding="utf-8",
@@ -576,7 +639,8 @@ def run_driver(wt: Path, jobs: list[dict], scratch: Path, n_proc: int,
 
 
 def replay(selected: list[tuple], *, repo: Path, root: Path | None, scratch: Path | None,
-           n_proc: int = 1, python: str | None = None, log=print) -> dict:
+           n_proc: int = 1, python: str | None = None, dump: Path | None = None,
+           log=print) -> dict:
     """Plan, replay every group at its revision, clean up. Returns
     {records, worktrees}."""
     groups, records = plan(selected, repo, root)
@@ -589,7 +653,7 @@ def replay(selected: list[tuple], *, repo: Path, root: Path | None, scratch: Pat
             t0 = time.perf_counter()
             try:
                 with wt as path:
-                    got = run_driver(path, jobs, base, n_proc, python)
+                    got = run_driver(path, jobs, base, n_proc, python, dump)
             except Exception as e:                               # noqa: BLE001
                 got = [{**j, "verdict": "not_replayable",
                         "why": f"no worktree at {sha[:12]}: {type(e).__name__}: {e}"}
@@ -626,6 +690,19 @@ def _reason_key(why: str) -> str:
     return why[:90]
 
 
+def _replayed_on(records: list[dict]) -> dict | list[dict]:
+    """The interpreter and host the drivers ran under, as each record says
+    (with --python not this process's); one dict when they all agree."""
+    seen: list[dict] = []
+    for r in records:
+        f = r.get("replayed_on")
+        if isinstance(f, dict) and f not in seen:
+            seen.append(f)
+    if not seen:
+        return host_facts()
+    return seen[0] if len(seen) == 1 else seen
+
+
 def summarise(records: list[dict], worktrees: list[dict], *, command: str,
               seconds: float, groups: list[str]) -> dict:
     def counts(rs):
@@ -654,7 +731,7 @@ def summarise(records: list[dict], worktrees: list[dict], *, command: str,
                  "refly: the headless episode re-flown closed loop by that revision's "
                  "tools/rerun_episode.py; open_loop: that revision's Shield on the "
                  "episode's logged inputs)"),
-        "command": command, "seconds": round(seconds, 1), "replayed_on": host_facts(),
+        "command": command, "seconds": round(seconds, 1), "replayed_on": _replayed_on(records),
         "tool_revision": tool_revision(),
         "compared": {
             "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; "
@@ -691,11 +768,12 @@ def summarise(records: list[dict], worktrees: list[dict], *, command: str,
 
 
 def _compact(r: dict) -> dict:
-    keep = ("run", "kind", "verdict", "why", "manifest_date", "topology", "selected_by",
+    keep = ("run", "kind", "verdict", "why", "flight_date", "flight_date_basis", "topology",
+            "selected_by",
             "code_revision_flown", "difference_class", "ticks", "audit", "log", "events",
             "kpi",
             "flight_log", "first_difference", "generations", "limits", "flown_on",
-            "state_source")
+            "state_source", "installs", "dump", "decision_ticks")
     return {k: r[k] for k in keep if k in r and r[k] is not None}
 
 
@@ -707,7 +785,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("runs", nargs="*", type=Path, help="run folders (default: --root's)")
     ap.add_argument("--root", type=Path, default=None)
     ap.add_argument("--window", action="append", default=[],
-                    help="FROM:TO, ISO dates: runs whose manifest.json is dated inside "
+                    help="FROM:TO, ISO dates: runs that flew inside (flight_date: the "
+                         "episode's own stamp or first wall time) "
                          "(repeatable; with --topology, a run matching either is taken)")
     ap.add_argument("--topology", action="append", default=[],
                     help="runs whose manifest names this topology (repeatable)")
@@ -720,6 +799,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="write the summary JSON here, and the per-episode records "
                          "beside it as <stem>.per_run.jsonl.gz")
     ap.add_argument("--json", action="store_true", help="print the summary as JSON")
+    ap.add_argument("--python", type=Path, default=None,
+                    help="the interpreter the replay runs under (default: this one); "
+                         "each record's replayed_on says which ran it")
+    ap.add_argument("--dump-dir", type=Path, default=None,
+                    help="write every difference of each open-loop episode that differs "
+                         "here, one JSON file per episode (the records keep the first)")
     a = ap.parse_args(argv)
     try:
         windows = [parse_window(w) for w in a.window]
@@ -742,10 +827,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if a.scratch is not None:
         a.scratch.mkdir(parents=True, exist_ok=True)
-    got = replay(selected, repo=a.repo, root=root, scratch=a.scratch, n_proc=a.jobs)
+    if a.python is not None and not Path(a.python).is_file():
+        print(f"--python {a.python}: no such interpreter", file=sys.stderr)
+        return 2
+    got = replay(selected, repo=a.repo, root=root, scratch=a.scratch, n_proc=a.jobs,
+                 python=str(a.python) if a.python else None,
+                 dump=a.dump_dir.resolve() if a.dump_dir else None)
     shown = list(argv)
     for i, x in enumerate(shown[:-1]):
-        if x in ("--out", "--scratch", "--repo"):
+        if x in ("--out", "--scratch", "--repo", "--python", "--dump-dir"):
             shown[i + 1] = f"<{x[2:]}>"
     groups = ([f"window {lo.isoformat()}:{hi.isoformat()}" for lo, hi in windows]
               + [f"topology {t}" for t in a.topology])
@@ -795,12 +885,13 @@ def driver_main(argv: list[str]) -> int:
     import importlib
     importlib.invalidate_caches()
     job = json.loads(a.job.read_text(encoding="utf-8"))
+    dump = Path(job["dump_dir"]) if job.get("dump_dir") else None
     with a.out.open("w", encoding="utf-8", newline="\n") as fh:
         for j in job["runs"]:
             t0 = time.perf_counter()
             try:
                 rec = (_refly(Path(j["dir"]), Path(code)) if j["kind"] == "refly"
-                       else _open_loop(Path(j["dir"]), Path(code)))
+                       else _open_loop(Path(j["dir"]), Path(code), dump=dump))
             except Refused as e:
                 rec = {"verdict": "not_replayable", "why": str(e)}
             except Exception as e:                               # noqa: BLE001
@@ -961,16 +1052,24 @@ def _vec(d: Any) -> list | None:
 
 
 def _flown_on(metrics: dict) -> dict | None:
-    """The host the Shield node ran on, as the run's hil_evidence says."""
+    """The host the Shield node ran on, as the run's hil_evidence says, and
+    the interpreter it ran under where the run recorded it (metrics.json
+    gc.python, written by the node's GC pacing since 2026-11-10; `python`
+    absent on an earlier run, never guessed). Both are needed to read a
+    last-digit difference: the host's libm and the interpreter's own float
+    routines (Python 3.12 changed sum()) are separate candidates."""
+    out: dict = {}
     ev = metrics.get("hil_evidence")
-    if not isinstance(ev, dict):
-        return None
-    out = {k: ev[k] for k in ("host_arch", "device_model", "l4t_release", "jetpack",
-                              "hostname") if isinstance(ev.get(k), (str, int, float))}
+    if isinstance(ev, dict):
+        out = {k: ev[k] for k in ("host_arch", "device_model", "l4t_release", "jetpack",
+                                  "hostname") if isinstance(ev.get(k), (str, int, float))}
+    gc = metrics.get("gc")
+    if isinstance(gc, dict) and isinstance(gc.get("python"), str):
+        out["python"] = gc["python"]
     return out or None
 
 
-def _open_loop(run: Path, code_root: Path) -> dict:
+def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
     import inspect
     from datetime import datetime as _dt
     try:
@@ -1154,8 +1253,14 @@ def _open_loop(run: Path, code_root: Path) -> dict:
             raise Refused("this revision's Shield has no set_subject")
         shield.set_subject(subject[0], subject[1], subject[2])
     state_fields = getattr(State, "model_fields", {})
+    installs: list[dict] = []
 
-    def install(target) -> None:
+    def install(target) -> dict:
+        """Commit stored generation `target` on the Shield as a hot-apply
+        does: the rules replaced, every dynamic_nfz it adds or changes
+        anchored at the Shield's own event time (its last tick, which is
+        what the node's events get: shield_t=None), the others keeping
+        theirs. Returns what was done, for the record."""
         for need in ("_commit", "_event_time", "_anchors"):
             if not hasattr(shield, need):
                 raise Refused(f"this revision's Shield has no {need}: a hot-applied "
@@ -1164,16 +1269,36 @@ def _open_loop(run: Path, code_root: Path) -> dict:
         keep = {c.id for c in target.constraints}
         anchors = {k: v for k, v in shield._anchors.items() if k in keep}
         te = shield._event_time(None)
+        moved = []
         for c in target.constraints:
             if c.type == "dynamic_nfz" and (c.id not in cur or cur[c.id].model_dump(
                     mode="json") != c.model_dump(mode="json")):
                 anchors[c.id] = te
+                moved.append(c.id)
         shield.policy.generation = target.generation - 1
         shield._commit(list(target.constraints), "replay_generation", "-", "-", None, anchors)
         if not target.matches_hash(shield.policy.policy_hash):
             raise Refused(f"generation {target.generation} rebuilt in this revision's Shield "
                           f"hashes to {shield.policy.policy_hash}, not the stored "
                           f"{target.policy_hash}")
+        return {"generation": target.generation, "event_time": te,
+                "anchored": {k: anchors[k] for k in moved}}
+
+    def install_through(frm: int, to: int, i: int, tick) -> None:
+        """Rows that go from generation `frm` to `to` in one tick (two hot
+        applies between ticks: a spawn and a rotate at one mission time)
+        are installed through every stored generation between, in order,
+        as the node committed them (until 2026-11-18 the replay committed
+        `to` alone, straight from `frm`)."""
+        chain = [n for n in sorted(policies) if frm < n <= to] if to > frm else [to]
+        if not chain or chain[-1] != to:
+            chain = [to]
+        gaps = [n for n in range(frm + 1, to) if n not in policies] if to > frm else []
+        if gaps:
+            limits.append(f"row {i} (tick {tick}): generation(s) {gaps} between {frm} and "
+                          f"{to} are not stored, so {to} was committed without them")
+        installs.append({"row": i, "tick": tick, "from": frm, "to": to,
+                         "commits": [install(policies[n]) for n in chain]})
 
     # positions: trajectory.json's own doubles when it has one point per row
     tdata, _ = read_run_file(run, "trajectory.json")
@@ -1221,9 +1346,12 @@ def _open_loop(run: Path, code_root: Path) -> dict:
     touched_without_record: list = []
     rows_ticks = set()
     yaw_exact = 0
+    log_diff_ticks: list[dict] = []
+    emitted_by_tick: dict = {}
+    log_decision: dict = {}
     for i, row in enumerate(rows):
         if gens[i] != current:
-            install(policies[gens[i]])
+            install_through(current, gens[i], i, row.get("tick"))
             current = gens[i]
         if clocks:
             pin[0] = clocks[i]
@@ -1264,11 +1392,20 @@ def _open_loop(run: Path, code_root: Path) -> dict:
                 diffs.append(("emitted", row.get("emitted"), dict(zip(VEC, em))))
                 if lv is not None:
                     emitted_max = max(emitted_max, max(abs(a - b) for a, b in zip(lv, em)))
+                    emitted_by_tick[tick] = max(abs(a - b) for a, b in zip(lv, em))
+                else:
+                    emitted_by_tick[tick] = None
         for f, lv, gv in diffs:
+            if f != "emitted":
+                log_decision.setdefault(tick, []).append(f)
             log_counts[f] = log_counts.get(f, 0) + 1
             if first_log is None:
                 first_log = {"where": "flight_log.jsonl", "tick": tick, "row": i, "field": f,
                              "stored": lv, "replayed": gv}
+        if diffs and dump is not None:
+            log_diff_ticks.append({"row": i, "tick": tick, "generation": gens[i],
+                                   "fields": [{"field": f, "stored": lv, "replayed": gv}
+                                              for f, lv, gv in diffs]})
         # the audit record, the Shield's part
         if stored is not None or dec.touched:
             r = logger.record(tick, dec, fsm_record={"transition": "replay"})
@@ -1319,17 +1456,28 @@ def _open_loop(run: Path, code_root: Path) -> dict:
             cls = "float_last_digits"
         else:
             cls = "decision"
+    decision_ticks = (_decision_ticks(stored_in_order, replayed_audit, log_decision,
+                                      emitted_by_tick) if cls == "decision" else None)
     if not_logged:
         limits.append("not compared, the row does not log it: " + ", ".join(
             f"{k} on {n} tick(s)" for k, n in sorted(not_logged.items())))
     if yaw_exact < len(rows):
         limits.append(f"heading: the audit record's full double on {yaw_exact} tick(s), the "
                       f"log's 0.01 degree on {len(rows) - yaw_exact}")
+    rail_gens = _rail_generation_records(run)
+    dumped = None
+    if dump is not None and diffs_all:
+        dumped = _dump_differences(dump, run, stored_in_order, replayed_audit, log_diff_ticks,
+                                   installs, rail_gens)
     return {
         "verdict": "differs" if diffs_all else "identical",
         "first_difference": diffs_all[0] if diffs_all else None,
         "differences": diffs_all,
         "difference_class": cls,
+        # A `decision` episode's ticks that differ in more than numbers (at
+        # most 20), each with whether the action the Shield emitted there
+        # is bit for bit the flown one.
+        "decision_ticks": decision_ticks,
         "ticks": len(rows),
         "audit": audit,
         "log": {"rows": len(rows), "source": src_rows,
@@ -1341,8 +1489,91 @@ def _open_loop(run: Path, code_root: Path) -> dict:
         "shield": {**cfg, "clock": "pinned per tick" if clocks else "none"},
         "state_source": state_source,
         "flown_on": _flown_on(metrics),
+        # Each generation change on the rows and how the replay committed
+        # it (the event time and the zones it anchored there), beside the
+        # rail's own record of the same generations (events.jsonl): what
+        # separates a difference the replay made from one the flown code
+        # made (2026-11-18 review).
+        "installs": installs,
+        "rail_generations": rail_gens,
+        "dump": dumped,
         "limits": limits,
     }
+
+
+def _structural_fields(a: dict, b: dict) -> list[str]:
+    """The fields two records differ in by more than numbers at the same
+    places (a string, a shape, a list's length)."""
+    return [k for k in list(a) + [k for k in b if k not in a]
+            if json.dumps(a.get(k)) != json.dumps(b.get(k))
+            and (k not in a or k not in b or max_abs_numeric(a[k], b[k]) is None)]
+
+
+def _decision_ticks(stored: list[dict], replayed: list[dict], log_decision: dict,
+                    emitted_by_tick: dict, limit: int = 20) -> list[dict]:
+    out: dict = {}
+    for s, r in zip(stored, replayed):
+        a = _drop(s, AUDIT_WALL_FIELDS, NODE_FSM_PREFIX)
+        b = _drop(r, AUDIT_WALL_FIELDS, NODE_FSM_PREFIX)
+        f = _structural_fields(a, b)
+        if f:
+            out.setdefault(s.get("tick"), {"audit_fields": [], "log_fields": []})[
+                "audit_fields"] = f
+    for t, f in log_decision.items():
+        out.setdefault(t, {"audit_fields": [], "log_fields": []})["log_fields"] = f
+    ticks = sorted(out, key=lambda t: (t is None, t if t is not None else 0))
+    return [{"tick": t, **out[t], "emitted_bit_identical": t not in emitted_by_tick,
+             "emitted_max_abs_diff": emitted_by_tick.get(t)} for t in ticks[:limit]]
+
+
+def _rail_generation_records(run: Path) -> list[dict]:
+    """The rail's own record of each policy generation and of the scenario
+    event that made it (events.jsonl: `policy_generation`, `scenario_event`),
+    the mission time and wall time of each, or [] when the run kept none."""
+    data, _ = read_run_file(run, "events.jsonl")
+    if data is None:
+        return []
+    out = []
+    for line in data.decode("utf-8", "replace").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get("kind") in ("policy_generation", "scenario_event"):
+            out.append({k: r.get(k) for k in ("kind", "t", "wall", "generation", "policy_hash",
+                                              "reason", "event", "op", "rule_id", "refused")
+                        if r.get(k) is not None})
+    return out
+
+
+def _dump_differences(dump: Path, run: Path, stored: list[dict], replayed: list[dict],
+                      log_ticks: list[dict], installs: list[dict],
+                      rail_gens: list[dict]) -> str:
+    """Every differing audit record (stored and replayed, `ts` and the
+    node's fsm_* dropped from both, as compared) and every differing
+    flight-log tick of one episode, with how each generation was installed
+    and the rail's record of it, as `<dump>/<run path, slashes as __>.json`.
+    For finding a difference's cause; the per-run record keeps the first
+    difference only. Returns the file's name."""
+    pairs = []
+    for s, r in zip(stored, replayed):
+        a = _drop(s, AUDIT_WALL_FIELDS, NODE_FSM_PREFIX)
+        b = _drop(r, AUDIT_WALL_FIELDS, NODE_FSM_PREFIX)
+        if json.dumps(a) == json.dumps(b):
+            continue
+        fields = [k for k in list(a) + [k for k in b if k not in a]
+                  if json.dumps(a.get(k)) != json.dumps(b.get(k))]
+        pairs.append({"tick": s.get("tick"), "fields": fields,
+                      "stored": {k: a.get(k) for k in fields},
+                      "replayed": {k: b.get(k) for k in fields}})
+    name = "__".join(run.resolve().parts[-3:]).replace(":", "") + ".json"
+    dump.mkdir(parents=True, exist_ok=True)
+    (dump / name).write_text(json.dumps({
+        "run": run.as_posix(), "audit_records_differing": pairs,
+        "log_ticks_differing": log_ticks, "installs": installs,
+        "rail_generations": rail_gens}, indent=1, default=str) + "\n",
+        encoding="utf-8", newline="\n")
+    return name
 
 
 if __name__ == "__main__":

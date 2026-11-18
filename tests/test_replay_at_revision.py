@@ -39,8 +39,16 @@ What is pinned here:
   * the worktree is gone afterwards (not on disk, not in `git worktree
     list`), and a junction / symlink inside a folder is unlinked without
     deleting its target's files;
+  * rows that jump two generations in one tick are installed through the
+    one between, in order, each commit recorded (`installs`); a `decision`
+    record names its ticks and whether the emitted action is the flown one
+    (`decision_ticks`);
+  * a run is dated by its own flight record (the episode folder's UTC
+    stamp, else events.jsonl's first wall time), not by manifest.json's file
+    time; `flown_on` carries the flown interpreter where the run recorded it;
   * the CLI writes the summary and the per-episode records, and exits 0 / 1
-    / 2.
+    / 2; --python picks the drivers' interpreter (the summary's replayed_on
+    is theirs) and --dump-dir keeps every difference of a differing episode.
 
 The end-to-end tests SKIP outside a git checkout, and when guardrail/,
 experiments/, policies/ or tools/rerun_episode.py have uncommitted changes
@@ -109,12 +117,16 @@ def _head_holds_this_code() -> str | None:
 # --------------------------------------------------------------------------- #
 
 def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
-              subject: tuple | None = None, record_subject: bool = True) -> None:
+              subject: tuple | None = None, record_subject: bool = True,
+              two_edits: bool = False) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
     inside), its audit written by AuditLogger as the rail writes it.
     `subject` (x, y, class): a DECLARED subject set once before the first
     tick, on the pedestrian policy, as the node's --subject does; metrics.json
-    records it unless `record_subject` is false."""
+    records it unless `record_subject` is false. `two_edits`: the spawned
+    zone is moved in the same tick (a spawn and a rotate at one mission
+    time, as dyn-nfz-rotate-spin flies), so the rows go from generation 0
+    to 2."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
@@ -137,6 +149,12 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
                 motion={"vx_mps": -0.3, "vy_mps": 0.1}))
             (run / f"policy_g{sh.policy.generation}.json").write_bytes(
                 sh.policy.canonical_bytes())
+            if two_edits:
+                sh.move_nfz("bar", [(x + 10, y - 7), (x + 12, y - 7), (x + 12, y + 7),
+                                    (x + 10, y + 7)],
+                            motion={"vx_mps": -0.25, "vy_mps": 0.05})
+                (run / f"policy_g{sh.policy.generation}.json").write_bytes(
+                    sh.policy.canonical_bytes())
         raw = Action4D(vx=4.5 + 0.01 * k, vy=0.3 * math.sin(k / 7.0),
                        vz_up=1.2 if k < 30 else -0.1, yaw_rate=0.0)
         d = sh.filter(State(x=x, y=y, up=up, yaw_deg=yaw), raw)
@@ -171,8 +189,8 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     (run / "manifest.json").write_text(json.dumps({
         "code_revision": rev, "policy_hash": pol.policy_hash, "random_seed": 0,
         "sim_speedup": 1.0, "topology": "dev"}), encoding="utf-8")
-    assert len(audit) > 10 and {r["generation"] for r in rows} == {0, 1}, \
-        "the synthetic flight gave the Shield nothing to audit"
+    assert len(audit) > 10 and {r["generation"] for r in rows} == (
+        {0, 2} if two_edits else {0, 1}), "the synthetic flight gave the Shield nothing to audit"
 
 
 def _headless_bundle(ep_dir: Path, rev: str, sid: str = "nfz-head-on") -> None:
@@ -236,6 +254,8 @@ def _replayed() -> dict | str:
     shutil.copytree(root / "rail_ok", root / "rail_rule_id")
     _edit_jsonl(root / "rail_rule_id" / "shield_audit.jsonl", i,
                 lambda a: a["violations"][0].__setitem__("rule_id", "another-rule"))
+    # two hot applies between two ticks: the rows jump from generation 0 to 2
+    _rail_run(root / "rail_two_edits", rev, two_edits=True)
     # a declared subject, recorded in metrics.json; and one that is not
     _rail_run(root / "rail_subject", rev, subject=(20.0, 1.0, "pedestrian"))
     _rail_run(root / "rail_subject_unrecorded", rev, subject=(20.0, 1.0, "pedestrian"),
@@ -404,8 +424,74 @@ def test_the_open_loop_replay_can_fail_and_says_where():
     r = out["rail_rule_id"]
     assert r["verdict"] == "differs" and r["difference_class"] == "decision", r
     assert r["first_difference"]["field"] == "violations", r["first_difference"]
+    # where it is a decision, and whether the emitted action is still the flown one
+    assert r["decision_ticks"] == [{"tick": _CACHE["world_tick"], "audit_fields": ["violations"],
+                                    "log_fields": [], "emitted_bit_identical": True,
+                                    "emitted_max_abs_diff": None}], r["decision_ticks"]
+    assert w["decision_ticks"] is None and b["decision_ticks"] is None
     # the wall time and the node's FSM verdict are not the Shield's to replay
     assert out["rail_ts_fsm"]["verdict"] == "identical", out["rail_ts_fsm"]
+
+
+def test_two_hot_applies_in_one_tick_are_installed_in_the_order_the_node_committed():
+    """Rows that go from generation 0 to 2 in one tick (a spawn and a move
+    between two ticks, as dyn-nfz-rotate-spin flies) are installed through
+    generation 1, then 2, at the Shield's own event time (2026-11-18 review:
+    the replay had committed 2 straight from 0); each commit is recorded,
+    and the replay is identical."""
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    t = out["rail_two_edits"]
+    assert t["verdict"] == "identical" and t["generations"] == [0, 2], t
+    (inst,) = t["installs"]
+    assert (inst["from"], inst["to"]) == (0, 2), inst
+    assert [c["generation"] for c in inst["commits"]] == [1, 2], inst
+    assert len({c["event_time"] for c in inst["commits"]}) == 1, inst
+    assert all(c["anchored"] == {"bar": c["event_time"]} for c in inst["commits"]), inst
+
+
+def test_a_run_is_dated_by_its_own_flight_record_not_a_file_time():
+    """The Q3 window reads the date the episode flew: the UTC stamp in an
+    episode folder's name, else the first wall time of its events.jsonl;
+    manifest.json's file time (which a copy, a restore or a sync changes)
+    only when the run holds neither, and the record says which."""
+    root = _tmp("rar_date_")
+    late = 1798761600                      # 2027-01-01: a copy made long after the flight
+    ep = root / "episode-2026-10-22T15-33-56Z--nfz-head-on--seed0"
+    rail, bare = root / "rail_run", root / "bare_run"
+    for d in (ep, rail, bare):
+        d.mkdir()
+        (d / "manifest.json").write_text(json.dumps({"code_revision": "a" * 12,
+                                                     "topology": "dev"}), encoding="utf-8")
+        os.utime(d / "manifest.json", (late, late))
+    (rail / "events.jsonl").write_text(
+        json.dumps({"kind": "episode_start", "t": None,
+                    "wall": "2026-10-31T17:30:00.000+00:00"}) + "\n", encoding="utf-8")
+    assert RA.flight_date(ep) == (RA.date(2026, 10, 22), RA.FLIGHT_DATE_BASES[0])
+    assert RA.flight_date(rail) == (RA.date(2026, 10, 31), RA.FLIGHT_DATE_BASES[1])
+    d, basis = RA.flight_date(bare)
+    assert d.year == 2027 and basis == RA.FLIGHT_DATE_BASES[2], (d, basis)
+    q3 = [(RA.date(2026, 8, 1), RA.date(2026, 10, 31))]
+    picked = {r.name for r, _, _ in RA.select([ep, rail, bare], q3, [])}
+    assert picked == {ep.name, rail.name}, picked
+    groups, refused = RA.plan(RA.select([ep], q3, []), ROOT, root)
+    rec = (refused or [j for js in groups.values() for j in js])[0]
+    assert rec["flight_date"] == "2026-10-22" and \
+        rec["flight_date_basis"] == RA.FLIGHT_DATE_BASES[0], rec
+
+
+def test_flown_on_names_the_interpreter_where_the_run_recorded_it():
+    """A last-digit difference has two candidate causes, the host's libm and
+    the interpreter's float routines: flown_on carries both where the run
+    recorded them (metrics.json hil_evidence, gc.python), never a guess."""
+    ev = {"host_arch": "aarch64", "device_model": "Orin", "jetpack": None}
+    assert RA._flown_on({"hil_evidence": ev, "gc": {"python": "3.12.3"}}) == {
+        "host_arch": "aarch64", "device_model": "Orin", "python": "3.12.3"}
+    assert RA._flown_on({"hil_evidence": ev}) == {"host_arch": "aarch64",
+                                                  "device_model": "Orin"}
+    assert RA._flown_on({"gc": {"python": "3.12.3"}}) == {"python": "3.12.3"}
+    assert RA._flown_on({}) is None
 
 
 def test_a_declared_subject_is_replayed_and_an_unrecorded_one_is_refused():
@@ -519,6 +605,23 @@ def test_the_cli_writes_the_summary_and_exits_by_verdict():
         assert RA.main([str(root / "rail_world_ulp"), "--scratch",
                         str(_tmp("rar_cli_wt_"))]) == 1
         assert RA.main([str(root / "rail_dirty")]) == 2
+    # --python names the interpreter the drivers run under, and the summary
+    # says which ran; --dump-dir keeps every difference of a differing episode
+    import platform
+    dump, dst2 = _tmp("rar_dump_"), _tmp("rar_cli2_") / "rar.json"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert RA.main([str(root / "rail_world_ulp"), "--python", sys.executable,
+                        "--dump-dir", str(dump), "--out", str(dst2), "--scratch",
+                        str(_tmp("rar_cli_wt_"))]) == 1
+        assert RA.main([str(root / "rail_ok"), "--python",
+                        str(root / "no_such_python.exe")]) == 2
+    s2 = json.loads(dst2.read_text(encoding="utf-8"))
+    assert s2["replayed_on"]["python"] == platform.python_version(), s2["replayed_on"]
+    assert "<python>" in s2["command"] and "<dump-dir>" in s2["command"], s2["command"]
+    (f,) = list(dump.iterdir())
+    d = json.loads(f.read_text(encoding="utf-8"))
+    assert [p["tick"] for p in d["audit_records_differing"]] == [_CACHE["world_tick"]], d
+    assert d["audit_records_differing"][0]["fields"] == ["emitted_action_world"], d
 
 
 if __name__ == "__main__":
