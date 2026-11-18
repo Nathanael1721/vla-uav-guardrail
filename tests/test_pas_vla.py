@@ -579,6 +579,11 @@ def test_a_vla_run_that_cannot_fly_honestly_is_refused_before_anything_starts():
         # 0.1-0.4 m and 3-9 deg off when pipelined. Refused unless asked for.
         (["--pilot", "vla", "--goal", "50,0", *srv, "--cadence", "pipelined"],
          "--allow-unstamped-pipelined"),
+        # THE PREFIX A/B (2026-11-18): the VLA's prompt; a plain pair label
+        (["--vla-prefix", "csp"], "--pilot vla"),
+        (["--ab-pair", "p1"], "--pilot vla"),
+        (["--pilot", "vla", "--goal", "50,0", *srv, "--ab-pair", "p 1"], "--ab-pair"),
+        (["--pilot", "vla", "--goal", "50,0", *srv, "--ab-pair", "../x"], "--ab-pair"),
     ]
     for extra, word in bad:
         a = _args(*extra)
@@ -2039,6 +2044,84 @@ def test_a_request_the_feed_sent_between_ticks_is_on_the_next_row():
     _, row, _ = p.after(10.2, st, flies=True, touched=False, shield_on=True, t_mission=10.2)
     assert row["vla_request"] == "no_hint", row["vla_request"]
     assert pilot(NoPump()).pump() is False
+
+
+# ------------------------------------------------------- THE PREFIX A/B (WP4-15)
+def test_a_prefix_arm_sends_the_csp_on_every_request_and_records_its_hash():
+    """--vla-prefix csp --ab-pair (2026-11-18; guardrail/vla_prefix.py): the
+    CSP compiled before take-off for this flight's mission, at AerialVLA's
+    slot budget, is sent on EVERY request - the three warm-up ones too -
+    and recorded: metrics.json vla_prefix, the episode's events, the CSP
+    file, and each request's csp_mode / SHA-256 in vla_steps.jsonl.
+    manifest.json stays the grant's six fields."""
+    r = _vfly(_real(F.goto_responder(GOAL, 8.0)), max_s="20",
+              extra=("--vla-prefix", "csp", "--ab-pair", "pab_t_p1", "--seed", "77"))
+    assert r.rc == 0, r.rc
+    m = _json(r.run, "metrics.json")
+    vp = m["vla_prefix"]
+    assert (vp["in_ab"], vp["arm"], vp["prefix"], vp["ab_pair"], vp["seed"]) == \
+        (True, "csp", "on", "pab_t_p1", 77), vp
+    assert vp["slot"]["model"] == "aerialvla" and vp["model_trained_on_prefix"] is False
+    text = vp["prefix_text"]
+    assert text and vp["prefix_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert len(r.srv.requests) > 5
+    assert all((q["csp_mode"], q["csp_text"]) == ("csp", text) for q in r.srv.requests)
+    csp = _json(r.run, "vla_prompt_csp.json")
+    assert csp["natural_language_prompt"].strip() == text and vp["csp_file"] == \
+        "vla_prompt_csp.json"
+    ev = [e for e in _events(r.run) if e["kind"] == "vla_prefix"]
+    assert len(ev) == 1 and ev[0]["prefix_sha256"] == vp["prefix_sha256"], ev
+    steps = [s for s in _steps(r.run) if "csp_mode" in s]
+    assert steps and all((s["csp_mode"], s["csp_sha256"]) == ("csp", vp["prefix_sha256"])
+                         for s in steps), steps[:2]
+    man = _json(r.run, "manifest.json")
+    assert len(man) == 6 and man["random_seed"] == 77, man
+
+
+def test_the_off_arm_of_a_pair_sends_no_prefix_and_a_plain_flight_is_no_ab_flight():
+    r = _vfly(_real(F.goto_responder(GOAL, 8.0)), max_s="12",
+              extra=("--vla-prefix", "off", "--ab-pair", "pab_t_p1"))
+    m = _json(r.run, "metrics.json")
+    vp = m["vla_prefix"]
+    assert (vp["in_ab"], vp["prefix"], vp["prefix_text"], vp["ab_pair"]) == \
+        (True, "off", None, "pab_t_p1"), vp
+    assert vp["slot"]["budget_tokens"] > 0
+    assert all((q["csp_mode"], q["csp_text"]) == ("off", None) for q in r.srv.requests)
+    assert not (r.run / "vla_prompt_csp.json").exists()
+    r = _vfly(_real(F.goto_responder(GOAL, 8.0)), max_s="12")
+    vp = _json(r.run, "metrics.json")["vla_prefix"]
+    assert vp["in_ab"] is False and vp["arm"] == "off" and "slot" not in vp, vp
+    assert not [e for e in _events(r.run) if e["kind"] == "vla_prefix"]
+
+
+def test_aiotvlas_csp_arm_is_refused_before_take_off_and_says_why():
+    """AIoT-VLA's hello declares its CSP slot (OWL-ViT's 16-token window);
+    the follow policy's P0 rules do not fit beside "a red car", so the csp
+    arm is refused before a request is sent or the aircraft armed, with
+    vla_prefix_refused.json naming why. Where OWL-ViT's tokenizer is not on
+    the machine the refusal is that one (no_tokenizer): an uncounted prefix
+    is never sent."""
+    from guardrail import vla_prefix as VP
+    model = SF.foreign_identity(
+        "aiotvla", name="v10b", folder="v10b", revision=None,
+        digest=hashlib.sha256(b"aiotvla v10b head.pt").hexdigest(), precision="fp16",
+        attn="sdpa", front_source="detector",
+        facts={"horizon_s": 0.5, "csp_slot": {
+            "placement": SF.AIOTVLA_CSP_PLACEMENT, "text_window_tokens": 16,
+            "special_tokens": 2, "tokenizer": "google/owlvit-base-patch32"}})
+    model = {**model, "host": dict(ORIN_HOST)}
+    r = _follow(model=model, policy=(ROOT / "policies" / "follow_car_citylife.yaml")
+                .read_text(encoding="utf-8"), raises=SystemExit,
+                extra=("--vla-prefix", "csp", "--ab-pair", "pab_a_p1"))
+    assert "refused before take-off" in str(r.exc), r.exc
+    doc = _json(r.run, "vla_prefix_refused.json")
+    want = ("csp_budget_exceeded" if VP.clip_token_counter("google/owlvit-base-patch32")
+            else "no_tokenizer")
+    assert doc["code"] == want and doc["ab_pair"] == "pab_a_p1", doc
+    if want == "csp_budget_exceeded":
+        assert (doc["facts"]["p0_tokens"], doc["facts"]["budget_tokens"]) == (45, 11), doc
+    assert r.srv.requests == [] and r.link.requests_at_arm is None
+    assert not (r.run / "flight_log.jsonl").exists()
 
 
 if __name__ == "__main__":

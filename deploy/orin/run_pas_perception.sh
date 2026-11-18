@@ -137,6 +137,14 @@
 #               scene's -FrontCaptureIntervalS 0.05: a 15 Hz camera); tick (the
 #               other families' default): one request per 10 Hz tick at most,
 #               as every flight before 2026-11-15
+#   PREFIX      the prefix A/B arm, off | csp | neutral (--vla-prefix; default:
+#               not passed, the flight it always was): the Prefix Compiler's CSP
+#               in front of the VLA's instruction, budgeted to its prompt slot
+#               (guardrail/vla_prefix.py). AIoT-VLA's slot is 11 tokens beside
+#               "a red car" (OWL-ViT's 16-token text window), which the follow
+#               policy's P0 rules do not fit: its csp arm is refused before
+#               take-off (CSPBudgetExceeded). VLA families only.
+#   AB_PAIR     the A/B pair label (--ab-pair); run_pas_prefix_ab.sh sets both
 #   VENV        the Python environment (default ~/vla-drone-env)
 #   ROS_SETUP   ROS 2's setup script (default /opt/ros/jazzy/setup.bash)
 #   VLAGUARD_REQUIRE_CHAIN  1 = the node flies the bundle only if its signer's
@@ -268,6 +276,18 @@ if [ "$FAMILY" = servo ] || [ "$FAMILY" = estimator ]; then
 fi
 if [ -n "${BUNDLE:-}" ]; then
   args+=(--bundle "$BUNDLE")
+fi
+if [ -n "${PREFIX:-}${AB_PAIR:-}" ]; then
+  if [ "$FAMILY" = servo ] || [ "$FAMILY" = estimator ]; then
+    die 64 "PREFIX / AB_PAIR: FAMILY=$FAMILY flies no VLA, so no prompt carries a prefix"
+  fi
+  case "${PREFIX:-off}" in
+    off|csp|neutral) args+=(--vla-prefix "${PREFIX:-off}") ;;
+    *) die 64 "PREFIX '$PREFIX' is none of off csp neutral (perception_node.py --vla-prefix)" ;;
+  esac
+  if [ -n "${AB_PAIR:-}" ]; then
+    args+=(--ab-pair "$AB_PAIR")
+  fi
 fi
 if [ -n "${FRONT_CAPTURE_INTERVAL_S:-}" ]; then
   args+=(--front-capture-interval-s "$FRONT_CAPTURE_INTERVAL_S")
