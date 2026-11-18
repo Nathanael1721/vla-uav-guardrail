@@ -30,6 +30,17 @@ starts, and nothing else:
                             (VLAGUARD_TOPOLOGY), when given. A declaration:
                             the manifest's `topology` is decided from the
                             evidence of the flight, never from a flag.
+  launch.ground_sha256      (X-11, 2026-11-18) the sha256 of the mission's
+                            --ground file, when it names one: the ground the
+                            policy hash above was loaded over. Absent without
+                            --ground, so every other launch prints what it did.
+
+A DECLARED GROUND. A policy with an MSL rule passes the flight gate only over
+the ground it flies over; until 2026-11-18 this helper loaded the policy
+without one and left launch.policy_hash out of every such bag with a note.
+It now reads the mission's own --ground / --ground-sha256 (the Shield node's
+flags, so the file must hash to the named sha256 when one is given) and
+loads the policy over that ground, as the node does. No ground is guessed.
 
 WHAT IS NOT KNOWN AT LAUNCH, and so is not here: vla_model_hash (resolved
 from /vla/identity once the pilot is up), sim_speedup (read from the
@@ -61,6 +72,10 @@ RANDOM_SEED_KEY = "manifest.random_seed"
 POLICY_HASH_KEY = "launch.policy_hash"
 TOPOLOGY_DECLARED_KEY = "launch.topology_declared"
 KEYS = (CODE_REVISION_KEY, RANDOM_SEED_KEY, POLICY_HASH_KEY, TOPOLOGY_DECLARED_KEY)
+# Only a launch that names a ground carries this (module docstring); kept out
+# of KEYS, the fields every launch is asked for.
+GROUND_SHA256_KEY = "launch.ground_sha256"
+GROUND_KEYS = (GROUND_SHA256_KEY,)
 
 # The manifest fields no launch can know, and when each is known instead.
 NOT_KNOWN_AT_LAUNCH = {
@@ -110,10 +125,17 @@ def launch_fields(mission_args: list[str], topology: str | None = None
     if args is not None:
         try:
             from guardrail.bundle import load_for_flight
+            from guardrail.terrain import ground_from_args
             bundle, yaml_path, _ = node.resolve_policy(args)
+            # The mission's named ground (--ground / --ground-sha256), as
+            # the node loads it; (None, None) without --ground.
+            ground, gfile = ground_from_args(args, bundle, yaml_path, root=ROOT)
             policy, _ = load_for_flight(bundle, yaml_path,
-                                        allow_unverified=args.allow_unverified_bundle)
+                                        allow_unverified=args.allow_unverified_bundle,
+                                        **({} if ground is None else {"ground": ground}))
             put(POLICY_HASH_KEY, policy.policy_hash)
+            if gfile is not None:
+                put(GROUND_SHA256_KEY, gfile["sha256"])
         except (Exception, SystemExit) as e:                     # noqa: BLE001
             notes.append(f"{POLICY_HASH_KEY}: {type(e).__name__}: {e}")
     if topology:
@@ -137,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     # carriage return (Python on Windows) would become part of the value.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(newline="\n")
-    for key in KEYS:
+    for key in KEYS + GROUND_KEYS:
         if key in fields:
             print(f"{key}={fields[key]}")
     for note in notes:

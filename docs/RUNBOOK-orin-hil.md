@@ -563,11 +563,13 @@ says anything else, `metrics.json` has a `topology_refused` entry naming what
 was missing: usually the device tree (step 10), an ArduPilot SITL running on
 the Orin itself, or an `FCU_URL` without the desktop's address.
 
-## 11a. MSL over a DEM (X-11): the SITL profile, not flown yet
+## 11a. MSL over a DEM (X-11): the SITL profile
 
-One MSL rule flown over a declared ground (2026-11-18). Nothing here has
-been flown on SITL or on the rig; the commands are ready for the rig's
-next session.
+MSL rules flown over a declared ground. Step 2a was flown on the desktop
+dev rail three times on 2026-11-18 (msl_dem_sitl_01..03, before wf21; the
+CHANGELOG has the numbers). Step 2b (hil) and step 2c (the stress harness's
+msl_dem profile, wf21) have not been flown; their commands are ready for the
+rig's next session.
 
 | Piece | File |
 |---|---|
@@ -590,11 +592,26 @@ On SITL the node raises `FENCE_ALT_MAX` to the policy's ceiling plus 5 m
 when it sits below it. With `--ground` that ceiling is a height above home,
 the reference ArduPilot measures `FENCE_ALT_MAX` in: `msl-ceiling` gives
 624 - 584 = 40 m, `agl-band` gives 60 m over the grid's highest ground
-(605.26 m MSL after resampling), 81.26 m. The node takes the higher figure,
-so the raise is to about 86.3 m, which is still above the MSL rule. The
-autopilot's backstop is therefore looser than the MSL rule on this profile.
-Before the 2026-11-18 review fix, the 624 m MSL ceiling was read as metres
-above home and the raise would have gone to 629 m.
+(605.5 m MSL, `terrain.ground_band`), 81.5 m. Since 2026-11-18 (wf21) a hard
+MSL ceiling that no clock can switch off caps the figure
+(`mavlink_adapter_node.policy_ceiling_m`, THE MSL CEILING CAPS IT): no
+height above it is ever legal. The raise is therefore to 45 m above home
+(5 m over the MSL rule). Flights before wf21 (msl_dem_sitl_01..03) raised it
+to 86.5 m, 46.5 m over the rule (their `metrics.json`: `policy_ceiling_m`
+81.5, `FENCE_ALT_MAX` 86.5). The same cap comes from the MSL ceiling of a
+hard keep-in corridor in force all flight: `msl_dem_corridor` raises to 31 m
+(610 m MSL less home, + 5 m). A keep-out MSL zone bounds nothing above or
+beside it, so `msl_dem_zone` keeps the AGL band's 81.5 m (raise to 86.5 m). Before the first 2026-11-18 review fix the
+624 m MSL ceiling was read as metres above home and the raise would have
+gone to 629 m. The GCS step (`GCS_BACKSTOP=1`) computes the same figure.
+
+**Naming the ground (wf21).** Every reader takes the ground by name: its
+path (`--ground`) and the sha256 of the file (`--ground-sha256`, optional
+on a hand launch, always sent by the stress harness). A file that does not
+hash to the name is refused before it is read. The sha256 of
+`experiments/worlds/dem_cmac_wgs84.json` is
+`44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0`;
+check it on both hosts with `sha256sum experiments/worlds/dem_cmac_wgs84.json`.
 
 **1. The signed bundle** (the desktop, which holds the lab key; on the Orin
 the same command after the trust store is synced, as in step 7):
@@ -605,18 +622,59 @@ python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml \
 # -> bundles/msl-dem-sitl-v0.1.0.tar.gz (check: same command with --check)
 ```
 
-**2a. Desktop dev rail (WSL, one desktop).** `SITL_HOME` is given by hand:
-`sitl/bundle_origin.py` reads a bundle through the flight gate without a
-ground and would refuse this one. CMAC is the policy's own origin, so the
-value is the default home spelled out:
+**2a. Desktop dev rail (WSL, one desktop).** Since wf21
+`sitl/bundle_origin.py` takes the flight's `--ground` / `--ground-sha256`
+(run_ros2_demo.sh forwards them) and SITL boots at `--ground-home-msl`, so
+`SITL_HOME` is no longer typed by hand (msl_dem_sitl_01..03 set it):
 
 ```bash
-SITL_HOME=-35.363261,149.165230,584,0 bash sitl/run_ros2_demo.sh on - \
+bash sitl/run_ros2_demo.sh on - \
     --bundle bundles/msl-dem-sitl-v0.1.0.tar.gz \
-    --ground experiments/worlds/dem_cmac_wgs84.json --ground-home-msl 584 \
+    --ground experiments/worlds/dem_cmac_wgs84.json \
+    --ground-sha256 44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0 \
+    --ground-home-msl 584 \
     --start 0,0,15 --target 0,200,15 --pilot goto --speed 3 --max-s 120 \
-    --tag msl_dem_sitl_01
+    --tag msl_dem_sitl_04
 ```
+
+`GCS_BACKSTOP=1`, `BAG_MANIFEST=1` and `STYLE=mission` take the same named
+ground (wf21).
+
+**2c. Through the stress harness (wf21).** The profile
+`experiments/profiles/msl_dem.yaml` flies an MSL polygon_fence, an MSL
+corridor and the MSL altitude_envelope over this ground (6 missions); the
+harness names the ground to both nodes and boots SITL at the DEM's
+elevation under each start:
+
+```bash
+python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml \
+    experiments/policies/msl_dem_zone.yaml experiments/policies/msl_dem_corridor.yaml \
+    --ground experiments/worlds/dem_cmac_wgs84.json
+python experiments/sweep_scenarios.py --profile msl_dem --backend sitl --sitl-dry-run
+python experiments/sweep_scenarios.py --profile msl_dem --backend sitl
+```
+
+On the hil rig the same profile flies through step 14's harness. The DEM is
+a tracked file, so the Orin's clean checkout at the desktop's commit (step
+7) holds it at the same repo-relative path, which the mission container
+mounts; the harness sends `--ground-sha256` with it, so a different file is
+refused before take-off. The replay bundle is written on the Orin and must
+carry the DEM (`guardrail.replay` refuses to write one without it), so
+check the file and build the three bundles there too before the campaign:
+
+```bash
+# on the desktop AND on the Orin (same commit, git status clean):
+sha256sum experiments/worlds/dem_cmac_wgs84.json   # 44ed8a16...d31e0 on both
+python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml     experiments/policies/msl_dem_zone.yaml experiments/policies/msl_dem_corridor.yaml     --ground experiments/worlds/dem_cmac_wgs84.json
+# then, from the desktop:
+python experiments/sweep_scenarios.py --profile msl_dem --backend hil --hil-dry-run
+python experiments/sweep_scenarios.py --profile msl_dem --backend hil --hil-campaign msl_dem_hil
+```
+
+Each fetched run's `metrics.json` `ground.file` must name the same path and
+sha256, and its `<tag>.replay.tar.gz` must list `ground/dem_cmac_wgs84.json`
+(`python -m guardrail.replay verify` re-derives the heights from it;
+`python tools/replay_from_bag.py <run>` compares the bag's heights over it).
 
 **2b. The hil rig.** SITL on the desktop at its default home (CMAC; no
 `--home`), from WSL:
@@ -632,7 +690,8 @@ docker compose --env-file deploy/topologies/hil.env \
     -f deploy/compose/docker-compose.orin.yml run --rm mission \
     mission --shield on --tag msl_dem_hil_01 \
     --bundle bundles/msl-dem-sitl-v0.1.0.tar.gz \
-    --ground experiments/worlds/dem_cmac_wgs84.json --ground-home-msl 584 \
+    --ground experiments/worlds/dem_cmac_wgs84.json \
+    --ground-sha256 44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0 --ground-home-msl 584 \
     --start 0,0,15 --target 0,200,15 --pilot goto --speed 3 --max-s 120
 ```
 
@@ -647,17 +706,21 @@ same on both hosts); every row's `up` is the height above the grid (what
 the Shield judged), beside `up_home` (the pose) and `msl_m`; the policy
 source record names the ground; `alt_violation_s` judges `msl-ceiling`
 against `msl_m` and `agl-band` against `up` (a clean flight reads 0);
-`autopilot_fence.policy_ceiling_m` is about 81.3 (above home), not 624;
-the replay packs as usual.
+`autopilot_fence.policy_ceiling_m` is 40 (above home, capped by
+msl-ceiling since wf21; 81.5 before), not 624; `metrics.json`
+`ground.file` names the path and sha256; the replay bundle carries the DEM
+as `ground/dem_cmac_wgs84.json` and `python -m guardrail.replay verify`
+re-derives every row's height above it from `msl_m`.
 
-**Not supported with this profile (yet):** `GCS_BACKSTOP=1` loads the
-bundle without a ground and refuses it, and `BAG_MANIFEST=1` /
-`VLAGUARD_BAG_MANIFEST=1` then leaves the policy hash out of the bag's
-custom data with a note (both load through the flight gate with no ground;
-leave them at their default 0); the stress harness's
-`--backend sitl|hil` refuses a scenario with a `ground` (its post-flight
-scoring has none), so this profile is flown by the commands above, not by
-a campaign. The AGL band over the grid: until 2026-11-18 (wf20) the
+**Supported since wf21 (2026-11-18), not flown yet:** `GCS_BACKSTOP=1`
+(the GCS step takes `--ground`, `--ground-sha256` and `--ground-home-msl`
+and checks the autopilot's HOME_POSITION altitude and the DEM at home
+against it), `BAG_MANIFEST=1` / `VLAGUARD_BAG_MANIFEST=1` (the policy hash
+loaded over the named ground, plus `launch.ground_sha256`), the
+mission-style node (`STYLE=mission`, each leg step judged at its height
+above the DEM) and the stress harness's `--backend sitl|hil` (step 2c).
+Until then each of them refused the ground. The AGL band over the grid:
+until 2026-11-18 (wf20) the
 Shield's forecast held the ground flat over its lookahead, and the first
 flight of this profile (`msl_dem_sitl_01`) went under the AGL floor for
 2.0 s (at most 0.49 m; headless, 189 oracle ticks). Since wf20 each
@@ -677,9 +740,12 @@ noise can still show as `agl-band` ticks of mm to cm. Read the depth
 heights: `rtl_path.check_leg` judges the climb to `RTL_ALT` above home at
 its height above the grid under the aircraft, and the progress test
 (`remaining_to_home`) counts the climb above home; the Shield's bands stay
-in the grid's reference. The return leg's band is judged at the height it
-has at the aircraft, not along the leg over other ground. The
-home-reached test uses the pose's height above home. The headless harness
+in the grid's reference. Since wf21 the return leg is judged along the
+ground (`rtl_path.check_leg`, THE LEG OVER A DEM): the leg flies level in
+MSL at `RTL_ALT` above home, every metre of it is judged at its height
+above the grid under it, an MSL rule in MSL; until then it was judged at
+the height it had at the aircraft only. The home-reached test uses the
+pose's height above home. The headless harness
 does the same over a declared ground since wf20: its modelled RTL climbs
 to `RTL_ALT` above home and flies the leg level in MSL, and its
 `home_reached` and RTL watch read the height above home.

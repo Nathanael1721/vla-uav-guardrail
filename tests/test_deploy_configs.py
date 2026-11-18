@@ -1217,8 +1217,10 @@ def test_the_ros2_rail_boots_sitl_at_a_geographic_bundles_origin():
     flew corridor-survey 0.1.2 (origin 35.6895, 139.6917) from CMAC and every
     upload was refused: 7955798.7 m from home."""
     demo = RUN_ROS2_DEMO.read_text(encoding="utf-8")
-    assert 'export SITL_HOME="$ORIGIN,584,0"' in demo
-    assert '"$DIR/bundle_origin.py" "$FLIGHT_BUNDLE"' in demo
+    # 584 m unless the flight names its home elevation (--ground-home-msl,
+    # X-11, 2026-11-18); the flight's named ground goes to bundle_origin.
+    assert 'export SITL_HOME="$ORIGIN,${GROUND_HOME_MSL:-584},0"' in demo
+    assert '"$DIR/bundle_origin.py" "$FLIGHT_BUNDLE" "${GROUND_ARGS[@]}"' in demo
     assert 'if [ -z "${SITL_HOME:-}" ]; then' in demo, "a hand-set SITL_HOME must win"
     sys.path.insert(0, str(ROOT / "sitl"))
     import bundle_origin as BO

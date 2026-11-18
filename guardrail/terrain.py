@@ -643,10 +643,76 @@ def policy_file_frame_origin(bundle=None, yaml_path=None):
     raise ValueError("no policy given: a bundle or a YAML file")
 
 
-def ground_for_flight(path, bundle=None, yaml_path=None, *, root=None):
+def ground_for_flight(path, bundle=None, yaml_path=None, *, root=None, sha256=None):
     """`load_ground(path)` in the frame of the policy a rail flies (its
-    bundle or YAML, `policy_file_frame_origin`)."""
+    bundle or YAML, `policy_file_frame_origin`). `sha256` (the readers'
+    --ground-sha256, 2026-11-18): the file must hash to it, checked before
+    it is read (`ground_file`); None reads it unpinned, as every rail did
+    before that date."""
+    if sha256 is not None:
+        ground_file(path, root=root, sha256=sha256)
     return load_ground(path, policy_file_frame_origin(bundle, yaml_path), root=root)
+
+
+# ---------------------------------------------------------------------------
+# Naming a ground: its file and the file's hash (2026-11-18, X-11)
+# ---------------------------------------------------------------------------
+#
+# A ground is the world's, not the policy's, so it never enters policy_hash
+# and nothing in a signed bundle pins it. Every reader that flies or scores a
+# ground is therefore told it by NAME: the repo-relative path of its file and
+# the file's sha256 (`--ground FILE --ground-sha256 HEX` on the rails' nodes,
+# the GCS step, bundle_origin and bag_custom_data; the stress harness sends
+# both, computed from its own checkout). A reader never guesses one - not
+# from a bundle's frame origin, not from a rail's home altitude, not from a
+# default - and a file that does not hash to the name it was given is refused
+# before it is read. The flight's records carry the same pair
+# (`ground_file`), which is what a replay bundle packs and checks
+# (guardrail/replay.py, "THE GROUND A RUN FLEW OVER").
+
+GROUND_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _ground_path(path, root=None) -> Path:
+    p = Path(path)
+    return p if p.is_absolute() or root is None else Path(root) / p
+
+
+def ground_file_sha256(path, root=None) -> str:
+    """The sha256 (hex) of a ground file's bytes, as the file is on disk."""
+    return _file_sha256(_ground_path(path, root))
+
+
+def ground_file(path, *, root=None, sha256: str | None = None) -> dict:
+    """`{"path", "sha256"}` of a declared ground file: `path` as it was named
+    (repo-relative on every rail) and the hash of its bytes. With `sha256`
+    the file must hash to it (lower-case hex, 64 digits), else ValueError:
+    the reader was named another ground than the one on its disk."""
+    if sha256 is not None and not GROUND_SHA256_RE.match(str(sha256)):
+        raise ValueError(f"ground sha256 {sha256!r} is not 64 lower-case hex digits")
+    got = ground_file_sha256(path, root)
+    if sha256 is not None and got != sha256:
+        raise ValueError(f"ground {path}: the file hashes to {got}, the ground was "
+                         f"named with {sha256}: another file than the one named")
+    return {"path": str(path), "sha256": got}
+
+
+def ground_from_args(args, bundle=None, yaml_path=None, *, root=None):
+    """(ground, file record) a reader's parsed arguments name: `args.ground`
+    (a path) and `args.ground_sha256` (its hash, optional), the ground placed
+    in the frame of the policy the reader flies (`ground_for_flight`), or
+    (None, None) without --ground. --ground-sha256 without --ground is
+    refused: a hash names no file."""
+    path = getattr(args, "ground", None)
+    sha = getattr(args, "ground_sha256", None)
+    if not path:
+        if sha:
+            raise ValueError("--ground-sha256 is the hash of a --ground file, and no "
+                             "--ground was given")
+        return None, None
+    rec = ground_file(path, root=root, sha256=sha)
+    rec["pinned"] = sha is not None
+    return load_ground(path, policy_file_frame_origin(bundle, yaml_path), root=root), rec
 
 
 class TerrainReference:

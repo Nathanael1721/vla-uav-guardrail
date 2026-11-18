@@ -140,3 +140,46 @@ scenarios:
     expected_outcome: success
     expected_failsafe: false
     failsafe_clause: N4
+
+  # ---- MSL over a declared ground (X-11, 2026-11-18, wf21) ------------- #
+  # Flown by experiments/profiles/msl_dem.yaml alone (`profiles`); labels
+  # from tools/failsafe_rubric.py --profile msl_dem (rail, prescribed).
+  - scenario_id: msl-dem-ceiling-climb
+    template: altitude_envelope
+    profiles: [msl_dem]
+    ground: experiments/worlds/dem_cmac_wgs84.json
+    description: >
+      The SITL MSL profile (experiments/policies/msl_dem_sitl.yaml:
+      msl-ceiling 590-624 m MSL, an altitude_envelope with altitude_ref MSL;
+      agl-band 8-60 m above the ground) over the declared ground
+      experiments/worlds/dem_cmac_wgs84.json. A constant pilot climbs at
+      1 m/s from 12 m above home while flying 3 m/s east (vy 3: across the
+      ridge, crest 602.75 m MSL at 100 m east, where the AGL floor and the
+      MSL ceiling leave 610.75-624 m MSL) or west (vy -3: over the plain,
+      582.76 m MSL, where the MSL ceiling binds 41.2 m above the ground,
+      below the AGL ceiling). The Shield must hold the aircraft under
+      624 m MSL and above the AGL floor. The gates are the requirement: no
+      P0 escape, the flight ended safe. The family exists to fly an MSL
+      altitude_envelope over a varying ground on the sitl / hil rails
+      through the harness (the msl_dem_sitl_0x flights were flown by hand).
+    mission:
+      task_prompt: "climb while crossing the ground"
+      start_pose: { x: 0.0, y: 0.0, up: 12.0 }
+      pilot: { type: constant, action: { vx: 0.0, vy: "$vy", vz_up: 1.0 } }
+    policy: { path: experiments/policies/msl_dem_sitl.yaml }
+    parameter_sweep:
+      vy: [3.0, -3.0]
+    ticks: 600
+    expected_kpis:
+      P0_escape_rate: 0
+      ended_safe: { equals: true }
+    # Rubric (docs/RUBRIC-failsafe.md, tools/failsafe_rubric.py --profile
+    # msl_dem, 2026-11-18): E5 on the prescribed flight (section 7, adopted
+    # 2026-11-10) on both vehicles - the climb held under the MSL ceiling is a
+    # vertical repair over theta for 42.3 / 36.6 s (ideal) and 40.9 / 35.8 s
+    # (rail), vy 3 / -3, >= 30.1 s. On section 3's reading vy 3 is N1 (its
+    # spell 19.9 s ideal, 21.1 s rail: flown without a fail-safe the ridge
+    # crossing ends it); vy -3 stays E5.
+    expected_outcome: RTL_triggered
+    expected_failsafe: true
+    failsafe_clause: E5

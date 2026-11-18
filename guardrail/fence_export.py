@@ -124,7 +124,28 @@ def _in_force(clock, now):
     return on
 
 
-def iter_zones(policy, now=None, column_m: float | None = None
+def _band_above_home(c, ground, home_msl_m) -> tuple[float, float]:
+    """A zone's (floor, ceiling) as heights above HOME, the reference the
+    autopilot's fence column (0 .. FENCE_ALT_MAX) is in, over a declared
+    ground (X-11, 2026-11-18): an MSL band less home's elevation (exact: a
+    level height in MSL is a level height above home); an AGL band over the
+    ground's whole spread - the floor where it stands highest above home,
+    the ceiling where it stands lowest - so the column test can only leave
+    a zone to the Shield, never export one stricter than the policy. Over a
+    flat ground at home's elevation both are the band itself."""
+    from .terrain import ground_band, is_msl
+    lo = float(getattr(c, "altitude_floor_m", 0.0) or 0.0)
+    hi = getattr(c, "altitude_ceiling_m", None)
+    hi = float("inf") if hi is None else float(hi)
+    home = float(home_msl_m)
+    if is_msl(c):
+        return lo - home, hi - home
+    bottom, top = (float(v) for v in ground_band(ground))
+    return lo + (top - home), hi + (bottom - home)
+
+
+def iter_zones(policy, now=None, column_m: float | None = None, *, ground=None,
+               home_msl_m: float | None = None
                ) -> Iterator[tuple[str, dict[str, Any]]]:
     """("zone", zone) or ("skipped", entry) for each rule, in policy order.
 
@@ -132,7 +153,12 @@ def iter_zones(policy, now=None, column_m: float | None = None
     {"id", "kind": "circle", "center": [x, y], "radius_m"}; a skipped entry is
     {"id", "why"} plus `time_controlled: True` for a zone a clock can turn
     off. `policy_zones` collects these; the ROS adapter walks them to hold a
-    zone back in place, so its skip list keeps the policy's order."""
+    zone back in place, so its skip list keeps the policy's order.
+
+    `ground`, `home_msl_m` (X-11, 2026-11-18): over a declared ground each
+    zone's band is read as heights above home (`_band_above_home`) before
+    the column test, so an MSL zone's band is not compared, in metres MSL,
+    with a column in metres above home. Without a ground: unchanged."""
     constraints = list(getattr(policy, "constraints", []))
     clock = _rule_clock()(constraints)
     in_force = _in_force(clock, now) if now is not None else None
@@ -173,12 +199,17 @@ def iter_zones(policy, now=None, column_m: float | None = None
                                   "fence would be stricter than the policy "
                                   "cannot be decided"}, c)
             continue
-        lo = float(getattr(c, "altitude_floor_m", 0.0) or 0.0)
-        hi = getattr(c, "altitude_ceiling_m", None)
-        hi = float("inf") if hi is None else float(hi)
+        if ground is not None:
+            lo, hi = _band_above_home(c, ground, home_msl_m)
+            ref = " above home"
+        else:
+            lo = float(getattr(c, "altitude_floor_m", 0.0) or 0.0)
+            hi = getattr(c, "altitude_ceiling_m", None)
+            hi = float("inf") if hi is None else float(hi)
+            ref = ""
         if lo > 0.0 or hi < column_m:
             yield "skipped", tag({"id": c.id, "why": (
-                f"altitude band {lo:g}-{hi:g} m does not cover the fence "
+                f"altitude band {lo:g}-{hi:g} m{ref} does not cover the fence "
                 f"column 0-{column_m:g} m; a 2-D autopilot fence would be "
                 f"stricter than the policy")}, c)
             continue
@@ -198,8 +229,8 @@ def iter_zones(policy, now=None, column_m: float | None = None
         yield "zone", tag(f, c)
 
 
-def policy_zones(policy, now=None, column_m: float | None = None
-                 ) -> tuple[list[dict], list[dict]]:
+def policy_zones(policy, now=None, column_m: float | None = None, *, ground=None,
+                 home_msl_m: float | None = None) -> tuple[list[dict], list[dict]]:
     """The policy's keep-out zones a clockless 2-D autopilot fence can hold
     exactly as the policy does: `(zones, skipped)`, each in policy order.
 
@@ -208,7 +239,8 @@ def policy_zones(policy, now=None, column_m: float | None = None
     entry (module docstring); the selection does not depend on it. The
     aircraft's position plays no part here: see `defer_near`."""
     zones, skipped = [], []
-    for kind, entry in iter_zones(policy, now=now, column_m=column_m):
+    gkw = {} if ground is None else {"ground": ground, "home_msl_m": home_msl_m}
+    for kind, entry in iter_zones(policy, now=now, column_m=column_m, **gkw):
         (zones if kind == "zone" else skipped).append(entry)
     return zones, skipped
 

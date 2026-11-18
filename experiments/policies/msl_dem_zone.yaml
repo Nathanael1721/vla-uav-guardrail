@@ -1,0 +1,76 @@
+# An MSL keep-out zone over the DEM's ridge (X-11, 2026-11-18, wf21): the
+# stress profile experiments/profiles/msl_dem.yaml flies it over the declared
+# ground experiments/worlds/dem_cmac_wgs84.json (a WGS84 elevation grid about
+# CMAC, the SITL home; tools/msl_dem_rail.py --write-dem).
+#
+# WHY IT IS NOT UNDER policies/
+#
+# As experiments/policies/msl_dem_sitl.yaml: an MSL rule is refused without a
+# ground (models.Policy.flight_problems), and every shipped policy is loaded
+# by the CI's policy tests without one, so this file lives beside the
+# experiment that flies it, unlocked. Its signed bundle is built with the
+# ground:
+#
+#   python tools/build_flight_bundles.py experiments/policies/msl_dem_zone.yaml \
+#       --ground experiments/worlds/dem_cmac_wgs84.json
+#
+# THE RULES
+#
+#   msl-ridge-nfz  a polygon_fence in MSL (altitude_ref MSL, the grant's
+#                  opt-in on a geometry primitive): 606-700 m MSL over the
+#                  ridge, 60-140 m east of home, 30 m either side of the
+#                  home's meridian. Read as AGL the same numbers would sit
+#                  hundreds of metres above anything flown; in MSL the zone
+#                  starts 22 m above home and about 3 m above the crest
+#                  (602.75 m MSL after resampling);
+#   agl-band       terrain clearance, 8-60 m above the ground under the
+#                  aircraft (AGL, the default);
+#   kin-caps       speed / climb / yaw-rate caps (P1).
+#
+# Over the crest the AGL floor needs at least 610.75 m MSL, inside the zone's
+# band: no height over the crest inside the footprint is legal, so the Shield
+# must hold the aircraft out of it; beside the footprint the ridge is crossed
+# over the AGL floor.
+policy_id: msl-dem-zone
+version: 0.1.0
+# Frame origin: ArduPilot SITL --home (CMAC, sitl/start_sitl.sh), as
+# msl_dem_sitl.yaml. The DEM is resampled into this frame.
+origin:
+  lat: -35.363261
+  lon: 149.16523
+
+constraints:
+  - id: msl-ridge-nfz
+    type: polygon_fence
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    altitude_ref: MSL
+    vertices:
+      - {lat: -35.363530494585, lon: 149.165890931678}
+      - {lat: -35.362991505415, lon: 149.165890931678}
+      - {lat: -35.362991505415, lon: 149.166772173915}
+      - {lat: -35.363530494585, lon: 149.166772173915}
+    altitude_floor_m: 606
+    altitude_ceiling_m: 700
+    margin_m: 2.0
+
+  - id: agl-band
+    type: altitude_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    alt_min_m: 8
+    alt_max_m: 60
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

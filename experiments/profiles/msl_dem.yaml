@@ -1,0 +1,49 @@
+# MSL over a declared ground: the grant's MSL opt-in on geometry primitives
+# flown through the stress harness on a rail (X-11, 2026-11-18, wf21).
+#
+# WHY THIS PROFILE EXISTS
+#
+# The grant's DSL makes AGL the default and MSL "an opt-in field on geometry
+# primitives" (02-implementation/policy-dsl.md). An MSL rule is enforced over
+# a declared ground (guardrail/terrain.py), and until 2026-11-18 one had flown
+# only by hand on the dev SITL rail, and only on an altitude_envelope
+# (msl_dem_sitl_01..03): the stress harness refused a scenario's ground on
+# its sitl / hil backends. Since then rail_node_args names the ground to both
+# nodes by path and sha256 (--ground, --ground-sha256) with the home
+# elevation on it (--ground-home-msl, where SITL boots), and every
+# post-flight judge is built over the same ground. This profile flies the
+# three families that carry an MSL geometry over the declared ground
+# experiments/worlds/dem_cmac_wgs84.json (a synthetic ridge about CMAC):
+#
+#   msl-dem-zone-ridge      a polygon_fence in MSL over the ridge (2 lanes)
+#   msl-dem-corridor-west   a corridor in MSL over the plain (level / climb)
+#   msl-dem-ceiling-climb   an altitude_envelope in MSL (east / west climbs)
+#
+# WHAT IT IS NOT
+#
+# Not a grant scheduling row and not a KPI set (`grant_kpi_bearing: false`):
+# each family is flown by this profile alone (its `profiles` field), so no
+# library, smoke, nightly or broad number moves. Headless it is not
+# KPI-grade (headless-kinematic, sim_speedup >> 1). The DEM is synthetic and
+# SITL's own ground stays flat: the height above the ground is the node's
+# own (pose above home + home elevation - DEM). On the hil rail each episode
+# flies the policy's SIGNED bundle, built with the ground on both hosts:
+#
+#   python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml \
+#       experiments/policies/msl_dem_zone.yaml experiments/policies/msl_dem_corridor.yaml \
+#       --ground experiments/worlds/dem_cmac_wgs84.json
+#
+#   python experiments/sweep_scenarios.py --profile msl_dem
+#   python experiments/sweep_scenarios.py --profile msl_dem --backend sitl --sitl-dry-run
+#   python experiments/sweep_scenarios.py --profile msl_dem --backend hil --hil-dry-run
+
+profile: msl_dem
+cadence: on demand (X-11, MSL geometry over a declared ground on a rail)
+grant_scope: "not a grant row: MSL polygon_fence, corridor and altitude_envelope over a declared DEM, flown on a rail"
+grant_sim_speedup: "1.0 on the sitl / hil rails - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001]
+samples_per_family: 1
+families: [msl-dem-zone-ridge, msl-dem-corridor-west, msl-dem-ceiling-climb]
+expected_cells: [6, 6]

@@ -222,12 +222,26 @@ ground). The scenario's policy is loaded with it wherever it is loaded
 harness gives every Shield of the episode the ground with up_ref="terrain"
 and flies the vehicle at a height above that ground (the vehicle holds its
 MSL height: a level command over rising ground brings the ground closer).
-The ground does not turn with the mission, so a rotated mission with a
-ground is refused. The SITL / hil rails do not take a scenario's ground
-(their post-flight scoring has no ground yet; rail_node_args refuses one):
-the Shield node flies one from its own --ground flag (docs/RUNBOOK-orin-
-hil.md, "MSL over a DEM"). A scenario without `ground` - every one before
-that date - is loaded, flown and recorded exactly as before.
+A scenario without `ground` - every one before that date - is loaded, flown
+and recorded exactly as before.
+
+Since 2026-11-18 (wf21) the SITL / hil rails fly a scenario's ground too:
+rail_node_args names it to both nodes by path and sha256 (--ground,
+--ground-sha256; a node whose copy of the file hashes otherwise refuses the
+flight) with the home elevation on it (--ground-home-msl, the DEM at the
+start, where sitl_home boots SITL), and the post-flight scoring builds every
+judge over the same ground (experiments/sweep_scenarios.py rail_judge_kw).
+Until then rail_node_args refused one.
+
+A ROTATED MISSION OVER A GROUND (2026-11-18). The ground is the world's,
+like the policy's zones, and a rotated mission turns its start, target,
+subject and constant action about the start, never the policy (and so
+never its ground): a family flown from four sides crosses the same relief
+from four sides, as it crosses the same zones. Until this date a ground
+and a rotated mission were refused together (as a world and a rotated
+mission still are, whose buildings and roads were authored for one
+approach); the take-off ground is the ground under the rotated start, the
+reference every height of the episode is above.
 
 SINCE 2026-11-16: A PILOT THAT CONSUMES THE PREFIX (WP4-15)
 
@@ -1191,9 +1205,8 @@ class ScenarioSpec(_Strict):
     @model_validator(mode="after")
     def _coherent(self) -> "ScenarioSpec":
         if self.ground is not None:
-            if self.mission.rotate_deg or self.mission.rotate_about is not None:
-                raise ValueError(f"{self.scenario_id}: a ground and a rotated mission - the "
-                                 f"ground's relief would not turn with it")
+            # A rotated mission flies over the same ground (module
+            # docstring, A ROTATED MISSION OVER A GROUND).
             # Its own copy of the reference, so a PolicyRef shared with
             # another spec never carries this one's ground.
             ref = self.policy.model_copy()

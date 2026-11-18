@@ -119,6 +119,25 @@ things now stop that:
     id-less log from before 2026-10-07 this is a note instead: the pymavlink
     rail wrote no mission_end then, so its stored runs cannot show one).
 
+THE GROUND A RUN FLEW OVER (since 2026-11-18, X-11)
+
+A run flown over a declared ground (the rails' --ground) converted its MSL
+rules over that ground and, over a DEM, judged every row at its height above
+it; until this date its bundle named the ground (metrics.json `ground`: the
+file's path and sha256) without carrying it, so a reader without the same
+checkout could not re-derive a height. Now `write_replay` packs the named
+file itself as `ground/<file name>`, after checking it hashes to the sha256
+the run recorded (a missing or different file refuses the bundle), and the
+index records `ground` {path, sha256, member}. `verify_replay` checks the
+carried bytes against that sha256 and the run's own record, then USES the
+carried DEM: it places it in the bundle policy's frame (terrain.load_ground)
+and re-derives every terrain-referenced row's height above the ground from
+its MSL height (up = msl_m - g(x, y), within the rows' millimetre rounding);
+a row that disagrees fails the bundle. `replay_ground` hands the carried
+ground to a reader that rebuilds the Shield. A run without a ground packs
+and verifies exactly as before; a bundle written before this date whose run
+had one verifies with a note that it does not carry it.
+
 ONE ESCALATION FSM PER RAIL (since 2026-10-07)
 
 A Shield can run the escalation FSM inside filter() (`Shield(escalation=...)`,
@@ -553,9 +572,101 @@ def episode_binding(events: list[dict], rows: list[dict],
     return binding, problems, notes
 
 
+# The member a carried ground file is packed as (THE GROUND A RUN FLEW OVER),
+# and how far a row's `up` may sit from msl_m - g(x, y): the rails round both
+# to the millimetre.
+GROUND_DIR = "ground/"
+GROUND_ROW_TOL_M = 2.5e-3
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_ground_ref(metrics: dict | None) -> dict | None:
+    """{"path", "sha256"} of the ground file a run's metrics.json names
+    (`ground.file`, written since 2026-11-18; before that the WGS84 DEM's
+    own record, `ground.ground.wgs84_dem`), {"path": None, ...} for a run
+    over a ground no file names (a flat ground stated in the record
+    itself), or None for a run without a ground."""
+    g = (metrics or {}).get("ground") if isinstance(metrics, dict) else None
+    if not isinstance(g, dict):
+        return None
+    f = g.get("file")
+    if isinstance(f, dict) and f.get("path") and f.get("sha256"):
+        return {"path": str(f["path"]), "sha256": str(f["sha256"])}
+    inner = g.get("ground") if isinstance(g.get("ground"), dict) else g
+    dem = inner.get("wgs84_dem") if isinstance(inner, dict) else None
+    if isinstance(dem, dict) and dem.get("path") and dem.get("sha256"):
+        return {"path": str(dem["path"]), "sha256": str(dem["sha256"])}
+    return {"path": None, "sha256": None,
+            "kind": (inner or {}).get("kind") if isinstance(inner, dict) else None}
+
+
+def _ground_member(metrics: dict | None, root: Path) -> tuple[dict | None, dict]:
+    """(index entry, {member: bytes}) for the ground a run names (THE GROUND
+    A RUN FLEW OVER). Raises ValueError for a named file that is missing or
+    does not hash to the run's sha256: such a bundle could not re-derive
+    what the run judged."""
+    ref = run_ground_ref(metrics)
+    if ref is None:
+        return None, {}
+    if ref["path"] is None:
+        return ({"carried": False, "kind": ref.get("kind"),
+                 "why": "the run's ground names no file (a ground stated in its "
+                        "record, e.g. a flat elevation): the record is the ground"}, {})
+    p = Path(ref["path"])
+    full = p if p.is_absolute() else Path(root) / p
+    if not full.is_file():
+        raise ValueError(f"the run flew over the ground {ref['path']} (sha256 "
+                         f"{ref['sha256']}), which is not at {full}: a replay bundle "
+                         f"must carry the ground its heights stand on")
+    data = full.read_bytes()
+    got = _digest(data)
+    if got != ref["sha256"]:
+        raise ValueError(f"the ground file {full} hashes to {got}, the run recorded "
+                         f"{ref['sha256']}: not the ground the run flew over")
+    name = GROUND_DIR + p.name
+    return ({"carried": True, "path": ref["path"], "sha256": ref["sha256"],
+             "member": name}, {name: data})
+
+
+def replay_ground(got: dict):
+    """The ground a replay bundle carries, placed in the frame of its policy
+    (guardrail/terrain.py load_ground), from read_replay's result; None for
+    a bundle without one. What a reader rebuilding the run's Shield hands it
+    (Shield(ground=..., up_ref="terrain") over a DEM)."""
+    entry = (got.get("index") or {}).get("ground")
+    data = got.get("ground_bytes")
+    if not isinstance(entry, dict) or not entry.get("carried") or data is None:
+        return None
+    from .terrain import load_ground
+    with tempfile.TemporaryDirectory(prefix="replay_ground_") as d:
+        f = Path(d) / Path(entry["member"]).name
+        f.write_bytes(data)
+        return load_ground(f, got["policy"].frame_origin)
+
+
+def _ground_rows_problem(rows: list[dict], ground) -> tuple[int, str | None]:
+    """(rows re-derived, the first row whose `up` is not its `msl_m` less
+    the carried DEM under it, or None): THE GROUND A RUN FLEW OVER."""
+    n = 0
+    for r in rows:
+        if r.get("up_ref") != "terrain":
+            continue
+        try:
+            x, y, up, msl = (float(r[k]) for k in ("x", "y", "up", "msl_m"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        want = msl - float(ground.elevation_at(x, y))
+        if abs(want - up) > GROUND_ROW_TOL_M:
+            return n, (f"tick {r.get('tick')}: up {up:g} m, but msl_m {msl:g} m less the "
+                       f"carried ground at ({x:g}, {y:g}) is {want:.4f} m")
+        n += 1
+    return n, None
+
+
 def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
                  changelog: str = "initial", *, signer="auto",
-                 policy_source: dict | None = None) -> Path:
+                 policy_source: dict | None = None,
+                 ground_root: str | Path | None = None) -> Path:
     """Package a finished flight directory and its policy into one archive.
 
     The policy is stored as the same canonical IR `bundle.py` hashes, so the
@@ -566,6 +677,10 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     present and writes a KEYLESS bundle otherwise. `policy_source` - where the
     flight got its policy (a verified bundle, or a YAML file and therefore
     unsigned) - is copied into the index when the flight supplies it.
+
+    `ground_root` (X-11): what a run's repo-relative ground path is relative
+    to (default this checkout's root); the file is packed (THE GROUND A RUN
+    FLEW OVER).
     """
     run, out = Path(run_dir), Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -697,6 +812,12 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     else:
         policy_binding = "unverified"
 
+    # The ground the run flew over, carried (THE GROUND A RUN FLEW OVER).
+    ground_index, ground_members = _ground_member(
+        _json_or_none(members.get(EPISODE + "metrics.json")),
+        Path(ground_root) if ground_root is not None else _REPO_ROOT)
+    members.update(ground_members)
+
     sgn = _resolve_signer(signer)
     members[POLICY + "ir.json"] = policy.canonical_bytes()
     members[POLICY + "manifest.json"] = json.dumps(
@@ -732,6 +853,8 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     }
     if bag_index is not None:
         index["bag"] = bag_index
+    if ground_index is not None:
+        index["ground"] = ground_index
     if policy_source is not None:
         index["policy_source"] = policy_source
     index_bytes = json.dumps(index, indent=2, sort_keys=True).encode()
@@ -852,6 +975,11 @@ def read_replay(path: str | Path,
             "events": _jsonl(blobs.get(EPISODE + "events.jsonl")),
             "generation_policies": gen_policies,
             "generation_problems": gen_problems,
+            # The carried ground file's bytes (THE GROUND A RUN FLEW OVER),
+            # None for a bundle without one.
+            "ground_bytes": (blobs.get(index["ground"]["member"])
+                             if isinstance(index.get("ground"), dict)
+                             and index["ground"].get("member") else None),
             "bag_files": sorted(n for n in blobs
                                 if n.startswith(EPISODE + BAG_DIR + "/"))}
 
@@ -970,6 +1098,37 @@ def verify_replay(path: str | Path,
                          f"{bag.get('why')}")
     elif bag:
         notes.append(f"rosbag NOT included: {bag.get('why')}")
+
+    # THE GROUND A RUN FLEW OVER: the carried file is the one the run
+    # recorded, and its heights re-derive from it.
+    ref = run_ground_ref(got["metrics"])
+    gidx = got["index"].get("ground")
+    if isinstance(gidx, dict) and gidx.get("carried"):
+        data = got.get("ground_bytes")
+        if data is None or _digest(data) != gidx.get("sha256"):
+            return False, [f"the carried ground {gidx.get('member')} does not hash to "
+                           f"the index's {gidx.get('sha256')}"]
+        if ref is None or ref.get("sha256") != gidx.get("sha256") \
+                or ref.get("path") != gidx.get("path"):
+            return False, [f"the carried ground {gidx.get('path')} ({gidx.get('sha256')}) "
+                           f"is not the one the run's metrics.json names ({ref})"]
+        try:
+            ground = replay_ground(got)
+        except (ValueError, OSError, KeyError) as exc:
+            return False, [f"the carried ground {gidx.get('path')} cannot be placed in "
+                           f"the bundle policy's frame: {type(exc).__name__}: {exc}"]
+        n, bad_row = _ground_rows_problem(got["rows"], ground)
+        if bad_row:
+            return False, [f"a row's height above the carried ground does not "
+                           f"re-derive: {bad_row}"]
+        notes.append(f"ground {gidx.get('path')} carried (sha256 {gidx.get('sha256')}): "
+                     f"{n} row height(s) above it re-derived from msl_m")
+    elif isinstance(gidx, dict):
+        notes.append(f"ground NOT carried: {gidx.get('why')}")
+    elif ref is not None:
+        notes.append(f"the run flew over the ground {ref.get('path')} (sha256 "
+                     f"{ref.get('sha256')}) and this bundle does not carry it (written "
+                     f"before 2026-11-18): its heights cannot be re-derived from it")
 
     stored = got["kpi"]
     if stored is None:

@@ -1229,6 +1229,146 @@ def test_the_launch_passes_only_what_it_knows_and_nothing_rosbag2_would_cut():
 
 
 # --------------------------------------------------------------------------- #
+# a run over a DEM (X-11)
+# --------------------------------------------------------------------------- #
+
+DEM = "experiments/worlds/dem_cmac_wgs84.json"
+CMAC = (-35.363261, 149.16523)
+HOME_MSL = 584.0
+
+
+def _dem_episode():
+    """_episode() as a run with --ground over the CMAC DEM logs it: each
+    row's `up` is above the DEM under it (the node's terrain_relative_up of
+    the MAVROS height above home), `up_home` the height above home,
+    `up_ref` "terrain"; trajectory.json's `up` the exact double. The DEM
+    under HOME is ~0.6 m below home, so the two heights differ."""
+    from guardrail import terrain as T
+    g = T.load_ground(DEM, CMAC, root=ROOT)
+    s, rows, traj, kpi = _episode()
+    for row, p in zip(rows, traj):
+        up_home = p["up"]
+        up_dem = T.terrain_relative_up(up_home, HOME_MSL, g, p["x"], p["y"])
+        row.update(up=round(up_dem, 3), up_home=round(up_home, 3), up_ref="terrain")
+        p["up"] = up_dem
+    return g, s, rows, traj, kpi
+
+
+def test_a_run_over_a_dem_is_compared_above_the_dem_it_flew_over():
+    g, s, rows, traj, kpi = _dem_episode()
+    assert abs(rows[0]["up"] - rows[0]["up_home"]) > 0.3, rows[0]
+    # The DEM given: the bag's height above home is converted over it, and
+    # trajectory.json's doubles match bit for bit.
+    ep = R.Episode(name="dem", source="memory", bag_dir=Path("stand-in"), rows=rows,
+                   trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on",
+                   terrain=(g, HOME_MSL))
+    with _bag_is(s):
+        rec, _ = R.replay(ep)
+    tr = rec["compared_with_the_log"]["trajectory"]
+    assert rec["verdict"] == "identical", rec["first_difference"]
+    assert tr["exact"] == len(PLAN) and "trajectory.json" in tr["against"], tr
+    assert tr["heights"].startswith("above the run's DEM") and \
+        tr["terrain_rows_not_compared"] == 0, tr
+    # ... against the flight log's 3 decimals too
+    ep.trajectory = None
+    with _bag_is(s):
+        rec, _ = R.replay(ep)
+    assert rec["verdict"] == "identical", rec["first_difference"]
+    # A height the Shield did not judge at is a difference: 0.5 m off the DEM.
+    bad = [dict(r) for r in rows]
+    bad[5]["up"] = round(bad[5]["up"] + 0.5, 3)
+    ep2 = R.Episode(name="dem", source="memory", bag_dir=Path("stand-in"), rows=bad,
+                    trajectory=None, kpi=kpi, priorities=PRIORITIES, arm="on",
+                    terrain=(g, HOME_MSL))
+    with _bag_is(s):
+        rec, _ = R.replay(ep2)
+    assert rec["first_difference"]["field"] == "pose" and \
+        rec["first_difference"]["tick"] == 6, rec["first_difference"]
+    # Before X-11's bag replay knew the DEM it compared the bag's height
+    # above home with the log's above the DEM: every pose differed.
+    ep3 = R.Episode(name="dem", source="memory", bag_dir=Path("stand-in"),
+                    rows=[{k: v for k, v in r.items() if k not in ("up_ref", "up_home")}
+                          for r in rows],
+                    trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on")
+    with _bag_is(s):
+        rec, _ = R.replay(ep3)
+    assert rec["compared_with_the_log"]["trajectory"]["differs"] == len(PLAN)
+    # No DEM: the log's up_home against the bag's, and said.
+    ep4 = R.Episode(name="dem", source="memory", bag_dir=Path("stand-in"), rows=rows,
+                    trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on")
+    with _bag_is(s):
+        rec, _ = R.replay(ep4)
+    tr = rec["compared_with_the_log"]["trajectory"]
+    assert rec["verdict"] == "identical" and "flight_log.jsonl" in tr["against"], tr
+    assert tr["heights"].startswith("above home") and "not checked" in tr["heights"], tr
+    # ... and a terrain row with no up_home is not compared: incomplete.
+    gap = [dict(r) for r in rows]
+    del gap[2]["up_home"]
+    ep5 = R.Episode(name="dem", source="memory", bag_dir=Path("stand-in"), rows=gap,
+                    trajectory=None, kpi=kpi, priorities=PRIORITIES, arm="on")
+    with _bag_is(s):
+        rec, _ = R.replay(ep5)
+    tr = rec["compared_with_the_log"]["trajectory"]
+    assert rec["verdict"] == "incomplete" and tr["terrain_rows_not_compared"] == 1, tr
+    assert any("not compared" in x for x in rec["limits"]), rec["limits"]
+    # A run without --ground keeps its record unchanged (no `heights` key).
+    s0, rows0, traj0, kpi0 = _episode()
+    rec0, _ = _replay(s0, rows0, traj0, kpi0)
+    assert "heights" not in rec0["compared_with_the_log"]["trajectory"]
+
+
+def test_a_run_folder_names_the_dem_it_flew_over_by_path_and_sha256():
+    """load_run takes the DEM a run's metrics.json names, checked against its
+    sha256 and placed in generation 0's frame; another file or none is a
+    limit, and the poses are then compared by up_home."""
+    from guardrail import terrain as T
+    import guardrail.replay as GR
+    g, s, rows, traj, kpi = _dem_episode()
+    sha = T.ground_file_sha256(DEM, ROOT)
+    metrics = {"shield": "on", "ground": {"up_ref": "terrain", "home_msl_m": HOME_MSL,
+                                          "file": {"path": DEM, "sha256": sha}}}
+
+    class _Pol:
+        frame_origin = CMAC
+
+    real = GR.generation_table
+    GR.generation_table = lambda files: (None, {0: _Pol()}, [])
+    try:
+        root = _tmp("rfb_dem_")
+        run = _run_folder(root, "dem_001", rows, traj, kpi)
+        (run / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+        ep = R.load_run(run)
+        assert ep.terrain is not None and ep.terrain[1] == HOME_MSL, ep.limits
+        assert sha in ep.terrain_source and any(sha in x for x in ep.not_from_bag)
+        assert abs(ep.terrain[0].elevation_at(-200.0, 5.0) - g.elevation_at(-200.0, 5.0)) \
+            < 1e-12
+        ep.priorities = PRIORITIES          # the stand-in generation names no rule
+        with _bag_is(s):
+            rec, _ = R.replay(ep)
+        assert rec["verdict"] == "identical", rec["first_difference"]
+        assert rec["compared_with_the_log"]["trajectory"]["exact"] == len(PLAN)
+        # Another file than the one the run flew over: not used, said.
+        metrics["ground"]["file"]["sha256"] = "0" * 64
+        (run / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+        ep = R.load_run(run)
+        assert ep.terrain is None and "not the ground the run flew over" in ep.terrain_why
+        assert any("up_home" in x for x in ep.limits), ep.limits
+        ep.priorities = PRIORITIES
+        with _bag_is(s):
+            rec, _ = R.replay(ep)
+        assert rec["verdict"] == "identical", rec["first_difference"]
+        assert rec["compared_with_the_log"]["trajectory"]["heights"].startswith("above home")
+        # A flat ground (up_ref home) or none: no DEM, nothing said.
+        for m in ({"shield": "on"},
+                  {"shield": "on", "ground": {"up_ref": "home", "ground": {"kind": "flat"}}}):
+            (run / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+            ep = R.load_run(run)
+            assert ep.terrain is None and ep.terrain_why is None and not ep.limits
+    finally:
+        GR.generation_table = real
+
+
+# --------------------------------------------------------------------------- #
 # a real rosbag2, written and read with rosbags
 # --------------------------------------------------------------------------- #
 

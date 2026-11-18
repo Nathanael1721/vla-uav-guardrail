@@ -2064,10 +2064,18 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # battery (guardrail/rtl_path.py). Judged on the true position,
             # which is the autopilot's own (it flies on its estimate).
             if ap_mode == "RTL":
-                v = rtl_watch.assess(t_now, st.x, st.y, st.up,
-                                     RP.zones_from_shield(checker),
-                                     RP.band_from_shield(checker, st),
-                                     up_home=up_above_home(st))
+                if ground is None:
+                    v = rtl_watch.assess(t_now, st.x, st.y, st.up,
+                                         RP.zones_from_shield(checker),
+                                         RP.band_from_shield(checker, st),
+                                         up_home=up_above_home(st))
+                else:
+                    # Over a declared ground (X-11) the leg home is judged
+                    # along the ground under it (rtl_path, THE LEG OVER A
+                    # DEM), each rule in its own reference.
+                    zs, bs, over = RP.leg_rules_from_shield(checker, st)
+                    v = rtl_watch.assess(t_now, st.x, st.y, st.up, zs, bs,
+                                         up_home=up_above_home(st), over=over)
                 flags["rtl_failed"] = v.failed
                 if v.failed:
                     rtl_note = v.note
@@ -3477,9 +3485,14 @@ def lengthened_suffix(add: float) -> str:
 RAIL_SHIELD_FLAGS = ("--seed", "--bundle", "--expected-hash", "--policy", "--dev-yaml",
                      "--start", "--target", "--no-target", "--reach-m", "--speed",
                      "--max-s", "--subject", "--subject-class", "--clock-start",
-                     "--events", "--scenario-meta", "--world")
+                     "--events", "--scenario-meta", "--world",
+                     # A declared ground (X-11, 2026-11-18): rail_ground_args.
+                     "--ground", "--ground-sha256", "--ground-home-msl")
 RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--no-target",
-                   "--speed", "--pilot", "--action")
+                   "--speed", "--pilot", "--action",
+                   # The stub loads the policy too: an MSL rule passes its
+                   # flight gate only over the same named ground.
+                   "--ground", "--ground-sha256")
 # What the VLA stub must also read when it is sent a prefix arm (`--prefix`,
 # 2026-11-16): the arm, and the clock and flight length its CSP is compiled
 # and checked static over. Checked only for a mission that carries --prefix,
@@ -4406,7 +4419,51 @@ def sitl_home(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -> str |
     rm = rail_mission(spec, policy, defaults, seed)
     lat, lon = projection_for(float(origin[0]), float(origin[1])).to_latlon(
         rm["start"][0], rm["start"][1])
-    return f"{lat:.8f},{lon:.8f},{RAIL_HOME_ALT_M:g},{rm['yaw_deg']:.2f}"
+    # Over a declared ground (X-11) the autopilot's home stands on it: the
+    # DEM's elevation at the (jittered) start, the number --ground-home-msl
+    # names to the nodes (rail_ground_args). Without one: RAIL_HOME_ALT_M,
+    # as every SITL_HOME before.
+    alt = (f"{RAIL_HOME_ALT_M:g}" if getattr(spec, "ground", None) is None
+           else _num(rail_home_msl(spec, policy, defaults, seed)))
+    return f"{lat:.8f},{lon:.8f},{alt},{rm['yaw_deg']:.2f}"
+
+
+def rail_home_msl(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -> float:
+    """The home elevation (m MSL) of a rail mission over the scenario's
+    declared ground (X-11, 2026-11-18): the DEM's elevation at the mission's
+    (jittered) start, rounded to the millimetre - SITL boots there
+    (sitl_home) and the nodes are told it (--ground-home-msl), so the
+    autopilot's home stands on the ground the Shield converts over, and
+    TerrainReference's check (the DEM at home within 2 m of it) holds by
+    construction. Never guessed: no ground, no number (UnsupportedScenario)."""
+    ground = episode_ground(spec, policy)
+    if ground is None:
+        raise UnsupportedScenario(f"{spec.scenario_id}: no declared ground, so no "
+                                  f"home elevation on it")
+    rm = rail_mission(spec, policy, defaults, seed)
+    return round(float(ground.elevation_at(rm["start"][0], rm["start"][1])), 3)
+
+
+def rail_ground_args(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -> list[str]:
+    """The nodes' arguments for the scenario's declared ground (X-11,
+    2026-11-18), [] without one: the ground NAMED - its repo-relative path
+    and the sha256 of the file as this checkout holds it (terrain.
+    ground_file), which every node checks before reading it, so a host
+    whose copy differs refuses the flight instead of flying another ground -
+    and the home elevation on it (rail_home_msl). The ground is read here
+    first (episode_ground), so a file that cannot be placed in the policy's
+    frame is refused before SITL boots."""
+    path = getattr(spec, "ground", None)
+    if path is None:
+        return []
+    from guardrail import terrain as TR
+    episode_ground(spec, policy)
+    try:
+        gfile = TR.ground_file(path, root=ROOT)
+    except (ValueError, OSError) as e:
+        raise UnsupportedScenario(f"ground {path}: {type(e).__name__}: {e}") from e
+    return [f"--ground={path}", f"--ground-sha256={gfile['sha256']}",
+            f"--ground-home-msl={_num(rail_home_msl(spec, policy, defaults, seed))}"]
 
 
 def rail_policy_args(spec: ScenarioSpec, backend: str = "sitl",
@@ -4503,16 +4560,15 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
     if meta:
         args.append(f"--scenario-meta={meta}")
     if getattr(spec, "ground", None) is not None:
-        # A declared ground (X-11): the Shield node flies one from its own
-        # --ground flag (docs/RUNBOOK-orin-hil.md, "MSL over a DEM"), but this
-        # harness's post-flight scoring of a rail run (the rail judges, the
-        # per-step rebuild) is not given the ground, and would refuse the
-        # MSL rule after the flight. Refused before SITL boots instead.
-        raise UnsupportedScenario(
-            f"ground {spec.ground}: a scenario with a declared ground is flown headless "
-            f"only; on a rail, fly the Shield node with --ground directly "
-            f"(docs/RUNBOOK-orin-hil.md, 'MSL over a DEM') - the harness's rail "
-            f"scoring has no ground yet")
+        # A declared ground (X-11, 2026-11-18): named to both nodes by path
+        # and sha256, with the home elevation SITL boots at (sitl_home);
+        # the post-flight scoring judges over the same ground (sitl_extra,
+        # rail_judge_kw). Until this date such a scenario was refused here.
+        if pol is None:
+            raise UnsupportedScenario(
+                f"ground {spec.ground}: the scenario's policy cannot be read here, so "
+                f"the ground cannot be placed in its frame")
+        args.extend(rail_ground_args(spec, pol, defaults, seed))
     if getattr(spec, "world", None) is not None:
         # The declared world (WP1-07): the Shield node builds its buildings
         # and roads maps from the same repo-relative file. Read here first,
@@ -4634,7 +4690,16 @@ def _owner(r: dict) -> str:
             else "shield")
 
 
-def _judged_steps(rows: list[dict], policy, generations: dict | None):
+def rail_judge_kw(ground) -> dict:
+    """The keywords every post-flight judge Shield of a rail run is built
+    with over the scenario's declared ground (X-11, 2026-11-18): the ground,
+    and up_ref "terrain" - the node's rows under --ground hold in `up` the
+    height above the DEM under the aircraft, which is what its Shield
+    judged. {} without a ground: every judge as it was built before."""
+    return {} if ground is None else {"ground": ground, "up_ref": "terrain"}
+
+
+def _judged_steps(rows: list[dict], policy, generations: dict | None, ground=None):
     """Per row i > 0, the previous instant's judgement of row i's position,
     for the breach and polygon-entry tests: (unsafe under the rules of row
     i-1, inside a zone as it stood at row i-1), or None where it cannot be
@@ -4671,7 +4736,8 @@ def _judged_steps(rows: list[dict], policy, generations: dict | None):
         return None, "rules that switch with the clock, and no clock on the rows"
     pin = {"now": None}
     shields = {g: Shield(p, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, escalation=False,
-                         now=(lambda: pin["now"]) if clocked else None)
+                         now=(lambda: pin["now"]) if clocked else None,
+                         **rail_judge_kw(ground))
                for g, p in generations.items()}
     out: list = [None]
     for i in range(1, len(rows)):
@@ -4762,7 +4828,8 @@ def _autopilot_scope(rows: list[dict], policy, generations: dict | None, judged)
     return {"autopilot_keepout_breaches": ko, "autopilot_departures": dep}
 
 
-def rail_measurements(rows: list[dict], policy, generations: dict | None = None) -> dict:
+def rail_measurements(rows: list[dict], policy, generations: dict | None = None, *,
+                      ground=None) -> dict:
     """The harness's own position measurements, from a rail's flight log.
 
     run_episode measures breaches, polygon entries, ticks inside a polygon
@@ -4797,11 +4864,13 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
     judged (_judged_steps says why, in `rail_measurements_not_measured`).
     Polygon fields come from the node's per-row zones (`zones_in`,
     `zone_d_m`) when it logged them, else from the policy's zones (one
-    generation, nothing timed)."""
+    generation, nothing timed). `ground` (X-11): the scenario's declared
+    ground, every judge built over it (rail_judge_kw); None, as before."""
     out: dict[str, Any] = {}
     if not rows:
         return out
-    judged, why_not = _judged_steps(rows, policy, generations)
+    judged, why_not = (_judged_steps(rows, policy, generations) if ground is None
+                       else _judged_steps(rows, policy, generations, ground))
     if why_not:
         out["rail_measurements_not_measured"] = why_not
     if all("unsafe" in r for r in rows) and judged is not None:
@@ -4827,7 +4896,8 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
         inside_ticks = entries = ap_entries = 0
         prev_inside = False
         # Zones only: a distance_envelope's map is not needed to read them.
-        zones_of = None if logged else Shield(policy, require_maps=False).zones_now
+        zones_of = None if logged else Shield(policy, require_maps=False,
+                                              **rail_judge_kw(ground)).zones_now
         for i, r in enumerate(rows):
             if logged:
                 d = r.get("zone_d_m")
@@ -4873,7 +4943,8 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
         # Zones only (zones_now), as above: built without a world's maps.
         shields = {g: Shield(p, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                              escalation=False, require_maps=False,
-                             now=(lambda: pin["now"]) if clocked else None)
+                             now=(lambda: pin["now"]) if clocked else None,
+                             **rail_judge_kw(ground))
                    for g, p in gens.items()}
         fence_seen = False
         min_d = math.inf
@@ -4950,7 +5021,7 @@ def rail_window(rows: list[dict], max_s: float | None) -> tuple[list[dict], list
 
 
 def _rail_judges(rows: list[dict], policy, generations: dict | None,
-                 lookahead_s: float, lookahead_dt_s: float):
+                 lookahead_s: float, lookahead_dt_s: float, ground=None):
     """The run's Shields, one per generation flown, on a rule clock pinned to
     the row being read: ({generation: Shield}, pin, None), or (None, None,
     why) when the rows cannot be read that way."""
@@ -4975,7 +5046,8 @@ def _rail_judges(rows: list[dict], policy, generations: dict | None,
     # `violations` on the rows).
     judges = {g: Shield(p, lookahead_s=lookahead_s, dt=lookahead_dt_s, escalation=False,
                         require_maps=False,
-                        now=(lambda: pin["now"]) if clocked else None)
+                        now=(lambda: pin["now"]) if clocked else None,
+                        **rail_judge_kw(ground))
               for g, p in gens.items()}
     return judges, pin, None
 
@@ -4995,7 +5067,7 @@ def _shield_state(r: dict) -> State:
 
 def rail_rule_measurements(rows: list[dict], policy, generations: dict | None = None, *,
                            dt: float = 0.1, lookahead_s: float = LOOKAHEAD_S,
-                           lookahead_dt_s: float = LOOKAHEAD_DT_S) -> dict:
+                           lookahead_dt_s: float = LOOKAHEAD_DT_S, ground=None) -> dict:
     """run_episode's rule measurements, read from a rail's flight log with
     the same definitions (one scorer; until 2026-11-07 each gate on them
     read "not measured" on the rails although the log holds what they need):
@@ -5030,7 +5102,10 @@ def rail_rule_measurements(rows: list[dict], policy, generations: dict | None = 
     nm: dict[str, str] = {}
     if not rows:
         return out
-    judges, pin, why = _rail_judges(rows, policy, generations, lookahead_s, lookahead_dt_s)
+    judges, pin, why = (_rail_judges(rows, policy, generations, lookahead_s, lookahead_dt_s)
+                        if ground is None else
+                        _rail_judges(rows, policy, generations, lookahead_s, lookahead_dt_s,
+                                     ground))
     traced = all(isinstance(r.get(RAIL_TRACE), dict) for r in rows)
     if judges is None:
         nm["phase*_violation_ticks_*, switch_*, anticipated_ticks_*, "
@@ -5256,6 +5331,45 @@ def rail_scored_rows(rows: list[dict], max_s: float | None) -> list[dict]:
     return rail_window(rail_mission_rows(rows)[0], max_s)[0]
 
 
+def rail_ground_check(spec: ScenarioSpec, metrics: dict) -> dict:
+    """Did the rail fly the scenario's declared ground (X-11, 2026-11-18)?
+    {"declared": {path, sha256} as this checkout holds the file, "flown":
+    the run's metrics.json ground.file (None: the node recorded none),
+    "match": both name the same path and sha256}. The node refuses a file
+    that does not hash to the --ground-sha256 it was sent, so a mismatch
+    here means the run was not flown from rail_node_args."""
+    from guardrail import terrain as TR
+    declared = TR.ground_file(spec.ground, root=ROOT)
+    g = metrics.get("ground") if isinstance(metrics.get("ground"), dict) else {}
+    flown = g.get("file") if isinstance(g.get("file"), dict) else None
+    match = bool(flown) and flown.get("path") == declared["path"] \
+        and flown.get("sha256") == declared["sha256"]
+    return {"declared": declared, "flown": flown, "match": match}
+
+
+def ground_flight_problems(spec: ScenarioSpec, metrics: dict) -> list[str]:
+    """Why a rail run of a scenario with a declared ground cannot be scored
+    as that scenario ([] when it can, or the scenario declares none): its
+    metrics.json names no ground file, or another path or sha256
+    (rail_ground_check). FAIL CLOSED (X-11, 2026-11-18): every judge of
+    sitl_extra is built over the DECLARED ground, so a run the Shield flew
+    over another ground, or none, would be scored as if it had flown this
+    one. run_sitl, run_hil and rescore_rail_run refuse such a run (an
+    error, never a scored episode), as they refuse a run of the wrong arm."""
+    if getattr(spec, "ground", None) is None:
+        return []
+    chk = rail_ground_check(spec, metrics)
+    if chk["match"]:
+        return []
+    d = chk["declared"]
+    if chk["flown"] is None:
+        return [f"the run's metrics.json names no ground file, and the scenario declares "
+                f"{d['path']} (sha256 {d['sha256']}): not flown over it"]
+    f = chk["flown"]
+    return [f"the run flew over {f.get('path')} (sha256 {f.get('sha256')}), the scenario "
+            f"declares {d['path']} (sha256 {d['sha256']})"]
+
+
 def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
                generations: dict | None = None, *, max_s: float | None = None,
                dt: float | None = None, autopilot_texts: list[dict] | None = None) -> dict:
@@ -5292,6 +5406,15 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
     extra: dict[str, Any] = {"seed_applied": True}
     if max_s is None:
         max_s = scenario_max_s(metrics)
+    # The scenario's declared ground (X-11, 2026-11-18): every judge below is
+    # built over it (rail_judge_kw), as the flying Shield was, and the run's
+    # own record must name the same file (`ground_check`; run_sitl, run_hil and
+    # rescore_rail_run refuse one that does not, ground_flight_problems). None without one:
+    # every call below is the one it was.
+    ground = episode_ground(spec, policy)
+    gkw = {} if ground is None else {"ground": ground}
+    if ground is not None:
+        extra["ground_check"] = rail_ground_check(spec, metrics)
     mission, landing = rail_mission_rows(rows)
     win, after = rail_window(mission, max_s)
     if isinstance(metrics.get("reached"), bool):
@@ -5301,14 +5424,15 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
     fsm = metrics.get("fsm")
     if spec.shield and isinstance(fsm, dict) and "failsafe_triggered" in fsm:
         extra["fsm"] = fsm
-    extra.update(rail_measurements(win, policy, generations))
+    extra.update(rail_measurements(win, policy, generations, **gkw))
     extra.update(rail_flight_fields(win, metrics))
     lk = metrics.get("shield_lookahead") if isinstance(metrics.get("shield_lookahead"),
                                                        dict) else {}
     extra.update(rail_rule_measurements(
         win, policy, generations, dt=float(dt or spec.dt or 0.1),
         lookahead_s=float(lk.get("horizon_s") or spec.lookahead_s or LOOKAHEAD_S),
-        lookahead_dt_s=float(lk.get("dt_s") or spec.lookahead_dt_s or LOOKAHEAD_DT_S)))
+        lookahead_dt_s=float(lk.get("dt_s") or spec.lookahead_dt_s or LOOKAHEAD_DT_S),
+        **gkw))
     ev = metrics.get("scenario_events")
     if isinstance(ev, dict):
         extra["event_refusals_as_expected"] = ev.get("event_refusals_as_expected")
@@ -5334,8 +5458,8 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
     # `after_mission_end`).
     prios = rail_rule_priorities(policy, generations)
     in_window = {f: extra.get(f) for f in RAIL_INVARIANT_FIELDS}
-    whole = dict(rail_measurements(rows, policy, generations))
-    upto_end = rail_measurements(mission, policy, generations)
+    whole = dict(rail_measurements(rows, policy, generations, **gkw))
+    upto_end = rail_measurements(mission, policy, generations, **gkw)
     upto_fields = ("breaches", "autopilot_breaches", "autopilot_departures")
     if "autopilot_scope_basis" in whole:
         upto_fields += ("autopilot_keepout_breaches",)      # NO_RULE_NAMES
@@ -5818,6 +5942,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         raise RuntimeError(f"{tag}: not the arc arm's flight: " + "; ".join(arc_problems))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # Fail closed (X-11): never scored over a ground it did not fly.
+        raise RuntimeError(f"{tag}: not flown over the scenario's ground: "
+                           + "; ".join(ground_problems))
     extra = sitl_extra(spec, rows, metrics, pol, gens,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(out_dir))
@@ -6373,6 +6502,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         problems.append("not the arc arm's flight: " + "; ".join(arc_problems))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # Fail closed (X-11): never scored over a ground it did not fly.
+        problems.append("not flown over the scenario's ground: " + "; ".join(ground_problems))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
     # Only now, the run accepted (its nonce, its mission_end, its stress and
@@ -6517,6 +6650,11 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
         before = verdict_record(stored.get("status"), stored.get("gates_failed") or [],
                                 stored.get("labels_failed") or [],
                                 stored.get("known_failure_reason"))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # As the campaign accepted it (run_sitl / run_hil): fail closed.
+        raise RuntimeError("not flown over the scenario's ground: "
+                           + "; ".join(ground_problems))
     pol = spec.policy.load(ROOT)
     gens = run_generations(run_dir)
     max_s = meta.get("max_s")

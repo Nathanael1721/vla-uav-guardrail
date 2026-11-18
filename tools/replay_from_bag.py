@@ -42,6 +42,19 @@ WHAT IS REBUILT, AND FROM WHICH TOPIC
                       the Shield touched with the Shield on: rule ids and
                       operator names only
 
+A RUN OVER A DEM (X-11, 2026-11-18)
+
+A run flown with --ground over a grid (metrics.json `ground.up_ref`
+"terrain") logs each height above the DEM under the aircraft, not the
+MAVROS height above home the bag holds. The bag's pose is converted over
+that DEM before it is compared (the node's own terrain_relative_up with
+metrics.json's home_msl_m): the DEM is read from the replay bundle that
+carries it, or from the repo-relative file a run folder names, checked
+against the run's sha256 and placed in the frame of the policy the run
+launched with. Without the DEM the log's `up_home` (the pose's own height
+above home) is compared instead and the record says the conversion was not
+checked. A run without a ground, or over a flat one, is compared as before.
+
 WHAT THE BAG DOES NOT HOLD (each is reported per run, never filled in)
 
   * Which pose message a tick consumed. The node and the recorder are two
@@ -900,15 +913,29 @@ def compare_manifest(custom: dict | None, manifest: dict | None,
 # against the flight log
 # --------------------------------------------------------------------------- #
 
-def _pose_match(s: BagStreams, home: list, j: int, want: tuple, exact: bool) -> str | None:
+def _over_ground(x: float, y: float, up_home: float, terrain) -> float:
+    """The height above the DEM under (x, y) of a pose `up_home` above home:
+    the node's own conversion (guardrail/terrain.py TerrainReference.up,
+    terrain_relative_up, called with the same doubles), so a trajectory.json
+    point is matched bit for bit. `terrain`: (ground, home_msl_m)."""
+    from guardrail.terrain import terrain_relative_up
+    ground, home_msl = terrain
+    return terrain_relative_up(up_home, home_msl, ground, x, y)
+
+
+def _pose_match(s: BagStreams, home: list, j: int, want: tuple, exact: bool,
+                terrain=None) -> str | None:
     """Is the log's point the bag's pose message `j`, or a neighbour of it?
     `exact`: the log holds the message's own doubles (trajectory.json), else
-    the flight log's rounding (3 decimals)."""
+    the flight log's rounding (3 decimals). `terrain` ((ground, home MSL),
+    X-11): the log's height is above that DEM, so the bag's height above
+    home is converted over it first; None compares the bag's own height."""
     def same(i: int) -> bool:
         if not 0 <= i < len(s.poses):
             return False
         p = s.poses[i][1]
-        got = (p["north"] + home[0], p["east"] + home[1], p["up"])
+        x, y = p["north"] + home[0], p["east"] + home[1]
+        got = (x, y, p["up"] if terrain is None else _over_ground(x, y, p["up"], terrain))
         if exact:
             return all(abs(a - b) <= POSE_EXACT_M for a, b in zip(got, want))
         return tuple(round(v, 3) for v in got) == want
@@ -940,11 +967,25 @@ def _align(rb: Rebuilt, rows: list[dict]) -> tuple[list, str]:
 
 
 def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
-                  trajectory: list | None = None, *, arm: str | None = None) -> dict:
+                  trajectory: list | None = None, *, arm: str | None = None,
+                  terrain=None) -> dict:
     """The rebuilt ticks against flight_log.jsonl (and trajectory.json).
     `arm`: metrics.json's `shield` ("on" / "off" / None unknown), which says
-    whether a logged violation on a tick with no intercept is a difference."""
+    whether a logged violation on a tick with no intercept is a difference.
+
+    `terrain` ((ground, home MSL), X-11): the DEM a run flown with --ground
+    over a grid judged its heights above. Such a run's rows say
+    `up_ref: "terrain"`, and their `up` (and trajectory.json's) is the height
+    above that DEM, not the MAVROS height above home the bag holds: the bag's
+    is converted over the DEM before it is compared. Without the DEM a
+    terrain row is compared by its own `up_home` (the pose's height above
+    home, 3 decimals), and the record says the conversion was not checked;
+    a terrain row with neither is not compared and is counted."""
     pairs, how = _align(rb, rows)
+    over_dem = any(r.get("up_ref") == "terrain" for r in rows)
+    if over_dem and terrain is None:
+        # trajectory.json carries no height above home: the log's up_home.
+        trajectory = None
     home = rb.window["home_policy_ne"]
     diffs: dict[str, int] = {}
     absent: dict[str, int] = {}             # log rows lacking a compared key
@@ -953,6 +994,7 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
     unsent: list[dict] = []                 # logged as streamed, MAVROS sent nothing
     first: dict | None = None
     pose = {"exact": 0, "next": 0, "previous": 0, "differs": 0}
+    pose_unchecked = 0                      # a terrain row with no DEM and no up_home
     worst_m = 0.0
     dts: list[tuple[int, float]] = []
     compared = 0
@@ -1030,20 +1072,30 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
             if got["executed"] is None:
                 unsent.append(row)
         # The pose: the logged point must be a pose message of the bag.
+        on_dem = row.get("up_ref") == "terrain"
+        over = terrain if on_dem else None
         if exact_traj:
             p = trajectory[i]
             want, exact = (p.get("x"), p.get("y"), p.get("up")), True
+        elif on_dem and terrain is None:
+            # The bag's height above home against the pose's own (up_home).
+            want, exact = (row.get("x"), row.get("y"), row.get("up_home")), False
+            if not isinstance(want[2], (int, float)):
+                pose_unchecked += 1
+                want = (None,)
         else:
             want, exact = (row.get("x"), row.get("y"), row.get("up")), False
         if all(isinstance(v, (int, float)) for v in want):
-            m = _pose_match(s, home, got["_bag"]["pose_index"], want, exact)
+            m = _pose_match(s, home, got["_bag"]["pose_index"], want, exact, over)
             pose[m or "differs"] += 1
+            bag_pt = None
             if got["x"] is not None:
-                worst_m = max(worst_m, math.dist((got["x"], got["y"], got["up"]), want))
+                bag_pt = (got["x"], got["y"], got["up"] if over is None
+                          else _over_ground(got["x"], got["y"], got["up"], over))
+                worst_m = max(worst_m, math.dist(bag_pt, want))
             if m is None:
                 differ("trajectory", "pose", row,
-                       None if got["x"] is None else [got["x"], got["y"], got["up"]],
-                       list(want))
+                       None if bag_pt is None else list(bag_pt), list(want))
         if isinstance(row.get("t"), (int, float)):
             dts.append((i, got["t"] - float(row["t"])))
     offset = sorted(d for _, d in dts)[len(dts) // 2] if dts else None
@@ -1087,11 +1139,22 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
                   # logged the action it ran on (the node's lag at the start).
                   "first_action_logged_before_its_tick_ms": (
                       round((offset - dts[0][1]) * 1e3, 3) if dts and dts[0][0] == 0 else None)},
-        "trajectory": {"verdict": "differs" if pose["differs"] else "identical",
+        "trajectory": {"verdict": ("differs" if pose["differs"] else
+                                   "incomplete" if pose_unchecked else "identical"),
                        "against": ("trajectory.json (the pose message's own doubles)"
                                    if exact_traj else "flight_log.jsonl (3 decimals)"),
                        "points": sum(pose.values()), **pose,
-                       "bag_order_max_error_m": round(worst_m, 4)},
+                       "bag_order_max_error_m": round(worst_m, 4),
+                       # X-11: which height a run over a DEM was compared by
+                       # (absent for every run without one, as before).
+                       **({} if not over_dem else {
+                           "heights": ("above the run's DEM: the bag's height above "
+                                       "home converted over it (terrain_relative_up)"
+                                       if terrain is not None else
+                                       "above home: the log's up_home against the bag's "
+                                       "(the DEM was not available, so the conversion "
+                                       "the Shield judged by was not checked)"),
+                           "terrain_rows_not_compared": pose_unchecked})},
         "first_difference": first,
         "rows_used": last_used + 1,
         # Runs of ticks the log says streamed a setpoint and the bag holds no
@@ -1182,6 +1245,12 @@ class Episode:
     bundle_signature: dict | None = None        # a bundle's read_replay signature status
     limits: list = field(default_factory=list)  # said before the bag is read
     adapter_log_lines: int | None = None        # adapter_log.jsonl: one line a setpoint sent
+    # X-11: (ground, home MSL m) of a run flown over a DEM (metrics.json
+    # `ground.up_ref` "terrain"), its rows' heights above it; None otherwise
+    # or when the DEM could not be had (`terrain_why`).
+    terrain: Any = None
+    terrain_source: str | None = None
+    terrain_why: str | None = None
 
 
 def _rel(p: Path | str) -> str:
@@ -1196,6 +1265,71 @@ def _rel(p: Path | str) -> str:
         except (ValueError, OSError):
             continue
     return Path(p).as_posix()
+
+
+def _checkout_roots() -> list[Path]:
+    """Where a run's repo-relative ground path may be: this checkout, and
+    the main checkout when this is a worktree of it (as `_rel`)."""
+    roots = [ROOT]
+    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
+        roots.append(ROOT.parents[2])
+    return roots
+
+
+def _dem_of_run(metrics: Any) -> tuple[dict | None, str | None]:
+    """({"ref": {path, sha256}, "home_msl_m"} of the DEM a run's metrics.json
+    says its heights are above, or None; why not, or None). A run without
+    a ground, or over a flat one (`up_ref` "home"), has none and no reason:
+    its heights are above home, as the bag's are."""
+    g = metrics.get("ground") if isinstance(metrics, dict) else None
+    if not isinstance(g, dict) or g.get("up_ref") != "terrain":
+        return None, None
+    from guardrail.replay import run_ground_ref
+    ref = run_ground_ref(metrics)
+    home = g.get("home_msl_m")
+    if not ref or not ref.get("path") or not ref.get("sha256"):
+        return None, "metrics.json's ground names no file and sha256"
+    if not isinstance(home, (int, float)) or isinstance(home, bool) \
+            or not math.isfinite(float(home)):
+        return None, "metrics.json's ground states no home elevation (home_msl_m)"
+    return {"ref": ref, "home_msl_m": float(home)}, None
+
+
+def _place_dem(dem: dict, data: bytes, frame_origin, where: str):
+    """(ground, why not): the DEM file `data` checked against the run's
+    sha256 and placed in the policy's frame, as the node placed it."""
+    from guardrail.terrain import load_ground
+    got = hashlib.sha256(data).hexdigest()
+    if got != dem["ref"]["sha256"]:
+        return None, (f"{where} hashes to {got}, the run recorded "
+                      f"{dem['ref']['sha256']}: not the ground the run flew over")
+    with tempfile.TemporaryDirectory(prefix="rfb_ground_") as d:
+        f = Path(d) / Path(dem["ref"]["path"]).name
+        f.write_bytes(data)
+        try:
+            return load_ground(f, frame_origin), None
+        except (ValueError, OSError, KeyError) as e:
+            return None, (f"{where} cannot be placed in the policy's frame: "
+                          f"{type(e).__name__}: {e}")
+
+
+def _set_terrain(ep: "Episode", dem: dict | None, why: str | None, ground,
+                 source: str) -> None:
+    if dem is None and why is None:
+        return
+    if ground is None:
+        ep.terrain_why = why
+        ep.limits.append(
+            f"the run's heights are above a DEM (metrics.json ground up_ref terrain) and "
+            f"that DEM was not had here: {why}. Its poses are compared by the log's "
+            f"up_home (the height above home, 3 decimals), so the conversion the Shield "
+            f"judged by is not checked")
+        return
+    ep.terrain = (ground, dem["home_msl_m"])
+    ep.terrain_source = (f"{source} {dem['ref']['path']} (sha256 {dem['ref']['sha256']}), "
+                         f"home {dem['home_msl_m']:g} m MSL from metrics.json")
+    ep.not_from_bag.append(f"the DEM the run flew over ({ep.terrain_source}): the bag's "
+                           f"height above home converted to the log's height above it")
 
 
 def _jsonl(text: str) -> list[dict]:
@@ -1275,6 +1409,23 @@ def load_run(run: Path) -> Episode:
         ep.arm = metrics["shield"]
         ep.not_from_bag.append("metrics.json `shield` (the arm, to say what a Shield-off "
                                "bag cannot carry)")
+    dem, why = _dem_of_run(metrics)
+    ground = None
+    if dem is not None:
+        rel = Path(dem["ref"]["path"])
+        full = next((p for p in ([rel] if rel.is_absolute() else
+                                 [r / rel for r in _checkout_roots()]) if p.is_file()), None)
+        if full is None:
+            why = f"the ground file {rel.as_posix()} is not in this checkout"
+        elif not policies or problems:
+            why = ("the run's policy generations are missing or disagree, so the frame "
+                   "the node placed the DEM in is not known")
+        else:
+            # The node placed the DEM in the frame of the policy it launched
+            # with (generation 0).
+            ground, why = _place_dem(dem, full.read_bytes(),
+                                     policies[min(policies)].frame_origin, str(full))
+    _set_terrain(ep, dem, why, ground, "the file")
     return ep
 
 
@@ -1353,6 +1504,21 @@ def load_bundle(path: Path, into: Path, *, trust_store: Any = None,
     if arm in ("on", "off"):
         ep.arm = arm
         ep.not_from_bag.append("the bundle's metrics.json `shield` (the arm)")
+    dem, why = _dem_of_run(got["metrics"])
+    ground = None
+    if dem is not None:
+        gidx = got["index"].get("ground")
+        if not (isinstance(gidx, dict) and gidx.get("carried")) \
+                or got.get("ground_bytes") is None:
+            why = ("the bundle does not carry it (written before 2026-11-18, or the "
+                   "run's ground names no file)")
+        elif gidx.get("path") != dem["ref"]["path"]:
+            why = (f"the bundle carries {gidx.get('path')}, the run's metrics.json "
+                   f"names {dem['ref']['path']}")
+        else:
+            ground, why = _place_dem(dem, got["ground_bytes"], got["policy"].frame_origin,
+                                     f"the bundle's {gidx.get('member')}")
+    _set_terrain(ep, dem, why, ground, "the bundle's")
     return ep
 
 
@@ -1406,7 +1572,7 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
             rec.update(verdict="not_replayable",
                        why="the flight log holds no rows: nothing to compare the bag with")
             return rec, rb.rows[:n]
-        cmp_ = compare_ticks(s, rb, ep.rows, ep.trajectory, arm=ep.arm)
+        cmp_ = compare_ticks(s, rb, ep.rows, ep.trajectory, arm=ep.arm, terrain=ep.terrain)
         first = cmp_.pop("first_difference")
         n = max(n, cmp_.pop("rows_used"))
         past_end = cmp_["ticks_past_bag_end"]
@@ -1442,6 +1608,11 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
             limits.append(f"{unchecked} log row(s) name a violation or a repair on a tick "
                           f"with no intercept, and the arm is unknown (no metrics.json "
                           f"`shield`): whether the bag should hold an intercept is not known")
+        if cmp_["trajectory"].get("terrain_rows_not_compared"):
+            limits.append(
+                f"{cmp_['trajectory']['terrain_rows_not_compared']} log row(s) hold a "
+                f"height above a DEM the replay does not have and no up_home: their "
+                f"pose was not compared")
         nb = cmp_["trajectory"]["next"] + cmp_["trajectory"]["previous"]
         if nb:
             limits.append(
@@ -1485,8 +1656,9 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                       + " are in no bag")
     rec["limits"] = limits
     rec["first_difference"] = first
-    partial = (rec.get("compared_with_the_log") or {}).get("ticks", {}).get(
-        "verdict") == "incomplete"
+    cmp_log = rec.get("compared_with_the_log") or {}
+    partial = (cmp_log.get("ticks", {}).get("verdict") == "incomplete"
+               or cmp_log.get("trajectory", {}).get("verdict") == "incomplete")
     rec["verdict"] = ("differs" if first is not None else
                       "incomplete" if partial else "identical")
     if ep.rows is None or ep.kpi is None:
