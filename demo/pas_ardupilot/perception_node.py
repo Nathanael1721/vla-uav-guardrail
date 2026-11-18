@@ -479,7 +479,8 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
                               verify_replay, write_replay, zone_dwell)
 from guardrail import response as vresp                               # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, altitude_out_of_band,  # noqa: E402
-                              standoff_breached, standoff_ring_m, standoff_rules)
+                              clearance_breached, standoff_breached, standoff_ring_m,
+                              standoff_rules)
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E402
                                   HOLD_MODES, ModeRequests,
                                   autopilot_mode, fence_alt_plan,
@@ -4065,7 +4066,8 @@ class CrowdTruth:
                and r["people_truth"].get("min_m") is not None]
         mins = [pt["min_m"] for pt, _ in got]
         below = [(pt, wi) for pt, wi in got
-                 if min_distance_m is not None and pt["min_m"] < min_distance_m]
+                 if min_distance_m is not None
+                 and clearance_breached(pt["min_m"], min_distance_m)]
         rr = self.rec
         recall = {"range_m": CROWD_RECALL_RANGE_M, "match_m": CROWD_MATCH_M, **rr,
                   "recall_in_range": (round(rr["matched"] / rr["in_range"], 4)

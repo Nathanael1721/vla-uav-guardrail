@@ -1106,6 +1106,10 @@ _LIBRARY_CLEARANCE_MEASURES = {
 # SETUP / PLANNING / GEOMETRY / POLICY LINT / EXPORT) and that it judges no
 # flight; an unlisted comparison fails, and so does a stale entry.
 _THRESHOLD_COMPARISONS_NOT_VERDICTS = {
+    ("sitl/mavlink_adapter_node.py", "policy_ceiling_m"):
+        "EXPORT: the autopilot backstop's FENCE_ALT_MAX picks the lower of two "
+        "ceiling figures (an MSL keep-in cap less home vs the envelope's); it "
+        "sizes a parameter, it judges no position",
     ("demo/pas_ardupilot/perception_node.py", "publish"):
         "NOT A RULE THRESHOLD: self.margin_m is the autopilot's FENCE_MARGIN "
         "parameter (else mavlink_adapter_node.FENCE_MARGIN_M), named like "
@@ -1645,18 +1649,20 @@ def test_the_standoff_counts_ask_the_shields_standoff_test():
         {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 12.0})
     assert [c.id for c in SH.standoff_rules(pol.constraints, "pedestrian")] == \
-        ["ped", "any", "people"]
-    assert SH.standoff_ring_m(pol.constraints, "pedestrian") == 12.0
+        ["ped", "any"]
+    assert SH.standoff_ring_m(pol.constraints, "pedestrian") == 10.0  # people envelope = clearance (wf21)
     assert SH.standoff_ring_m(pol.constraints, "car") == 5.0
     assert SH.standoff_ring_m(pol.constraints, None) == 5.0
     assert SH.standoff_ring_m(_pol(pol.constraints[0].model_dump()).constraints, "car") is None
     # the test is the Shield's own: rule_status's breach for the same range
-    sh = Shield(pol, escalation=False)
+    # since wf21-people-distance the people envelope needs a named source:
+    # the declared subject, a person (guardrail/people.py)
+    sh = Shield(pol, escalation=False, people_source="declared subject (test)")
     sh.set_subject(0.0, 0.0, "pedestrian")
     for d in (12.0, 12.0 - 5e-10, 12.0 - 2e-9, 11.0, 12.5, float("nan")):
         rows = {r["id"]: r for r in sh.rule_status(State(x=d, y=0.0, up=10.0))}
         if math.isfinite(d):
-            assert rows["people"]["breach"] == SH.standoff_breached(d, 12.0), d
+            assert rows["people"]["breach"] == SH.clearance_breached(d, 12.0), d
         assert SH.standoff_breached(d, 12.0) == (math.isfinite(d) and d < 12.0 - 1e-9), d
     assert sh._standoff_inside(pol.constraints[0], 10.0 - 5e-10) is False
     # every count asks the library, and none compares a ring itself

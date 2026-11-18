@@ -70,7 +70,7 @@ DESIGN_DOC = ROOT / "docs" / "DESIGN-python-versions.md"
 CORE = {"pydantic": "pydantic", "pydantic_core": "pydantic", "yaml": "pyyaml",
         "shapely": "shapely", "numpy": "numpy", "jinja2": "jinja2"}
 EXTRA = {"cryptography": "signing", "fastapi": "api", "uvicorn": "api",
-         "tokenizers": "tokens", "grpc": "harness", "google": "harness",
+         "tokenizers": "tokens", "transformers": "tokens", "grpc": "harness", "google": "harness",
          "pyarrow": "export"}
 # Import name -> distribution name, where the two differ.
 DIST_OF = {"grpc": "grpcio", "google": "protobuf"}

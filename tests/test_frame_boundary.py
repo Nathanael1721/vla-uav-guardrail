@@ -424,23 +424,28 @@ def test_the_clearance_repair_on_a_raster_map_is_the_body_frame_one_at_the_quart
     assert len(searched) >= 8, len(searched)
 
 
-def test_the_direction_search_s_bearings_turn_with_the_aircraft():
+def test_the_direction_search_is_the_same_body_frame_set_at_every_quarter_turn():
     """The recovery direction search (_clear_dir_candidates: the clearance
-    fallback and the unconverged chain's rescue) tries 12 bearings from the
-    aircraft's nose: the same candidates in the body frame, in the same
-    order, at every heading, so a tie goes to the same body direction. At
-    heading 0 they are bit for bit the bearings from North it used before."""
+    fallback and the unconverged chain's rescue) tries 12 bearings every 30
+    degrees from North at every heading (the integration of 2026-11-19 kept
+    the North grid: a nose-relative grid moved stored follow decisions with
+    no flight behind it). 30 divides 90, so at every quarter turn the
+    candidates read in the body frame are the same SET as at heading 0; the
+    bearing passed in is not used."""
     sh = Shield(_scene(0.0, 0.0, 0.0))
     a = Action4D(vx=1.0, vy=0.5, vz_up=0.3, yaw_rate=0.1)
-    ref = [body_action(c, 0.0) for c in sh._clear_dir_candidates(a, 4.0, 0.0)]
-    assert len(ref) == 24
     old = [(math.cos(k * math.pi / 6.0) * (4.0 * f), math.sin(k * math.pi / 6.0) * (4.0 * f))
            for k in range(12) for f in (1.0, 0.5)]
-    assert [(c.vx, c.vy) for c in sh._clear_dir_candidates(a, 4.0, 0.0)] == old
-    for h in ROT_HEADINGS:
-        got = [body_action(c, h) for c in sh._clear_dir_candidates(a, 4.0, h)]
-        assert max(max(abs(g.vx - r.vx), abs(g.vy - r.vy)) for g, r in zip(got, ref)) < 1e-12, h
-        assert all((g.vz_up, g.yaw_rate) == (r.vz_up, r.yaw_rate) for g, r in zip(got, ref))
+    for h in (0.0, 37.0, -121.5):
+        assert [(c.vx, c.vy) for c in sh._clear_dir_candidates(a, 4.0, h)] == old, h
+
+    def body_set(h):
+        return sorted((round(b.vx, 9) + 0.0, round(b.vy, 9) + 0.0, b.vz_up, b.yaw_rate)
+                      for b in (body_action(c, h) for c in sh._clear_dir_candidates(a, 4.0, h)))
+    ref = body_set(0.0)
+    assert len(ref) == 24
+    for h in (90.0, 180.0, -90.0, 270.0):
+        assert body_set(h) == ref, h
 
 
 # --------------------------------------------------------------------------- #
@@ -816,6 +821,8 @@ WORLD_ENTRY_CALLERS = {
     ("tools/prefix_eval.py", "*", "sh"): "offline replay of a recorded run",
     ("tools/profile_shield_tick.py", "*", "shield"): "offline timing",
     ("tools/replay_q3.py", "*", "shield"): "offline open-loop replay",
+    ("tools/replay_at_revision.py", "*", "shield"):
+        "offline open-loop replay of a flight log at its flown revision",
     ("tools/replay_standoff_feed.py", "*", "sh"): "offline replay of logged flights",
     ("tools/wgs84_bind_compare.py", "*", "sh"): "offline comparison",
     ("tools/wp1_roundtrip_kpi.py", "*", "shield"): "offline KPI tool",

@@ -66,9 +66,11 @@ signing = ["cryptography"]
 # needs them.
 api = ["fastapi", "uvicorn"]
 # guardrail/csp.py OpenVLATokenCounter: exact OpenVLA (Llama-2 SentencePiece)
-# token counts from the model's tokenizer.json. Imported lazily; the default
-# TableTokenCounter is pure Python and needs nothing.
-tokens = ["tokenizers"]
+# token counts from the model's tokenizer.json, and guardrail/vla_prefix.py
+# ClipTokenCounter (transformers, local files only) for a CLIP-text VLA.
+# Imported lazily; the default TableTokenCounter is pure Python and needs
+# nothing.
+tokens = ["tokenizers", "transformers"]
 # guardrail/harness_service.py: the stress harness's gRPC control plane
 # (Stress Testing, "Control plane: gRPC over mTLS"). grpc and protobuf are
 # imported lazily, so `import guardrail.harness_service` works without them;

@@ -867,8 +867,11 @@ def standoff_inside(so, d: float) -> bool:
 
 def standoff_rules(constraints, subject_class: str | None) -> list:
     """The stand-off rules among `constraints` that bind `subject_class`, as
-    the Shield enforces them: every subject_standoff, and a distance_envelope
-    over people as its runtime rule (models.PeopleStandoff; _runtime_rule).
+    the Shield enforces them: every subject_standoff that binds it. A
+    distance_envelope over people is not one since 2026-11-18: its runtime
+    rule (models.PeopleClearance) is a clearance over every person the Shield
+    knows, judged by clearance_breached and scored by the people feed's own
+    truth (perception_node CrowdTruth), not a ring about the subject.
     Time windows are not read: the end-of-flight counts never have."""
     out = []
     for c in constraints:
@@ -3676,18 +3679,16 @@ class Shield:
             # sites below.
             ymax = math.radians(k.yaw_rate_max_dps)
             yr = max(-ymax, min(ymax, yr))
-        # The bearings are the aircraft's own (WP3-04 / ARCH-04, 2026-11-18):
-        # every 30 degrees from its nose, `yaw_deg` the state's heading, so
-        # the candidates - and a tie between equal ones, which goes to the
-        # first - turn with the aircraft and the search is the same in the
-        # frame the VLA emits in at every heading (tests/
-        # test_frame_boundary.py). Until then they were every 30 degrees
-        # from North: the same at heading 0 (bit for bit), and at any other
-        # heading a different candidate set. A state without a heading
-        # (yaw_deg 0) searches from North, as before.
-        nose = math.radians(yaw_deg) if math.isfinite(yaw_deg) else 0.0
+        # The bearings stay every 30 degrees from North (the integration of
+        # 2026-11-19 reverted wf21-bodyframe's nose-relative grid): the grid is
+        # the same set in the body frame at every quarter turn (30 divides 90,
+        # tests/test_frame_boundary.py), and a nose-relative grid moved 9 of 12
+        # stored follow decision streams (tests/test_own_velocity_forecast.py,
+        # pinned at c77c77d) with no flight behind the change. `yaw_deg` is
+        # kept in the signature, unused, so callers need not change.
+        del yaw_deg
         for k in range(12):
-            ang = nose + k * math.pi / 6.0
+            ang = k * math.pi / 6.0
             ux, uy = math.cos(ang), math.sin(ang)
             for frac in (1.0, 0.5):
                 spd = cap * frac
