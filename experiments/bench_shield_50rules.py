@@ -121,12 +121,29 @@ COLS, ROWS, SIDE_M, PITCH_M, MARGIN_M = 8, 6, 12.0, 40.0, 2.0
 TICK_BUDGET_MS = 100.0      # Safety Shield page: monitor tick 100 ms at 10 Hz
 QUERY_BUDGET_MS = 5.0       # Policy DSL page: 50 rules, <= 5 ms
 
+# The WGS84 frame origin the bench policy states (lat, lon): the same anchor
+# as tools/wp1_roundtrip_kpi.DOC_ANCHOR, so the timing bundle built from this
+# grid (grid_fifty_rule_policy) is this policy as it is. Since 2026-11-18
+# (WP1-14) a policy with no frame origin refuses every event with points, so
+# the hot-apply phase below needs one; the grid is laid out in metres and
+# stored in WGS84 about this origin.
+BENCH_ORIGIN = (25.04245, 121.5314)
+
 
 def fifty_rule_policy(with_fences: bool = True) -> Policy:
     """2 envelopes + 48 polygon fences = 50 rules, the grant's stated load.
 
     Alternate fences stop at 25 m so the altitude band short-circuit is part of
     the measurement too; samples fly between 5 and 30 m, so both kinds bind.
+
+    Stored in the canonical form (WP1-14, 2026-11-18): the origin stated
+    (BENCH_ORIGIN) and every vertex in WGS84 (projection.raw_points_in_wgs84),
+    since the grant's DSL "never carries projected coordinates". The grid is
+    laid out in metres on the micrometre grid, so the Shield's view of every
+    vertex is exactly the metre value it was laid out at and the samples,
+    decisions and index are what they were with metre vertices. Until
+    2026-11-18 the vertices were stored in metres with no origin, and the
+    hot-apply phase, which writes a metre fence into it, was refused.
     """
     rules = [
         KinematicEnvelope(id="kin", type="kinematic_envelope",
@@ -148,7 +165,12 @@ def fifty_rule_policy(with_fences: bool = True) -> Policy:
                     altitude_floor_m=0.0,
                     altitude_ceiling_m=120.0 if (r + c) % 2 == 0 else 25.0,
                     margin_m=MARGIN_M))
-    return Policy(policy_id="bench-50", constraints=rules)
+    from guardrail.projection import raw_points_in_wgs84
+    doc = Policy(policy_id="bench-50", constraints=rules).model_dump(
+        mode="json", exclude_none=True)
+    doc["origin"] = {"lat": BENCH_ORIGIN[0], "lon": BENCH_ORIGIN[1]}
+    doc["constraints"] = raw_points_in_wgs84(doc["constraints"], BENCH_ORIGIN)
+    return Policy.model_validate(doc)
 
 
 # The clock of the `edge` variant: the 17:30 window edge is 3 s ahead.

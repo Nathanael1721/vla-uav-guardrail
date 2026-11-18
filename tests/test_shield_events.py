@@ -589,13 +589,43 @@ def test_hot_apply_fits_the_grants_50_ms_at_50_rules():
     from bench_shield_50rules import fifty_rule_policy
     ms = []
     for i in range(30):
-        sh = Shield(Policy.model_validate({**fifty_rule_policy().model_dump(
-            mode="json", exclude_none=True), "origin": FRAME}))
+        # The bench policy as it is: it states its own frame origin since
+        # 2026-11-18 (bench_shield_50rules.BENCH_ORIGIN), so the spawn is
+        # written in WGS84 about it, as the bench's hot-apply phase does.
+        sh = Shield(fifty_rule_policy())
         sh.filter(State(x=-50, y=-50, up=20), Action4D())
         t0 = time.perf_counter()
         sh.hot_apply(_zone(zid=f"hot-{i}", cx=-25.0, cy=-25.0, half=5.0))
         ms.append((time.perf_counter() - t0) * 1e3)
     assert statistics.median(ms) <= 50.0, statistics.median(ms)
+
+
+def test_the_bench_runs_its_hot_apply_phase_on_its_own_policy():
+    """experiments/bench_shield_50rules.py is the command the Policy DSL page's
+    hot-apply <= 50 ms evidence comes from. Its policy states a WGS84 frame
+    origin and stores every vertex in lat/lon (WP1-14, review 2026-11-18):
+    with no origin, its hot-apply phase - a metre fence written into the
+    50-rule policy - was refused (models.NoFrameOrigin) and the bench
+    crashed. Run end to end here with small n: exit 0, 30 hot-applies timed,
+    the grid's metres read back exactly as laid out."""
+    import bench_shield_50rules as B
+    pol = B.fifty_rule_policy()
+    assert pol.point_form == "wgs84" and pol.frame_origin == B.BENCH_ORIGIN
+    assert B.fifty_rule_policy(False).frame_origin == B.BENCH_ORIGIN
+    first = next(c for c in pol.constraints if c.id == "nfz-0-1")
+    assert [(v.x, v.y) for v in first.vertices] == [
+        (40.0, 0.0), (52.0, 0.0), (52.0, 12.0), (40.0, 12.0)], first.vertices
+    for kind in ("edge", "moving"):
+        assert B.variant_policy(kind).point_form == "wgs84", kind
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "bench.json"
+        rc = B.main(["--n-check", "6", "--n-filter", "3", "--scenarios", "clear", "near",
+                     "--impl", "current", "--json", str(out)])
+        rec = json.loads(out.read_text(encoding="utf-8"))
+    assert rc == 0 and rec["failures"] == [], rec["failures"]
+    life = rec["lifecycle"]["current"]
+    assert life["hot_apply"]["n"] == 30 and life["construct"]["n"] == 30, life
+    assert life["hot_apply"]["median_ms"] <= 50.0, life
 
 
 # -------------------------------------------------------------------------- audit
