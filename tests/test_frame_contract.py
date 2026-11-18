@@ -206,6 +206,13 @@ def test_no_adapter_converts_the_yaw_rate_a_second_time():
     `send_velocity`'s own docstring explaining that the conversion had been
     REMOVED. A tripwire that fires on a correct change trains people to delete
     it, so this one looks for a real call node whose argument mentions yaw.
+
+    A HEADING is not a yaw rate. Since wf21 (WP3-04 / ARCH-04) the pymavlink
+    rail reads the aircraft's heading from ATTITUDE.yaw (radians) for the
+    body frame, and State.yaw_deg carries degrees: that conversion lives in
+    a function named for the heading (`MavlinkAdapter.heading_deg`), and
+    calls inside such a function are not yaw-rate conversions. Every other
+    math.radians / math.degrees on a yaw value is still flagged.
     """
     bad = []
     for rel in ADAPTERS:
@@ -213,8 +220,11 @@ def test_no_adapter_converts_the_yaw_rate_a_second_time():
         if not p.is_file():
             continue
         tree = ast.parse(p.read_text(encoding="utf-8"))
+        in_heading = {id(n) for f in ast.walk(tree)
+                      if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and "heading" in f.name for n in ast.walk(f)}
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or id(node) in in_heading:
                 continue
             fn = node.func
             if not (isinstance(fn, ast.Attribute)

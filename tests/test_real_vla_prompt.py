@@ -976,8 +976,13 @@ def test_the_worker_feeds_the_csp_prompt_and_logs_a_replayable_step():
     assert rec["frame_index"] == 1 and rec["frame_file"] == "frames/run-test/000001.png"
     assert (out / rec["frame_file"]).read_bytes() == PNG
     assert _close(rec["world_action"]["vy"], 1.5) and _close(rec["world_action"]["vx"], 0.0)
+    # Since wf21 (WP3-04 / ARCH-04) the worker hands the control loop the
+    # BODY action, which the Shield takes at the tick's heading; the step
+    # record keeps the world reading at the capture heading for replay.
     act, n = b.latest()
-    assert n == 1 and act.model_dump() == rec["world_action"]
+    body = rec["body_action"]
+    assert n == 1 and act.model_dump() == {"vx": body["vx_fwd"], "vy": body["vy_right"],
+                                            "vz_up": body["vz_up"], "yaw_rate": 0.0}
     assert rv.replay_step(rec).model_dump() == rec["world_action"]
 
 

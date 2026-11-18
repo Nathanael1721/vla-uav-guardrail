@@ -328,7 +328,7 @@ def test_the_flight_is_unchanged_when_off_and_the_shield_filters_what_flies():
     # What the perturber returns goes to the Shield, and only there: the
     # limiter is called on the expert's raw command and never sees it, so its
     # state stays the expert's (what vla_record.Perturber does).
-    assert src.count("d = filter_as_body(shield, state, flown_in)") == 1
+    assert src.count("d, _, e_body = filter_world_as_body(shield, state, flown_in)") == 1
     for n in ast.walk(fly):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "limiter":
             names = {x.id for a in n.args for x in ast.walk(a) if isinstance(x, ast.Name)}

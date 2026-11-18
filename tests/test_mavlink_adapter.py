@@ -1243,7 +1243,8 @@ def test_the_pas_setpoint_through_the_adapter_reaches_the_same_ned():
     adapter's input and no PositionTarget of its own; the adapter's
     conversion at the same heading gives exactly the NED setpoint the direct
     path sends (enu_position_target, through MAVROS's ENU -> NED), for every
-    heading. The default route is unchanged."""
+    heading: both are guardrail.frames.body_to_local_ned of the same body
+    action (since wf21 the link sends only the body frame)."""
     from guardrail.models import Action4D
     ML, direct, dnode = _pas_link("mavros")
     assert ML.TOPIC_SETPOINT in dnode.pubs and ML.TOPIC_ADAPTER_SETPOINT not in dnode.pubs
@@ -1253,12 +1254,14 @@ def test_the_pas_setpoint_through_the_adapter_reaches_the_same_ned():
     assert ML.TOPIC_SETPOINT not in node.pubs, "the adapter is the only PositionTarget writer"
     assert ML.TOPIC_ADAPTER_SETPOINT in node.pubs
     a = Action4D(vx=2.5, vy=-1.25, vz_up=0.4, yaw_rate=0.3)
+    sent_body = (2.5, -1.25, 0.4, 0.3)          # what the rail streams (body frame)
     for heading in range(0, 360, 30):
         link.snap.yaw = direct.snap.yaw = math.radians(heading)
-        link.send(a, raw_body=(1, 2, 3, 4))
+        link.send(a, raw_body=(1, 2, 3, 4), body=sent_body)
         body = node.pubs[ML.TOPIC_ADAPTER_SETPOINT].msgs[-1].data
+        assert list(body) == list(sent_body), "the adapter route publishes the body action as is"
         via_adapter = A.mavros_sends(A.setpoint_from_body(body, heading)["fields"])
-        direct.send(a)
+        direct.send(a, body=sent_body)
         pt = dnode.pubs[ML.TOPIC_SETPOINT].msgs[-1]
         f = {"coordinate_frame": pt.coordinate_frame, "type_mask": pt.type_mask,
              "velocity": (pt.velocity.x, pt.velocity.y, pt.velocity.z),

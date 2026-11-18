@@ -198,9 +198,9 @@ class CallLink(T.FakeLink):
             self.clock.t += self.stall[1]
         super().pump()
 
-    def send(self, a, raw_body=None):
+    def send(self, a=None, raw_body=None, body=None):
         self.calls.append(("send",))
-        super().send(a, raw_body)
+        super().send(a, raw_body, body=body)
 
 
 def _fly(policy: str, *, camera_kw=None, max_s="3", extra=(), link_kw=None,

@@ -30,6 +30,7 @@ reading the source, and was flown in WSL (docs/DESIGN-ros2-interface.md).
 """
 import ast
 import json
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -39,6 +40,7 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import load_policy                                    # noqa: E402
 from guardrail.audit import AuditLogger                              # noqa: E402
+from guardrail.frames import body_to_local_ned                       # noqa: E402
 from guardrail.models import Action4D, PolygonFence, State, XY       # noqa: E402
 from guardrail.shield import Shield                                  # noqa: E402
 
@@ -790,12 +792,15 @@ class _Sim:
     """A point mass: position (North, East, up) and the last velocity command,
     integrated by the virtual clock's sleep()."""
 
-    def __init__(self, up: float = 0.0):
+    def __init__(self, up: float = 0.0, yaw_deg: float = 0.0):
         self.t = 0.0
         self.x = self.y = 0.0
         self.up = up
         self.v = (0.0, 0.0, 0.0)          # North, East, up (m/s)
         self.modes: list = []             # set_mode arguments, in order
+        # The heading the stand-in autopilot reports (it does not yaw): the
+        # rails hand the Shield the body frame at it (WP3-04 / ARCH-04).
+        self.yaw_deg = yaw_deg
 
     def time(self) -> float:
         return self.t
@@ -871,7 +876,10 @@ def _fake_airsim(sim: _Sim):
 
         def simGetVehiclePose(self):
             pos = types.SimpleNamespace(x_val=sim.x, y_val=sim.y, z_val=-sim.up)
-            return types.SimpleNamespace(position=pos)
+            h = math.radians(sim.yaw_deg) / 2.0          # NED yaw quaternion
+            q = types.SimpleNamespace(w_val=math.cos(h), x_val=0.0, y_val=0.0,
+                                      z_val=math.sin(h))
+            return types.SimpleNamespace(position=pos, orientation=q)
 
         def moveByVelocityAsync(self, vx, vy, vz_ned, duration=0.0):
             sim.v = (float(vx), float(vy), -float(vz_ned))
@@ -1017,10 +1025,16 @@ def _fly_pymavlink_rail(args: list[str], patch=None, path: Path | None = None):
             sim.up = float(alt_m)
 
         def state(self, timeout=1.0):
-            return State(x=sim.x, y=sim.y, up=sim.up)
+            return State(x=sim.x, y=sim.y, up=sim.up, yaw_deg=sim.yaw_deg)
 
-        def send_velocity(self, vx, vy, vz_up, yaw_rate):
-            sim.v = (float(vx), float(vy), float(vz_up))
+        def heading_deg(self):
+            return sim.yaw_deg
+
+        def send_body(self, body, yaw_deg):
+            # As the real adapter: the one body -> NED function.
+            ned = body_to_local_ned(body, yaw_deg)
+            sim.v = (float(ned[0]), float(ned[1]), -float(ned[2]))
+            return ned
 
         def land_disarm(self):            # the real one sets LAND
             sim.v = (0.0, 0.0, 0.0)
