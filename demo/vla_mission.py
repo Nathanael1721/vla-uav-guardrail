@@ -2337,7 +2337,8 @@ def warmup_hint(mission: str, hint_source: Callable[[Capture], Hint | None] | No
 
 
 def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
-                 timeout_s: float, idle: Callable[[], None] | None = None) -> dict:
+                 timeout_s: float, idle: Callable[[], None] | None = None, *,
+                 csp_mode: str = "off", csp_text: str | None = None) -> dict:
     """One BLOCKING request before the flight loop (tools, and vla_fly off
     the event loop): the answer's kind, the round trip on the client's clock
     (`rtt_s`), the server's own model time and the capture-to-answer
@@ -2350,8 +2351,11 @@ def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
     gives it this answer timeout instead of its own (the flight's decision
     timeout), and `timeout_s` in the record is the one the client reports in
     force (LinkResult.timeout_s). Until then the record said 60 s for the
-    first request while the socket gave up at 10 s."""
-    fields, meta = build_infer_fields(capture, hint, object_text)
+    first request while the socket gave up at 10 s.
+
+    `csp_mode` / `csp_text`: the flight's prefix arm (guardrail/vla_prefix.py),
+    so the warm-up asks the prompt the flight will (default: none, as ever)."""
+    fields, meta = build_infer_fields(capture, hint, object_text, csp_mode, csp_text)
     # `object`: what was sent (with speed words, the words included)
     out: dict[str, Any] = {"phrase": hint.phrase, "hint_source": hint.source,
                            "object": fields["object"], "seq": None, "answered": False,
@@ -2499,7 +2503,8 @@ def run_warmup(client, next_capture: Callable[[], Capture | None], hint_source,
                n: int = WARMUP_REQUESTS, wait_frames_s: float = 30.0,
                clock: Callable[[], float] = time.time,
                sleep: Callable[[float], None] = time.sleep,
-               idle: Callable[[], None] | None = None) -> dict:
+               idle: Callable[[], None] | None = None,
+               csp_mode: str = "off", csp_text: str | None = None) -> dict:
     """The warm-up gate as one BLOCKING call, for a rail that runs it in a
     blocking pre-arm step (demo/pas_ardupilot/perception_node.py, disarmed,
     on the ground; demo/vla_fly.py runs the same series on its event loop,
@@ -2519,7 +2524,9 @@ def run_warmup(client, next_capture: Callable[[], Capture | None], hint_source,
     Until 2026-10-23 a cold first answer slower than the client's own
     timeout, or a refused first request, made the next two "not sent" and a
     healthy server was refused. Every attempt records the wait
-    (`client_ready`). `idle()` runs during both waits."""
+    (`client_ready`). `idle()` runs during both waits. `csp_mode` /
+    `csp_text`: the flight's prefix arm, sent on every warm-up request
+    (warmup_infer)."""
     attempts: list[dict] = []
     res: dict = {}
     for k in range(n):
@@ -2534,7 +2541,7 @@ def run_warmup(client, next_capture: Callable[[], Capture | None], hint_source,
             beat(k)
         res = warmup_infer(client, cap, hint, object_text,
                            warmup_timeout_s(k, decision_timeout_s, first_decision_timeout_s),
-                           idle=idle)
+                           idle=idle, csp_mode=csp_mode, csp_text=csp_text)
         res["client_ready"] = ready
         if res.get("seq") is not None and commit is not None:
             commit(cap, hint, res["seq"], warmup=True)

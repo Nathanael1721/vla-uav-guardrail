@@ -46,7 +46,10 @@ What the request's other fields mean here: the phrase and hint_source are
 validated and ignored (neither model takes a compass hint; recorded under
 native.ignored), the down frame is ignored (bottom_tile "none"), a CSP arm
 is refused (neither prompt has the slot: an A/B that changes nothing would
-report "no effect"), and the object words become the model's command.
+report "no effect") - except by AIoT-VLA since 2026-11-18, whose object words
+the CSP text is put in front of, inside its backbone's text window
+(AIOTVLAFamily, THE CSP SLOT) - and the object words become the model's
+command.
 
 DRONECATS (naver-ai/DroneCATS-Cosmos3-Edge-2B, read at HF revision e9004010,
 2026-10-27: README model card, prompts/*.txt, chat_template.jinja; the
@@ -899,9 +902,20 @@ class AIOTVLAFamily:
     proprio, kept by AIOTVLAModel). Its answer is already a step over the
     label horizon, so the mapping is the identity (rule aiotvla_step/1); the
     compass phrase, the hint source and the down frame are ignored, as for
-    the other foreign families."""
+    the other foreign families.
+
+    THE CSP SLOT (2026-11-18, WP4-15; guardrail/vla_prefix.py). The object
+    words are the model's only text, so a CSP arm ("csp" / "neutral") puts
+    its text in front of them, joined by one space: the grounding query and
+    the text-embedding token both read "<csp text> <object words>". Its
+    contrast phrases stay the object words' (core.CONTRAST is keyed by
+    them). The whole query must fit the backbone's text window
+    (AIOTVLAModel.check_inputs); an over-long one is refused, never
+    truncated: at the tokenizer a cut would drop the object words, the
+    query's end. The model was never trained with a prefix."""
     name = "aiotvla"
     history = False           # the model keeps its own ring of frames, not of actions
+    csp_slot = True
 
     def __init__(self, horizon_s: float):
         if not (C._finite_number(horizon_s) and float(horizon_s) > 0):
@@ -912,8 +926,15 @@ class AIOTVLAFamily:
         return img.convert("RGB"), {}
 
     def inputs(self, req: dict, intr: dict, history: list[dict]) -> dict:
-        return {"instruction": req["object"], "t_capture": float(req["t_capture"]),
-                "pose": dict(req["pose"])}
+        obj = req["object"]
+        out = {"instruction": obj, "t_capture": float(req["t_capture"]),
+               "pose": dict(req["pose"])}
+        if req.get("csp_mode", "off") != "off":
+            # validated by the codec (validate_request): one line, non-empty
+            text = req["csp_text"].strip()
+            out.update(instruction=f"{text} {obj}", object=obj, csp_mode=req["csp_mode"],
+                       csp_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
+        return out
 
     def parse(self, g: dict) -> dict:
         raw = g.get("raw")
@@ -1298,6 +1319,35 @@ class BitVLAModel:
                 "gen_s": t2 - t1, "model_s": time.perf_counter() - t0}
 
 
+AIOTVLA_CSP_PLACEMENT = ("in front of the object words, one space between: AIoT-VLA's "
+                         "grounding query and its text-embedding token read "
+                         "'<csp text> <object words>' (demo/vla_server_foreign.py "
+                         "AIOTVLAFamily, THE CSP SLOT)")
+
+
+def aiotvla_csp_slot(tokenizer, model_id: str, window: int) -> dict:
+    """The csp_slot block of an AIoT-VLA hello: the placement, the text
+    window (OWL-ViT's text max_position_embeddings) and the special tokens
+    the tokenizer adds to every query (counted on the empty text), and the
+    tokenizer's id, so a client counts with the same one."""
+    specials = len(tokenizer("", add_special_tokens=True)["input_ids"])
+    return {"placement": AIOTVLA_CSP_PLACEMENT, "text_window_tokens": int(window),
+            "special_tokens": int(specials), "tokenizer": str(model_id),
+            "truncation": "never: a query over the window is refused"}
+
+
+def check_text_window(tokenizer, text: str, window: int) -> int:
+    """The query's tokens with its special tokens; C.CodecError(ERR_BAD_CSP)
+    when they exceed `window` (aiotvla_csp_slot, AIOTVLAModel.check_inputs)."""
+    n = len(tokenizer(text, add_special_tokens=True)["input_ids"])
+    if n > int(window):
+        raise C.CodecError(C.ERR_BAD_CSP, f"the query is {n} tokens with its special tokens, "
+                                          f"over the backbone's {int(window)}-token text "
+                                          f"window; refused, never truncated (a cut would drop "
+                                          f"the object words at its end)")
+    return n
+
+
 class AIOTVLAModel:
     """training/aiotvla: the frozen OWL-ViT backbone and the trained head of
     <weights>/head.pt. generate() grounds the object words in the frame,
@@ -1372,11 +1422,28 @@ class AIOTVLAModel:
                            "pca_sha256": ck.get("pca_sha256"), "backbone": ck.get("backbone")}
         self.timing = {"load_total_s": time.perf_counter() - t0}
 
+    def csp_slot(self) -> dict:
+        """The hello's `foreign.config.csp_slot` (AIOTVLAFamily, THE CSP
+        SLOT): where a CSP arm's text goes and the backbone's text window,
+        which guardrail/vla_prefix.slot_for budgets the CSP against."""
+        return aiotvla_csp_slot(self.bb.proc.tokenizer, self.bb.model_id,
+                                self.bb.model.config.text_config.max_position_embeddings)
+
+    def check_inputs(self, inputs: dict) -> None:
+        """Refuse (CodecError ERR_BAD_CSP) a query over the text window: the
+        CLIP text encoder has no position beyond it, and a truncated query
+        loses its end, the object words. Called before generate()."""
+        check_text_window(self.bb.proc.tokenizer, inputs["instruction"],
+                          self.bb.model.config.text_config.max_position_embeddings)
+
     def generate(self, image, inputs: dict) -> dict:
         np, torch, NC = self.np, self.torch, self.NC
         t0 = time.perf_counter()
         phrase = inputs["instruction"]
-        neg = self.contrast.get(phrase, ()) if self.memory is not None else ()
+        # The contrast phrases are the object words' (a CSP arm's query is
+        # "<csp> <object words>"; AIOTVLAFamily, THE CSP SLOT).
+        neg = (self.contrast.get(inputs.get("object", phrase), ())
+               if self.memory is not None else ())
         out = self.bb.maps([np.asarray(image)], [phrase, *neg],
                            with_boxes=self.with_box or self.memory is not None)
         g, a = out[0], out[1]
@@ -1569,7 +1636,7 @@ class ForeignServer(S.V2Server):
         t0 = self.clock()
         key = self.session_key()
         try:
-            if req["csp_mode"] != "off":
+            if req["csp_mode"] != "off" and not getattr(self.family, "csp_slot", False):
                 raise C.CodecError(C.ERR_BAD_CSP, f"csp_mode {req['csp_mode']!r}: the "
                                                   f"{self.family.name} prompt has no CSP slot")
             img = self.decode_front(req)
@@ -1578,6 +1645,10 @@ class ForeignServer(S.V2Server):
             intr = intrinsics(*mimg.size, self.camera["hfov_deg"])
             hist, reset = self._history(key, float(req["t_capture"]))
             inputs = self.family.inputs(req, intr, hist)
+            if hasattr(self.model, "check_inputs"):
+                # AIoT-VLA's text window (AIOTVLAModel.check_inputs): an
+                # over-long query is a refusal, as any other bad input
+                self.model.check_inputs(inputs)
             image_sha = self.hash_fn(mimg)
         except C.CodecError as exc:
             self._count("refused")
@@ -1736,6 +1807,10 @@ def build_real(args, family, weights: Path):
         cfg["attn"] = "n/a (not applied: BitVLA's remote code picks its own attention)"
     if getattr(model, "checkpoint", None) is not None:
         cfg["checkpoint"] = model.checkpoint
+    if getattr(family, "csp_slot", False) and hasattr(model, "csp_slot"):
+        # where a CSP arm's text goes and the text window (2026-11-18;
+        # guardrail/vla_prefix.slot_for reads it from the hello)
+        cfg["csp_slot"] = model.csp_slot()
     if getattr(model, "norm_stats", None) is not None and hasattr(family, "stats"):
         ms = (model.norm_stats.get(family.unnorm_key) or {}).get("action") or {}
         cfg["model_norm_stats_agree"] = (

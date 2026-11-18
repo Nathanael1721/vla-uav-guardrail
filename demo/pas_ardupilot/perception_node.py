@@ -274,6 +274,31 @@ THE VLA FOLLOW (--pilot vla --mission follow; 2026-11-06)
   * NOT FLOWN: tests/test_pas_vla.py drives it with the stand-in link and a
     scripted protocol-v2 server announcing an aiotvla identity.
 
+THE PREFIX A/B (--vla-prefix off|csp|neutral, --ab-pair ID; 2026-11-18, WP4-15)
+
+  * The Prefix Compiler's CSP in front of the VLA's instruction, compiled
+    before take-off for the follow mission at the rule clock's reading and
+    budgeted to the model's prompt slot (guardrail/vla_prefix.py; the slot
+    comes from the server's hello). AerialVLA: its prompt's instruction line,
+    256 tokens. AIoT-VLA: in front of its object words, inside OWL-ViT's
+    16-token text window - 11 tokens beside "a red car", which no P0 rule set
+    of the follow policies fits, so its csp arm is refused before take-off
+    (CSPBudgetExceeded, the grant's rule: P0 is never truncated), with
+    vla_prefix_refused.json saying why.
+  * Neither model was trained with rule text: the A/B measures what the
+    prompt change does. The default (off, no pair) is the flight it always
+    was, and nothing is compiled for it.
+  * The neutral arm is length-matched to the CSP in the model's own tokens:
+    on AerialVLA with OpenVLA's tokenizer.json under OPENVLA_DIR, and refused
+    before take-off (no_tokenizer) where it is not on the machine.
+  * Recorded: metrics.json `vla_prefix` (arm, pair, the text and its
+    SHA-256, the CSP's hashes, budget, counter, window, P0 ids), events.jsonl
+    `vla_prefix`, vla_prompt_csp.json, and the csp_mode and text SHA-256 of
+    every request in vla_steps.jsonl. manifest.json stays the grant's six
+    fields; the pair's seed is its random_seed. The pairs are flown by
+    deploy/orin/run_pas_prefix_ab.sh and reported by tools/kpi_report.py
+    --runs (its A/B section, "Flown by a VLA that reads the prefix").
+
 THE TARGET ESTIMATOR (--target-estimator, with --identity, for --pilot vla
 --mission follow; 2026-11-15)
 
@@ -380,6 +405,7 @@ import inspect
 import json
 import math
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -786,7 +812,8 @@ VLA_FOLLOW_ONLY = ("vla_step_as_rate", "follow_memory_s", "follow_search_s",
 VLA_PARAMS = ("vla_front_source", "vla_step_as_rate", "vla_rate_yaw", "follow_memory_s",
               "follow_search_s", "close_bottom_frac", "close_width_frac", "lost_timeout_s",
               "vla_cruise_mps", "vla_speed_cap_mps", "allow_unstamped_pipelined",
-              "front_capture_interval_s", "target_estimator", "vla_feed", "vla_feed_max_hz")
+              "front_capture_interval_s", "target_estimator", "vla_feed", "vla_feed_max_hz",
+              "vla_prefix", "ab_pair")
 # Exit codes beside 0 and 1 (demo/vla_fly.py's): a VLA failure ended the
 # mission (vla_mission.VLA_FAILURE_ENDS), and a run refused before arming.
 EXIT_VLA_FAILURE = 3
@@ -5109,6 +5136,17 @@ def build_parser() -> argparse.ArgumentParser:
                          "grounding phrase; recorded as which, vla_mission."
                          "object_words_record). Default: vla_mission.GOTO_OBJECT_TEXT for "
                          "goto, --object for approach and follow")
+    # THE PREFIX A/B (module docstring; guardrail/vla_prefix.py, WP4-15)
+    ap.add_argument("--vla-prefix", choices=("off", "csp", "neutral"), default="off",
+                    help="the Constraint Summary Pack in the VLA's prompt: off (default, the "
+                         "prompt it always got), csp (the CSP compiled before take-off, "
+                         "budgeted to the model's prompt slot, in front of its instruction) "
+                         "or neutral (rule-free text of the same length there). A prefix "
+                         "whose P0 rules do not fit the slot is refused before take-off")
+    ap.add_argument("--ab-pair", default=None, metavar="ID",
+                    help="the prefix A/B pair this flight belongs to (tools/kpi_report.py "
+                         "pairs the arms of one pair, object words and seed); a flight "
+                         "without it is never paired")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0)
@@ -5408,7 +5446,11 @@ def check_pilot_args(args) -> None:
                                     else args.vla_rate_yaw),
                                    ("--vla-front-source",
                                     None if getattr(args, "vla_front_source", "vla") == "vla"
-                                    else args.vla_front_source))
+                                    else args.vla_front_source),
+                                   ("--vla-prefix",
+                                    None if getattr(args, "vla_prefix", "off") == "off"
+                                    else args.vla_prefix),
+                                   ("--ab-pair", getattr(args, "ab_pair", None)))
                     if v is not None]
         if vla_only:
             raise SystemExit(f"{', '.join(vla_only)} configure(s) the VLA pilot: "
@@ -5461,6 +5503,10 @@ def check_pilot_args(args) -> None:
                          "and there is no default: give --vla-precision, --vla-attn and "
                          f"--vla-merge or --no-vla-merge (missing {', '.join(missing)}), or "
                          "attach to a running one with --vla-server HOST:PORT")
+    ab_pair = getattr(args, "ab_pair", None)
+    if ab_pair is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", ab_pair):
+        raise SystemExit(f"--ab-pair {ab_pair!r} is not a plain label (letters, digits, "
+                         f"_ . -, at most 64)")
     if not 0 < args.vla_port < 65536:
         raise SystemExit(f"--vla-port {args.vla_port} is not a port")
     if args.cadence == "pipelined" and not args.allow_unstamped_pipelined:
@@ -6098,8 +6144,60 @@ def vla_observation(captures: list[dict], rows: list[dict], *, t0: float,
     }
 
 
+VLA_PROMPT_CSP_FILE = "vla_prompt_csp.json"
+VLA_PREFIX_REFUSED_FILE = "vla_prefix_refused.json"
+
+
+def vla_prefix_plan(args, identity: dict | None, policy, mission, rule_now, out: Path, *,
+                    counter_factory=None) -> dict:
+    """THE PREFIX A/B (guardrail/vla_prefix.py): the run's arm and what the
+    VLA is sent in front of its instruction. A flight with --vla-prefix off
+    and no --ab-pair is no A/B flight: its record says so and nothing is
+    compiled or counted. Otherwise the model's prompt slot is read from its
+    hello (vla_prefix.slot_for), the CSP compiled with that slot's budget at
+    the rule clock's reading (the generation-0 CSP; a hot-applied policy does
+    not reach the prompt), written to vla_prompt_csp.json, and the record
+    returned. A prefix the grant does not allow in this model's slot (the P0
+    rules over its budget: CSPBudgetExceeded, never truncated; no slot; no
+    tokenizer to count with) refuses the flight before take-off: SystemExit,
+    with vla_prefix_refused.json saying why."""
+    from guardrail import vla_prefix as VP
+    arm = getattr(args, "vla_prefix", "off")
+    pair = getattr(args, "ab_pair", None)
+    if arm == "off" and pair is None:
+        return {"arm": "off", "prefix": "off", "csp_mode": "off", "ab_pair": None,
+                "in_ab": False, "why": "no --vla-prefix and no --ab-pair: not an A/B flight"}
+    now = rule_now() if rule_now is not None else None
+    try:
+        slot = VP.slot_for(identity, args.vla_object,
+                           **({} if counter_factory is None
+                              else {"counter_factory": counter_factory}))
+        rec, csp = VP.compile_prompt_prefix(policy, mission, slot, arm, args.vla_object,
+                                            now=now, issued_at=now)
+    except VP.PrefixRefused as exc:
+        doc = {"arm": arm, "ab_pair": pair, "code": exc.code, "why": str(exc),
+               "facts": exc.facts, "model": (identity or {}).get("id"),
+               "object": args.vla_object, "policy_hash": getattr(policy, "policy_hash", None)}
+        try:
+            (out / VLA_PREFIX_REFUSED_FILE).write_text(json.dumps(doc, indent=2, default=str),
+                                                       encoding="utf-8")
+        except OSError:
+            pass
+        raise SystemExit(f"[vla]    *** --vla-prefix {arm}: refused before take-off: "
+                         f"{exc}") from None
+    rec.update(ab_pair=pair, in_ab=True, object=args.vla_object,
+               seed=getattr(args, "seed", None), model=(identity or {}).get("id"),
+               rule_clock_at_compile=None if now is None else str(now))
+    if csp is not None:
+        (out / VLA_PROMPT_CSP_FILE).write_text(csp.model_dump_json(indent=2),
+                                               encoding="utf-8")
+        rec["csp_file"] = VLA_PROMPT_CSP_FILE
+    return rec
+
+
 def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, hfov: float,
-                  frames, live, clock, client=None, run_cmd=subprocess.run) -> tuple:
+                  frames, live, clock, client=None, run_cmd=subprocess.run, *,
+                  mission=None, rule_now=None) -> tuple:
     """The VLA side up to the flight: the server's hello (waited for up to
     --vla-hello-timeout-s, the heartbeat beating), its identity judged
     (vla_mission.identity_is_vla: a stand-in only with --vla-fake-output or
@@ -6161,6 +6259,21 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
           + (f", the server's ({front_check['source']})" if front_check["checked"]
              else f" - {front_check['source']}"))
     words = VM.object_words_record(identity)
+    # THE PREFIX A/B (vla_prefix_plan): the arm, compiled for this model's
+    # prompt slot, or refused here, before the client connects.
+    if mission is None and (getattr(args, "vla_prefix", "off") != "off"
+                            or getattr(args, "ab_pair", None) is not None):
+        raise SystemExit("[vla]    *** --vla-prefix / --ab-pair need the mission the CSP is "
+                         "compiled for")
+    prefix = vla_prefix_plan(args, identity, policy, mission, rule_now, out)
+    if prefix.get("in_ab"):
+        print(f"[vla]    prefix A/B pair {prefix['ab_pair']!r}, arm {prefix['arm']}"
+              + ("" if prefix["prefix_text"] is None else
+                 f": {prefix['prefix_tokens']} tokens of {prefix['slot']['budget_tokens']} "
+                 f"({prefix['prefix_token_counter']}; the model's own tokens: "
+                 f"{prefix['prefix_tokens_exact']}), sha256 "
+                 f"{prefix['prefix_sha256'][:12]}, P0 {prefix['p0_ids']}")
+              + f"; slot: {prefix['slot']['placement']}")
     # The GPU's memory with the model loaded (review of 4a0da6d, P2-7).
     gpu = {"at_hello": gpu_memory(run_cmd)}
     weight_paths = (None if (args.no_local_weights or not is_vla)
@@ -6231,6 +6344,10 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                                tracker_config=tcfg, cadence=args.cadence,
                                steps_log=out / "vla_steps.jsonl", on_submit=frames.commit,
                                clock=clock,
+                               # the prefix arm (vla_prefix_plan); none: as ever
+                               **({"csp_mode": prefix["csp_mode"],
+                                   "csp_text": prefix["prefix_text"]}
+                                  if prefix["csp_mode"] != "off" else {}),
                                **({"new_frame": frames.front_token,
                                    "feed_max_hz": (float(args.vla_feed_max_hz) or None)}
                                   if getattr(args, "vla_feed", "tick") == "stream" else {}))
@@ -6267,7 +6384,7 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                                "track": track,
                                "close_rule": close_rule, "follow": follow_rec,
                                "front_source": front_check, "object_words": words,
-                               "vla_host": vla_host,
+                               "vla_host": vla_host, "prefix": prefix,
                                "pilot_alt_band": alt_band, "gpu_memory": gpu,
                                "tracker": {k: getattr(tcfg, k)
                                            for k in tcfg.__dataclass_fields__}}
@@ -6337,6 +6454,9 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
         track_rec["first_error"] = None if vla is None else vla.track_error
     return {
         "subject_track": track_rec,
+        # THE PREFIX A/B (vla_prefix_plan): the arm, the prefix's text and
+        # hash, the CSP's hashes and the slot; tools/kpi_report.py pairs it
+        "vla_prefix": rec.get("prefix"),
         "end_reason_means": VM.END_REASONS.get(end_reason),
         "pilot": pilot,
         "vla": {"mission": {"kind": args.mission, "goal_xy": None if goal is None else list(goal),
@@ -6493,6 +6613,10 @@ def dry_run(args, out: Path) -> dict:
                          "object": args.vla_object, "cadence": args.cadence,
                          "front_source": args.vla_front_source,
                          "lost_timeout_s": args.lost_timeout_s,
+                         # the prefix A/B arm (compiled only once the
+                         # server's hello names the slot: vla_prefix_plan)
+                         "prefix": {"arm": getattr(args, "vla_prefix", "off"),
+                                    "ab_pair": getattr(args, "ab_pair", None)},
                          "follow": (None if args.mission != "follow" else
                                     {k: getattr(args, k) for k in VLA_FOLLOW_ONLY
                                      + ("vla_rate_yaw", "target_estimator")}),
@@ -7022,7 +7146,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # ---- the VLA server's hello and the pilot, before ArduPilot starts
             vla_identity, vla_backend, vla_rec = _vla_bring_up(
                 args, out, VM, vla_srv, policy, shield_on, grounder, hfov, vla_frames,
-                live, clock, vla_client, run_cmd=run_cmd)
+                live, clock, vla_client, run_cmd=run_cmd, mission=mission,
+                rule_now=rule_now)
+            vp = vla_rec.get("prefix") or {}
+            if vp.get("in_ab"):
+                # the arm in the episode record (events.jsonl, in the replay
+                # bundle) beside metrics.json's vla_prefix
+                rec.event("vla_prefix", **{k: vp.get(k) for k in (
+                    "ab_pair", "arm", "prefix", "csp_mode", "prefix_sha256", "prefix_text",
+                    "prefix_tokens", "prefix_token_counter", "prefix_tokens_exact",
+                    "length_matched_to", "csp_hash", "csp_content_hash", "p0_ids", "object",
+                    "seed", "slot")})
         if args.start_sitl and plan is not None:
             cmd = rail.wsl_start_command(args.wsl_distro, plan,
                                          mavros=(args.link == "mavros"))
@@ -7145,7 +7279,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         # The autopilot link is read while an answer is
                         # awaited (a cold first inference may take a minute),
                         # as the detector's wait reads it.
-                        clock=clock, sleep=sleep, idle=link.pump)
+                        clock=clock, sleep=sleep, idle=link.pump,
+                        # the flight's prefix arm, on every warm-up request
+                        **({"csp_mode": vla_rec["prefix"]["csp_mode"],
+                            "csp_text": vla_rec["prefix"]["prefix_text"]}
+                           if (vla_rec.get("prefix") or {}).get("csp_mode", "off") != "off"
+                           else {}))
                     vla_warmup["phase"] = phase
                     vla_rec["gpu_memory"]["after_warmup"] = gpu_memory(run_cmd)
                     rec.event("vla_warmup", **vla_warmup)

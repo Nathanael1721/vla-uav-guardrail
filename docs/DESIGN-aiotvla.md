@@ -575,6 +575,36 @@ scores stand; their "P0 escapes 0.0" does not cover the stand-off. Since
 tick; a `--gate-truth` flight still has none to feed (its client-side box is
 the truth) and says INERT.
 
+## The CSP in its prompt: a 16-token window (18 Nov)
+
+The object words are this model's only text: OWL-ViT grounds them as its
+query, and from v8 their text embedding is one more token of the head. Both
+go through OWL-ViT's CLIP text encoder, whose window is 16 positions with
+the start and end tokens included (`text_config.max_position_embeddings`,
+the tokenizer's `model_max_length`). A longer query has no position to go
+to; a truncated one loses its end, which is the object words.
+
+For the prefix A/B (WP4-15) the server has a CSP slot
+(`demo/vla_server_foreign.py` AIOTVLAFamily): a `csp` or `neutral` arm's text
+goes in front of the object words, one space between, and a query over the
+window is refused, never cut. Its hello declares the window
+(`foreign.config.csp_slot`), and the client (`guardrail/vla_prefix.py`)
+compiles the CSP with the budget left over: 16 - 2 - 3 = 11 CLIP tokens
+beside "a red car". The follow policy's four P0 sentences need 45, so the
+compiler raises CSPBudgetExceeded and the prefix-on arm is refused before
+take-off, as the grant's rule says (P0 is never truncated). One at a time
+they are alt-band 10, bld-clearance 9, standoff-any 12 and
+standoff-pedestrian 14 CLIP tokens (the refusal records each, `p0_rules`):
+a policy with only one of the first two as P0 would fit, but only by
+demoting the building clearance and the stand-offs out of P0, which is a
+different set of rules for the follow, so no such policy is offered. The
+prefix A/B a text-reading VLA can fly on the follow is therefore
+AerialVLA's (deploy/orin/run_pas_prefix_ab.sh FAMILY=aerialvla). The model was
+not trained with any prefix, so a policy whose P0 rules did fit would
+measure only what the extra words do to the grounding. A CSP this model can
+read would need a text path that is not CLIP's 16 tokens, which means
+retraining.
+
 ## Limits
 
 - Offline accuracy is not closed-loop skill. The recordings are mostly
