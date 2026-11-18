@@ -775,6 +775,36 @@ def test_a_rerendered_track_tick_says_target_locked_only_with_a_lock():
     assert rr.status_lines(dict(row, tier="soft"), False)[-1] == "TRACKING (PARTLY HIDDEN)"
 
 
+def test_rerender_rebuilds_a_people_envelope_shield_from_the_log():
+    """Review 2026-11-18 (WP1-07): rerender_policy_hud built its Shield from
+    the policy alone, which a distance_envelope over people refuses (no
+    people source). It now replays each row's `people` (people.
+    logged_people_source) - the CityLife people policy re-renders - and a
+    log that records no people is refused with the reason, not drawn from a
+    Shield that would not have been built."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import rerender_policy_hud as rr
+    pol = load_policy(ROOT / "experiments" / "policies" / "follow_car_citylife_people.yaml")
+    act = {"vx": 1.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
+    rows = [{"tick": i, "t": 0.1 * i, "x": 0.1 * i, "y": 0.0, "up": 8.0, "psi": 0.0,
+             "mode": "track", "raw": act, "emitted": act,
+             "people": [[3.0, 0.0, 0.2]]} for i in range(5)]
+    metrics = {"people_feed": {"source": "perception: synthetic"}}
+    snaps, ind = rr.snapshots(rows, pol, None, metrics)
+    assert len(snaps) == len(rows)
+    sh = rr.rebuild_shield(pol, rows, metrics, None, None)
+    assert sh.people_source.startswith("replayed from the flight log's per-row `people`")
+    bare = [{k: v for k, v in r.items() if k != "people"} for r in rows]
+    try:
+        rr.snapshots(bare, pol, None, metrics)
+    except SystemExit as exc:
+        assert "REFUSED" in str(exc) and "de-people" in str(exc), exc
+    else:
+        raise AssertionError("a people policy re-rendered without its people")
+    # A policy without the rule re-renders exactly as before.
+    rr.snapshots(bare, load_policy(CITY), None, None)
+
+
 def test_rerender_main_draws_the_runs_own_lock_on_its_frames():
     """main() reads the run's metrics.json and passes its lock to the lines
     it draws: a frame of C2's null (no lock) is drawn TRACKING BOX (NO

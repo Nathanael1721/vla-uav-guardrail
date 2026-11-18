@@ -25,6 +25,15 @@ polygon fence in the policy it can only have been an obstacle, which is what
 this assumes; with a fence the cause is passed as unknown, and the banner says
 "cause not logged" rather than blaming either.
 
+A policy with a distance_envelope (WP1-07) is rebuilt with the world it was
+judged in, or refused with the reason - never drawn from a Shield that would
+not have been built: one over roads with the street mask beside the map
+(build_street_mask.road_map_for, as the city rails load it); one over
+people with the people each row's Shield was given (`people` per row,
+replayed; people.logged_people_source), which every rail that feeds people
+logs since 2026-11-18. The violations, repairs and banner are the flight's
+own (they come from the row); only the clearance read and the map change.
+
 A frame is mapped to flight time by the recorder's per-frame stamp
 (`frame_t` in recorder.json, from 2026-10-03); older recordings fall back to
 index / achieved_hz, which drifts by a few seconds over a flight. The recorder
@@ -45,6 +54,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import Shield, State, load_policy            # noqa: E402
+from guardrail.people import logged_people_source, row_people  # noqa: E402
 from guardrail.shield import ShieldDecision                 # noqa: E402
 from policy_hud import (PolicyIndicator, draw_policy_overlay,  # noqa: E402
                         draw_status_box, render_base_map)
@@ -108,8 +118,32 @@ def status_lines(r: dict, locked: bool | None = None) -> list[str]:
             mode]
 
 
-def snapshots(rows, policy, citymap: Path | None):
-    """One indicator snapshot per log row, in order."""
+def rebuild_shield(policy, rows, metrics: dict | None, smap, citymap: Path | None):
+    """The flight's Shield for the re-render: the obstacle map, the road map
+    for a distance_envelope over roads (street.npz beside `citymap`) and the
+    logged people for one over people. SystemExit with the reason when the
+    log or the map folder does not carry a rule's world (module docstring)."""
+    ppl_kw, gaps = logged_people_source(policy, rows, metrics)
+    road_kw = {}
+    if citymap is not None:
+        from build_street_mask import road_map_for
+        rmap, _note = road_map_for(policy, citymap.parent)
+        if rmap is not None:
+            road_kw = {"road_map": rmap}
+    if gaps:
+        raise SystemExit("[rerender] REFUSED: " + "; ".join(gaps))
+    # PathRepair off: the chain of the old flights this re-renders (it joined
+    # the Shield's default chain on 2026-11-17).
+    try:
+        return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap,
+                      path_repair=False, **road_kw, **ppl_kw)
+    except ValueError as exc:
+        raise SystemExit(f"[rerender] REFUSED: {exc}") from None
+
+
+def snapshots(rows, policy, citymap: Path | None, metrics: dict | None = None):
+    """One indicator snapshot per log row, in order. `metrics`: the flight's
+    metrics.json (where a people envelope's source is named)."""
     import numpy as np
     smap, street = None, None
     if citymap is not None and citymap.is_file():
@@ -120,9 +154,9 @@ def snapshots(rows, policy, citymap: Path | None):
         if sm.is_file():
             zs = np.load(sm)
             street = {"street": zs["street"]}
-    # PathRepair off: the chain of the old flights this re-renders (it joined
-    # the Shield's default chain on 2026-11-17).
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap, path_repair=False)
+    shield = rebuild_shield(policy, rows, metrics, smap, citymap)
+    feed_people = shield.people_source is not None and \
+        any(r.get("people") is not None for r in rows)
     has_fence = any(getattr(c, "type", "") == "polygon_fence" for c in policy.constraints)
     if has_fence:
         print("[rerender] policy has a fence and the log may not say which hazard "
@@ -131,6 +165,8 @@ def snapshots(rows, policy, citymap: Path | None):
     out = []
     for r in rows:
         st = State(x=r["x"], y=r["y"], up=r["up"])
+        if feed_people:
+            shield.set_people(row_people(r) or [])
         est = r.get("est_xy")
         cause = r.get("fence_cause")
         if cause is None and r.get("fence_mode") in ("skirt", "hold", "near") and not has_fence:
@@ -165,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     cmap = Path(args.citymap) if args.citymap else None
     mp = run / "metrics.json"
     locked = None
+    mjs = None
     if mp.is_file():
         mjs = json.loads(mp.read_text(encoding="utf-8"))
         flown = (mjs.get("params") or {}).get("citymap")
@@ -175,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     if cmap is not None and cmap.is_file() and cmap.stat().st_mtime > log.stat().st_mtime:
         print(f"[rerender] WARNING {cmap} is newer than this flight; clearance and "
               f"BREACH are drawn from a map the flight's Shield did not use")
-    snaps, ind = snapshots(rows, policy, cmap)
+    snaps, ind = snapshots(rows, policy, cmap, mjs)
     ts = [r["t"] for r in rows]
     print(f"[rerender] {len(rows)} ticks; counts {ind.counts}; banner ticks {ind.banner_ticks}")
 

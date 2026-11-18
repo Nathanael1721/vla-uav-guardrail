@@ -501,6 +501,7 @@ from guardrail.projection import LocalProjection                          # noqa
 from guardrail.shield import (altitude_out_of_band, standoff_breached,       # noqa: E402
                               standoff_ring_m, standoff_rules)
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
+from guardrail.people import declared_subject_source                     # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_from_args,       # noqa: E402
                                is_dem, is_msl)
 from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa: E402
@@ -2750,6 +2751,15 @@ if HAVE_ROS:
             self.world = load_world(wpath, ROOT) if wpath else None
             self.world_kw = self.world.shield_kwargs() if self.world else {}
             gaps = missing_maps(self.policy, self.world)
+            # A distance_envelope over people (2026-11-18, guardrail/
+            # people.py): SITL's world has no pedestrians, so its one person
+            # is a --subject declared as one; refused without it. Nothing
+            # for a policy without such a rule.
+            ppl_kw, ppl_gaps = declared_subject_source(
+                self.policy, subject, getattr(args, "subject_class", None),
+                rail="the ArduPilot SITL rail")
+            self.world_kw.update(ppl_kw)
+            gaps = gaps + ppl_gaps
             if gaps:
                 raise ValueError("REFUSED before take-off: " + "; ".join(gaps))
             # Episode record FIRST: it moves an earlier flight's audit and
@@ -5365,6 +5375,10 @@ if HAVE_ROS:
                 # The declared world the Shield judged a distance_envelope in
                 # (--world; None: no map was given).
                 "world": self.world.record() if self.world else None,
+                # Where the Shield was told about people (a distance_envelope
+                # over people only; guardrail/people.py).
+                **({} if self.shield.people_source is None
+                   else {"people_source": self.shield.people_source}),
                 "scenario_events": (None if not self._ev_file else {
                     "file": self._ev_file, "declared": self._ev_declared,
                     "applied": [r for r in self._ev_records if not r.get("refused")],

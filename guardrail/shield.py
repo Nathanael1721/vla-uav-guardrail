@@ -136,6 +136,7 @@ from . import fsm as _fsm
 from . import repair as _repair
 from . import response as _response
 from . import terrain as _terrain
+from .people import PEOPLE_FIELD_RES_M, PeopleField, as_person, is_finite_person
 from .frames import from_body as _from_body, to_body as _to_body
 from .geometry import (area_covers, boundary_depth, enters_interior, nearest_on_polyline,
                        point_in_fence, push_out_direction, ring_contains, ring_distance)
@@ -153,6 +154,7 @@ from .models import (
     EnvelopeClearance,
     KinematicEnvelope,
     ObstacleClearance,
+    PeopleClearance,
     Policy,
     PolygonFence,
     State,
@@ -261,9 +263,15 @@ def _msl_on_flat_forecast(state_at: int, poses_at: int | None = None):
 
 def _field_name(c) -> str:
     """Which map a clearance rule is measured on: "buildings" (the obstacle
-    map: every obstacle_clearance) or "roads" (a distance_envelope over
-    roads, models.RoadClearance). WP1-07, 2026-11-03."""
+    map: every obstacle_clearance), "roads" (a distance_envelope over
+    roads, models.RoadClearance; WP1-07, 2026-11-03) or "people" (one over
+    people, models.PeopleClearance: the people field, 2026-11-18)."""
     return getattr(c, "MAP", "buildings")
+
+
+# What a Shield must be given for a distance_envelope of each class: the
+# keyword that carries its world (Shield.__init__ refuses one without it).
+_SOURCE_OF = {"buildings": "obstacle_map", "roads": "road_map", "people": "people_source"}
 
 # A subject closer than this (metres, horizontally) is directly under or over
 # the aircraft: the line to it, and with it "closing" and "opening", is not
@@ -1747,9 +1755,9 @@ class _Runtime:
 
 def _runtime_rule(c, ground):
     """The rule the runtime enforces for declared rule `c` (2026-11-03): a
-    distance_envelope as the runtime rule of its class (WP1-07: buildings and
-    roads as clearance rules on the obstacle and road maps, people as a
-    stand-off from a tracked person), an MSL band as the AGL band over
+    distance_envelope as the runtime rule of its class (WP1-07: buildings,
+    roads and people as clearance rules on the obstacle map, the road map
+    and the people field), an MSL band as the AGL band over
     `ground` (X-11, guardrail/terrain.py). Same id, priority, breach action
     and schedule, so every check, repair, status row and audit record names
     the declared rule. Every other rule is itself."""
@@ -2124,7 +2132,7 @@ class Shield:
                  pipe_clock=None, recovery_law: str = DEFAULT_RECOVERY_LAW,
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
                  dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False,
-                 up_ref: str | None = None):
+                 up_ref: str | None = None, people_source: str | None = None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -2139,6 +2147,16 @@ class Shield:
         obstacle_clearance, it is never inert. `require_maps=False` builds
         one anyway, the rule then inert: only for a Shield that is asked
         about the clock and not flown (the compiler's in-force queries).
+
+        people_source: where this Shield is told about people, in words for
+        the record ("perception: ...", "simulator: ...", "the declared
+        subject only ..."): the world of a distance_envelope over `people`
+        (since 2026-11-18, WP1-07; guardrail/people.py). The rule is then
+        measured on the people field - every person `set_people` names, and
+        the tracked subject while it is classified as a person - and, like
+        a buildings or roads envelope without its map, refused at
+        construction without a source. None for every other policy: nothing
+        reads it.
 
         ground: the ground-elevation source of an MSL rule (guardrail/
         terrain.py, X-11): None refuses every rule with altitude_ref MSL, as
@@ -2408,6 +2426,16 @@ class Shield:
         # Non-finite velocities refused (the position is kept), counted.
         self._subject_v: tuple[float, float] | None = None
         self.n_subject_velocity_nonfinite = 0
+        # The people a rail reports (set_people; guardrail/people.py), for a
+        # distance_envelope over people: Persons, replaced on each call. The
+        # field the rule reads is these plus the subject while it is a person
+        # (_people_field), rebuilt only when either changes. Non-finite
+        # entries are dropped and counted.
+        self._people_source = None if people_source is None else str(people_source)
+        self._people: tuple = ()
+        self._people_ver = 0
+        self._people_cache = None
+        self.n_people_nonfinite = 0
         # Ticks where the escape floor (_floor_the_escape) changed a legal
         # action and was NOT flown - the raw action flew instead - because
         # its result failed the full re-check or carried a repair theta
@@ -2465,9 +2493,10 @@ class Shield:
             self._road = (rd, rres, float(road_map["ox"]), float(road_map["oy"]),
                           _field_lipschitz(rd, rres))
         # A distance_envelope is never inert (models.DistanceEnvelope): one
-        # over buildings or roads without its map is refused here.
+        # over buildings or roads without its map, or over people without a
+        # people source, is refused here.
         blind = [f"{c.id}: a distance_envelope over {_field_name(c)} needs "
-                 f"{'road_map' if _field_name(c) == 'roads' else 'obstacle_map'} "
+                 f"{_SOURCE_OF[_field_name(c)]} "
                  f"(the Shield has no other source of {_field_name(c)})"
                  for c in self._rt.clear
                  if isinstance(c, EnvelopeClearance) and self._field_for(c) is None]
@@ -2502,10 +2531,15 @@ class Shield:
     def _field_for(self, c):
         """The distance field clearance rule `c` is measured on: (field, res,
         ox, oy, lipschitz) - the obstacle map for buildings (every
-        obstacle_clearance), the road map for a distance_envelope over roads -
-        or None when that map was not given."""
-        if _field_name(c) == "roads":
+        obstacle_clearance), the road map for a distance_envelope over roads,
+        the people field for one over people (field a PeopleField, res its
+        probe step) - or None when that map, or a people source, was not
+        given."""
+        name = _field_name(c)
+        if name == "roads":
             return self._road
+        if name == "people":
+            return None if self._people_source is None else self._people_field()
         if self._dist is None:
             return None
         return (self._dist, self._res, self._ox, self._oy, self._dist_lip)
@@ -2901,11 +2935,15 @@ class Shield:
         being far off-map IS clear).
 
         `f`: another field (`_field_for`: the road map of a distance_envelope
-        over roads, WP1-07), read the same way; None, the obstacle map."""
+        over roads, WP1-07), read the same way; None, the obstacle map. The
+        people field (one over people) is no grid: its own distance, the
+        nearest person's reach disc (guardrail/people.py)."""
         if f is None:
             d, res, ox, oy = self._dist, self._res, self._ox, self._oy
         else:
             d, res, ox, oy = f[0], f[1], f[2], f[3]
+            if type(d) is PeopleField:
+                return d.distance(x, y)
         return field_distance(d, res, ox, oy, x, y)
 
     @property
@@ -2922,7 +2960,7 @@ class Shield:
         require_maps=True and its maps; a reader that builds one with
         require_maps=False (an offline counter) reports these rather than
         count zero seconds for a rule that never ran."""
-        return [f"{c.id}: no {'road_map' if _field_name(c) == 'roads' else 'obstacle_map'}"
+        return [f"{c.id}: no {_SOURCE_OF.get(_field_name(c), 'obstacle_map')}"
                 f" - the rule is inert here"
                 for c in self._rt.clear if self._field_for(c) is None]
 
@@ -4648,7 +4686,8 @@ class Shield:
                 continue                  # still actively escaping -> never freeze
             return [Violation(
                 rule_id=c.id, category="clearance", predicted_at_s=t,
-                detail=(f"obstacle dist {d:.2f}m < min {c.min_clearance_m}m "
+                detail=(f"{'person' if _field_name(c) == 'people' else 'obstacle'} "
+                        f"dist {d:.2f}m < min {c.min_clearance_m}m "
                         f"at ({p.x:.1f},{p.y:.1f}) t+{t:.1f}s"))]
         return []
 
@@ -5612,6 +5651,64 @@ class Shield:
     def subject_velocity(self) -> tuple[float, float] | None:
         """The subject's (vx, vy) the stand-off forecasts with; None = still."""
         return self._subject_v
+
+    # ---------------- people (distance_envelope over people) ---------------- #
+
+    def set_people(self, people) -> None:
+        """Tell the Shield where the people are, once per tick (since
+        2026-11-18, WP1-07; guardrail/people.py).
+
+        `people`: every person the rail's source knows of now, as
+        people.Person (x, y, age_s: how old the fix is) or (x, y[, age_s])
+        in the Action4D frame; None or [] for nobody. Replaces the last call,
+        like set_subject: a person the source no longer reports is gone (the
+        source applies its own staleness rule, people.PeopleMemory). A
+        distance_envelope over people holds min_distance_m from each one's
+        reach disc (as far as it may have walked since the fix,
+        people.PERSON_SPEED_MPS * age_s) and from the tracked subject while
+        it is classified as a person (set_subject), which the Shield adds
+        itself. Inert, as every other input, for a policy without such a
+        rule. A non-finite entry is dropped (`n_people_nonfinite` counts
+        them): NaN fails every comparison, so kept it would read as clear."""
+        kept = []
+        for p in people or ():
+            q = as_person(p)
+            if is_finite_person(q):
+                kept.append(q)
+            else:
+                self.n_people_nonfinite += 1
+        kept = tuple(kept)
+        if kept != self._people:
+            self._people = kept
+            self._people_ver += 1
+
+    @property
+    def people(self) -> tuple:
+        """The people the last set_people() gave (people.Person)."""
+        return self._people
+
+    @property
+    def people_source(self) -> str | None:
+        """Where this Shield is told about people (the constructor's
+        people_source); None: no people envelope can be enforced."""
+        return self._people_source
+
+    def _people_field(self):
+        """The people field as a clearance field tuple (_field_for): the
+        set_people persons and the subject while it is a person - in a
+        look-ahead view where its velocity puts it then (_subject_track)."""
+        subj = None
+        if self._subject is not None and PeopleClearance.is_person(self._subject_class):
+            subj = self._subject_track()[:2]
+        key = (self._people_ver, subj)
+        cache = self._people_cache
+        if cache is None or cache[0] != key:
+            pts = [(p.x, p.y, p.reach_m()) for p in self._people]
+            if subj is not None:
+                pts.append((subj[0], subj[1], 0.0))
+            cache = self._people_cache = (key, (PeopleField(pts), PEOPLE_FIELD_RES_M,
+                                                0.0, 0.0, 1.0))
+        return cache[1]
 
     def clearance_at(self, x: float, y: float) -> float:
         """Metres to the nearest mapped obstacle as the clearance rule reads it;
@@ -7069,8 +7166,9 @@ class Shield:
                         row.update(bound=in_force, value=sep,
                                    distance_m=sep - c.min_range_m,
                                    breach=in_force and self._standoff_inside(c, sep))
-            elif c.type == "obstacle_clearance" and _field_name(c) == "roads":
-                # A distance_envelope over roads (WP1-07): its own map.
+            elif c.type == "obstacle_clearance" and _field_name(c) in ("roads", "people"):
+                # A distance_envelope over roads (WP1-07): its own map; over
+                # people (2026-11-18): the people field.
                 f = self._field_for(c)
                 d = self._distance_at(state.x, state.y, f) if f is not None else None
                 if d is not None and math.isfinite(d):

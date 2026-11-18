@@ -75,6 +75,25 @@ X-09). Two fallbacks, both weaker than a hash and both labelled as such:
 An id-resolved run must reproduce its stored P0 figures AND its reconstructed
 dwell must agree with the dwell the rail measured independently
 (`nfz_s`, `alt_violation_s`, `standoff_s`), or nothing is written.
+
+Experiment profiles (experiments/policies/*.yaml, since 2026-11-18) are
+offered after every shipped policy, as guardrail.bundle.policy_candidates
+offers them: a rig run flown under one (the CityLife people follow, the
+MSL-over-DEM SITL flights) resolves by hash instead of being written off as
+unverified. They load as declarations (runtime=False) - an MSL profile
+flies only with its ground - and a Shield that cannot be rebuilt from the
+log is refused with its reason (below), never built blind.
+
+A DISTANCE_ENVELOPE OVER PEOPLE (WP1-07, review 2026-11-18). Its people are
+not in the policy: each tick's Shield was told them by the rail. Every rail
+that feeds people logs what it gave (`people` per row: [x, y, age_s]), so
+the reconstruction replays them tick by tick (people.logged_people_source,
+people.row_people); a SITL / harness flight whose only person was its
+declared subject replays that subject. A log that records neither is
+REFUSED, with the reason, under `withheld` - judging the people rule over
+nobody would reconstruct a clean flight from a rule that never ran. Every
+rail since 2026-10 logs `unsafe` itself (guardrail.replay.
+episode_row_fields), so only a log without it is reconstructed at all.
 """
 from __future__ import annotations
 
@@ -93,6 +112,7 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K, load_policy                        # noqa: E402
 from guardrail.models import State                                 # noqa: E402
+from guardrail.people import logged_people_source, row_people      # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
 
 # Fields this tool is allowed to introduce. Anything already present in a
@@ -178,12 +198,22 @@ _HASH_MIN = len("sha256:") + 16
 # --------------------------------------------------------------------------- #
 
 def load_policies() -> list[tuple[Path, object]]:
+    """Every shipped policy, then every experiment profile
+    (experiments/policies/*.yaml, as declarations: module docstring). A
+    shipped policy keeps a hash both would answer to (policies_by_hash
+    takes the first)."""
     out = []
     for p in sorted((ROOT / "policies").glob("*.yaml")):
         try:
             out.append((p, load_policy(p)))
         except Exception as e:                                   # noqa: BLE001
             print(f"  ! {p.name}: will not load ({type(e).__name__}: {e})")
+    for p in sorted((ROOT / "experiments" / "policies").glob("*.yaml")):
+        try:
+            out.append((p, load_policy(p, runtime=False)))
+        except Exception as e:                                   # noqa: BLE001
+            print(f"  ! experiments/policies/{p.name}: will not load "
+                  f"({type(e).__name__}: {e})")
     return out
 
 
@@ -331,16 +361,35 @@ def subject_for_row(r: dict, declared) -> tuple[float, float, str | None, str] |
     return None
 
 
+class ReconstructRefused(Exception):
+    """The flight's Shield cannot be rebuilt from its log: a rule whose world
+    (a map, the people) the log does not carry. The message is the reason,
+    reported under `withheld`; nothing is reconstructed."""
+
+
 def reconstruct_unsafe(rows: list[dict], pol, metrics: dict) -> dict:
     """Set r["unsafe"] on every row with a pose, exactly as in flight.
 
     Returns what it did: how many ticks were reconstructed, where each tick's
     subject came from, and the seconds spent unsafe per rule category - the
     last so the result can be checked against the rail's own dwell figures.
-    """
+
+    A distance_envelope over people is judged over the people each row's
+    Shield was given (`people`, replayed) or the declared person subject
+    (people.logged_people_source). Raises ReconstructRefused, before any
+    row is touched, when the log carries neither, or when the Shield refuses
+    the policy for another rule's missing world (a distance_envelope over
+    buildings or roads: their maps are not in the log)."""
+    ppl_kw, ppl_gaps = logged_people_source(pol, rows, metrics)
+    if ppl_gaps:
+        raise ReconstructRefused("; ".join(ppl_gaps))
     # PathRepair off: the chain of every flight rescored here (it joined the
     # Shield's default chain on 2026-11-17).
-    sh = Shield(pol, lookahead_s=3.0, dt=0.5, path_repair=False)
+    try:
+        sh = Shield(pol, lookahead_s=3.0, dt=0.5, path_repair=False, **ppl_kw)
+    except ValueError as exc:
+        raise ReconstructRefused(str(exc)) from None
+    feed_people = bool(ppl_kw) and any(r.get("people") is not None for r in rows)
     declared = declared_subject(metrics)
     sources: dict[str, int] = {}
     cat_ticks: dict[str, int] = {}
@@ -355,6 +404,10 @@ def reconstruct_unsafe(rows: list[dict], pol, metrics: dict) -> dict:
         else:
             sh.set_subject(subj[0], subj[1], subj[2])
             sources[subj[3]] = sources.get(subj[3], 0) + 1
+        if feed_people:
+            # The people this tick's Shield was told (every posed row has
+            # them: logged_people_source refused otherwise).
+            sh.set_people(row_people(r) or [])
         st = State(x=r["x"], y=r["y"], up=r["up"],
                    yaw_deg=r.get("yaw_deg", 0.0) or 0.0)
         bad = sh.state_is_unsafe(st)
@@ -369,6 +422,7 @@ def reconstruct_unsafe(rows: list[dict], pol, metrics: dict) -> dict:
     dts = [b - a for a, b in zip(ts, ts[1:]) if b > a]
     tick = statistics.median(dts) if dts else None
     return {"ticks": n, "subject_source": sources, "tick_s": tick,
+            "people_source": ppl_kw.get("people_source"),
             "unsafe_s_by_category": ({c: round(k * tick, 2) for c, k in cat_ticks.items()}
                                      if tick else {})}
 
@@ -449,12 +503,20 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
     # where the policy resolves; without it the run honestly reports
     # time_to_safe_not_measurable rather than a flattering zero.
     reconstructed, info, cross = False, {}, {"fields": {}, "agree": None}
+    refused = None
     flight_logged_unsafe = any("unsafe" in r for r in rows)
     if (pol is not None and not flight_logged_unsafe
             and any(r.get("x") is not None for r in rows)):
-        info = reconstruct_unsafe(rows, pol, metrics)
-        cross = dwell_crosscheck(info, metrics)
-        reconstructed = True
+        try:
+            info = reconstruct_unsafe(rows, pol, metrics)
+        except ReconstructRefused as exc:
+            # Stated, never a crash of the whole batch and never a Shield
+            # built without the rule's world: time to safe stays not
+            # measurable for this run.
+            refused = str(exc)
+        else:
+            cross = dwell_crosscheck(info, metrics)
+            reconstructed = True
 
     prios = K.rule_priorities(pol) if pol else {}
     # The caps let a clamped tick be sized on a run flown on the one-period
@@ -471,6 +533,9 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
                 drift.append(f"{f}: {stored[key]} -> {fresh.get(f)}")
 
     withheld = []
+    if refused is not None:
+        withheld.append("`unsafe` not reconstructed: the flight's Shield cannot be "
+                        "rebuilt from its log - " + refused)
     # An id-resolved policy is a claim about which rules flew; the dwell the
     # rail measured independently is what corroborates it.
     id_unconfirmed = how == "policy_id" and cross["agree"] is False
@@ -544,6 +609,10 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
     rescore_meta = {"date": date.today().isoformat(), "policy_resolved_by": how,
                     "note": note, "subject_source": info.get("subject_source"),
                     "dwell_crosscheck": cross["fields"] or None}
+    if info.get("people_source"):
+        rescore_meta["people_source"] = info["people_source"]
+    if refused is not None:
+        rescore_meta["reconstruction_refused"] = refused
     if retired:
         rescore_meta["retired"] = {
             "fields": {f: stored[f] for f in retired},

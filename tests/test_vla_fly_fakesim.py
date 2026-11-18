@@ -685,6 +685,78 @@ class _LevelCar:
         return {"tag": self.tag, "fake": True}
 
 
+class LevelActors:
+    """level_actors.LevelActors stand-in (follow_vlm.SimPeopleFeed knows a
+    level crowd by this class name): three pedestrians the level walks - one
+    beside the level car, one near it, one 800 m away - each poll counted."""
+    AT = {"Ped_00": (35.0, -6.0), "Ped_01": (30.0, -12.0), "Ped_02": (600.0, 600.0)}
+
+    def __init__(self, world, names, kind="pedestrian", min_period_s=0.1):
+        self.kind, self.min_period_s = kind, float(min_period_s)
+        self.figures = [types.SimpleNamespace(name=n, x=self.AT[n][0], y=self.AT[n][1],
+                                              seen=False, stale=0) for n in names]
+        self.n_calls = 0
+        self._last_t = None
+
+    def _poll(self):
+        self.n_calls += 1
+        for f in self.figures:
+            f.seen = True
+
+    def resolve(self):
+        self._poll()
+        self._last_t = 0.0
+        return len(self.figures)
+
+    def refresh(self):
+        self._poll()
+
+    def update(self, t):
+        if self._last_t is None or t - self._last_t >= self.min_period_s:
+            self._last_t = t
+            self._poll()
+
+    def stats(self):
+        return {"source": "level", "kind": self.kind, "figures": len(self.figures),
+                "rpc_polls": self.n_calls, "fake": True}
+
+
+def test_a_people_policy_tells_the_shield_every_level_pedestrian():
+    """WP1-07 (2026-11-18) through fly(): a distance_envelope over people
+    (experiments/policies/follow_car_citylife_people.yaml) with --level-peds:
+    the Shield is built with the level's pedestrian list as its people
+    source, every row carries the people it was given - the two within
+    100 m of the aircraft, not the one 800 m away, which the memory still
+    tracks - and metrics.people_feed records the source and the memory.
+    Without --level-peds the same policy is refused before the server."""
+    why = _missing()
+    if why:
+        print(f"      ({why})")
+        return SKIP
+    import level_actors
+    pol = str(ROOT / "experiments" / "policies" / "follow_car_citylife_people.yaml")
+    base = ["--mission", "follow", "--max-s", "8", "--no-transfer", "--no-land-site",
+            "--no-save-view", "--policy", pol, "--cadence", "pipelined",
+            "--vla-fake-output", "96 48 49</s>"]
+    code, out, said = _fly(base + ["--tag", "fakesim_people", "--level-peds", "3"],
+                           grounder=_GrowingBox,
+                           patch={(level_actors, "LevelCar"): _LevelCar,
+                                  (level_actors, "LevelActors"): LevelActors})
+    assert code == 0, said[-3000:]
+    assert "[people] simulator: the level's 3 pedestrians" in said, said[-3000:]
+    rows = _rows(out)
+    assert rows and all("people" in r for r in rows), rows[0]
+    assert all(sorted((p[0], p[1]) for p in r["people"]) == [(30.0, -12.0), (35.0, -6.0)]
+               for r in rows), [r["people"] for r in rows[:3]]
+    pf = _metrics(out)["people_feed"]
+    assert pf["source"].startswith("simulator: the level's 3 pedestrians"), pf
+    assert pf["tracks"] == 3 and pf["stale_s"] == 3.0 and pf["dropped_stale"] == 0, pf
+    assert pf["level"]["rpc_polls"] >= 2 and pf["people_nonfinite"] == 0, pf
+    code, out, said = _fly(base + ["--tag", "fakesim_people_none"], grounder=_GrowingBox,
+                           patch={(level_actors, "LevelCar"): _LevelCar})
+    assert "de-people" in str(code) and "--level-peds" in str(code), (code, said[-2000:])
+
+
 def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
     """M3 through fly() (review of d6e7123): the fake robot's detector camera
     has no depth topic, so the identity setup fails - and the follow flies

@@ -1611,6 +1611,238 @@ def _json(run, name):
     return json.loads((run / name).read_text())
 
 
+PEOPLE_POLICY = CAP_POLICY + """  - id: de-people
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    object_class: people
+    min_distance_m: 4.0
+"""
+
+
+class PeopleDetections(FakeDetections):
+    """FakeDetections plus the people phrase's publication
+    (follow_vlm.Grounder.latest()["people"]): one person box per inference,
+    no capture pose (placed from the tick's pose) and no depth range
+    (ranged by a person's width), a new frame every second call."""
+
+    def latest(self):
+        out = super().latest()
+        out["people"] = {"seq": self.n // 2, "t_capture": self.clock.t - 0.1, "pose": None,
+                         "depth_src": "none", "note": None,
+                         "boxes": [(384.0, 300.0, 10.0, 30.0, 0.3, 768, 432, None)]}
+        return out
+
+
+def test_a_people_policy_feeds_every_detected_person_to_the_shield():
+    """WP1-07 (2026-11-18) through run(): a distance_envelope over people.
+    The Shield is built with the perception people source, each detector
+    frame's person boxes are placed (people_estimates: the tick's pose,
+    width ranging, recorded so) and remembered, every row carries the
+    people the Shield was given, and metrics.people_feed records the
+    phrase, the placement and the memory. The same run with the fake
+    grounder that publishes no people runs with nobody, said so."""
+    rc, run, link = _fly("on", policy=PEOPLE_POLICY, grounder_cls=PeopleDetections)
+    assert rc == 0
+    rows = _rows(run)
+    assert rows and all(len(r["people"]) == 1 for r in rows), [r.get("people") for r in rows[:3]]
+    m = _json(run, "metrics.json")
+    pf = m["people_feed"]
+    assert pf["source"].startswith("perception: every box the detector scores 'a person'"), pf
+    assert pf["phrase"] == "a person" and pf["stale_s"] == 3.0, pf
+    pl = pf["placement"]
+    assert pl["frames"] >= 2 and pl["placed"] == pl["boxes"] == pl["frames"], pl
+    assert pl["pose"] == {"tick": pl["frames"]} and pl["src"] == {"width": pl["frames"]}, pl
+    assert pf["frames"] == pl["frames"] and pf["tracks"] >= 1, pf
+    # A policy without the rule: no people anywhere in the record.
+    rc, run, link = _fly("on", grounder_cls=PeopleDetections)
+    assert rc == 0 and "people" not in _rows(run)[0]
+    assert "people_feed" not in _json(run, "metrics.json")
+    # The rule with a grounder that publishes no people: nobody is fed.
+    rc, run, link = _fly("on", policy=PEOPLE_POLICY)
+    assert rc == 0 and all(r["people"] == [] for r in _rows(run))
+    pf = _json(run, "metrics.json")["people_feed"]
+    assert pf["frames"] == 0
+    # The cull this policy and forecast need is the 100 m floor (4 m + 5 s x
+    # 4 m/s + 10 m), and without --level-peds the feed is said unchecked.
+    assert pf["range_m"] == 100.0, pf
+    assert pf["truth"]["source"] is None and "no --level-peds" in pf["truth"]["why"], pf
+
+
+class ClosePeopleDetections(FakeDetections):
+    """One person box per inference, centred and 23 px wide: ranged by a
+    person's width from the tick's pose, subject_estimate places it ~4.1 m
+    straight ahead of the aircraft (north, the way the pilot flies) - at the
+    edge of a 4 m people envelope, with the aircraft closing on it."""
+
+    def latest(self):
+        out = super().latest()
+        out["people"] = {"seq": self.n // 2, "t_capture": self.clock.t - 0.1, "pose": None,
+                         "depth_src": "none", "note": None,
+                         "boxes": [(384.0, 300.0, 23.0, 60.0, 0.3, 768, 432, None)]}
+        return out
+
+
+def test_a_person_placed_inside_the_people_envelope_is_acted_on():
+    """Review 2026-11-18: the people feed's run() test checked only that rows
+    carry people. Here the detector places a person ~4.1 m ahead of the
+    aircraft, which the pilot flies towards: the row's people put it there,
+    the de-people rule is among each such tick's violations, the Shield's
+    ClearanceFix repairs it - the emitted command backs the aircraft away
+    (south) where the pilot asked north - the position counts as unsafe for
+    the rule (its reach puts the person inside 4 m), and the audit records
+    it."""
+    rc, run, link = _fly("on", policy=PEOPLE_POLICY, grounder_cls=ClosePeopleDetections)
+    assert rc == 0
+    rows = _rows(run)
+    fed = [r for r in rows if r["people"]]
+    assert len(fed) >= len(rows) - 2, (len(fed), len(rows))
+    for r in fed:
+        (px, py, age), = r["people"]
+        assert 3.9 < px - r["x"] < 4.3 and abs(py - r["y"]) < 0.01, (r["x"], r["people"])
+    acted = [r for r in fed if "de-people" in {v["rule_id"] for v in r["violations"]}]
+    assert len(acted) == len(fed), (len(acted), len(fed))
+    for r in acted:
+        assert "ClearanceFix" in [x["operator"] for x in r["repairs"]], r["repairs"]
+        assert r["raw"]["vx"] > 0 and r["emitted"]["vx"] < 0, (r["raw"], r["emitted"])
+        assert "de-people" in (r.get("unsafe_rules") or []), r.get("unsafe_rules")
+    assert link.sent and all(a.vx < 0 for a in link.sent[2:]), "flown away from the person"
+    audit = (run / "shield_audit.jsonl").read_text(encoding="utf-8")
+    assert '"de-people"' in audit
+    # Shield off (the control arm): the same person, the pilot's command flies.
+    rc, run, link = _fly("off", policy=PEOPLE_POLICY, grounder_cls=ClosePeopleDetections)
+    assert rc == 0 and any(a.vx > 0 for a in link.sent), "the control arm flew the raw command"
+
+
+class CrowdCamera(FakeCamera):
+    """A simulator whose level walks two pedestrians beside the aircraft -
+    Ped_00 2 m east of it (inside the 4 m envelope, and never a box the
+    detector reports), Ped_01 20 m north - and has no Ped_02; the aircraft
+    itself for the frame check."""
+
+    def __init__(self, link, log=None):
+        super().__init__(link, log)
+        self.reads = 0
+
+    def object_xy(self, name):
+        return (self.link.x, self.link.y)
+
+    def objects_xy(self, names):
+        self.reads += 1
+        at = {"Ped_00": (self.link.x, self.link.y + 2.0),
+              "Ped_01": (self.link.x + 20.0, self.link.y)}
+        return [at.get(n, (float("nan"), float("nan"))) for n in names]
+
+
+def test_the_level_crowd_checks_the_people_feed_record_only():
+    """Review 2026-11-18: on the PAS rail the people feed is checked against
+    the level's pedestrians (--level-peds, CrowdTruth): each row says how
+    close the aircraft truly was to any of them, and metrics say the true
+    minimum, the time inside the envelope and the feed's recall. Here the
+    detector reports one person ~19 m ahead and never Ped_00, 2 m away: the
+    record shows the breach the feed missed - a zero from the feed alone
+    would have read as a clean flight. The Shield never sees the truth: the
+    people it was given are the detector's only."""
+    camera_cls = CrowdCamera
+    out = _tmp()
+    pol = out / "policy.yaml"
+    pol.write_text(PEOPLE_POLICY, encoding="utf-8")
+    args = pn.build_parser().parse_args([
+        "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", "3",
+        "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
+        "--windows-ip", WIN, "--wsl-ip", WSL, "--dev-yaml", "--start-when-seen", "0",
+        "--level-peds", "3"])
+    clk = Clock()
+    link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+    cam = camera_cls(link)
+    rc = pn.run(args, link=link, camera=cam, grounder=PeopleDetections(clk),
+                obs=FakeObs(), clock=clk, sleep=clk.sleep)
+    assert rc == 0
+    rows = _rows(out / "run")
+    got = [r for r in rows if r.get("people_truth")]
+    assert got and len(got) >= len(rows) - 2, (len(got), len(rows))
+    for r in got:
+        pt = r["people_truth"]
+        assert pt["n"] == 2 and pt["min_m"] < 4.0 and pt["age_s"] <= 1.6, pt
+        # The Shield was given the detector's person only, never the truth.
+        assert len(r["people"]) == 1 and \
+            math.hypot(r["people"][0][0] - r["x"], r["people"][0][1] - r["y"]) > 10.0
+    scored = [r["people_truth"]["recall"] for r in got if "recall" in r["people_truth"]]
+    assert scored and all(s["in_range"] == 2 for s in scored), scored
+    m = _json(out / "run", "metrics.json")
+    t = m["people_feed"]["truth"]
+    assert t["source"].startswith("World.get_object_poses(2 level tags Ped_00"), t
+    assert t["unresolved"] == ["Ped_02"] and t["tags"] == 2, t
+    assert t["reads"] >= 2 and t["min_distance_m"] < 4.0 and t["envelope_m"] == 4.0, t
+    assert t["below_envelope_ticks"] == t["rows_with_truth"] == len(got), t
+    assert t["below_envelope_s"] > 0, t
+    rc_ = t["recall"]
+    assert rc_["in_range"] == 2 * rc_["reads_scored"] and rc_["matched"] < rc_["in_range"], rc_
+    assert rc_["recall_in_range"] is not None and rc_["recall_in_range"] <= 0.5, rc_
+    assert t["verdict"].startswith("the aircraft was closer than 4 m"), t["verdict"]
+    # Record only: no de-people violation came from the truth (the person
+    # the Shield had was ~19 m ahead).
+    assert not any("de-people" in (r.get("unsafe_rules") or []) for r in rows)
+    # A policy without a people rule reads nothing.
+    out2 = _tmp()
+    pol2 = out2 / "policy.yaml"
+    pol2.write_text(CAP_POLICY, encoding="utf-8")
+    args2 = pn.build_parser().parse_args([
+        "--out-root", str(out2), "--tag", "run", "--policy", str(pol2), "--max-s", "1",
+        "--hfov", "90", "--citymap", str(out2 / "no_map.npz"), "--network", "nat",
+        "--windows-ip", WIN, "--wsl-ip", WSL, "--dev-yaml", "--start-when-seen", "0",
+        "--level-peds", "3"])
+    clk2 = Clock()
+    link2 = FakeLink(clk2, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+    cam2 = camera_cls(link2)
+    assert pn.run(args2, link=link2, camera=cam2, grounder=PeopleDetections(clk2),
+                  obs=FakeObs(), clock=clk2, sleep=clk2.sleep) == 0
+    assert cam2.reads == 0 and "people_truth" not in _rows(out2 / "run")[0]
+
+
+def test_crowd_truth_refuses_a_level_with_none_of_its_tags():
+    clk = Clock()
+    link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+    cam = CrowdCamera(link)
+    ct = pn.CrowdTruth(cam, ["Ped_07", "Ped_08"], object(), None)
+    try:
+        ct.resolve()
+    except SystemExit as exc:
+        msg = str(exc)
+    else:
+        raise AssertionError("a level with none of the tags was accepted")
+    assert "none of the 2 pedestrian tag(s) resolved" in msg and "Ped_07" in msg, msg
+    assert pn.CrowdTruth(FakeCamera(link), ["Ped_00"], object(), None).why_off.startswith(
+        "this camera source reads no simulator poses")
+    assert "no scene home-geo-point" in pn.CrowdTruth(cam, ["Ped_00"], None, None).why_off
+
+
+def test_the_rpc_worker_hands_a_late_answer_to_on_late():
+    """OffLoopRpc.call(on_late=...): a call answered after its wait is
+    still "late" to the caller (the loop goes on), and its answer goes to
+    on_late on the worker thread instead of being dropped. Without on_late
+    nothing changes."""
+    import threading
+    import time as _time
+    gate = threading.Event()
+    got = []
+    rpc = pn.OffLoopRpc(wait_s=0.05)
+    st, val = rpc.call(lambda: (gate.wait(2.0), (1.0, 2.0))[1],
+                       on_late=lambda s, v: got.append((s, v)))
+    assert st == "late" and val is None and got == []
+    gate.set()
+    for _ in range(200):
+        if got:
+            break
+        _time.sleep(0.01)
+    assert got == [("ok", (1.0, 2.0))], got
+    assert rpc.call(lambda: 7, on_late=lambda s, v: got.append(v)) == ("ok", 7)
+    assert got == [("ok", (1.0, 2.0))]
+    rpc.close()
+
+
 def test_only_the_shield_s_output_reaches_the_autopilot():
     rc, run, link = _fly("on")
     assert rc == 0

@@ -1426,7 +1426,9 @@ def test_a_rule_the_shield_does_not_enforce_is_refused_by_name():
     de = Policy.model_validate({"policy_id": "p-de", "constraints": base + [
         {"id": "r-de", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 5.0}]})
-    assert "Keep at least 5 m from the person you are following." in \
+    # Every person since 2026-11-18 (it read "the person you are following"
+    # while the rule bound the followed subject alone).
+    assert "Keep at least 5 m from any person." in \
         ConstraintCompiler(de).compile_csp(_mission(), now=None).natural_language_prompt
     cases = {
         "MSL": ({"id": "r-msl", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,

@@ -165,6 +165,7 @@ for _p in (ROOT, ROOT / "demo"):
 
 from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.frames import body_to_local_ned, filter_world_as_body  # noqa: E402
+from guardrail import people as people_feed                         # noqa: E402
 
 import vla_mission as VM                                             # noqa: E402
 
@@ -291,6 +292,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help=f"M3 follow: the car the LEVEL drives that is the subject, read from "
                          f"the simulator for SCORING only (subject_dist_m per row; never the "
                          f"phrase, the VLA or a stop rule). Default {DEFAULT_LEVEL_CAR}")
+    ap.add_argument("--level-peds", type=int, default=0,
+                    help="a distance_envelope over people only: the Shield is told every "
+                         "pedestrian the LEVEL walks, polled by tag (--level-ped-prefix "
+                         "plus a two-digit index, level_actors.LevelActors) every "
+                         f"{LEVEL_TRUTH_PERIOD_S:g} s; a people policy is refused without "
+                         "it. Default 0: no poll")
+    ap.add_argument("--level-ped-prefix", default="Ped_",
+                    help="tag prefix for --level-peds (as follow_vlm's)")
+    ap.add_argument("--people-stale-s", type=float, default=people_feed.PEOPLE_STALE_S,
+                    help="a distance_envelope over people only: a pedestrian unseen for "
+                         "longer is dropped (guardrail/people.py; default %(default)s s)")
     ap.add_argument("--follow-memory-s", type=float, default=6.0,
                     help="M3: past the box's freshness, keep the phrase of its last bearing "
                          "(world frame, re-read against the current heading) this long")
@@ -1572,6 +1584,23 @@ async def fly(args) -> int:
             srv.stop()                 # idempotent: a second stop finds the process gone
 
 
+def people_source_vla(policy, args) -> str | None:
+    """The people source this rail gives the Shield for a distance_envelope
+    over people (guardrail/people.py): the level's pedestrians polled by tag
+    (--level-peds). None for a policy without such a rule. Refused without
+    --level-peds: CityLife walks pedestrians of its own, which the Shield
+    would not know about."""
+    ids = people_feed.needs_people(policy)
+    if not ids:
+        return None
+    if args.level_peds <= 0:
+        raise SystemExit(f"[policy] {', '.join(ids)}: a distance_envelope over people "
+                         f"needs the level's pedestrian list on this rail: --level-peds N")
+    return (f"simulator: the level's {args.level_peds} pedestrians polled by tag "
+            f"({args.level_ped_prefix}*, level_actors.LevelActors, every "
+            f">= {LEVEL_TRUTH_PERIOD_S:g} s)")
+
+
 async def _fly(args, holder: dict) -> int:
     from projectairsim import Drone, EnvActor, ProjectAirSimClient, World
 
@@ -1654,8 +1683,28 @@ async def _fly(args, holder: dict) -> int:
     # PathRepair off on this follow rail (guardrail.replay
     # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
     from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
+    # The people of a distance_envelope over people (2026-11-18, WP1-07):
+    # the level's pedestrians, polled by tag every tick's period
+    # (--level-peds; people_source_vla). None for every other policy: the
+    # Shield is the one flown before and nothing is polled.
+    people_source = people_source_vla(policy, args)
+    people_mem = (people_feed.PeopleMemory(stale_s=args.people_stale_s)
+                  if people_source is not None else None)
+    if people_source is not None:
+        print(f"[people] {people_source}; a pedestrian unseen for "
+              f"{people_mem.stale_s:g} s is dropped")
+    elif args.level_peds > 0:
+        print("[people] --level-peds is read for a distance_envelope over people only; "
+              "this policy has none, so nothing is polled")
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap,
-                         road_map=rmap, path_repair=FOLLOW_RAIL_PATH_REPAIR)
+                         road_map=rmap, path_repair=FOLLOW_RAIL_PATH_REPAIR,
+                         **({} if people_source is None
+                            else {"people_source": people_source}))
+    # The people handed to the Shield each tick: those within the range this
+    # policy and forecast can reach (people.cull_range_m; the policy's speed
+    # cap bounds the forecast - the VLA's commands have no bound of their own).
+    people_range = (None if people_source is None else
+                    people_feed.cull_range_m(policy, shield.lookahead_s))
     # The subject stand-off: who the subject is (the object words' policy
     # class, follow_vlm.subject_width) and whether its position can be fed
     # (subject_feed; decided again once the identity is set up).
@@ -1859,6 +1908,8 @@ async def _fly(args, holder: dict) -> int:
     pre_mission: dict = {}
     car = car_truth = None
     level_car = None
+    level_people = None
+    sim_people = None
     gate_truth_box: dict = {}
     level_truth_errors: list[str] = []
     resets: list[dict] = []                    # perception resets (stuck, close_stall)
@@ -2046,6 +2097,16 @@ async def _fly(args, holder: dict) -> int:
                       f"{args.level_car}'s TRUE position; the VLA flies on its own "
                       f"perception")
 
+        # The level's crowd for a distance_envelope over people, resolved
+        # before arming: refuses the flight when none of the tags resolves,
+        # as follow_vlm --level-peds does.
+        if people_mem is not None:
+            import level_actors
+            level_people = level_actors.LevelActors(
+                world, level_actors.names(args.level_ped_prefix, args.level_peds),
+                kind="pedestrian", min_period_s=LEVEL_TRUTH_PERIOD_S)
+            level_people.resolve()
+
         # ---- the warm-up gate: one inference on a live pair, before arming --
         warmup = await _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw,
                                FV, live)
@@ -2157,6 +2218,20 @@ async def _fly(args, holder: dict) -> int:
                 shield.set_subject(None)
             else:
                 shield.set_subject(subj[0], subj[1], subject_class, velocity=subj_v)
+            # Every pedestrian the level walks, for a distance_envelope over
+            # people (people_mem: only with such a rule), on the mission clock.
+            people_now = None
+            if people_mem is not None:
+                _tp = time.time() - t0
+                if sim_people is None:
+                    sim_people = FV.SimPeopleFeed(level_people, people_mem)
+                else:
+                    level_people.update(_tp)      # throttled: a poll every period
+                # Only those within reach of this tick's decision
+                # (people.cull_range_m); the memory keeps the rest.
+                people_now = people_feed.within(sim_people.step(_tp), state.x, state.y,
+                                                people_range)
+                shield.set_people(people_now)
             # the attitude, so the motion compares with follow_vlm's rows
             # (tools/compare_motion.py tilt and pitch/roll rates)
             res = loop.tick(state, extra_row={
@@ -2164,7 +2239,9 @@ async def _fly(args, holder: dict) -> int:
                 "shield_subject": (None if subj is None else
                                    [round(subj[0], 2), round(subj[1], 2)]),
                 "shield_subject_v": (None if subj_v is None else
-                                     [round(subj_v[0], 2), round(subj_v[1], 2)])})
+                                     [round(subj_v[0], 2), round(subj_v[1], 2)]),
+                **({} if people_now is None else
+                   {"people": people_feed.rows_people(people_now)})})
             e = res.flown
             cmd_times.append(time.time())
             # THE ADAPTER: the BODY action into the simulator's NED command,
@@ -2462,6 +2539,14 @@ async def _fly(args, holder: dict) -> int:
                           else None),
         "obstacle_map_loaded": bool(shield.has_obstacle_map), "occ_band_report": occ_report,
         "road_map": road_note,
+        # Where the Shield was told about people (a people envelope only).
+        **({} if people_mem is None else
+           {"people_feed": {"source": people_source,
+                            "range_m": people_feed.range_record(people_range),
+                            **people_mem.record(),
+                            "people_nonfinite": shield.n_people_nonfinite,
+                            "level": (None if level_people is None
+                                      else level_people.stats())}}),
         "collisions": guard("collisions", lambda: FV.collisions_summary(
             collisions, collisions_subscribed,
             None if t0 is None or t_connect is None else t0 - t_connect,
