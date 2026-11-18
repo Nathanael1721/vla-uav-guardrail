@@ -628,6 +628,71 @@ def test_the_rtl_leg_is_judged_along_the_ground():
     assert [z.rule_id for z in zf] == [z.rule_id for z in RP.zones_from_shield(flat)]
 
 
+def test_the_shield_nodes_rtl_watch_judges_the_leg_along_the_dem():
+    """sitl/ros2_shield_node.py _rtl_check on the stand-in ROS stack: with
+    --ground over the DEM the node hands its RTL watch the rules of the leg
+    along the ground (leg_rules_from_shield) and the pose above home; east
+    of the ridge at 606 m MSL the leg home passes the crest under the 8 m
+    AGL floor, so the watch fails it (blocked path, agl-band) and the node
+    records rtl_failed. The pre-wf21 branch (no DEM: rules at the aircraft
+    only) calls the same leg clear; a node without --ground hands neither
+    `over` nor up_home."""
+    import test_msl_rail as TM
+    from guardrail.fsm import FSMState
+    g = _dem()
+    RN, N, node, clk, out = TM._node([f"--ground={DEM}", f"--ground-sha256={_sha()}",
+                                      "--ground-home-msl=584", "--start=0,0,20",
+                                      "--no-target"])
+    assert node.terrain is not None
+    pose = State(x=0.0, y=170.0, up=22.0)              # above home: 606 m MSL
+    st = node._shield_pose(pose)
+    assert abs(st.up - (606.0 - g.elevation_at(0.0, 170.0))) < 1e-9
+    node.mode = "RTL"
+    # Not in RTL: no check, the watch reset.
+    assert node._rtl_check(1.0, st, pose) is None
+    node.fsm._state = FSMState.RTL                     # the FSM forced to RTL
+    seen = []
+    real = node.rtl_watch.assess
+
+    def spy(*a, **kw):
+        seen.append(kw)
+        return real(*a, **kw)
+    node.rtl_watch.assess = spy
+    chk = node._rtl_check(1.0, st, pose)
+    assert chk is not None and chk.failed and "blocked_path" in chk.kinds, chk
+    assert any("agl-band" in r and "above the ground at" in r for r in chk.reasons), \
+        chk.reasons
+    assert seen[-1]["up_home"] == 22.0 and seen[-1]["over"] is not None, seen[-1]
+    assert node.rtl_watch.n_errors == 0, node.rtl_watch.errors
+    ev = [json.loads(x) for x in (out / "events.jsonl").read_text(
+        encoding="utf-8").splitlines() if x.strip()]
+    assert any(e["kind"] == "rtl_failed" and "blocked_path" in e["kinds"] for e in ev), ev
+    # The branch every flight without a DEM takes, on this Shield: the rules
+    # at the aircraft only - the same leg reads clear.
+    node.rtl_watch.reset()
+    node.terrain = None
+    chk_old = node._rtl_check(2.0, st, pose)
+    assert "blocked_path" not in chk_old.kinds, chk_old
+    assert "over" not in seen[-1], seen[-1]
+    # A node without --ground (an AGL policy): neither `over` nor up_home.
+    RN2, N2, plain, clk2, out2 = TM._node(["--start=0,0,20", "--no-target"],
+                                          policy=ROOT / "policies" / "sim_demo_policy.yaml")
+    assert plain.terrain is None and plain.ground is None
+    plain.mode = "RTL"
+    plain.fsm._state = FSMState.RTL
+    seen2 = []
+    real2 = plain.rtl_watch.assess
+
+    def spy2(*a, **kw):
+        seen2.append(kw)
+        return real2(*a, **kw)
+    plain.rtl_watch.assess = spy2
+    p0 = State(x=0.0, y=50.0, up=20.0)
+    assert plain._shield_pose(p0) is p0
+    plain._rtl_check(1.0, p0, p0)
+    assert seen2 and seen2[-1]["up_home"] is None and "over" not in seen2[-1], seen2
+
+
 def test_an_msl_zone_crossed_by_the_leg_is_judged_in_msl():
     from guardrail import rtl_path as RP
     from guardrail.replay import rail_shield
