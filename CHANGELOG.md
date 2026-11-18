@@ -16,6 +16,134 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-19 (wf21, code) — the open rows' code side: MSL readers, one evaluation path, WGS84-only flights, one body-frame boundary, replay at the flown revision, people from the feed, a prefix for a text-reading VLA
+
+Seven branches (wf21-msl-readers, wf21-onepath3, wf21-wgs84-writers,
+wf21-bodyframe, wf21-replay-rev, wf21-people-distance, wf21-prefix-vla), each
+implemented, reviewed adversarially against the grant's wording and fixed,
+merged as integrate/1119. Full CI 183/183 in the worktree (cead0f0) and in the
+lab checkout (55aefcd). Code only: every row below stays PARTIAL until its
+flights (listed per row) have flown.
+
+#### Changed
+- **X-11, every reader takes a declared ground** (wf21-msl-readers):
+  - The stress harness's sitl/hil backends (rail_node_args), the headless
+    harness's rotated missions, the mission node, gcs_backstop,
+    sitl/bundle_origin.py and the bag's custom data take a ground named by
+    path and sha256; none guesses one. A rail run of a scenario with a
+    declared ground whose metrics.json names no ground, or another file, is
+    refused, never scored (`ground_flight_problems`).
+  - An MSL episode's replay tarball carries the DEM itself, signed in the
+    index; replay checks its sha256 and re-derives heights from it.
+    tools/replay_from_bag.py compares a DEM run's poses above the DEM (before:
+    on a stand-in episode 0.58 m off home's elevation, 24 of 24 poses read
+    "differs"); tests/test_replay_from_bag.py 30/30.
+  - The RTL leg is judged against the ground sampled along it, in the harness
+    and in the node (FSM forced to RTL at (0, 170), 606 m MSL: rtl_failed,
+    blocked_path, agl-band); tests/test_msl_readers.py 20/20.
+  - FENCE_ALT_MAX is capped by an MSL ceiling (an MSL altitude_envelope, or a
+    hard keep-in MSL corridor in force all flight), less home (584 m MSL):
+    msl_dem_sitl 40 m (raise 45 m), msl_dem_corridor 26 m (raise 31 m; was
+    81.5 m / 86.5 m), msl_dem_zone 81.5 m (raise 86.5 m; a keep-out zone bounds
+    nothing above it). A flown-default change, with --ground only.
+  - Correction to the 18 Nov entry: the DEM's highest ground is 605.5 m MSL, so
+    the uncapped ceiling was 81.5 m and its raise 86.5 m, as msl_dem_sitl_01..03
+    recorded (not 81.26 m / 86.26 m).
+  - New stress profile msl_dem (6 cells: MSL polygon_fence, corridor and
+    altitude_envelope over the ridge DEM): sitl dry-run 6 FLY, 0 refused;
+    RUNBOOK-orin-hil step 11a 2c.
+- **WP3-22 / X-13, one rule-evaluation path** (wf21-onepath3): FenceGuard's
+  building half judges with the Shield's `clearance_breached` against the
+  limits of every obstacle_clearance rule in force at that instant
+  (`Shield.clearance_limits_now`), on the Shield's field (guard_field
+  "shield"); the end-of-flight stand-off counts and the stand-off scorer call
+  `standoff_breached` / `standoff_ring_m`. Replay of the 10 stored AGX follow
+  runs: 41959 ticks, 469 (1.12 %) mode or side changed, 109 (0.26 %) building
+  brakes changed. 2302 stored run folders (121000 ranges): 0 ranges within
+  1e-9 m inside a ring, so no stored count changes. The AST scan finds no rule
+  threshold compared outside the checker except 15 named non-verdicts.
+- **WP1-14, flights fly WGS84 only** (wf21-wgs84-writers):
+  `bundle.load_for_flight` refuses a policy stored as local-metres or
+  wgs84+local-metres (`LegacyPointFormRefused`, naming the WGS84 bundle
+  beside it); a recorded flight re-runs with `legacy_read` /
+  `VLAGUARD_LEGACY_READ=1`, recorded. A flown-default change for the 13
+  legacy lab bundles; no policies/*.yaml is affected. Every writer refuses or
+  converts metre points. tools/bundle_census.py: 17 bundles not flight-ready
+  (13 legacy, 4 frameless) over 10 tasks, each with its re-fly bundle; lab
+  checkout built follow-car-citylife-nfz3 / nfz3b v0.1.3 (sha256 64153e45...,
+  7c458986...). The bench and msl_dem_kpi policies state a frame
+  (docs/data/msl_dem_kpi.json re-measured: hot-apply p99 8.61 ms, query p99
+  2.25 ms, MSL corridor query p99 1.55 ms, cold start p95 461 ms; 9/9
+  verdicts).
+- **WP3-04 / ARCH-04, one body-to-NED crossing** (wf21-bodyframe): every rail
+  and demo loop hands the Shield the body action at the measured heading
+  (city follow and pymavlink SITL no longer at heading 0) and sends through
+  `frames.body_to_local_ned` after the projection; the demo loops' rate
+  limiters cap the world reading as before; real_vla_demo turns OpenVLA's
+  action from its capture heading. tests/test_frame_boundary.py 20/20: the
+  emitted body action is the same at headings 0 / 90 / 179.9 / -90 / 37.3 /
+  -123.4 to 1e-12 for every rule family (raster clearance at the quarter
+  turns); crossing detectors work on structure and are mutation-tested.
+  Headless: 141 episodes, 129 identical, 12 differ only at <= 2.84e-14 plus
+  zero-sign flips and, on the 3 dyn-nfz-translate arms, a policy_hash from a
+  1-ulp vy_mps; the KPI inputs are unchanged in all 12.
+- **WP4-11, episode bundles and replay at the flown revision**
+  (wf21-replay-rev): rail campaigns (--backend hil|sitl, unless --no-bundles)
+  write a bundle per flown episode under the grant's six names
+  (manifest.json, policy_bundle.tar.gz, episode.bag2/, shield_audit.jsonl,
+  harness_events.jsonl, kpi.json). tools/replay_at_revision.py replays an
+  episode at the code revision its manifest records (a temporary detached
+  worktree; "-dirty" and unversioned refused with a reason): Q3 720 identical
+  of 5,509 (4,724 -dirty, 20 unversioned, 45 not replayable; events and KPI
+  only); hil open-loop 972 identical of 1,771 on Python 3.10 (984 on 3.12),
+  513 body-frame and 283 float last digits, 3 decision (tick 460 of three
+  dyn-nfz-rotate-spin runs, a no-op GeofenceSlide pass, emitted action
+  bit-identical), 97 not replayable (docs/data/replay_at_revision_20261118*).
+- **WP1-07, people from the feed** (wf21-people-distance): a distance_envelope
+  over people is a clearance over every person the rail reports
+  (models.PeopleClearance on the Shield's people field): the PAS perception
+  node's ground-projected person boxes, the subject while classified as a
+  person, a declared person subject on SITL / headless; refused when no
+  people source exists. `--level-peds N` on the PAS rail reads the level's
+  pedestrians as record-only truth (true minimum distance, time inside the
+  envelope, feed recall). People cull max(min_distance_m) + lookahead x speed
+  bound + 10 m, never below 100 m. New flight policy
+  experiments/policies/follow_car_citylife_people.yaml.
+- **WP4-15 / WP4-01, prefix A/B with a text-reading VLA** (wf21-prefix-vla):
+  perception_node `--vla-prefix off|csp|neutral` and `--ab-pair`, the CSP
+  budgeted to the model's prompt slot (guardrail/vla_prefix.py), paired
+  flights by deploy/orin/run_pas_prefix_ab.sh (ABBA, optional A/A), a
+  report section "Flown by a VLA that reads the prefix". AerialVLA: CSP 85
+  against neutral 85 OpenVLA tokens. AIoT-VLA's csp arm is refused before
+  take-off (CSPBudgetExceeded: the follow policy's 4 P0 sentences need 45
+  CLIP tokens against 11; alt-band 10, bld-clearance 9, standoff-any 12,
+  standoff-pedestrian 14), never truncated.
+
+#### Integration (integrate/1119)
+- The Shield's recovery direction search keeps its 30-degree grid from North:
+  wf21-bodyframe's nose-relative grid moved 9 of 12 stored follow decision
+  streams pinned at c77c77d (tests/test_own_velocity_forecast.py) with no
+  flight behind it; the grid is the same body-frame set at every quarter
+  turn.
+- `standoff_rules` / `standoff_ring_m` read only subject_standoff rules: a
+  distance_envelope over people is a clearance over every person since
+  wf21-people-distance, judged by `clearance_breached`.
+- transformers (the CLIP token counter) is declared in the `tokens` extra;
+  tools/replay_at_revision.py is named an offline world-frame replay;
+  tests/test_frame_boundary.py scans tracked modules only;
+  tests/test_harnesstruth_bundles.py reruns fase3-sim-demo-v0.1.4 (WGS84).
+- The AGX companion image vlaguard/companion:jazzy is rebuilt as an overlay of
+  the 14 Nov build with the current deploy/docker/entrypoint.sh (sha256
+  70edc29a..., the only image input changed since); the old build is kept as
+  vlaguard/companion:jazzy-20261114.
+
+#### Still open (flights, in order)
+hil shakedown; release smoke on hil (episode bundles, PathRepair on the ROS 2
+rail, replay at revision); msl_dem on SITL and hil; distance_envelope on hil;
+pab3; follow with guard_field shield (n = 5) and the WGS84 re-flights;
+the people follow on PAS; the AerialVLA prefix A/B (12 x 420 s); Gazebo
+functional sweep.
+
 ### 2026-11-18 (MSL flown) — the Shield's forecast stands over the DEM, an MSL rule flown on the ArduPilot SITL rail three times, the MSL altitude panel in the track video
 
 #### Changed
@@ -144,8 +272,8 @@ experiments/worlds/dem_cmac_wgs84.json (a synthetic ridge about CMAC, home
   - A WGS84 DEM loader (resample bound 3.653 m, sampled error 0.008 m) and an
     opt-in ground in the headless harness and the ROS 2 Shield node.
   - With `--ground` the node tells the Shield the height above the DEM, gives
-    FENCE_ALT_MAX its ceiling above home (msl_dem_sitl: 81.26 m, raised to
-    86.26 m), and judges alt_violation_s per envelope reference.
+    FENCE_ALT_MAX its ceiling above home (msl_dem_sitl: 81.5 m, raised to
+    86.5 m; corrected 19 Nov), and judges alt_violation_s per envelope reference.
   - Headless rail run (docs/data/msl_dem_rail.json, 12 episodes per arm, seed
     1001): msl-ceiling requested on 2061 ticks, MSL-band ticks 0 (Shield off
     4798 oracle P0 ticks; MSL read as AGL 5902).
