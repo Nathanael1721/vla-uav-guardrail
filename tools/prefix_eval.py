@@ -126,8 +126,9 @@ import real_vla_demo as rv                                         # noqa: E402
 
 ARMS = ("off", "csp", "neutral")
 # Rule-free filler for the neutral arm. Plain description, no number, no
-# direction, no rule word, so it cannot carry a constraint by accident.
-NEUTRAL_SENTENCE = "The scene is an ordinary outdoor environment seen from a camera."
+# direction, no rule word, so it cannot carry a constraint by accident. One
+# sentence for every neutral arm: the PAS follow's prefix A/B uses it too.
+from guardrail.vla_prefix import NEUTRAL_SENTENCE                  # noqa: E402
 # A replayed raw action "reproduces" the logged one within this (raw units are
 # arm deltas ~1e-2; 4-bit GPU kernels are not bit-deterministic run to run).
 REPRODUCE_TOL = 1e-4
