@@ -27,6 +27,7 @@ time to safe whenever any tick had used the declared subject.
 """
 import io
 import json
+import math
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -117,6 +118,105 @@ def test_a_declared_subject_breach_is_not_scored_clean():
         eff = _effective(r)
     assert eff["time_to_safe_episodes"] == 1, eff
     assert abs(eff["mean_time_to_safe_s"] - 2.8) <= 0.21, eff
+
+
+def _people_rule_policy(d=10.0, extra=()):
+    from guardrail.models import policy_from_raw
+    return policy_from_raw({"policy_id": "people-rescore", "constraints": [
+        {"id": "de-people", "type": "distance_envelope", **HARD_P0,
+         "object_class": "people", "min_distance_m": d}, *extra]})
+
+
+def test_a_people_envelope_run_is_rescored_from_its_logged_people():
+    """Review 2026-11-18 (WP1-07): the offline readers could not rebuild a
+    Shield for a distance_envelope over people - it refuses one with no
+    people source - and replayed no `people`. A synthetic run that passes a
+    logged person at (15, 15) inside a 10 m people envelope, and logged no
+    `unsafe` of its own: the rescore replays each row's people, finds the
+    one 2.8 s episode the rail's 10 m geometry gives, and names its source.
+    The same log without `people`, or with them missing on one tick, is
+    refused with the reason - never reconstructed as a clean flight - and so
+    is a rule whose map the log does not carry; none of them crashes the
+    batch."""
+    pol = _people_rule_policy()
+    base = _rows_past_a_person()
+    rows = [dict(r, people=[[15.0, 15.0, 0.0]]) for r in base]
+    stored = {k: v for k, v in K.compute(base, {}, {}).items() if "time_to_safe" not in k}
+    feed = {"people_feed": {"source": "perception: every box the detector scores "
+                                      "'a person' >= 0.1 in each frame"}}
+    with tempfile.TemporaryDirectory() as td:
+        run = _make_run(Path(td), "people", rows, policy_hash=pol.policy_hash,
+                        metrics=feed, stored=stored)
+        r = R.rescore(run, {pol.policy_hash: pol})
+        assert r["verified"] and not r["drift"] and not r["withheld"], r["withheld"]
+        add = r["added"]
+        assert add["time_to_safe_episodes"] == 1, add
+        assert abs(add["mean_time_to_safe_s"] - 2.8) <= 0.21, add
+        assert add["time_to_safe_reconstructed"] is True
+        meta = r["rescore_meta"]
+        assert meta["people_source"].startswith(
+            "replayed from the flight log's per-row `people` (as flown: perception:"), meta
+        # Every reconstructed tick within 10 m of the person is unsafe for
+        # the people rule, and only those.
+        near = [math.hypot(x["x"] - 15.0, x["y"] - 15.0) < 10.0 for x in rows]
+        again = [dict(x) for x in rows]
+        R.reconstruct_unsafe(again, pol, feed)
+        assert [("de-people" in x["unsafe_rules"]) for x in again] == near
+        assert 0 < near.count(True) < len(near)
+        got = [json.loads(ln) for ln in (run / "flight_log.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        assert got == rows, "the flight log itself is never rewritten"
+        # No people logged: refused, said so, nothing reconstructed.
+        run2 = _make_run(Path(td), "people_unlogged", base, policy_hash=pol.policy_hash,
+                         metrics=feed, stored=stored)
+        r2 = R.rescore(run2, {pol.policy_hash: pol})
+        assert r2["fresh"]["time_to_safe_reconstructed"] is False
+        assert "time_to_safe_episodes" not in r2["added"] or \
+            r2["added"].get("time_to_safe_not_measurable") is True, r2["added"]
+        assert any("not reconstructed" in w and "records no people" in w
+                   for w in r2["withheld"]), r2["withheld"]
+        assert "records no people" in r2["rescore_meta"]["reconstruction_refused"]
+        # One tick without `people`: refused, with the count.
+        holed = [dict(x) for x in rows]
+        del holed[30]["people"]
+        run3 = _make_run(Path(td), "people_holed", holed, policy_hash=pol.policy_hash,
+                         metrics=feed, stored=stored)
+        r3 = R.rescore(run3, {pol.policy_hash: pol})
+        assert any("1 of 61 ticks" in w for w in r3["withheld"]), r3["withheld"]
+        # A distance_envelope over buildings: no map in a log, refused (no crash).
+        bpol = _people_rule_policy(extra=[{
+            "id": "de-buildings", "type": "distance_envelope", **HARD_P0,
+            "object_class": "buildings", "min_distance_m": 5.0}])
+        run4 = _make_run(Path(td), "buildings", rows, policy_hash=bpol.policy_hash,
+                         metrics=feed, stored=stored)
+        r4 = R.rescore(run4, {bpol.policy_hash: bpol})
+        assert any("de-buildings" in w and "obstacle_map" in w for w in r4["withheld"]), \
+            r4["withheld"]
+    # A SITL-style run whose only person is its declared subject replays it.
+    kw, gaps = R.logged_people_source(pol, base, DECLARED)
+    assert gaps == [] and kw["people_source"].startswith(
+        "replayed: the declared subject only (pedestrian at (15.0, 15.0))"), kw
+
+
+def test_an_experiment_profile_run_resolves_by_hash():
+    """A rig run flown under experiments/policies/*.yaml (the CityLife people
+    follow) resolves by hash in the rescore and the KPI report, as
+    guardrail.bundle.policy_candidates resolves it; a shipped policy keeps
+    every hash it answers to."""
+    loaded = R.load_policies()
+    names = [p.name for p, _ in loaded]
+    assert "follow_car_citylife_people.yaml" in names and "msl_dem_sitl.yaml" in names, names
+    shipped = [p for p, _ in loaded if p.parent.name == "policies"
+               and p.parent.parent.name != "experiments"]
+    assert names.index("follow_car_citylife_people.yaml") >= len(shipped), \
+        "experiment profiles come after every shipped policy"
+    rig = load_policy(ROOT / "experiments" / "policies" / "follow_car_citylife_people.yaml")
+    by_hash = R.policies_by_hash(loaded)
+    assert by_hash[rig.policy_hash].policy_id == "follow-car-citylife-people"
+    for p, pol in loaded:
+        if p in shipped:
+            assert by_hash[pol.policy_hash] is pol or \
+                by_hash[pol.policy_hash].policy_hash == pol.policy_hash
 
 
 def test_ros2_ped_off_reports_the_standoff_breach_its_metrics_record():

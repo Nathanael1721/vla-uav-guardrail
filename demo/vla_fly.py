@@ -1696,6 +1696,11 @@ async def _fly(args, holder: dict) -> int:
                          road_map=rmap, path_repair=FOLLOW_RAIL_PATH_REPAIR,
                          **({} if people_source is None
                             else {"people_source": people_source}))
+    # The people handed to the Shield each tick: those within the range this
+    # policy and forecast can reach (people.cull_range_m; the policy's speed
+    # cap bounds the forecast - the VLA's commands have no bound of their own).
+    people_range = (None if people_source is None else
+                    people_feed.cull_range_m(policy, shield.lookahead_s))
     # The subject stand-off: who the subject is (the object words' policy
     # class, follow_vlm.subject_width) and whether its position can be fed
     # (subject_feed; decided again once the identity is set up).
@@ -2219,8 +2224,9 @@ async def _fly(args, holder: dict) -> int:
                 else:
                     level_people.update(_tp)      # throttled: a poll every period
                 # Only those within reach of this tick's decision
-                # (people.PEOPLE_RANGE_M); the memory keeps the rest.
-                people_now = people_feed.within(sim_people.step(_tp), state.x, state.y)
+                # (people.cull_range_m); the memory keeps the rest.
+                people_now = people_feed.within(sim_people.step(_tp), state.x, state.y,
+                                                people_range)
                 shield.set_people(people_now)
             # the attitude, so the motion compares with follow_vlm's rows
             # (tools/compare_motion.py tilt and pitch/roll rates)
@@ -2527,7 +2533,9 @@ async def _fly(args, holder: dict) -> int:
         "road_map": road_note,
         # Where the Shield was told about people (a people envelope only).
         **({} if people_mem is None else
-           {"people_feed": {"source": people_source, **people_mem.record(),
+           {"people_feed": {"source": people_source,
+                            "range_m": people_feed.range_record(people_range),
+                            **people_mem.record(),
                             "people_nonfinite": shield.n_people_nonfinite,
                             "level": (None if level_people is None
                                       else level_people.stats())}}),

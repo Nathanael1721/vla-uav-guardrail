@@ -7185,6 +7185,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # tracked with the staleness rule (guardrail/people.PeopleMemory).
         people_mem = (people_feed.PeopleMemory(stale_s=args.people_stale_s)
                       if people_source is not None else None)
+        # Handed to the Shield each tick: the people within the range this
+        # policy and forecast can reach (people.cull_range_m; the servo or
+        # estimator pilot's --speed-max bounds its raw action, the VLA's
+        # commands only the policy's cap).
+        people_range = (None if people_source is None else people_feed.cull_range_m(
+            policy, shield.lookahead_s,
+            None if vla_on else getattr(args, "speed_max", None)))
         people_last_seq = None
         people_place: dict = {"frames": 0, "boxes": 0, "placed": 0, "pose": {}, "src": {}}
         # Where each estimate's pose and depth came from (estimate_inputs),
@@ -7486,9 +7493,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         for k, v in prec["src"].items():
                             people_place["src"][k] = people_place["src"].get(k, 0) + v
                     # Only those within reach of this tick's decision
-                    # (people.PEOPLE_RANGE_M); the memory keeps the rest.
+                    # (people.cull_range_m); the memory keeps the rest.
                     people_now = people_feed.within(people_mem.current(t_tick),
-                                                    st.x, st.y)
+                                                    st.x, st.y, people_range)
                     shield.set_people(people_now)
                 # The autopilot's measured velocity: logged on every tick
                 # (state_v), given to the Shield only with the own-velocity
@@ -8356,6 +8363,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # and the memory's staleness rule and counts.
             **({} if people_mem is None else
                {"people_feed": {"source": people_source, "phrase": people_query,
+                                "range_m": people_feed.range_record(people_range),
                                 "placement": people_place, **people_mem.record(),
                                 "people_nonfinite": shield.n_people_nonfinite,
                                 "detector_frames": getattr(grounder, "n_people_frames", None),

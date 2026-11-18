@@ -81,13 +81,19 @@ PEOPLE_STALE_S = 3.0
 PERSON_SPEED_MPS = 1.5
 PEOPLE_ASSOC_M = 2.0
 # The rails hand the Shield only the people whose reach disc comes within
-# this distance of the aircraft (`within`). The grant's 5 s lookahead at the
-# 5 m/s cap of the CityLife follow policies reaches 25 m (and any repair
-# candidate no further), so a person beyond 100 m can neither raise nor
-# clear a violation of an envelope up to 75 m; the cull keeps the per-tick
-# cost from growing with a crowd spread over the whole 2 km level (the
-# Shield's distance query is a loop over the people it holds).
+# a cull range of the aircraft (`within`): the cull keeps the per-tick cost
+# from growing with a crowd spread over the whole 2 km level (the Shield's
+# distance query is a loop over the people it holds). The range is sized
+# per policy and forecast (`cull_range_m`): the envelope's distance plus the
+# farthest the forecast can carry the aircraft, plus a margin, and never
+# less than this floor. The grant's 5 s lookahead at the 5 m/s cap of the
+# CityLife follow policies reaches 25 m, so every shipped people policy
+# (4 m) culls at the floor.
 PEOPLE_RANGE_M = 100.0
+# What cull_range_m keeps beyond the envelope distance plus the forecast's
+# reach: the clearance repair's gradient probe (PEOPLE_FIELD_RES_M / 2) and
+# one control tick of the aircraft's own motion are well inside it.
+PEOPLE_RANGE_MARGIN_M = 10.0
 # The step the clearance repairs probe a field's gradient with is half its
 # cell size (Shield._away_dir); the people field has no cells, and 0.5 m
 # gives a 0.25 m probe, well inside a disc of the smallest sensible envelope.
@@ -230,7 +236,9 @@ class PeopleMemory:
 
 def within(people, x: float, y: float, range_m: float = PEOPLE_RANGE_M) -> list[Person]:
     """The people whose reach disc comes within `range_m` of (x, y): what a
-    rail hands Shield.set_people for an aircraft at (x, y) (PEOPLE_RANGE_M)."""
+    rail hands Shield.set_people for an aircraft at (x, y). The rails pass
+    the range cull_range_m sizes for their policy and forecast; the default
+    is its floor, PEOPLE_RANGE_M."""
     out = []
     for p in people:
         q = as_person(p)
@@ -243,6 +251,111 @@ def needs_people(policy) -> list[str]:
     """The ids of `policy`'s distance_envelope rules over people."""
     from .models import DistanceEnvelope
     return [c.id for c in policy.by_type(DistanceEnvelope) if c.object_class == "people"]
+
+
+def cull_range_m(policy, lookahead_s: float, speed_mps: float | None = None) -> float:
+    """The range a rail hands people within (`within`) for `policy` judged
+    over a `lookahead_s` forecast (review 2026-11-18: a fixed 100 m cull
+    was checked against nothing).
+
+    A person matters to a tick when its reach disc comes within the
+    envelope's min_distance_m of a point the Shield judges: the aircraft and
+    its forecast. The forecast flies at most the policy's horizontal speed
+    cap (the kinematic_envelope's tightest speed_max_mps: the emitted
+    action is clamped to it) or the rail's own commanded maximum
+    (`speed_mps`, for the raw action's forecast), whichever is larger, for
+    lookahead_s (an upper bound: a clearance rule's forecast is the
+    stopping horizon, never longer than the lookahead). So the range is
+
+        max(min_distance_m) + lookahead_s * speed + PEOPLE_RANGE_MARGIN_M,
+
+    and never less than PEOPLE_RANGE_M (the cull every rail flew with:
+    4 + 5 * 5 + 10 = 39 m for the shipped CityLife people policy). With no
+    speed bound at all - no cap in the policy and none given - nothing
+    bounds the forecast, and the answer is inf: no cull, every person the
+    source reports is handed over. A policy without a people rule: the
+    floor (nobody is handed over anyway)."""
+    from .models import DistanceEnvelope, KinematicEnvelope
+    dists = [c.min_distance_m for c in policy.by_type(DistanceEnvelope)
+             if c.object_class == "people"]
+    if not dists:
+        return PEOPLE_RANGE_M
+    if not (isinstance(lookahead_s, (int, float)) and math.isfinite(lookahead_s)
+            and lookahead_s >= 0):
+        raise ValueError(f"cull_range_m: lookahead_s must be a finite number >= 0, "
+                         f"got {lookahead_s!r}")
+    speeds = [c.speed_max_mps for c in policy.by_type(KinematicEnvelope)]
+    cap = min(speeds) if speeds else None
+    if speed_mps is not None and not (math.isfinite(speed_mps) and speed_mps >= 0):
+        raise ValueError(f"cull_range_m: speed_mps must be a finite number >= 0, "
+                         f"got {speed_mps!r}")
+    bound = [v for v in (cap, speed_mps) if v is not None]
+    if not bound:
+        return math.inf
+    need = max(dists) + float(lookahead_s) * max(bound) + PEOPLE_RANGE_MARGIN_M
+    return max(PEOPLE_RANGE_M, need)
+
+
+def range_record(range_m: float):
+    """cull_range_m's answer as a flight record writes it: the metres, or
+    the words for no cull (an inf is not valid JSON)."""
+    return (round(float(range_m), 2) if math.isfinite(range_m)
+            else "no cull: neither the policy nor the rail bounds the speed")
+
+
+def row_people(row: dict) -> list[Person] | None:
+    """The people a flight log row says its Shield was given (`people`:
+    [[x, y, age_s], ...], rows_people), as Persons; None when the row has no
+    `people` field (a rail that fed none, or a row before 2026-11-18)."""
+    ppl = row.get("people")
+    if ppl is None:
+        return None
+    return [as_person(p) for p in ppl]
+
+
+def logged_people_source(policy, rows, metrics: dict | None) -> tuple[dict, list[str]]:
+    """For an OFFLINE reader that rebuilds a flight's Shield from its log
+    (tools/rescore_kpis.py, tools/rerender_policy_hud.py):
+    `({"people_source": ...} or {}, problems)`.
+
+    No distance_envelope over people: ({}, []). One, and every row with a
+    pose carries `people` (the rails that feed people log what each tick's
+    Shield was given, rows_people): the source is that log, replayed with
+    `row_people` on each tick, named with the flight's own source
+    (metrics.people_feed.source). One on a rail whose only person was the
+    declared subject (the SITL rails, the headless harness: metrics
+    `people_source`, or a declared subject classified as a person): that
+    subject, which the Shield adds itself. Otherwise no source and the
+    reason - the reader refuses with it rather than judge a people rule over
+    nobody (a rule that never ran reads as a clean flight)."""
+    from .models import PEOPLE_CLASSES
+    ids = needs_people(policy)
+    if not ids:
+        return {}, []
+    metrics = metrics or {}
+    posed = [r for r in rows if r.get("x") is not None and r.get("y") is not None]
+    logged = [r for r in posed if r.get("people") is not None]
+    flown = (metrics.get("people_feed") or {}).get("source") \
+        if isinstance(metrics.get("people_feed"), dict) else None
+    if logged:
+        if len(logged) < len(posed):
+            return {}, [f"{', '.join(ids)}: {len(posed) - len(logged)} of {len(posed)} "
+                        f"ticks with a pose have no `people` field, so the people "
+                        f"their Shield was given are not in the log"]
+        return ({"people_source": "replayed from the flight log's per-row `people`"
+                                  + (f" (as flown: {flown})" if flown else "")}, [])
+    declared = metrics.get("people_source")
+    subj = metrics.get("subject") if isinstance(metrics.get("subject"), dict) else None
+    if isinstance(declared, str) and declared.startswith("the declared subject only"):
+        return {"people_source": f"replayed: {declared}"}, []
+    if subj is not None and str(subj.get("class") or "").lower() in PEOPLE_CLASSES \
+            and subj.get("x") is not None and subj.get("y") is not None:
+        return ({"people_source": f"replayed: the declared subject only "
+                                  f"({subj.get('class')} at ({float(subj['x']):.1f}, "
+                                  f"{float(subj['y']):.1f}))"}, [])
+    return {}, [f"{', '.join(ids)}: a distance_envelope over people, and the log "
+                f"records no people (no per-row `people`, no declared person "
+                f"subject){'' if not flown else f'; the flight named {flown!r}'}"]
 
 
 def declared_subject_source(policy, subject, subject_class: str | None,

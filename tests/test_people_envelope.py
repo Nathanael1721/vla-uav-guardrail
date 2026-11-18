@@ -511,6 +511,89 @@ def test_the_sitl_rails_and_the_harness_judge_the_declared_person_only():
     assert "declared_subject_source(" in sw and "rec_kw.update(ppl_kw)" in sw
 
 
+HARNESS_PEOPLE_POLICY = """policy_id: harness-people-envelope
+version: 0.1.0
+origin:
+  lat: -35.363261
+  lon: 149.16523
+constraints:
+  - id: de-people
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    object_class: people
+    min_distance_m: 6.0
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    alt_min_m: 10
+    alt_max_m: 20
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
+"""
+
+
+def _harness_spec(policy_path, cls="pedestrian", shield=True):
+    from guardrail.scenario_spec import ScenarioSpec
+    return ScenarioSpec.model_validate(dict(
+        scenario_id="people-envelope-pass", template="subject_standoff",
+        description="a goto past a declared pedestrian 2 m off the route",
+        policy={"path": str(policy_path)}, shield=shield,
+        mission={"start_pose": {"x": 0, "y": 0, "up": 15},
+                 "target": {"x": 40, "y": 0, "up": 15},
+                 "pilot": {"type": "goto", "speed": 4.0},
+                 "subject": {"x": 20.0, "y": 2.0, "class": cls}},
+        expected_kpis={"p0_violation_escape_rate": {"max": 0.0}}))
+
+
+def test_a_headless_episode_holds_the_people_envelope_off_a_declared_pedestrian():
+    """Review 2026-11-18: the harness's people wiring was pinned by source
+    text only, and no scenario carried a people policy. One episode, built
+    here (no profile carries it, so the five digested profiles do not move):
+    a goto past a declared pedestrian 2 m off the route under a 6 m
+    distance_envelope over people. The Shield names de-people, holds the
+    aircraft >= 6 m from the person (6.04 m measured, seed 1001, ideal
+    vehicle), never lets the position become unsafe, and the mission still
+    reaches its goal; the Shield-off arm flies within 2 m. A car subject is
+    refused before take-off (the harness has no person to judge the rule
+    against)."""
+    import tempfile
+    import sweep_scenarios as S
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    with tempfile.TemporaryDirectory() as td:
+        pp = Path(td) / "harness_people.yaml"
+        pp.write_text(HARNESS_PEOPLE_POLICY, encoding="utf-8")
+        run = S.run_episode(_harness_spec(pp), lib.defaults, 1001)
+        named = {v["rule_id"] for r in run.rows for v in r["violations"]}
+        dmin = min(math.hypot(r["x"] - 20.0, r["y"] - 2.0) for r in run.rows)
+        assert named == {"de-people"}, named
+        assert dmin >= 6.0 - 1e-6, dmin
+        assert not any(r["unsafe"] for r in run.rows)
+        assert run.extra["reached_goal"] is True and run.extra["breaches"] == 0, run.extra
+        off = S.run_episode(_harness_spec(pp, shield=False), lib.defaults, 1001)
+        assert min(math.hypot(r["x"] - 20.0, r["y"] - 2.0) for r in off.rows) < 2.5
+        assert any("de-people" in r.get("unsafe_rules", []) or r["unsafe"] for r in off.rows)
+        try:
+            S.run_episode(_harness_spec(pp, cls="car"), lib.defaults, 1001)
+        except S.UnsupportedScenario as e:
+            assert "de-people" in str(e) and "'car'" in str(e), e
+        else:
+            raise AssertionError("a people envelope flew over a car subject")
+
+
 def test_the_rig_policy_loads_for_flight_and_needs_its_people_source():
     """experiments/policies/follow_car_citylife_people.yaml: the CityLife
     follow's rules plus a 4 m people envelope, the policy the rig's
@@ -550,12 +633,101 @@ def test_the_rails_hand_the_shield_the_people_within_reach_of_the_decision():
                 sh_cut.filter(ST, Action4D(vx=vx, vy=vy))
             assert a.emitted == b.emitted and \
                 [v.rule_id for v in a.violations] == [v.rule_id for v in b.violations]
-    for rail, at in (("demo/follow_vlm.py", "state.x, state.y)"),
-                     ("demo/vla_fly.py", "state.x, state.y)"),
-                     ("demo/pas_ardupilot/perception_node.py", "st.x, st.y)")):
+    for rail, at in (("demo/follow_vlm.py", "state.x, state.y, people_range)"),
+                     ("demo/vla_fly.py", "people_range)"),
+                     ("demo/pas_ardupilot/perception_node.py", "st.x, st.y, people_range)")):
         src = (ROOT / rail).read_text(encoding="utf-8")
         i = src.index("people_now = people_feed.within(")
-        assert at in src[i:i + 160], rail
+        assert at in src[i:i + 200], rail
+        assert "people_feed.cull_range_m(" in src and \
+            "people_range = (None if people_source is None" in src, rail
+        assert '"range_m": people_feed.range_record(people_range)' in src, rail
+
+
+def test_the_cull_range_is_sized_by_the_envelope_and_the_forecast():
+    """Review 2026-11-18: the 100 m cull was checked against nothing, so an
+    envelope over ~75 m, or a faster cap or a longer lookahead, would have
+    dropped people the rule must judge. people.cull_range_m sizes it as
+    max(min_distance_m) + lookahead * speed + margin, floored at 100 m
+    (every shipped people policy culls at the floor), and an unbounded
+    speed gets no cull at all."""
+    def pol(d, cap=5.0):
+        cons = [{"id": "de-people", "type": "distance_envelope", **H,
+                 "object_class": "people", "min_distance_m": d}]
+        if cap is not None:
+            cons.append({"id": "kin", "type": "kinematic_envelope", **H,
+                         "speed_max_mps": cap, "climb_rate_max_mps": 2.0,
+                         "yaw_rate_max_dps": 45.0})
+        return policy_from_raw({"policy_id": "p", "constraints": cons})
+    from guardrail.models import load_policy
+    rig = load_policy(ROOT / "experiments" / "policies" / "follow_car_citylife_people.yaml")
+    assert P.cull_range_m(rig, 5.0) == P.PEOPLE_RANGE_M          # 4 + 25 + 10 < 100
+    assert P.cull_range_m(rig, 5.0, 4.0) == P.PEOPLE_RANGE_M
+    # A large envelope: 80 + 5 * 5 + 10 = 115 m.
+    assert P.cull_range_m(pol(80.0), 5.0) == 115.0
+    # A faster rail bound than the cap, or a longer lookahead, widens it.
+    assert P.cull_range_m(pol(80.0), 5.0, 9.0) == 80.0 + 45.0 + P.PEOPLE_RANGE_MARGIN_M
+    assert P.cull_range_m(pol(4.0, cap=20.0), 10.0) == 4.0 + 200.0 + 10.0
+    # No speed bound anywhere: nothing bounds the forecast, no cull.
+    assert P.cull_range_m(pol(4.0, cap=None), 5.0) == math.inf
+    assert P.range_record(math.inf).startswith("no cull")
+    assert P.range_record(115.0) == 115.0
+    # No people rule: the floor.
+    plain = policy_from_raw({"policy_id": "p", "constraints": [
+        {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+    assert P.cull_range_m(plain, 5.0) == P.PEOPLE_RANGE_M
+    _refused(lambda: P.cull_range_m(rig, float("nan")), "lookahead_s")
+    # The equivalence the cull rests on, for a large envelope (98 m): a
+    # person 101 m away, outside the old 100 m floor and inside the sized
+    # 133 m range, decides the tick exactly as the full crowd does (the
+    # clearance forecast's stopping horizon carries the aircraft ~5 m on) -
+    # and the old floor would have dropped it.
+    big = pol(98.0)
+    rng = P.cull_range_m(big, 5.0)
+    assert rng == 98.0 + 25.0 + P.PEOPLE_RANGE_MARGIN_M
+    crowd = [(101.0, 0.0), (400.0, 0.0)]
+    sh_all = Shield(big, lookahead_s=5.0, dt=0.1, people_source=SRC)
+    sh_cut = Shield(big, lookahead_s=5.0, dt=0.1, people_source=SRC)
+    sh_old = Shield(big, lookahead_s=5.0, dt=0.1, people_source=SRC)
+    sh_all.set_people(crowd)
+    sh_cut.set_people(P.within(crowd, 0.0, 0.0, rng))
+    sh_old.set_people(P.within(crowd, 0.0, 0.0))
+    assert len(sh_cut.people) == 1 and len(sh_old.people) == 0
+    a = Action4D(vx=5.0)
+    da, dc, do = sh_all.filter(ST, a), sh_cut.filter(ST, a), sh_old.filter(ST, a)
+    assert [v.rule_id for v in da.violations] == ["de-people"], da.violations
+    assert da.emitted == dc.emitted and \
+        [v.rule_id for v in da.violations] == [v.rule_id for v in dc.violations]
+    assert do.violations == [], "the fixed 100 m floor would have missed it"
+
+
+def test_an_offline_reader_takes_its_people_from_the_log_or_refuses():
+    """people.logged_people_source / row_people (review 2026-11-18): what
+    tools/rescore_kpis.py and tools/rerender_policy_hud.py rebuild a people
+    envelope's Shield from - every posed row's `people`, else a declared
+    person subject (metrics `people_source` of the SITL rails, or
+    `subject`), else a stated refusal."""
+    pol = _people_policy()
+    rows = [{"x": 0.0, "y": 0.0, "people": [[1.0, 2.0, 0.5]]},
+            {"x": 1.0, "y": 0.0, "people": []}, {"t": 9.0}]
+    kw, gaps = P.logged_people_source(pol, rows, {"people_feed": {"source": "sim: x"}})
+    assert gaps == [] and kw["people_source"] == (
+        "replayed from the flight log's per-row `people` (as flown: sim: x)"), kw
+    assert P.row_people(rows[0]) == [P.Person(1.0, 2.0, 0.5)]
+    assert P.row_people(rows[1]) == [] and P.row_people(rows[2]) is None
+    kw, gaps = P.logged_people_source(pol, rows[:1] + [{"x": 2.0, "y": 0.0}], {})
+    assert kw == {} and "1 of 2 ticks" in gaps[0], gaps
+    sitl = {"people_source": "the declared subject only (pedestrian at (30.0, 0.0); x)"}
+    kw, gaps = P.logged_people_source(pol, [{"x": 0.0, "y": 0.0}], sitl)
+    assert gaps == [] and kw["people_source"].startswith("replayed: the declared subject")
+    for m in ({}, {"subject": {"class": "car", "x": 1.0, "y": 1.0}}):
+        kw, gaps = P.logged_people_source(pol, [{"x": 0.0, "y": 0.0}], m)
+        assert kw == {} and "records no people" in gaps[0], gaps
+    plain = policy_from_raw({"policy_id": "p", "constraints": [
+        {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+    assert P.logged_people_source(plain, [{"x": 0.0, "y": 0.0}], {}) == ({}, [])
 
 
 def test_rows_people_is_what_a_flight_log_keeps():

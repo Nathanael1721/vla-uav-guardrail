@@ -223,7 +223,11 @@ class PolicyIndicator:
     (and whose hot-applied rules it shows as they arrive). Without one the
     indicator builds a Shield of its own over `policy`, with no escalation
     FSM and no obstacle map - the rule geometry is still the Shield's, and an
-    offline caller passes the clearance it measured (`clearance_m`)."""
+    offline caller passes the clearance it measured (`clearance_m`). That
+    Shield reads rule geometry only, so it is built with require_maps=False:
+    a distance_envelope whose world (a map, the people) only the flight's
+    Shield has does not refuse the panel (tools/rerender_policy_hud.py on a
+    people-envelope flight, review 2026-11-18)."""
 
     def __init__(self, policy, hold_s: float = 1.5, trail_n: int = 400,
                  base_map=None, fence_near_m: float = FENCE_NEAR_M, shield=None):
@@ -232,7 +236,7 @@ class PolicyIndicator:
             # (OverlayCache, draw_*) runs on the recorder thread and needs only
             # PIL.
             from guardrail.shield import Shield
-            shield = Shield(policy, escalation=False)
+            shield = Shield(policy, escalation=False, require_maps=False)
         self.shield = shield
         self.policy = shield.policy
         self.hold_s = float(hold_s)

@@ -4914,6 +4914,12 @@ async def fly(args) -> int:
     shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast,
                            legacy_forecast=args.legacy_forecast, road_map=rmap,
                            people_source=people_source)
+    # The people handed to the Shield each tick: those within the range this
+    # policy and forecast can reach (people.cull_range_m, the pilot's
+    # --speed-max as the raw action's bound).
+    people_range = (None if people_source is None else
+                    people_feed.cull_range_m(policy, shield.lookahead_s,
+                                             getattr(args, "speed_max", None)))
     print(f"[shield] forecast {shield.lookahead_s:g} s at {shield.dt:g} s "
           f"({'the grant forecast, escalation FSM off' if args.grant_forecast else '3 s / 0.5 s, the city rail before 2026-11-03' if args.legacy_forecast else 'the grant forecast, escalation FSM on'})")
     clr = policy.by_type(ObstacleClearance)
@@ -6949,9 +6955,9 @@ async def fly(args) -> int:
                 if sim_people is None:
                     sim_people = SimPeopleFeed(people, people_mem)
                 # Only those within reach of this tick's decision
-                # (people.PEOPLE_RANGE_M); the memory keeps the rest.
+                # (people.cull_range_m); the memory keeps the rest.
                 people_now = people_feed.within(sim_people.step(time.time() - t0),
-                                                state.x, state.y)
+                                                state.x, state.y, people_range)
                 shield.set_people(people_now)
 
             # --record-perturb (vla_record.Perturber): the EXECUTED command is
@@ -7513,7 +7519,9 @@ async def fly(args) -> int:
         "shield_lookahead": shield_lookahead_record(shield),
         # Where the Shield was told about people (a people envelope only).
         **({} if people_mem is None else
-           {"people_feed": {"source": people_source, **people_mem.record(),
+           {"people_feed": {"source": people_source,
+                            "range_m": people_feed.range_record(people_range),
+                            **people_mem.record(),
                             "people_nonfinite": shield.n_people_nonfinite}}),
         # Estimator measurements by the pose they were placed at: "capture"
         # (the box's own frame) or "tick" (--legacy-tick-pose, or no capture
