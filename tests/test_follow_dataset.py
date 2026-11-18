@@ -1162,8 +1162,8 @@ def test_the_perturbation_is_off_unless_asked_and_the_flight_is_unchanged_when_o
     src = FOLLOW.read_text(encoding="utf-8")
     # The Shield judges `flown_in`: the expert's `smooth`, replaced only by
     # the perturber's output when there is one.
-    assert src.count("d = shield.filter(state, flown_in)") == 1, "the loop's Shield call moved"
-    assert "d = shield.filter(state, smooth)" not in src
+    assert src.count("d = filter_as_body(shield, state, flown_in)") == 1, "the loop's Shield call moved"
+    assert "d = filter_as_body(shield, state, smooth)" not in src
     tree = ast.parse(src)
     fly = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "fly")
     parents = {c: n for n in ast.walk(fly) for c in ast.iter_child_nodes(n)}

@@ -16,6 +16,75 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-18 (code rows, wave 4) — one clearance path closer, the GUI writes WGS84, dev rails hand over the body frame, MSL on the ROS 2 rail; all four rows stay PARTIAL
+
+#### Changed
+- **One rule-evaluation path** (WP3-22, X-13; guardrail/shield.py,
+  demo/semantic_demo.py, demo/semantic_seek.py,
+  experiments/analyze_semantic_ab.py, tests/test_shieldcore_onepath.py).
+  - The semantic demo's and semantic seek's minimum building distance and
+    altitude band, and the semantic A/B P0 counter, now ask the Shield
+    (min_clearance_on_map, altitude_band_report, Shield.rule_status). The
+    counter names the rules it cannot judge (unjudged_rules), and each A/B
+    row names its clearance measure.
+  - follow_vlm.grid_scan_clearance moved into the library unchanged as
+    nearest_cell_clearance. Bit-identical on 12,000 seeded comparisons over
+    6 stored maps, and on 653 guard decisions of 10 stored AGX follow flights.
+  - The test pins the library's two obstacle_clearance measures by
+    behaviour, and FenceGuard's two threshold tests.
+  - **Still open:** the library measures obstacle_clearance twice and
+    FenceGuard flies the grid measure by default; `--guard-field shield` is
+    not flown.
+- **The Mission Control GUI writes WGS84** (WP1-14; demo/gui_policy.py,
+  demo/gui_mission_control.py, guardrail/models.py, guardrail/bundle.py,
+  tests/test_wgs84_ingest_writers.py).
+  - policies/gui_policy.yaml is written in WGS84 about the base policy's
+    frame origin, with the origin stated. Redrawing the shipped zones
+    reproduces gui-mission@0.1.3.
+  - Writer inventory (12/12): REST and PATCH on 32 policies (worst
+    5.574e-08 m), harness spawns on 32 (worst 5.509e-08 m), the 1 shipped
+    corridor, the gRPC path on 3 policies.
+  - The legacy metre read form is labelled (Policy.point_form; run records
+    get point_form/point_note). All 33 policies/*.yaml match the lock; all 41
+    lab policy bundles keep their hash.
+  - A conversion error is now logged instead of silently ending the Fly
+    click.
+  - **Still open:** a metre-only document still loads and flies (13 of the 41
+    lab bundles); events on a metre-only policy and gen_random_scenario
+    --metres can still write metres.
+- **Dev rails hand the Shield the body frame where that is exact** (WP3-04,
+  ARCH-04; guardrail/frames.py filter_as_body, tests/test_rail_body_frame.py).
+  - City follow, pymavlink SITL, PAS ArduPilot and the headless harness use
+    Shield.filter_body on every tick whose round trip is exact to the bit,
+    else Shield.filter as before. Every decision and log row is unchanged to
+    the bit, so earlier bundles re-fly byte for byte.
+  - Test (10/10): harness 130 episodes, 85794 rows equal, 80200 ticks handed
+    in the body frame; PAS fake flight 270 rows, 252 body; stored flights 8
+    flights, 8580 ticks, 8247 body (local only).
+  - **Still open:** repairs act in the world frame; city follow and pymavlink
+    SITL use heading 0.
+- **MSL on the ROS 2 rail** (X-11; guardrail/terrain.py load_ground,
+  sitl/ros2_shield_node.py `--ground`, sitl/mavlink_adapter_node.py,
+  sitl/ros2_vla_bridge_node.py, tools/msl_dem_rail.py, docs/RUNBOOK-orin-hil.md
+  step 11a).
+  - A WGS84 DEM loader (resample bound 3.653 m, sampled error 0.008 m) and an
+    opt-in ground in the headless harness and the ROS 2 Shield node.
+  - With `--ground` the node tells the Shield the height above the DEM, gives
+    FENCE_ALT_MAX its ceiling above home (msl_dem_sitl: 81.26 m, raised to
+    86.26 m), and judges alt_violation_s per envelope reference.
+  - Headless rail run (docs/data/msl_dem_rail.json, 12 episodes per arm, seed
+    1001): msl-ceiling requested on 2061 ticks, MSL-band ticks 0 (Shield off
+    4798 oracle P0 ticks; MSL read as AGL 5902).
+  - The independent oracle counts 189 P0 ticks on the AGL floor over the DEM,
+    at most 0.081 m under it, level-cross pilot only: the Shield's lookahead
+    holds the ground flat.
+  - Without a ground: 141/141 library episodes byte-identical
+    (docs/data/msl_rail_identity_20261118.json); tests/test_msl_rail.py 17/17.
+  - **Still open:** no SITL, hil or PAS flight has carried an MSL rule; the
+    DEM is synthetic.
+- **Appendix A:** the six rows get the new evidence and gap text; totals
+  unchanged at 107 DONE, 28 PARTIAL, 1 DRIFT, 0 MISSING.
+
 ### 2026-11-18 (the default backend named) — AIoT-VLA v10b for the follow task, after the measurement set; the team stated as in the grant across the docs
 
 #### Changed

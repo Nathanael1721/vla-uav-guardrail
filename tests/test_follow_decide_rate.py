@@ -174,9 +174,9 @@ def test_off_by_default_and_the_flight_unchanged_when_off():
                  and isinstance(n.func, ast.Attribute) and n.func.attr == "apply"
                  and isinstance(n.func.value, ast.Name) and n.func.value.id == "perturber")
     shield = next(n for n in ast.walk(fly) if isinstance(n, ast.Assign)
-                  and ast.unparse(n) == "d = shield.filter(state, flown_in)")
+                  and ast.unparse(n) == "d = filter_as_body(shield, state, flown_in)")
     assert pcall.lineno < c.lineno < shield.lineno, (pcall.lineno, c.lineno, shield.lineno)
-    assert src.count("d = shield.filter(state, flown_in)") == 1, "the loop's Shield call moved"
+    assert src.count("d = filter_as_body(shield, state, flown_in)") == 1, "the loop's Shield call moved"
     # The limiter never sees what the hold flies: its state stays the expert's.
     for n in ast.walk(fly):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "limiter":
