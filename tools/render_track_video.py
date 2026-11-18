@@ -47,6 +47,33 @@ frames replay by its real path (it said demo/out/<tag>/flight_log.jsonl for
 every run, wherever it was), and --stills draws chosen frames as PNGs
 instead of a video. `--tag` may name a nested run (hil_smoke/<run>).
 
+Since 2026-11-18 a run whose rows carry up_ref "terrain" (up = height above
+a ground grid, up_home = height above home, msl_m = MSL) has its altitude
+panel drawn in MSL (terrain_panel). Only the ROS 2 Shield node with --ground
+over a DEM (terrain.TerrainReference) writes such rows; the headless
+harness's rows carry msl_m but no up_ref (and its episodes no policy_g*.json,
+so this tool refuses them), and the node over a FLAT --ground writes neither
+(metrics.json ground.up_ref "home"). The panel shows the aircraft's msl_m,
+the ground under it (msl_m - up), home's elevation, each AGL
+altitude_envelope of policy_g0 as a band that follows the ground (ground +
+min .. ground + max) and each MSL one (altitude_ref MSL) as a fixed band,
+labelled by rule id. Every interval the aircraft is outside a band is shaded
+red on the time axis (breach_intervals), so every frame shows it, and the
+dot turns red inside one; the text block shows up, up_home, msl_m and the
+ground. The y axis covers the ground, the aircraft, the MSL bands and the
+AGL floors; an AGL ceiling above that is named at the top of the panel, not
+drawn (at 581-653 m the 0.49 m floor breach of msl_dem_sitl_01 was under two
+pixels). Until then the panel drew `up` on the same axis as the MSL band,
+which on msl_dem_sitl_01 put a 590-624 m band over a 7-20 m trace.
+
+On any other run the panel draws `up` (above home) as before. An MSL
+envelope there is drawn on that axis only when the run says where home is in
+MSL (metrics.json ground: a flat --ground's elevation, flat_ground_msl),
+offset by it and labelled; otherwise it is named as not drawn. Until then the
+first altitude_envelope was drawn on the up axis whatever its reference. A run
+with no MSL envelope is drawn exactly as before (stills of dev_compose_01
+and gcs_fence_off_20261104 byte-identical before and after).
+
 Writes demo/out/<tag>/<tag>_track.mp4 by default, through a .partial file
 that is checked (non-empty) before it replaces the target.
 """
@@ -311,10 +338,247 @@ def mission_waypoints(run: Path) -> list[tuple[float, float]]:
 
 
 def altitude_band(policy: dict) -> tuple[float, float] | None:
+    """The first above-ground altitude_envelope's (min, max): the band drawn
+    on an `up` axis. An MSL envelope (altitude_ref MSL) is not one: its
+    numbers are not heights above home (home_axis_msl_bands)."""
     for c in policy.get("constraints", []):
-        if c.get("type") == "altitude_envelope":
+        if c.get("type") == "altitude_envelope" and c.get("altitude_ref") != "MSL":
             return float(c.get("alt_min_m", 0.0)), float(c.get("alt_max_m", 0.0))
     return None
+
+
+def flat_ground_msl(run: Path) -> float | None:
+    """Home's elevation in MSL for a run flown over a FLAT --ground (the ROS
+    2 Shield node's metrics.json ground: {"ground": {"kind": "flat",
+    "elevation_msl_m": ...}, "up_ref": "home"}); None for any other run,
+    whose `up` has no stated MSL reference."""
+    p = run / "metrics.json"
+    if not p.is_file():
+        return None
+    try:
+        g = json.loads(p.read_text(encoding="utf-8")).get("ground")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(g, dict) or g.get("up_ref") != "home":
+        return None
+    flat = g.get("ground")
+    if not isinstance(flat, dict) or flat.get("kind") != "flat":
+        return None
+    e = flat.get("elevation_msl_m")
+    return float(e) if isinstance(e, (int, float)) and math.isfinite(e) else None
+
+
+def home_axis_msl_bands(policy: dict, home_msl: float | None) -> list[dict]:
+    """Each MSL altitude_envelope as drawn on an `up` (above home) axis:
+    {"id", "lo", "hi", "up_lo", "up_hi"}, up_lo / up_hi the band less home's
+    elevation, None when `home_msl` is unknown (the band is then named, not
+    drawn)."""
+    out = []
+    for e in altitude_envelopes(policy):
+        if e["ref"] != "MSL":
+            continue
+        k = home_msl is not None
+        out.append(dict(e, up_lo=e["lo"] - home_msl if k else None,
+                        up_hi=e["hi"] - home_msl if k else None))
+    return out
+
+
+def altitude_envelopes(policy: dict) -> list[dict]:
+    """Every altitude_envelope with the height it is measured from:
+    {"id", "lo", "hi", "ref"}, ref "MSL" for `altitude_ref: MSL`, else
+    "AGL" (guardrail.models.AltitudeEnvelope.altitude_ref: absent means
+    above ground, models.AltitudeRef)."""
+    out = []
+    for c in policy.get("constraints", []):
+        if c.get("type") == "altitude_envelope":
+            out.append({"id": c.get("id"), "lo": float(c.get("alt_min_m", 0.0)),
+                        "hi": float(c.get("alt_max_m", 0.0)),
+                        "ref": "MSL" if c.get("altitude_ref") == "MSL" else "AGL"})
+    return out
+
+
+def terrain_referenced(rows: list[dict]) -> bool:
+    """True for a run whose rows measure `up` above a ground grid (up_ref
+    "terrain": the ROS 2 Shield node with --ground over a DEM,
+    terrain.TerrainReference); its altitude panel is drawn in MSL
+    (terrain_panel). The node over a flat --ground and the headless harness
+    write no up_ref on their rows."""
+    return any(r.get("up_ref") == "terrain" for r in rows)
+
+
+def _num(v) -> float:
+    return float(v) if isinstance(v, (int, float)) else float("nan")
+
+
+def terrain_panel(rows: list[dict], envs: list[dict]) -> dict:
+    """The altitude panel of an up_ref "terrain" run, in metres MSL, from
+    the rows alone: the aircraft (msl_m), the ground under it (msl_m - up:
+    up is the height above the grid), home's elevation (the median of
+    msl_m - up_home, None without up_home), each AGL envelope as a band
+    that follows the ground (ground + lo .. ground + hi) and each MSL
+    envelope as a fixed band. A row missing a value gives NaN there."""
+    ts = [float(r["t"]) for r in rows]
+    msl = [_num(r.get("msl_m")) for r in rows]
+    ground = [m - _num(r.get("up")) for m, r in zip(msl, rows)]
+    homes = sorted(m - _num(r.get("up_home")) for m, r in zip(msl, rows)
+                   if not math.isnan(m - _num(r.get("up_home"))))
+    home = homes[len(homes) // 2] if homes else None
+    bands = []
+    for e in envs:
+        if e["ref"] == "MSL":
+            bands.append(dict(e, lo_s=[e["lo"]] * len(ts), hi_s=[e["hi"]] * len(ts)))
+        else:
+            bands.append(dict(e, lo_s=[g + e["lo"] for g in ground],
+                              hi_s=[g + e["hi"] for g in ground]))
+    return {"t": ts, "msl": msl, "ground": ground, "home": home, "bands": bands}
+
+
+def outside_bands(panel: dict, i: int) -> list[str]:
+    """Ids of the bands row `i`'s aircraft is outside of (MSL comparison;
+    for an AGL band the same as up against its limits). A row with no
+    msl_m, or a band with no limits there (an AGL band on a row with no
+    `up`: no ground), is outside nothing: a gap, not a breach."""
+    m = panel["msl"][i]
+    if math.isnan(m):
+        return []
+    return [b["id"] for b in panel["bands"]
+            if not (math.isnan(b["lo_s"][i]) or math.isnan(b["hi_s"][i]))
+            and not (b["lo_s"][i] <= m <= b["hi_s"][i])]
+
+
+def breach_intervals(panel: dict) -> list[tuple[float, float, list[str]]]:
+    """The runs of consecutive rows outside at least one band: (first t,
+    last t, the band ids outside anywhere in the run), in time order."""
+    out: list[tuple[float, float, list[str]]] = []
+    cur = None
+    for i, t in enumerate(panel["t"]):
+        ids = outside_bands(panel, i)
+        if ids and cur is not None:
+            cur[1] = t
+            cur[2].update(ids)
+        elif ids:
+            cur = [t, t, set(ids)]
+        elif cur is not None:
+            out.append((cur[0], cur[1], sorted(cur[2])))
+            cur = None
+    if cur is not None:
+        out.append((cur[0], cur[1], sorted(cur[2])))
+    return out
+
+
+def terrain_ylim(panel: dict, margin: float = 3.0) -> tuple[float, float] | None:
+    """The panel's y range: the ground less `margin` up to the highest of the
+    aircraft, the MSL bands and the AGL floors plus `margin`. An AGL
+    ceiling far above (60 m over a ridge) is left off it: on the axis it
+    would shrink a sub-metre floor breach under two pixels. None without a
+    finite value."""
+    fin = lambda s: [v for v in s if not math.isnan(v)]   # noqa: E731
+    lows = fin(panel["ground"]) + fin(panel["msl"])
+    highs = fin(panel["msl"])
+    for b in panel["bands"]:
+        if b["ref"] == "MSL":
+            lows.append(b["lo"])
+            highs.append(b["hi"])
+        else:
+            highs += fin(b["lo_s"])
+    if not lows or not highs:
+        return None
+    return min(lows) - margin, max(highs) + margin
+
+
+def altitude_readout(r: dict, panel: dict | None, i: int) -> tuple[float, bool, str]:
+    """What frame `i` (row `r`) shows in the altitude panel: the dot's y,
+    whether it is outside a band (a terrain run's dot turns red) and the
+    text block's position lines. Without a terrain panel the dot is `up`
+    and nothing is judged; with one the dot is msl_m."""
+    if panel is None:
+        return (r["up"], False,
+                f"position  x {r['x']:7.2f}  y {r['y']:7.2f}  up {r['up']:6.2f} m\n")
+    out_of = outside_bands(panel, i)
+    return (panel["msl"][i], bool(out_of),
+            f"position  x {r['x']:7.2f}  y {r['y']:7.2f}\n"
+            f"height    up {_num(r.get('up')):6.2f} m above grid"
+            f"  up_home {_num(r.get('up_home')):6.2f} m\n"
+            f"          msl_m {panel['msl'][i]:7.2f}"
+            f"  ground {panel['ground'][i]:7.2f} m MSL\n"
+            f"outside bands: {', '.join(out_of) or '-'}\n")
+
+
+# Fill colours: AGL bands (following the ground) blue, MSL bands green.
+_BAND_COLOURS = {"AGL": ("#90caf9", "#1565c0"), "MSL": ("#c8e6c9", "#2e7d32")}
+
+
+def draw_terrain_altitude(az, panel: dict) -> None:
+    """Draw `panel` (terrain_panel) on the altitude axes `az`: altitude MSL
+    on the y axis (terrain_ylim), each band labelled on the plot by its rule
+    id (a legend would sit on the bands' edges), every breach interval
+    (breach_intervals) shaded red with the aircraft line red inside it, and
+    an AGL ceiling above the axis named at its top."""
+    ts, ground = panel["t"], panel["ground"]
+    fin = lambda s: [(t, v) for t, v in zip(ts, s) if not math.isnan(v)]   # noqa: E731
+    lim = terrain_ylim(panel)
+    # Half a tick each side, so a one-tick breach is a visible span.
+    dts = sorted(b - a for a, b in zip(ts, ts[1:]) if b > a)
+    half = dts[len(dts) // 2] / 2.0 if dts else 0.05
+    for t0, t1, _ in breach_intervals(panel):
+        # Over the band fills (zorder 1), under the lines (2): red, not grey.
+        az.axvspan(t0 - half, t1 + half, color="#ef9a9a", alpha=0.45, lw=0, zorder=1.5)
+    g = fin(ground)
+    if g:
+        bottom = (lim[0] if lim else min(v for _, v in g) - 3.0)
+        az.fill_between(ts, [bottom] * len(ts), ground, color="#d7ccc8", alpha=0.9, lw=0)
+        az.plot(ts, ground, color="#6d4c41", lw=1.2)
+        tg = max(g, key=lambda p: p[1])[0]
+        az.text(tg, bottom + 0.5, "ground (msl_m - up)", fontsize=7, color="#6d4c41",
+                ha="center", va="bottom")
+    off_axis = []
+    for b in panel["bands"]:
+        fill, edge = _BAND_COLOURS[b["ref"]]
+        if b["ref"] == "MSL":
+            az.axhspan(b["lo"], b["hi"], color=fill, alpha=0.6)
+            az.text(ts[-1], b["hi"], f"{b['id']}: MSL {b['lo']:g}-{b['hi']:g} m ",
+                    fontsize=7, color=edge, ha="right", va="top")
+            continue
+        az.fill_between(ts, b["lo_s"], b["hi_s"], color=fill, alpha=0.35, lw=0)
+        az.plot(ts, b["lo_s"], "--", color=edge, lw=0.9)
+        az.plot(ts, b["hi_s"], "--", color=edge, lw=0.9)
+        lo_f, hi_f = fin(b["lo_s"]), fin(b["hi_s"])
+        name = f"{b['id']}: AGL {b['lo']:g}-{b['hi']:g} m"
+        if lim and hi_f and min(v for _, v in hi_f) > lim[1]:
+            off_axis.append(f"{b['id']} ceiling {min(v for _, v in hi_f):.1f}-"
+                            f"{max(v for _, v in hi_f):.1f} m MSL above the axis")
+            if lo_f:
+                # Under the floor where it is highest (the ridge's plateau):
+                # the widest gap between the floor and the ground below it.
+                top = max(v for _, v in lo_f)
+                near = [t for t, v in lo_f if v >= top - 1.0]
+                az.text(near[len(near) // 2], top, name, fontsize=7, color=edge,
+                        ha="center", va="top")
+        elif hi_f:
+            az.text(hi_f[0][0], hi_f[0][1], f" {name}", fontsize=7, color=edge,
+                    ha="left", va="top")
+    if panel["home"] is not None:
+        az.axhline(panel["home"], color="#455a64", ls=":", lw=1.0)
+        az.text(ts[-1], panel["home"], f"home {panel['home']:.1f} m ", fontsize=7,
+                color="#455a64", ha="right", va="top")
+    az.plot(ts, panel["msl"], color="#546e7a", lw=1)
+    # The aircraft line red where it is outside a band (NaN elsewhere).
+    flags = [bool(outside_bands(panel, i)) for i in range(len(ts))]
+    if any(flags):
+        az.plot(ts, [m if f else float("nan") for m, f in zip(panel["msl"], flags)],
+                color="#c62828", lw=2.0)
+    a = fin(panel["msl"])
+    if a:
+        # At the end of the trace, clear of the ridge where a breach is.
+        az.text(a[-1][0], a[-1][1], "aircraft msl_m ", fontsize=7, color="#546e7a",
+                ha="right", va="bottom")
+    note = ["red: outside a band"] if any(flags) else []
+    if off_axis or note:
+        az.text(0.01, 0.98, "\n".join(note + off_axis), transform=az.transAxes, fontsize=7,
+                color="#37474f", ha="left", va="top")
+    if lim:
+        az.set_ylim(*lim)
+    az.set_ylabel("altitude MSL (m)")
 
 
 def mission_target(run: Path) -> tuple[float, float] | None:
@@ -368,13 +632,18 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
     return _render(run, out, fps, step, None)
 
 
-def render_stills(run: Path, out_dir: Path, times: list[float], step: int = 1) -> list[Path]:
+def render_stills(run: Path, out_dir: Path, times: list[float], step: int = 1,
+                  probe: list | None = None) -> list[Path]:
     """The frames nearest each of `times` (mission seconds) as PNGs in
-    `out_dir`, drawn exactly as the video draws them; no ffmpeg needed."""
-    return _render(run, out_dir, 10, step, [float(t) for t in times])
+    `out_dir`, drawn exactly as the video draws them; no ffmpeg needed.
+    With `probe` (a list), each still also appends what it drew in the
+    altitude panel and the text block: {"t", "alt_dot" (x, y),
+    "alt_dot_colour", "alt_ylabel", "alt_texts", "body"}."""
+    return _render(run, out_dir, 10, step, [float(t) for t in times], probe)
 
 
-def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | None):
+def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | None,
+            probe: list | None = None):
     # The run's own inputs are judged before the drawing stack is imported: a
     # run with nothing to draw is refused the same way on a host without
     # matplotlib (found by the Python 3.12 CI env, 2026-11-06).
@@ -418,13 +687,36 @@ def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | Non
     info.axis("off")
 
     ts = [r["t"] for r in rows]
-    ups = [r["up"] for r in rows]
-    az.plot(ts, ups, color="#90a4ae", lw=1)
-    if band:
-        az.axhspan(band[0], band[1], color="#c8e6c9", alpha=0.6, label="altitude band")
-    alt_dot, = az.plot([], [], "o", color="#1565c0")
+    # A run whose `up` is above a ground grid (up_ref "terrain") is drawn in
+    # MSL: up, up_home and msl_m are three different heights there, and the
+    # MSL bands and the AGL bands share no axis but MSL.
+    panel = terrain_panel(rows, altitude_envelopes(g0)) if terrain_referenced(rows) else None
+    if panel is not None:
+        draw_terrain_altitude(az, panel)
+        alt_dot, = az.plot([], [], "o", color="#1565c0", zorder=5)
+    else:
+        ups = [r["up"] for r in rows]
+        az.plot(ts, ups, color="#90a4ae", lw=1)
+        if band:
+            az.axhspan(band[0], band[1], color="#c8e6c9", alpha=0.6, label="altitude band")
+        # An MSL envelope on this above-home axis: offset by home's MSL
+        # elevation where the run states it (a flat --ground), else named
+        # as not drawn. A policy with none draws nothing here.
+        msl_bands = home_axis_msl_bands(g0, flat_ground_msl(run))
+        for k, b in enumerate(msl_bands):
+            if b["up_lo"] is not None:
+                az.axhspan(b["up_lo"], b["up_hi"], color="#a5d6a7", alpha=0.5)
+                az.text(ts[-1], b["up_hi"], f"{b['id']}: MSL {b['lo']:g}-{b['hi']:g} m"
+                        f" (home {b['lo'] - b['up_lo']:g} m MSL) ", fontsize=7,
+                        color="#2e7d32", ha="right", va="top")
+            else:
+                az.text(0.01, 0.98 - 0.07 * k, f"{b['id']}: MSL {b['lo']:g}-{b['hi']:g} m"
+                        " not drawn (no MSL reference for home)", transform=az.transAxes,
+                        fontsize=7, color="#2e7d32", ha="left", va="top")
+        alt_dot, = az.plot([], [], "o", color="#1565c0")
     az.set_xlabel("t (s)")
-    az.set_ylabel("altitude up (m)")
+    if panel is None:
+        az.set_ylabel("altitude up (m)")
     az.set_title("altitude")
 
     zone_patches: dict[int, list] = {}
@@ -531,7 +823,10 @@ def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | Non
         moving = draw_zones(int(r.get("generation") or 0), float(r["t"]))
         track.set_data([q["x"] for q in rows[: i + 1]], [q["y"] for q in rows[: i + 1]])
         dot.set_data([r["x"]], [r["y"]])
-        alt_dot.set_data([r["t"]], [r["up"]])
+        alt_y, outside, position = altitude_readout(r, panel, i)
+        alt_dot.set_data([r["t"]], [alt_y])
+        if panel is not None:
+            alt_dot.set_color("#c62828" if outside else "#1565c0")
         raw, emi = r.get("raw") or {}, r.get("emitted") or {}
         raw_q.set_offsets([[r["x"], r["y"]]])
         raw_q.set_UVC([2 * raw.get("vx", 0.0)], [2 * raw.get("vy", 0.0)])
@@ -562,7 +857,7 @@ def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | Non
         ez = math.hypot(emi.get("vx", 0.0), emi.get("vy", 0.0))
         body.set_text(
             f"tick {r.get('tick')}   generation {r.get('generation')}\n"
-            f"position  x {r['x']:7.2f}  y {r['y']:7.2f}  up {r['up']:6.2f} m\n"
+            + position +
             f"pilot     |v_h| {hz:5.2f} m/s  vz {raw.get('vz_up', 0.0):5.2f}\n"
             f"emitted   |v_h| {ez:5.2f} m/s  vz {emi.get('vz_up', 0.0):5.2f}\n"
             f"flown     {r.get('flown')}   setpoint {r.get('setpoint')}\n"
@@ -586,6 +881,15 @@ def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | Non
             p = out / f"{run.name}_t{float(rows[idx[k]]['t']):07.2f}.png"
             fig.savefig(p, dpi=100)
             written.append(p)
+            if probe is not None:
+                xd, yd = alt_dot.get_data()
+                from matplotlib.colors import to_hex
+                probe.append({"t": float(rows[idx[k]]["t"]),
+                              "alt_dot": (float(xd[0]), float(yd[0])),
+                              "alt_dot_colour": to_hex(alt_dot.get_color()),
+                              "alt_ylabel": az.get_ylabel(),
+                              "alt_texts": [x.get_text() for x in az.texts],
+                              "body": body.get_text()})
         plt.close(fig)
         return written
 
