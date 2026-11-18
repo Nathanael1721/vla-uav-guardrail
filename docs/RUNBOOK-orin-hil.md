@@ -583,7 +583,18 @@ autopilot's home altitude, 584 m for every SITL rail here) - the grid's
 elevation under the aircraft. It refuses a `--ground-home-msl` more than
 2 m from the grid's own elevation at home (`terrain.GROUND_HOME_TOL_M`),
 and it refuses the MSL policy outright without `--ground`. The VLA stub
-takes the same `--ground` (it loads the policy too).
+and the AerialVLA bridge (`VLA=bridge`) take the same `--ground` (they load
+the policy too).
+
+On SITL the node raises `FENCE_ALT_MAX` to the policy's ceiling plus 5 m
+when it sits below it. With `--ground` that ceiling is a height above home,
+the reference ArduPilot measures `FENCE_ALT_MAX` in: `msl-ceiling` gives
+624 - 584 = 40 m, `agl-band` gives 60 m over the grid's highest ground
+(605.26 m MSL after resampling), 81.26 m. The node takes the higher figure,
+so the raise is to about 86.3 m, which is still above the MSL rule. The
+autopilot's backstop is therefore looser than the MSL rule on this profile.
+Before the 2026-11-18 review fix, the 624 m MSL ceiling was read as metres
+above home and the raise would have gone to 629 m.
 
 **1. The signed bundle** (the desktop, which holds the lab key; on the Orin
 the same command after the trust store is synced, as in step 7):
@@ -634,7 +645,10 @@ climb over it, the MSL ceiling holds the climb below 624 m MSL.
 `44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0`, the
 same on both hosts); every row's `up` is the height above the grid (what
 the Shield judged), beside `up_home` (the pose) and `msl_m`; the policy
-source record names the ground; the replay packs as usual.
+source record names the ground; `alt_violation_s` judges `msl-ceiling`
+against `msl_m` and `agl-band` against `up` (a clean flight reads 0);
+`autopilot_fence.policy_ceiling_m` is about 81.3 (above home), not 624;
+the replay packs as usual.
 
 **Not supported with this profile (yet):** `GCS_BACKSTOP=1` loads the
 bundle without a ground and refuses it, and `BAG_MANIFEST=1` /
@@ -645,9 +659,15 @@ leave them at their default 0); the stress harness's
 scoring has none), so this profile is flown by the commands above, not by
 a campaign. The AGL band over the grid has a known gap (the Shield's
 forecast holds the ground flat over its lookahead; `docs/data/
-msl_dem_rail.json` `finding_agl_over_dem`): headless, 189 ticks a few
-centimetres (at most 0.081 m) under the AGL floor on level flight into the
-ridge; the MSL rule has no such gap.
+msl_dem_rail.json` `finding_agl_over_dem`): headless, the independent
+oracle counts 189 P0 ticks a few centimetres (at most 0.081 m) under the
+AGL floor on level flight into the ridge, while the harness's own true-P0
+count is 0 (its judge Shield has the same flat-ground forecast); the MSL
+rule has no such gap (0 oracle ticks). On the node, the RTL watch
+(`rtl_path.check_leg`, its climb to `RTL_ALT` measured above home) is fed
+the height above the grid, the reference the Shield's bands are in, so over
+the ridge the leg's climb is judged against the wrong reference. The
+home-reached test uses the pose's height above home.
 
 ## 12. Profile the Shield on the Orin
 

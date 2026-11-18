@@ -501,7 +501,7 @@ from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa
 from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_for_flight,      # noqa: E402
-                               is_dem)
+                               is_dem, is_msl)
 from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa: E402
                                 RTL_ALT_M, ProgressMonitor, band_from_shield,
                                 check_leg, home_reached, remaining_to_home,
@@ -933,6 +933,23 @@ def home_check(home, origin, start_xy, tol_m: float = HOME_TOL_M) -> dict:
                  f"frame, {miss:.1f} m from the scenario's start ({want_n:.1f}, "
                  f"{want_e:.1f}) m (tolerance {tol_m:g} m): SITL booted at another "
                  f"home (SITL_HOME) than the scenario starts from"))
+
+
+def alt_dwell_ticks(traj: list[dict], envelopes) -> int:
+    """(point, envelope) pairs outside the envelope: metrics.json's
+    alt_violation_s is this times TICK. Each envelope is judged in its own
+    reference (X-11): an MSL envelope against the point's `msl_m` (written
+    only with --ground), every other envelope against `up` (above home, or
+    above the DEM under the aircraft with a --ground grid). Until 2026-11-18
+    every envelope was judged against `up`, so a flight of
+    experiments/policies/msl_dem_sitl.yaml counted every tick as an altitude
+    violation (604 m MSL read as 604 m above ground). A point without
+    `msl_m` (every flight without --ground, where an MSL rule is refused
+    before take-off) is judged as before."""
+    def height(p: dict, e) -> float:
+        return p["msl_m"] if is_msl(e) and "msl_m" in p else p["up"]
+    return sum(1 for p in traj for e in envelopes
+               if not (e.alt_min_m <= height(p, e) <= e.alt_max_m))
 
 
 def zones_at(shield, st: State) -> tuple[list[str], float | None]:
@@ -3072,6 +3089,15 @@ if HAVE_ROS:
             same object, as every flight before 2026-11-18."""
             return st if self.terrain is None else self.terrain.state(st)
 
+        def _msl_of(self, st: State) -> float:
+            """The MSL height of `st` as the Shield was told it (with
+            --ground only): over a DEM its height above the DEM plus the
+            DEM there; over a flat ground its height above home (= above that
+            ground) plus the ground's elevation."""
+            if self.terrain is not None:
+                return self.terrain.msl(st.up, st.x, st.y)
+            return float(st.up) + float(self.ground.elevation_at())
+
         def _on_pose(self, msg: PoseStamped) -> None:
             q = msg.pose.orientation
             # MAVROS ENU -> our up-positive frame (x = N, y = E), heading
@@ -3608,6 +3634,18 @@ if HAVE_ROS:
                 return False
             return bool(res and res.results and res.results[0].successful)
 
+        def _fence_ground_kw(self) -> dict:
+            """What policy_ceiling_m needs to give FENCE_ALT_MAX's ceiling
+            above HOME (X-11): the --ground and home's elevation (over a DEM
+            --ground-home-msl as TerrainReference checked it; over a flat
+            ground its one elevation). {} without --ground: the call every
+            flight before 2026-11-18 made."""
+            if self.ground is None:
+                return {}
+            home = (self.terrain.home_msl_m if self.terrain is not None
+                    else float(self.ground.elevation_at()))
+            return {"ground": self.ground, "home_msl_m": home}
+
         def read_autopilot_fence(self) -> None:
             """The GeoFence parameters as the AUTOPILOT holds them, not as the
             .parm file says (GUARDRAIL_FENCE=0 starts SITL without it, and the
@@ -3637,7 +3675,8 @@ if HAVE_ROS:
                         break
                 rclpy.spin_once(self, timeout_sec=0.5)
             ceiling, ceiling_src = policy_ceiling_m(self.policy,
-                                                    self.mission.cruise_alt_m)
+                                                    self.mission.cruise_alt_m,
+                                                    **self._fence_ground_kw())
             alt_max = vals.get("FENCE_ALT_MAX")
             plan = fence_alt_plan(ceiling, alt_max)
             raised_from = None
@@ -4728,8 +4767,12 @@ if HAVE_ROS:
                         # the harness's own test, 2026-11-07). Until then
                         # the distance alone: an RTL entered beside the
                         # start reported home below the climb (rh01_038).
+                        # The pose's own height above HOME (X-11): RTL_ALT is
+                        # measured above home, and with a --ground grid `st`
+                        # holds the height above the DEM. Without --ground
+                        # pose is st.
                         home_reached=(self.mode == "RTL"
-                                      and home_reached(st.x, st.y, st.up, self.start_xy,
+                                      and home_reached(st.x, st.y, pose.up, self.start_xy,
                                                        tol_m=REACH_M)),
                         landed=self.landed_input(),
                         stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
@@ -4908,6 +4951,11 @@ if HAVE_ROS:
                               "up": st.up,
                               "touched": bool(self.shield_on and decision.touched),
                               "clock": self.clock().isoformat()})
+            if self.ground is not None:
+                # With --ground (X-11) the point's MSL height beside its `up`,
+                # so the altitude dwell judges an MSL envelope in MSL
+                # (metrics alt_violation_s). Absent without --ground.
+                self.traj[-1]["msl_m"] = self._msl_of(st)
             self.rows.append(build_row(
                 now=now, tick=tick_no, state=st, body=body,
                 decision=decision, raw_world=raw_w, emitted_world=em_w,
@@ -5194,8 +5242,7 @@ if HAVE_ROS:
                                                       encoding="utf-8")
 
             envelopes = self.policy.by_type(AltitudeEnvelope)
-            alt_bad = sum(1 for p in self.traj for e in envelopes
-                          if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+            alt_bad = alt_dwell_ticks(self.traj, envelopes)
             alt_s = alt_bad * TICK
             shield_ms = [r["shield_ms"] for r in self.rows
                          if isinstance(r.get("shield_ms"), (int, float))]

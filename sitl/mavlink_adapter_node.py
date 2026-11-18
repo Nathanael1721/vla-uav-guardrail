@@ -546,13 +546,39 @@ def zones_near(fences: list[dict], x: float, y: float,
     return _zones_near(fences, x, y, margin_m)
 
 
-def policy_ceiling_m(policy, fallback_m: float | None = None) -> tuple[float | None, str]:
+def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
+                     home_msl_m: float | None = None) -> tuple[float | None, str]:
     """The highest altitude the policy allows, and where that figure came
     from: its altitude envelopes, else `fallback_m` (the mission's cruise
-    altitude), else None."""
-    ceilings = [float(c.alt_max_m) for c in getattr(policy, "constraints", [])
-                if getattr(c, "type", "") == "altitude_envelope"
-                and getattr(c, "alt_max_m", None) is not None]
+    altitude), else None.
+
+    With `ground` (the Shield node's --ground, X-11) every envelope's ceiling
+    is turned into a height above HOME, the reference ArduPilot measures
+    FENCE_ALT_MAX in (`home_msl_m`: home's elevation, m MSL; default the
+    ground's own at home, for a flat ground its one elevation): an MSL
+    envelope's ceiling less home's elevation; an AGL envelope's plus the
+    highest ground the ground covers less home's elevation (over a DEM's
+    ridge an AGL ceiling is that much above home; over a flat ground at home,
+    the ceiling itself). The highest of those, as without a ground. Until
+    2026-11-18 an MSL ceiling (624 m for experiments/policies/msl_dem_sitl.
+    yaml) was handed on as metres above home, and the node would have raised
+    SITL's FENCE_ALT_MAX to 629 m. Without `ground`: unchanged."""
+    envs = [c for c in getattr(policy, "constraints", [])
+            if getattr(c, "type", "") == "altitude_envelope"
+            and getattr(c, "alt_max_m", None) is not None]
+    if envs and ground is not None:
+        from guardrail.terrain import ground_band, is_dem, is_msl
+        top = float(ground_band(ground)[1])
+        if home_msl_m is None:
+            home_msl_m = float(ground.elevation_at(0.0, 0.0) if is_dem(ground)
+                               else ground.elevation_at())
+        home = float(home_msl_m)
+        ceilings = [float(c.alt_max_m) - home if is_msl(c)
+                    else float(c.alt_max_m) + (top - home) for c in envs]
+        return max(ceilings), (f"altitude_envelope, above home ({home:g} m MSL): MSL "
+                               f"ceilings less home, AGL ceilings plus the ground's "
+                               f"highest {top:g} m MSL less home")
+    ceilings = [float(c.alt_max_m) for c in envs]
     if ceilings:
         return max(ceilings), "altitude_envelope"
     if fallback_m is not None:

@@ -44,12 +44,24 @@
   }
  },
  "verdict": {
-  "oracle_msl_ticks_zero": true,
-  "harness_true_p0_zero": true,
-  "msl_rule_bound": true,
-  "null_off_sees_violations": true,
-  "null_msl_as_agl_sees_msl_escapes": true
+  "scope": "gated: the MSL rule msl-ceiling (oracle), the harness's own true-P0 count and the two nulls; NOT the declared policy as a whole - agl-band's oracle ticks are in not_gated",
+  "gated": {
+   "oracle_msl_ticks_zero": true,
+   "harness_true_p0_zero": true,
+   "msl_rule_bound": true,
+   "null_off_sees_violations": true,
+   "null_msl_as_agl_sees_msl_escapes": true
+  },
+  "not_gated": {
+   "oracle_p0_zero": false,
+   "oracle_p0_ticks": 189,
+   "oracle_p0_ticks_by_rule": {
+    "msl-ceiling": 0,
+    "agl-band": 189
+   }
+  }
  },
+ "p0_counts": "harness true-P0 0; independent oracle 189 P0 ticks (agl-band, max 0.081 m under the floor, level-cross only); MSL-band ticks 0",
  "finding_agl_over_dem": {
   "oracle_agl_ticks": 189,
   "by_pilot": {
@@ -84,7 +96,7 @@
   "null_off_episodes_violating": 12,
   "null_msl_as_agl_oracle_msl_ticks": 5902,
   "null_msl_as_agl_episodes_violating": 12,
-  "wall_s": 22.4
+  "wall_s": 22.1
  },
  "episodes": {
   "on": [

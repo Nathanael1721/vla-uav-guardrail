@@ -281,21 +281,44 @@ def main(argv=None) -> int:
     ground = terrain.load_ground(DEM_REL, HOME, root=ROOT)
     res = run(grid)
     print(json.dumps(res["summary"], indent=1))
-    # Gated: the MSL rule (X-11's subject) and the harness's own count. The
-    # AGL band over the DEM is reported beside it, not gated (FINDING in the
-    # module docstring).
-    verdict = {
-        "oracle_msl_ticks_zero": res["summary"]["on_oracle_msl_ticks"] == 0,
-        "harness_true_p0_zero": res["summary"]["on_harness_true_p0_ticks"] == 0,
-        "msl_rule_bound": res["summary"]["on_requested_ticks_msl_ceiling"] > 0,
-        "null_off_sees_violations": res["summary"]["null_off_oracle_p0_ticks"] > 0,
-        "null_msl_as_agl_sees_msl_escapes":
-            res["summary"]["null_msl_as_agl_oracle_msl_ticks"] > 0,
+    # Gated: the MSL rule (msl-ceiling, X-11's subject), the harness's own
+    # count and the nulls. NOT gated, and never folded into a pass: the
+    # independent oracle's P0 count over the whole declared policy, which
+    # includes agl-band's ticks under the floor (FINDING in the module
+    # docstring) - the harness's judge is a Shield with the same flat-ground
+    # forecast, so its 0 does not see them. Both counts are stated side by
+    # side in `p0_counts`.
+    s = res["summary"]
+    gated = {
+        "oracle_msl_ticks_zero": s["on_oracle_msl_ticks"] == 0,
+        "harness_true_p0_zero": s["on_harness_true_p0_ticks"] == 0,
+        "msl_rule_bound": s["on_requested_ticks_msl_ceiling"] > 0,
+        "null_off_sees_violations": s["null_off_oracle_p0_ticks"] > 0,
+        "null_msl_as_agl_sees_msl_escapes": s["null_msl_as_agl_oracle_msl_ticks"] > 0,
     }
+    verdict = {
+        "scope": ("gated: the MSL rule msl-ceiling (oracle), the harness's own true-P0 "
+                  "count and the two nulls; NOT the declared policy as a whole - "
+                  "agl-band's oracle ticks are in not_gated"),
+        "gated": gated,
+        "not_gated": {
+            "oracle_p0_zero": s["on_oracle_p0_ticks"] == 0,
+            "oracle_p0_ticks": s["on_oracle_p0_ticks"],
+            "oracle_p0_ticks_by_rule": {"msl-ceiling": s["on_oracle_msl_ticks"],
+                                        "agl-band": s["on_oracle_agl_ticks"]},
+        },
+    }
+    by = {n: k for n, k in s["on_oracle_agl_ticks_by_pilot"].items() if k}
+    p0_counts = (f"harness true-P0 {s['on_harness_true_p0_ticks']}; independent oracle "
+                 f"{s['on_oracle_p0_ticks']} P0 ticks (agl-band, max "
+                 f"{s['on_max_agl_floor_shortfall_m']:.3f} m under the floor, "
+                 f"{(', '.join(by) + ' only') if by else 'no pilot'}); MSL-band ticks "
+                 f"{s['on_oracle_msl_ticks']}")
     print(json.dumps(verdict, indent=1))
+    print(p0_counts)
     out = {"command": "python tools/msl_dem_rail.py " + " ".join(argv or sys.argv[1:]),
            "policy": POLICY_REL, "ground_file": DEM_REL,
-           "ground": ground.record(), "verdict": verdict,
+           "ground": ground.record(), "verdict": verdict, "p0_counts": p0_counts,
            "finding_agl_over_dem": {
                "oracle_agl_ticks": res["summary"]["on_oracle_agl_ticks"],
                "by_pilot": res["summary"]["on_oracle_agl_ticks_by_pilot"],
@@ -308,7 +331,7 @@ def main(argv=None) -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {args.out}")
-    return 0 if all(verdict.values()) else 1
+    return 0 if all(gated.values()) else 1
 
 
 if __name__ == "__main__":

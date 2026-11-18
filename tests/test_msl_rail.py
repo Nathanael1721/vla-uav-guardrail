@@ -26,9 +26,17 @@ WHAT IS PINNED
       pose object itself. The VLA stub and tools/build_flight_bundles.py
       take the same ground.
 
-Byte-identity of every flight without a ground (65 library episodes before
-and after) is docs/data/msl_rail_identity_20261118.json; this file pins the
-mechanisms. Throwaway signing keys only; no rig step runs.
+  (d) After review (2026-11-18): with --ground the node's FENCE_ALT_MAX
+      ceiling is a height above HOME (an MSL ceiling less home, an AGL one
+      plus the ground's highest less home; 624 m MSL was being handed on as
+      624 m above home, raise to 629), metrics alt_violation_s judges an MSL
+      envelope in MSL (a clean flight is 0, not every tick), and the
+      AerialVLA bridge takes --ground as the stub does.
+
+Byte-identity of every flight without a ground (141 library episodes of the
+profiles smoke, distance_envelope, fsm_edges, grant_example and prefix_ab,
+base 7b0f50c and this branch, both digest sets stored) is
+docs/data/msl_rail_identity_20261118.json; this file pins the mechanisms. Throwaway signing keys only; no rig step runs.
 
 Run: python tests/test_msl_rail.py
 """
@@ -276,7 +284,19 @@ def run_ground(r):
 def test_the_evidence_file_says_what_the_tool_measured():
     d = json.loads((ROOT / "docs" / "data" / "msl_dem_rail.json").read_text(encoding="utf-8"))
     s = d["summary"]
-    assert all(d["verdict"].values()), d["verdict"]
+    v = d["verdict"]
+    assert all(v["gated"].values()), v
+    # The verdict is scoped to the MSL rule by name, and the oracle's P0
+    # count over the whole policy (agl-band included) sits beside it, never
+    # folded into the pass.
+    assert "msl-ceiling" in v["scope"] and "agl-band" in v["scope"]
+    ng = v["not_gated"]
+    assert ng["oracle_p0_ticks"] == s["on_oracle_p0_ticks"]
+    assert ng["oracle_p0_zero"] is (s["on_oracle_p0_ticks"] == 0)
+    assert ng["oracle_p0_ticks_by_rule"] == {"msl-ceiling": s["on_oracle_msl_ticks"],
+                                             "agl-band": s["on_oracle_agl_ticks"]}
+    assert (f"harness true-P0 {s['on_harness_true_p0_ticks']}; independent oracle "
+            f"{s['on_oracle_p0_ticks']} P0 ticks") in d["p0_counts"]
     assert s["on_oracle_msl_ticks"] == 0 and s["on_harness_true_p0_ticks"] == 0
     assert s["on_requested_ticks_msl_ceiling"] > 0
     assert s["null_off_oracle_p0_ticks"] > 0 and s["null_msl_as_agl_oracle_msl_ticks"] > 0
@@ -297,6 +317,8 @@ def test_the_identity_evidence_and_its_compare_tool():
     c = d["compare"]
     assert c["same_episodes"] and c["differing"] == [] and c["errors"] == []
     assert c["identical_episodes"] == c["episodes_before"] == 141 == len(d["digests_after"])
+    # Both digest sets are stored, so the compare can be redone from the file.
+    assert E.compare(d["digests_before"], d["digests_after"]) == c
     one = {f: "x" for f in E.FIELDS}
     r = E.compare({"a": one, "b": one}, {"a": dict(one, rows="y"), "b": {"error": "e"}})
     assert ["a", "rows"] in r["differing"] and r["errors"] == ["b"]
@@ -359,6 +381,66 @@ def test_the_ros2_node_flies_an_msl_rule_over_the_dem():
     m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert m["ground"]["home_msl_m"] == 584.0 and m["ground"]["up_ref"] == "terrain"
     assert m["ground"]["ground"]["wgs84_dem"]["path"] == DEM
+    # The clean flight (604 m MSL, 20 m above the DEM: inside both bands) has
+    # no altitude dwell. Until the review every tick counted (0.3 s for 3
+    # ticks: 604 m MSL judged against `up`), and guardrail/kpi.py fails a run
+    # on any alt_violation_s above 0.
+    assert m["ticks"] > 0 and m["alt_violation_s"] == 0, m["alt_violation_s"]
+    p = node.traj[0]
+    assert abs(p["msl_m"] - 604.0) < 1e-3 and abs(p["up"] - 20.0) < 0.01
+
+
+def test_alt_dwell_judges_each_envelope_in_its_own_reference():
+    _, N, node, _, _ = _node([f"--ground={DEM}", "--ground-home-msl=584"])
+    from guardrail.models import AltitudeEnvelope
+    envs = node.policy.by_type(AltitudeEnvelope)
+    ok = {"up": 20.0, "msl_m": 604.0}
+    high = {"up": 20.0, "msl_m": 630.0}          # above the MSL ceiling only
+    low = {"up": 5.0, "msl_m": 600.0}            # under the AGL floor only
+    assert N.alt_dwell_ticks([ok], envs) == 0
+    assert N.alt_dwell_ticks([high], envs) == 1 and N.alt_dwell_ticks([low], envs) == 1
+    # Without msl_m (every flight without --ground) every envelope is judged
+    # against `up`, as before: the MSL band 590-624 fails 20 m.
+    assert N.alt_dwell_ticks([{"up": 20.0}], envs) == 1
+    agl = [e for e in envs if e.altitude_ref is None]
+    assert N.alt_dwell_ticks([{"up": 20.0}, {"up": 70.0}], agl) == 1
+
+
+def test_the_fence_ceiling_is_above_home_with_a_ground():
+    """FENCE_ALT_MAX is measured above home. Without the fix the MSL profile's
+    ceiling was 624 (its MSL alt_max read as metres above home) and SITL's
+    fence was raised to 629 m, switching the altitude backstop off."""
+    g = terrain.load_ground(DEM, CMAC, root=ROOT)
+    RN, N, node, clk, out = _node([f"--ground={DEM}", "--ground-home-msl=584",
+                                   "--start=0,0,20", "--no-target"])
+    kw = node._fence_ground_kw()
+    assert kw["ground"] is node.ground and kw["home_msl_m"] == 584.0
+    ceiling, src = N.policy_ceiling_m(node.policy, 20.0, **kw)
+    top = terrain.ground_band(g)[1]
+    # msl-ceiling: 624 - 584 = 40 m above home; agl-band: 60 m over the
+    # DEM's highest ground, top - 584 above home. The higher of the two, as
+    # without a ground (an envelope may be scoped or windowed).
+    assert abs(ceiling - max(624.0 - 584.0, 60.0 + top - 584.0)) < 1e-9, (ceiling, top)
+    assert ceiling < 100.0 and "above home" in src
+    if str(ROOT / "sitl") not in sys.path:
+        sys.path.insert(0, str(ROOT / "sitl"))
+    from mavlink_adapter_node import FENCE_ALT_HEADROOM_M
+    plan = N.fence_alt_plan(ceiling, 30.0)
+    assert abs(plan["raise_to"] - (ceiling + FENCE_ALT_HEADROOM_M)) < 1e-9
+    assert plan["raise_to"] < 100.0, plan
+    # The MSL rule alone: 40 m above home + the headroom.
+    only_msl = node.policy.model_copy(update={"constraints": [
+        c for c in node.policy.constraints if c.id != "agl-band"]})
+    c2, _ = N.policy_ceiling_m(only_msl, 20.0, **kw)
+    assert abs(c2 - 40.0) < 1e-9
+    # Without a ground: the figure every flight before 2026-11-18 got.
+    assert N.policy_ceiling_m(node.policy, 20.0) == (624.0, "altitude_envelope")
+    sim = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    assert N.policy_ceiling_m(sim, 15.0) == N.policy_ceiling_m(sim, 15.0, **{})
+    # A flat ground at home's elevation changes no AGL ceiling.
+    flat = terrain.FlatGround(584.0, "test")
+    assert N.policy_ceiling_m(sim, 15.0, ground=flat, home_msl_m=584.0)[0] == \
+        N.policy_ceiling_m(sim, 15.0)[0]
 
 
 def test_the_ros2_node_refuses_msl_without_a_ground_or_with_a_wrong_home():
@@ -400,6 +482,21 @@ def test_the_stub_and_the_bundle_builder_take_the_ground():
         assert "MSL" in str(e), e
     else:
         raise AssertionError("the stub loaded the MSL policy with no ground")
+    # The AerialVLA bridge (the rail's real-VLA slot) the same way; resolve()
+    # connects to nothing.
+    if str(ROOT / "sitl") not in sys.path:
+        sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_vla_bridge_node as Br
+    bbase = ["--vla-server", "127.0.0.1:5999", "--policy", str(POLICY)]
+    _, plan = Br.resolve(Br.make_parser().parse_known_args(bbase + [f"--ground={DEM}"])[0])
+    assert plan["policy"].policy_id == "msl-dem-sitl"
+    assert plan["policy_source"]["ground"]["wgs84_dem"]["path"] == DEM
+    try:
+        Br.resolve(Br.make_parser().parse_known_args(bbase)[0])
+    except ValueError as e:
+        assert "MSL" in str(e), e
+    else:
+        raise AssertionError("the bridge loaded the MSL policy with no ground")
     # The signed bundle recipe (docs/RUNBOOK-orin-hil.md): built and verified
     # over the ground, refused without it.
     import build_flight_bundles as T

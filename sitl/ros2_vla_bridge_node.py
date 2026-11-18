@@ -970,6 +970,11 @@ def make_parser():
     ap.add_argument("--policy", default=None)
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--ground", default=None, metavar="FILE",
+                    help="the Shield node's declared ground (X-11, guardrail/terrain.py "
+                         "load_ground): read here so a policy with an MSL rule passes "
+                         "this node's flight gate too, as in the VLA stub. Default: "
+                         "none, as before 2026-11-18")
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s",
                     help="the mission text, as the Shield node's (its target is the goal)")
     ap.add_argument("--target", default=None, metavar="X,Y")
@@ -1056,9 +1061,17 @@ def resolve(args) -> tuple[BridgeConfig, dict]:
     cfg.monitor()                             # the stop rules validate themselves
     TrackerConfig(cruise_mps=cfg.cruise_mps, speed_cap_mps=cfg.speed_cap_mps,
                   decision_timeout_s=cfg.decision_timeout_s)
+    yaml_path = args.policy or (None if args.bundle else DEFAULT_POLICY_YAML)
+    # With --ground (X-11) the policy loads over the Shield node's ground, so
+    # an MSL rule passes this node's flight gate as it does the Shield's and
+    # the stub's. Without it: the call every run before 2026-11-18 made.
+    kw = {}
+    if getattr(args, "ground", None):
+        from guardrail.terrain import ground_for_flight
+        kw["ground"] = ground_for_flight(args.ground, args.bundle, yaml_path, root=ROOT)
     policy, source = load_for_flight(
-        args.bundle, args.policy or (None if args.bundle else DEFAULT_POLICY_YAML),
-        allow_unverified=args.allow_unverified_bundle)
+        args.bundle, yaml_path,
+        allow_unverified=args.allow_unverified_bundle, **kw)
     mission = ConstraintCompiler(policy).parse_command(args.command)
     if args.target:
         x, y = (float(v) for v in args.target.split(","))
