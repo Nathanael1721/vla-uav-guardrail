@@ -24,16 +24,32 @@ Pinned here:
     zone ahead of the nose, the kinematic and altitude envelopes), gives the
     same emitted BODY action, the same rules and the same repair operators
     at headings 0, 90, 179.9, -90, 37.3 and -123.4: the repair is a function
-    of the scene as the VLA sees it, not of the world's axes.
+    of the scene as the VLA sees it, not of the world's axes. The same for
+    each rule family: stand-off (StandoffHold, StandoffRecover, the overhead
+    recovery straight back), PathRepair's stand-off detour, the corridor at
+    those headings; the clearance rule on a raster map, its direction search
+    included, at the four quarter turns (where a raster turns exactly). This
+    is the sense in which the grant's own reference implementation keeps its
+    repair "on the same frame the VLA emits in": its operators take and
+    return the body action and turn it into ENU for their geometry
+    (safety_shield/repair.py body_to_enu ... enu_to_body).
+  * PRODUCER-SIDE SMOOTHING. The demo loops' rate limiters cap the change of
+    the body action's WORLD reading (frames.limit_in_world), as they capped
+    the world action before wf21, through a turn too; frames.rebase_body
+    turns a body action from its capture heading to a later one.
   * ONE CROSSING. Parsed from the source of every module outside tests/ and
     the reference checkout: `from_body` / `to_local_ned` are referenced only
     by guardrail/frames.py, by the Shield's projection (filter_body,
     advise_body, check_body) and by one named record helper;
     `body_to_local_ned` - the adapter function - is called only by the
-    listed adapters, and each of them calls it; no velocity command or
-    Action4D is built from a hand-written cos / sin of a heading except at
-    the listed producer and record sites; no rail or demo loop calls
-    `Shield.filter` on the action it flies. A new crossing fails here.
+    listed adapters, and each of them calls it; no velocity command,
+    Action4D or vx / vy assignment uses cos(E) and sin(E) of one angle E,
+    whatever it is called, except at the listed TRIG_SITES; every call of
+    the Shield's world-frame entries (.filter / .advise / ._check with a
+    state and an action, on any receiver) outside the Shield is a listed
+    judge or offline tool, and none is in a module that flies. The
+    detectors are mutation-tested on planted modules. A new crossing fails
+    here.
   * THE REAL HEADING. The pymavlink SITL rail (stand-in autopilot at 37
     degrees), the PAS ArduPilot rail (fake flight at 0.6 rad) and the
     headless harness hand the Shield the BODY action at the aircraft's own
@@ -58,8 +74,8 @@ from guardrail.frames import (BODY_STOP, body_action,                 # noqa: E4
                               from_body, local_ned_to_world, streamed_body,
                               to_body)
 from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E402
-                              KinematicEnvelope, Policy, PolygonFence,
-                              State, XY)
+                              Corridor, KinematicEnvelope, Policy, PolygonFence,
+                              State, SubjectStandoff, XY)
 from guardrail.shield import Shield                                  # noqa: E402
 
 SKIP = "SKIP"
@@ -238,6 +254,290 @@ def test_filter_world_as_body_hands_over_every_tick_in_the_body_frame():
     assert sum(1 for c in calls if c == "filter") == 50
 
 
+# Every rule family, the same way: a scene built in the aircraft's own
+# (forward, right) metres, placed in the world at heading h, and the same body
+# action at every heading. The grant's own reference implementation keeps its
+# repair "on the same frame the VLA emits in" the same way - each operator
+# takes and returns the body action and turns it into the IR's ENU plane for
+# its geometry (kuanting-vla-uav-guardrail packages/safety-shield/src/
+# safety_shield/repair.py: body_to_enu ... enu_to_body) - so what the frame
+# of the repair means, checkably, is this: it does not depend on the world's
+# axes.
+
+ROT_HEADINGS = GRANT_HEADINGS + (37.3, -123.4)
+QUARTER_TURNS = (0.0, 90.0, 180.0, -90.0)
+X0, Y0 = 100.0, -50.0
+
+
+def _kin() -> KinematicEnvelope:
+    return KinematicEnvelope(id="kin", type="kinematic_envelope", scope="mission",
+                             constraint_type="hard", priority="P1", violation_action="repair",
+                             speed_max_mps=6.0, climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)
+
+
+def _at(h: float, f: float, r: float, x0: float = X0, y0: float = Y0) -> tuple:
+    """The world point (forward f, right r) of (x0, y0) at heading h."""
+    w = from_body(f, r, 0.0, 0.0, h)
+    return x0 + w.vx, y0 + w.vy
+
+
+def _bodies(seed: int, n: int = 40) -> list:
+    rng = random.Random(seed)
+    return [Action4D(vx=rng.uniform(-2.0, 6.0), vy=rng.uniform(-3.0, 3.0),
+                     vz_up=rng.uniform(-1.0, 1.0), yaw_rate=rng.uniform(-0.5, 0.5))
+            for _ in range(n)]
+
+
+def _same_repair_at_every_heading(make, bodies, headings, tol=1e-12) -> dict:
+    """make(h) -> (a fresh Shield, the State at heading h) for the scene at
+    heading h. Asserts the emitted BODY action (to `tol`), the rules broken
+    and the repair operators are the heading-`headings[0]` ones at every
+    other heading; returns how often each operator ran there."""
+    ops: dict = {}
+    for k, body in enumerate(bodies):
+        ref = None
+        for h in headings:
+            sh, st = make(h)
+            d, em = sh.filter_body(st, body)
+            got = (em, sorted(v.rule_id for v in d.violations), [r.operator for r in d.repairs])
+            if ref is None:
+                ref = got
+                for o in got[2]:
+                    ops[o] = ops.get(o, 0) + 1
+                continue
+            dd = max(abs(em.vx - ref[0].vx), abs(em.vy - ref[0].vy),
+                     abs(em.vz_up - ref[0].vz_up), abs(em.yaw_rate - ref[0].yaw_rate))
+            assert dd <= tol and got[1:] == ref[1:], (k, h, body, em, ref[0], got[1:], ref[1:])
+    return ops
+
+
+def _standoff_scene(h, at=(14.0, 2.0), velocity=None, path_repair=True):
+    pol = Policy(policy_id="body-frame-standoff", version="0.0.1", constraints=[
+        SubjectStandoff(id="so", type="subject_standoff", subject_class="*", min_range_m=10.0,
+                        soft_margin_m=2.0, **HARD),
+        _kin()])
+    sh = Shield(pol, path_repair=path_repair)
+    v = None
+    if velocity is not None:
+        w = from_body(velocity[0], velocity[1], 0.0, 0.0, h)
+        v = (w.vx, w.vy)
+    sh.set_subject(*_at(h, *at), "pedestrian", velocity=v)
+    return sh, State(x=X0, y=Y0, up=15.0, yaw_deg=h)
+
+
+def test_the_stand_off_repair_and_path_repair_s_detour_are_the_body_frame_ones():
+    """A subject ahead and to the right, still and moving, outside the ring
+    and inside it: StandoffHold, StandoffRecover and PathRepair's stand-off
+    detour (path_repair on, the Shield's default) give the same emitted body
+    action at every heading, to 1e-12 m/s. Counted, not blind."""
+    ops = _same_repair_at_every_heading(lambda h: _standoff_scene(h), _bodies(5), ROT_HEADINGS)
+    moving = _same_repair_at_every_heading(lambda h: _standoff_scene(h, velocity=(1.5, -0.5)),
+                                           _bodies(5), ROT_HEADINGS)
+    inside = _same_repair_at_every_heading(lambda h: _standoff_scene(h, at=(6.0, 1.0)),
+                                           _bodies(5), ROT_HEADINGS)
+    off = _same_repair_at_every_heading(lambda h: _standoff_scene(h, path_repair=False),
+                                        _bodies(5), ROT_HEADINGS)
+    assert ops.get("StandoffHold", 0) >= 10 and off.get("StandoffHold", 0) >= 10, (ops, off)
+    assert ops.get("PathRepair", 0) + moving.get("PathRepair", 0) >= 5, (ops, moving)
+    assert inside.get("StandoffRecover", 0) >= 30, inside
+
+
+def test_the_overhead_recovery_backs_away_in_the_body_frame_at_any_heading():
+    """Directly over the subject with no horizontal command there is no line
+    to it; StandoffRecover leaves backwards from the aircraft's heading
+    (shield.py _recover_from_overhead). Since wf21 the city follow and
+    pymavlink SITL rails give the Shield the real heading, so this is
+    'backwards' in the body frame there too (with heading 0 it was always
+    South): the emitted body action is straight back, at every heading."""
+    for body in (Action4D(), Action4D(vz_up=0.5, yaw_rate=0.2)):
+        for h in ROT_HEADINGS:
+            sh, st = _standoff_scene(h, at=(0.0, 0.0))
+            d, em = sh.filter_body(st, body)
+            assert [r.operator for r in d.repairs] == ["StandoffRecover"], (h, d.repairs)
+            assert "backing away from the aircraft's heading" in d.repairs[0].detail
+            assert em.vx < -0.4 and abs(em.vy) <= 1e-12, (h, em)
+            assert (em.vz_up, em.yaw_rate) == (body.vz_up, body.yaw_rate)
+
+
+def test_the_corridor_repair_is_the_body_frame_one():
+    """A corridor along the nose, the aircraft 2.5 m right of its centerline:
+    CorridorReturn (and the brakes it leaves) the same at every heading."""
+    def scene(h):
+        a, b = _at(h, -20.0, -2.5), _at(h, 60.0, -2.5)
+        pol = Policy(policy_id="body-frame-corridor", version="0.0.1", constraints=[
+            Corridor(id="cor", type="corridor", centerline=[XY(x=a[0], y=a[1]), XY(x=b[0], y=b[1])],
+                     width_m=8.0, altitude_floor_m=0.0, altitude_ceiling_m=100.0, **HARD),
+            _kin()])
+        return Shield(pol), State(x=X0, y=Y0, up=15.0, yaw_deg=h)
+    ops = _same_repair_at_every_heading(scene, _bodies(7), ROT_HEADINGS, tol=1e-11)
+    assert ops.get("CorridorReturn", 0) >= 15, ops
+
+
+def test_the_clearance_repair_on_a_raster_map_is_the_body_frame_one_at_the_quarter_turns():
+    """ObstacleClearance reads a distance field on a world-aligned raster.
+    Buildings placed in body-frame cells (a block ahead, a wall to the right,
+    a corner the aircraft sits in) and the map turned with the aircraft give
+    the same emitted body action and operators at 0, 90, 180 and -90 degrees,
+    where turning a raster is exact (a cell to a cell); the corner case
+    reaches the direction search (_best_clear_dir), whose bearings are the
+    aircraft's own since 2026-11-18. A raster turned by any other angle is
+    not the same map, so no other heading is compared."""
+    import numpy as np
+    from guardrail.models import ObstacleClearance
+    n, res, c = 81, 2.0, 40                        # the aircraft on cell (40, 40) = (0, 0)
+
+    def scene(cells):
+        def make(h):
+            occ = np.zeros((n, n), np.uint8)
+            for f, r in cells:
+                w = from_body(float(f), float(r), 0.0, 0.0, h)   # exact at a quarter turn
+                occ[c + int(w.vx), c + int(w.vy)] = 1
+            pol = Policy(policy_id="body-frame-clearance", version="0.0.1", constraints=[
+                ObstacleClearance(id="clr", type="obstacle_clearance", min_clearance_m=6.0,
+                                  soft_margin_m=2.0, **HARD),
+                _kin()])
+            return (Shield(pol, lookahead_s=3.0, dt=0.5,
+                           obstacle_map={"occ": occ, "res": res, "ox": -80.0, "oy": -80.0}),
+                    State(x=0.0, y=0.0, up=15.0, yaw_deg=h))
+        return make
+
+    searched = []
+    real = Shield._best_clear_dir
+
+    def spy(self, *a, **k):
+        searched.append(1)
+        return real(self, *a, **k)
+    Shield._best_clear_dir = spy
+    try:
+        block = [(f, r) for f in range(4, 8) for r in range(-3, 4)]
+        wall = [(f, r) for f in range(-20, 21) for r in range(3, 6)]
+        corner = ([(f, r) for f in range(1, 6) for r in range(1, 6)]
+                  + [(f, r) for f in range(-5, 6) for r in range(-6, -3)])
+        tot = {}
+        for cells in (block, wall, corner):
+            for o, k in _same_repair_at_every_heading(scene(cells), _bodies(11),
+                                                      QUARTER_TURNS).items():
+                tot[o] = tot.get(o, 0) + k
+    finally:
+        Shield._best_clear_dir = real
+    assert tot.get("ClearanceFix", 0) >= 60, tot
+    assert len(searched) >= 8, len(searched)
+
+
+def test_the_direction_search_s_bearings_turn_with_the_aircraft():
+    """The recovery direction search (_clear_dir_candidates: the clearance
+    fallback and the unconverged chain's rescue) tries 12 bearings from the
+    aircraft's nose: the same candidates in the body frame, in the same
+    order, at every heading, so a tie goes to the same body direction. At
+    heading 0 they are bit for bit the bearings from North it used before."""
+    sh = Shield(_scene(0.0, 0.0, 0.0))
+    a = Action4D(vx=1.0, vy=0.5, vz_up=0.3, yaw_rate=0.1)
+    ref = [body_action(c, 0.0) for c in sh._clear_dir_candidates(a, 4.0, 0.0)]
+    assert len(ref) == 24
+    old = [(math.cos(k * math.pi / 6.0) * (4.0 * f), math.sin(k * math.pi / 6.0) * (4.0 * f))
+           for k in range(12) for f in (1.0, 0.5)]
+    assert [(c.vx, c.vy) for c in sh._clear_dir_candidates(a, 4.0, 0.0)] == old
+    for h in ROT_HEADINGS:
+        got = [body_action(c, h) for c in sh._clear_dir_candidates(a, 4.0, h)]
+        assert max(max(abs(g.vx - r.vx), abs(g.vy - r.vy)) for g, r in zip(got, ref)) < 1e-12, h
+        assert all((g.vz_up, g.yaw_rate) == (r.vz_up, r.yaw_rate) for g, r in zip(got, ref))
+
+
+# --------------------------------------------------------------------------- #
+# Producer-side smoothing: the demo loops' rate limiters
+# --------------------------------------------------------------------------- #
+
+def _world_limiter(dv_h: float, dv_z: float):
+    """The cap every demo loop applied to its WORLD action before wf21."""
+    prev = [Action4D()]
+
+    def clip(new, old, m):
+        return old + max(-m, min(m, new - old))
+
+    def lim(a: Action4D) -> Action4D:
+        p = prev[0]
+        out = Action4D(vx=clip(a.vx, p.vx, dv_h), vy=clip(a.vy, p.vy, dv_h),
+                       vz_up=clip(a.vz_up, p.vz_up, dv_z), yaw_rate=a.yaw_rate)
+        prev[0] = out
+        return out
+    return lim
+
+
+def test_the_demo_loops_rate_limiters_cap_the_world_reading_through_a_turn():
+    """The demo loops hand the Shield a body action and smooth it first. A
+    per-axis clip does not commute with a rotation, and a body-frame clip
+    does not see a turn: a steady 3 m/s forward while the heading turns 90
+    degrees swings the world velocity through 90 degrees. The limiters
+    (demo/aerialvla_demo.py RateLimiter - also aerialvla_pas_demo,
+    semantic_demo, semantic_seek -, demo/real_vla_demo.py RateLimiter,
+    demo/run_demo.py RateLimiter.smooth_body) cap the change of the WORLD
+    reading, the cap they applied before wf21, and hand back the body frame:
+    tick for tick the world limiter's output, in the body frame. The turn is
+    capped (the body action handed back differs from the one handed in),
+    which a body-frame cap would not do."""
+    sys.path.insert(0, str(ROOT / "demo"))
+    if "airsim" not in sys.modules:                   # run_demo imports it at the top
+        import types
+        sys.modules["airsim"] = types.ModuleType("airsim")
+    import aerialvla_demo
+    import real_vla_demo
+    import run_demo
+    from guardrail.frames import limit_in_world
+    makers = {
+        "aerialvla_demo": (lambda: aerialvla_demo.RateLimiter(0.25, 0.15),
+                           lambda lim, b, h: lim(b, h), 0.25, 0.15),
+        "real_vla_demo": (lambda: real_vla_demo.RateLimiter(0.25, 0.15),
+                          lambda lim, b, h: lim(b, h), 0.25, 0.15),
+        "run_demo": (lambda: run_demo.RateLimiter(0.45, 0.25),
+                     lambda lim, b, h: lim.smooth_body(b, h), 0.45, 0.25),
+    }
+    for name, (make, call, dv_h, dv_z) in makers.items():
+        lim, ref = make(), _world_limiter(dv_h, dv_z)
+        if name == "run_demo":
+            call(lim, Action4D(), 0.0)                # its first call is passed through
+        capped = 0
+        # 30 ticks steady (up to speed), a 90-degree turn in 6 ticks, 30
+        # steady: all off the quarter turns
+        heads = [0.37] * 30 + [0.37 + 15.0 * i for i in range(1, 7)] + [90.37] * 30
+        for i, h in enumerate(heads):
+            body = Action4D(vx=3.0, vy=0.0, vz_up=0.8, yaw_rate=0.5)
+            got = call(lim, body, h)
+            want = body_action(ref(from_body(3.0, 0.0, 0.8, 0.5, h)), h)
+            assert max(abs(got.vx - want.vx), abs(got.vy - want.vy),
+                       abs(got.vz_up - want.vz_up)) <= 1e-12, (name, i, got, want)
+            assert got.yaw_rate == body.yaw_rate
+            if i == 29:
+                assert abs(got.vx - 3.0) <= 1e-12 and abs(got.vy) <= 1e-12, (name, got)
+            if i >= 30:
+                capped += math.hypot(got.vx - body.vx, got.vy - body.vy) > 0.05
+        assert capped >= 3, (name, capped)
+        # once the turn is over and the cap has caught up, the steady body
+        # action comes back as it went in (to the round trip's few ulp)
+        assert abs(got.vx - 3.0) <= 1e-12 and abs(got.vy) <= 1e-12, (name, got)
+    # the helper itself: limit_in_world(identity) is the round trip
+    for h in ROT_HEADINGS:
+        b = Action4D(vx=2.0, vy=-1.0, vz_up=0.3, yaw_rate=0.1)
+        out = limit_in_world(lambda w: w, b, h)
+        assert max(abs(out.vx - b.vx), abs(out.vy - b.vy)) <= 4 * 2.2e-16 * 2.0
+
+
+def test_rebase_body_turns_a_body_action_by_the_heading_change():
+    """frames.rebase_body: forward at a capture heading of 90 (East) is, seen
+    from heading 0, to the right; in general the same world velocity, turned
+    in the body frame (no world frame in between)."""
+    from guardrail.frames import rebase_body
+    got = rebase_body(Action4D(vx=1.5, vy=0.0, vz_up=0.2, yaw_rate=0.0), 90.0, 0.0)
+    assert (got.vx, got.vy, got.vz_up) == (0.0, 1.5, 0.2)
+    rng = random.Random(9)
+    for _ in range(200):
+        h0, h1 = rng.uniform(-360, 360), rng.uniform(-360, 360)
+        b = Action4D(vx=rng.uniform(-5, 5), vy=rng.uniform(-5, 5))
+        w = from_body(b.vx, b.vy, 0.0, 0.0, h0)
+        want = body_action(w, h1)
+        got = rebase_body(b, h0, h1)
+        assert max(abs(got.vx - want.vx), abs(got.vy - want.vy)) <= 1e-13, (h0, h1, got, want)
+
+
 # --------------------------------------------------------------------------- #
 # One crossing: the source
 # --------------------------------------------------------------------------- #
@@ -273,22 +573,38 @@ ADAPTERS = {
     "training/collect_aerialvla_data.py",   # the expert data collector (no Shield)
 }
 
-# Hand-written cos / sin of a heading inside a velocity: the sites that are
-# NOT a body -> NED crossing of a flown action, each with its reason.
+# Hand-written rotations of a velocity: every function, in every scanned
+# module, whose velocity commands / Action4D arguments / vx-vy assignments use
+# BOTH cos(E) and sin(E) of the same expression E - whatever E is called -
+# directly or through a name bound to one (c, s = cos(t), sin(t)). Only these
+# sites may, each with its reason; a new one fails here.
 TRIG_SITES = {
     # Inside the projection's own world frame (body in / body out at its
-    # interface): the direction that backs away from the heading.
+    # interface): directions that turn with the aircraft.
     ("guardrail/shield.py", "_recover_from_overhead"):
-        "the projection's internal world frame",
+        "the projection's internal world frame: backing away from the heading",
+    ("guardrail/shield.py", "_clear_dir_candidates"):
+        "the projection's internal world frame: 12 bearings from the nose",
+    # A relative turn of an action by an angle: 2-D rotations commute, so it
+    # is the same turn in the body frame and in the world frame.
+    ("guardrail/prefix_consumer.py", "_turned"): "a relative turn of the action",
     # World-frame PRODUCERS upstream of the Shield's input contract: their
     # controller composes its command in the world frame, and the rail hands
     # the Shield its body-frame reading (frames.to_body / filter_world_as_body).
     ("guardrail/vla_link.py", "_rate_tick"):
-        "the step tracker: a step's speed along the heading, in the world frame",
+        "the step tracker (a world-frame controller): a rate step's (forward, right) "
+        "speed at the heading, in the world frame",
     ("demo/follow_vlm.py", "fly"):
-        "the follow controller's orbit term, composed in the world frame",
+        "the follow controller's orbit and look terms, composed in the world frame",
     ("demo/pas_ardupilot/perception_node.py", "step"):
         "FollowPilot's world record of its command (it hands over the body action)",
+    # The expert data collector (no Shield): its bearing-error steering
+    # makes a body (forward) speed; the command goes through body_to_local_ned.
+    ("training/collect_aerialvla_data.py", "main"): "the expert's bearing-error steering",
+    # The headless harness's simulated world: the wind disturbance on the
+    # vehicle and the scenario's rotation, not a command crossing.
+    ("experiments/sweep_scenarios.py", "_episode"):
+        "the harness's wind model and scenario rotation (the simulated world)",
     # Offline reading of logs, never sent.
     ("tools/replay_from_bag.py", "world_from_body"): "offline bag replay record",
     ("experiments/analyze_semantic_ab.py", "_world_xy"): "offline analysis of logged rows",
@@ -296,7 +612,6 @@ TRIG_SITES = {
 
 VEL_SINKS = {"move_by_velocity_async", "moveByVelocityAsync", "moveByVelocityZAsync",
              "set_position_target_local_ned_send", "send_velocity"}
-HEADINGISH = ("yaw", "psi", "heading", "hdg")
 # A velocity's name: vx, vy, vn, ve, v_n, v_e, with an optional one-letter
 # prefix (cvx, gvy, ...).
 VEL_NAME = re.compile(r"^[a-z]?v_?(x|y|n|e)$")
@@ -332,6 +647,93 @@ def _name(node) -> str:
     if isinstance(node, ast.Attribute):
         return node.attr
     return ""
+
+
+def _own_nodes(fn):
+    """The nodes of a function body, not those of a function nested in it."""
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        n = stack.pop()
+        yield n
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(n))
+
+
+def _trig_atoms(expr, bound) -> set:
+    """("cos" | "sin", source of the angle) for each cos / sin call in
+    `expr`, and those of each name in it that `bound` maps."""
+    out = set()
+    for n in ast.walk(expr):
+        if isinstance(n, ast.Name) and n.id in bound:
+            out |= bound[n.id]
+        if isinstance(n, ast.Call) and _name(n.func) in ("cos", "sin") and n.args:
+            out.add((_name(n.func), ast.unparse(n.args[0])))
+    return out
+
+
+def _rotation_sites(modules) -> dict:
+    """(module, function) -> sorted line numbers of the velocity sinks that use
+    cos(E) and sin(E) of the same E (see TRIG_SITES)."""
+    found = {}
+    for rel, tree in modules:
+        if rel == "guardrail/frames.py":
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            nodes = list(_own_nodes(fn))
+            bound: dict = {}
+            changed = True
+            while changed:                        # names bound to a cos / sin, to a fixpoint
+                changed = False
+                for n in nodes:
+                    if not isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) \
+                            or n.value is None:
+                        continue
+                    pairs = []
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                        if isinstance(t, ast.Tuple) and isinstance(n.value, ast.Tuple) \
+                                and len(t.elts) == len(n.value.elts):
+                            pairs += list(zip(t.elts, n.value.elts))
+                        elif isinstance(t, ast.Tuple):
+                            pairs += [(e, n.value) for e in t.elts]
+                        else:
+                            pairs.append((t, n.value))
+                    for t, v in pairs:
+                        a = _trig_atoms(v, bound)
+                        if isinstance(t, ast.Name) and a and not a <= bound.get(t.id, set()):
+                            bound[t.id] = bound.get(t.id, set()) | a
+                            changed = True
+            sinks = []
+            for n in nodes:
+                exprs = []
+                if isinstance(n, ast.Call) and (_name(n.func) == "Action4D"
+                                                or _name(n.func) in VEL_SINKS):
+                    exprs = list(n.args) + [k.value for k in n.keywords
+                                            if k.arg in (None, "vx", "vy")]
+                elif isinstance(n, (ast.Assign, ast.AugAssign)):
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    tnames = {_name(t) for t in targets}
+                    tnames |= {_name(e) for t in targets if isinstance(t, ast.Tuple)
+                               for e in t.elts}
+                    if any(VEL_NAME.match(t or "") for t in tnames):
+                        exprs = [n.value]
+                elif isinstance(n, ast.Dict):
+                    exprs = [v for k, v in zip(n.keys, n.values)
+                             if isinstance(k, ast.Constant) and k.value in ("vx", "vy")]
+                atoms = set()
+                for e in exprs:
+                    atoms |= _trig_atoms(e, bound)
+                if atoms:
+                    sinks.append((n.lineno, atoms))
+            every = set().union(*(a for _, a in sinks)) if sinks else set()
+            turned = {e for f, e in every if f == "cos" and ("sin", e) in every}
+            if turned:
+                found[(rel, fn.name)] = sorted(
+                    {ln for ln, a in sinks
+                     if any((f, e) in a for e in turned for f in ("cos", "sin"))})
+    return found
 
 
 def test_from_body_and_to_local_ned_are_used_only_by_the_projection_and_one_record():
@@ -374,88 +776,140 @@ def test_every_rail_s_adapter_calls_the_one_body_to_ned_function_and_nothing_els
 
 
 def test_no_velocity_is_built_from_a_hand_written_rotation_of_the_heading():
-    """A velocity command or an Action4D whose arguments - or a vx / vy
-    assignment whose value - contain cos / sin of a heading is a crossing
-    written by hand; only the listed producer and record sites may."""
-    bad, used = [], set()
-
-    def trig_of_heading(expr, trig_names=frozenset()) -> bool:
-        for n in ast.walk(expr):
-            if isinstance(n, ast.Name) and n.id in trig_names:
-                return True              # a cos / sin of the heading computed above
-            if isinstance(n, ast.Call) and _name(n.func) in ("cos", "sin"):
-                inner = {(_name(x) or "").lower() for x in ast.walk(n)}
-                if any(h in s for s in inner for h in HEADINGISH):
-                    return True
-        return False
-
-    for rel, tree in _modules():
-        if rel == "guardrail/frames.py":
-            continue
-        fn_of = _enclosing(tree)
-        # Per function: names bound to a cos / sin of the heading (c, s =
-        # math.cos(psi), math.sin(psi)), so a rotation written through them
-        # is seen too.
-        trig = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and trig_of_heading(node.value):
-                for t in node.targets:
-                    for e in (t.elts if isinstance(t, ast.Tuple) else [t]):
-                        if isinstance(e, ast.Name):
-                            trig.setdefault(fn_of.get(id(node), ""), set()).add(e.id)
-        for node in ast.walk(tree):
-            exprs = []
-            if isinstance(node, ast.Call) and (_name(node.func) == "Action4D"
-                                               or _name(node.func) in VEL_SINKS):
-                exprs = list(node.args) + [k.value for k in node.keywords
-                                           if k.arg in (None, "vx", "vy")]
-            elif isinstance(node, (ast.Assign, ast.AugAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                tnames = {_name(t) for t in targets}
-                tnames |= {_name(e) for t in targets if isinstance(t, ast.Tuple)
-                           for e in t.elts}
-                if any(VEL_NAME.match(t or "") for t in tnames):
-                    exprs = [node.value]
-            elif isinstance(node, ast.Dict):
-                exprs = [v for k, v in zip(node.keys, node.values)
-                         if isinstance(k, ast.Constant) and k.value in ("vx", "vy")]
-            fn = fn_of.get(id(node), "")
-            if not any(trig_of_heading(e, frozenset(trig.get(fn, ()))) for e in exprs):
-                continue
-            key = (rel, fn)
-            if key in TRIG_SITES:
-                used.add(key)
-                continue
-            bad.append(f"{rel}:{node.lineno} in {fn or '<module>'}")
-    assert not bad, "hand-written heading rotations into a velocity: " + "; ".join(bad)
-    assert used == set(TRIG_SITES), f"stale TRIG_SITES entries: {set(TRIG_SITES) - used}"
+    """A velocity command, an Action4D, or a vx / vy assignment built from
+    cos(E) and sin(E) of the same angle E - whatever the angle is called -
+    is a rotation written by hand; only the listed TRIG_SITES may."""
+    found = _rotation_sites(_modules())
+    bad = [f"{rel}:{lines} in {fn}" for (rel, fn), lines in sorted(found.items())
+           if (rel, fn) not in TRIG_SITES]
+    assert not bad, "hand-written rotations into a velocity: " + "; ".join(bad)
+    stale = set(TRIG_SITES) - set(found)
+    assert not stale, f"stale TRIG_SITES entries: {stale}"
 
 
 LOOPS = sorted(ADAPTERS - {"sitl/mavlink_adapter_node.py", "demo/pas_ardupilot/autopilot.py"}
                | {"demo/vla_mission.py", "demo/pas_ardupilot/perception_node.py"})
 
+# Every call of the Shield's WORLD-frame entries - `.filter(state, action)`,
+# `.advise(state, action)`, `._check(state, action)`: an attribute call of
+# that name with two or more positional arguments, on ANY receiver - outside
+# the Shield itself, each with its reason. None of them is on a command path:
+# the harness's judging Shields re-check what flew, the rest are offline
+# (replays, KPI and dataset tools, the compiler's cost-map agreement). The
+# key is (module, function, receiver as written); a new caller anywhere, or a
+# new receiver at a listed site, fails until it is named here.
+WORLD_ENTRY_CALLERS = {
+    ("experiments/sweep_scenarios.py", "_episode", "checker"):
+        "the harness's judge: re-checks what flew",
+    ("experiments/sweep_scenarios.py", "_episode", "oracle"):
+        "the harness's oracle: the hindsight verdict",
+    ("experiments/sweep_scenarios.py", "_episode", "vjudge"):
+        "the harness's vehicle judge: the vehicle's velocity, re-checked",
+    ("experiments/verify_shield_yaw.py", "replay", "shield"): "offline replay of a log",
+    ("guardrail/compiler.py", "cost_map_agreement", "sh"): "offline cost-map agreement",
+    ("guardrail/repair.py", "repair", "sh"):
+        "PathRepair's re-check, inside the projection's internal world frame",
+    ("tools/build_deck_data.py", "*", "sh"): "offline deck figures",
+    ("tools/failsafe_rubric.py", "*", "self"): "offline rubric (a Shield subclass)",
+    ("tools/msl_dem_kpi.py", "*", "sh"): "offline KPI tool",
+    ("tools/own_velocity_closed_loop.py", "*", "sh"): "offline closed loop (no adapter)",
+    ("tools/prefix_eval.py", "*", "sh"): "offline replay of a recorded run",
+    ("tools/profile_shield_tick.py", "*", "shield"): "offline timing",
+    ("tools/replay_q3.py", "*", "shield"): "offline open-loop replay",
+    ("tools/replay_standoff_feed.py", "*", "sh"): "offline replay of logged flights",
+    ("tools/wgs84_bind_compare.py", "*", "sh"): "offline comparison",
+    ("tools/wp1_roundtrip_kpi.py", "*", "shield"): "offline KPI tool",
+    ("training/evaluate_policy.py", "*", "shield"): "offline evaluator (pos += v dt)",
+    ("training/generate_dataset.py", "*", "shield"): "offline dataset rollouts",
+    ("training/generate_v2.py", "*", "shield"): "offline dataset rollouts",
+}
+
+
+def _world_entry_calls(modules):
+    """[(module, function, receiver, line)] of every world-frame Shield entry
+    call outside guardrail/shield.py (see WORLD_ENTRY_CALLERS)."""
+    out = []
+    for rel, tree in modules:
+        if rel == "guardrail/shield.py":
+            continue
+        fn_of = _enclosing(tree)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("filter", "advise", "_check")
+                    and len(node.args) >= 2):
+                out.append((rel, fn_of.get(id(node), ""), ast.unparse(node.func.value),
+                            node.lineno))
+    return out
+
+
+def _unlisted(calls):
+    return [c for c in calls if (c[0], c[1], c[2]) not in WORLD_ENTRY_CALLERS
+            and (c[0], "*", c[2]) not in WORLD_ENTRY_CALLERS]
+
 
 def test_no_rail_or_demo_loop_hands_its_shield_a_world_frame_action():
     """Every rail and demo loop calls the Shield with the body frame
-    (filter_body / filter_world_as_body / advise_body / check_body); a
-    `<...shield...>.filter(` call there - the world-frame entry - fails. The
-    harness's judging Shields (checker, oracle, vjudge) re-check what flew
-    and are not the flying Shield."""
-    bad, n_body = [], 0
+    (filter_body / filter_world_as_body / advise_body / check_body). Every
+    call of a world-frame entry anywhere outside the Shield, on any receiver,
+    is a listed judge or offline tool (WORLD_ENTRY_CALLERS); none is in a
+    module that sends a velocity command or calls the adapter function,
+    except the harness's judges."""
+    calls = _world_entry_calls(_modules())
+    bad = _unlisted(calls)
+    assert not bad, "world-frame Shield calls not named in WORLD_ENTRY_CALLERS: " + "; ".join(
+        f"{m}:{ln} {r}.<entry> in {f or '<module>'}" for m, f, r, ln in bad)
+    keys = {(m, f, r) for m, f, r, _ in calls} | {(m, "*", r) for m, _, r, _ in calls}
+    stale = set(WORLD_ENTRY_CALLERS) - keys
+    assert not stale, f"stale WORLD_ENTRY_CALLERS entries: {stale}"
+    flying = set(LOOPS) | ADAPTERS
+    for rel, tree in _modules():
+        if any(isinstance(n, ast.Call) and _name(n.func) in VEL_SINKS for n in ast.walk(tree)):
+            flying.add(rel)
+    on_flying = {m for m, _, _, _ in calls if m in flying}
+    assert on_flying <= {"experiments/sweep_scenarios.py"}, on_flying
+    n_body = 0
     for rel in LOOPS:
-        tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                continue
-            recv = ast.unparse(node.func.value).lower()
-            if node.func.attr in ("filter_body", "advise_body", "check_body"):
-                n_body += 1
-            if node.func.attr in ("filter", "advise", "_check") and "shield" in recv:
-                bad.append(f"{rel}:{node.lineno} {ast.unparse(node.func)}(")
         src = (ROOT / rel).read_text(encoding="utf-8")
+        n_body += len(re.findall(r"\.(filter_body|advise_body|check_body)\(", src))
         n_body += src.count("filter_world_as_body(")
-    assert not bad, "world-frame Shield calls on a flying loop: " + "; ".join(bad)
     assert n_body >= len(LOOPS), n_body
+
+
+def test_the_crossing_detectors_catch_a_planted_crossing():
+    """The detectors above, mutation-tested: a synthetic new rail module
+    with (a) a hand rotation through an angle named nothing like a heading,
+    (b) the same through names bound to cos / sin, (c) a world-frame filter
+    call on a receiver not named "shield", is caught by each detector; and
+    the real modules plus a harmless scalar cos (no matching sin) are not."""
+    planted = {
+        "demo/new_rail_a.py": (
+            "import math\n"
+            "def loop(drone, fwd, th):\n"
+            "    vx = fwd * math.cos(th); vy = fwd * math.sin(th)\n"
+            "    drone.move_by_velocity_async(vx, vy, 0)\n"),
+        "demo/new_rail_b.py": (
+            "import math\n"
+            "def loop(link, f, r, ang):\n"
+            "    c, s = math.cos(ang), math.sin(ang)\n"
+            "    a, b = f * c - r * s, f * s + r * c\n"
+            "    link.send_velocity(a, b, 0.0)\n"),
+        "demo/new_rail_c.py": (
+            "def loop(guard, st, a):\n"
+            "    d = guard.filter(st, a)\n"
+            "    return d.emitted\n"),
+        "demo/harmless.py": (
+            "import math\n"
+            "from guardrail.models import Action4D\n"
+            "def scale(a, err):\n"
+            "    k = max(0.25, math.cos(err))\n"
+            "    return Action4D(vx=a.vx * k, vy=a.vy * k)\n"),
+    }
+    mods = [(rel, ast.parse(src)) for rel, src in planted.items()]
+    rot = _rotation_sites(mods)
+    assert set(rot) == {("demo/new_rail_a.py", "loop"), ("demo/new_rail_b.py", "loop")}, rot
+    assert _unlisted(_world_entry_calls(mods)) == [("demo/new_rail_c.py", "loop", "guard", 2)]
+    real = _rotation_sites(_modules())
+    assert set(real) == set(TRIG_SITES), set(real) ^ set(TRIG_SITES)
 
 
 # --------------------------------------------------------------------------- #

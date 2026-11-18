@@ -3474,7 +3474,7 @@ class Shield:
         return list(self._predict(state, action, self._clear_horizon_s(action),
                                   arc_path="arc"))
 
-    def _clear_dir_candidates(self, a: Action4D, cap: float):
+    def _clear_dir_candidates(self, a: Action4D, cap: float, yaw_deg: float = 0.0):
         """Recovery headings: 12 bearings x 2 speeds, inheriting `a`'s vertical
         and yaw components (those were already repaired by the altitude operator,
         so they must not be re-invented here) — re-clamped so a candidate can
@@ -3490,8 +3490,18 @@ class Shield:
             # sites below.
             ymax = math.radians(k.yaw_rate_max_dps)
             yr = max(-ymax, min(ymax, yr))
+        # The bearings are the aircraft's own (WP3-04 / ARCH-04, 2026-11-18):
+        # every 30 degrees from its nose, `yaw_deg` the state's heading, so
+        # the candidates - and a tie between equal ones, which goes to the
+        # first - turn with the aircraft and the search is the same in the
+        # frame the VLA emits in at every heading (tests/
+        # test_frame_boundary.py). Until then they were every 30 degrees
+        # from North: the same at heading 0 (bit for bit), and at any other
+        # heading a different candidate set. A state without a heading
+        # (yaw_deg 0) searches from North, as before.
+        nose = math.radians(yaw_deg) if math.isfinite(yaw_deg) else 0.0
         for k in range(12):
-            ang = k * math.pi / 6.0
+            ang = nose + k * math.pi / 6.0
             ux, uy = math.cos(ang), math.sin(ang)
             for frac in (1.0, 0.5):
                 spd = cap * frac
@@ -3503,7 +3513,7 @@ class Shield:
         if (self._dist if f is None else f[0]) is None:
             return None
         best, best_key = None, None
-        for cand in self._clear_dir_candidates(a, cap):
+        for cand in self._clear_dir_candidates(a, cap, state.yaw_deg):
             key = (self._clear_min_dist(state, cand, f),
                    cand.vx * a.vx + cand.vy * a.vy)
             if best_key is None or key > best_key:
@@ -3525,7 +3535,7 @@ class Shield:
         clearance push and a stand-off ring disagreed the best effort could fly
         straight at the subject whose ring the aircraft was already inside."""
         clean = clean_key = best = best_key = None
-        for cand in self._clear_dir_candidates(a, cap):
+        for cand in self._clear_dir_candidates(a, cap, state.yaw_deg):
             key = (self._clear_min_dist(state, cand) if self._dist is not None else 0.0,
                    cand.vx * raw.vx + cand.vy * raw.vy)
             bkey = (-self._deepens(state, cand),) + key
@@ -7028,10 +7038,20 @@ class Shield:
         rotates the repair with them; the speed cap is a norm, and the
         vertical and yaw caps do not involve the heading. So repairing the
         rotated action against the world geometry is the body-frame repair,
-        rotated, without rotating every rule's geometry on every tick. One
-        choice is not of that kind: a tie between equally near edges with no
-        heading to break it goes to the first along the ring's stored
-        (world) order (`escape_direction`).
+        rotated, without rotating every rule's geometry on every tick. The
+        grant's own reference implementation does the same per operator
+        (kuanting-vla-uav-guardrail safety_shield/repair.py: each operator
+        takes and returns the body action and turns it into the IR's ENU
+        plane for its geometry, `body_to_enu` ... `enu_to_body`); this turns
+        once around the stack. Pinned per rule family in tests/
+        test_frame_boundary.py (zone, envelopes, corridor, stand-off and its
+        overhead recovery, PathRepair's stand-off detour at any heading; the
+        clearance rule on a raster map and its direction search, whose
+        bearings are the aircraft's own since 2026-11-18, at the quarter
+        turns, where a raster turns exactly). One choice is not of that
+        kind: a tie between equally near edges with no heading to break it
+        goes to the first along the ring's stored (world) order
+        (`escape_direction`).
 
         THE ARC (`arc`, 2026-11-17; None: the Shield's `arc_forecast`, off
         by default). A body-frame command holds its forward / right velocity
