@@ -53,50 +53,50 @@
    "null_msl_as_agl_sees_msl_escapes": true
   },
   "not_gated": {
-   "oracle_p0_zero": false,
-   "oracle_p0_ticks": 189,
+   "oracle_p0_zero": true,
+   "oracle_p0_ticks": 0,
    "oracle_p0_ticks_by_rule": {
     "msl-ceiling": 0,
-    "agl-band": 189
+    "agl-band": 0
    }
   }
  },
- "p0_counts": "harness true-P0 0; independent oracle 189 P0 ticks (agl-band, max 0.081 m under the floor, level-cross only); MSL-band ticks 0",
+ "p0_counts": "harness true-P0 0; independent oracle 0 P0 ticks (agl-band, max 0.000 m under the floor, no pilot); MSL-band ticks 0",
  "finding_agl_over_dem": {
-  "oracle_agl_ticks": 189,
+  "oracle_agl_ticks": 0,
   "by_pilot": {
-   "level-cross": 189,
+   "level-cross": 0,
    "climb-cross": 0,
    "terrain-follow": 0,
    "descend": 0
   },
-  "max_floor_shortfall_m": 0.0805,
-  "mechanism": "Shield forecast holds the ground under the aircraft flat over the lookahead: a level command over rising ground passes the AGL floor check at the query point and the next tick's ground is higher; the repair restores the floor the tick after (MSL rules are not affected)"
+  "max_floor_shortfall_m": 0.0,
+  "mechanism": "until 2026-11-18 (wf20) the Shield forecast held the ground under the aircraft flat over the lookahead: a level command over rising ground passed the AGL floor check at the query point and the next tick's ground was higher (189 oracle ticks, max 0.081 m under the floor, level-cross only). Since wf20 every forecast pose stands over its own ground and the altitude repair climbs on that forecast; oracle_agl_ticks is this run's count. MSL rules keep the flat forecast (judged in MSL)"
  },
  "scope": "headless harness (experiments/sweep_scenarios.py run_episode, ideal vehicle, seed 1001); synthetic WGS84 DEM; no SITL, hil or PAS flight",
  "summary": {
   "episodes_per_arm": 12,
   "on_requested_ticks_msl_ceiling": 2061,
-  "on_requested_ticks_agl_band": 1110,
+  "on_requested_ticks_agl_band": 1860,
   "on_harness_true_p0_ticks": 0,
-  "on_oracle_p0_ticks": 189,
+  "on_oracle_p0_ticks": 0,
   "on_oracle_msl_ticks": 0,
-  "on_oracle_agl_ticks": 189,
+  "on_oracle_agl_ticks": 0,
   "on_oracle_agl_ticks_by_pilot": {
-   "level-cross": 189,
+   "level-cross": 0,
    "climb-cross": 0,
    "terrain-follow": 0,
    "descend": 0
   },
-  "on_max_agl_floor_shortfall_m": 0.0805,
+  "on_max_agl_floor_shortfall_m": 0.0,
   "on_max_msl_band_excess_m": 0.0,
-  "on_min_agl_m": 7.919,
+  "on_min_agl_m": 10.192,
   "on_max_msl_m": 616.888,
   "null_off_oracle_p0_ticks": 4798,
   "null_off_episodes_violating": 12,
   "null_msl_as_agl_oracle_msl_ticks": 5902,
   "null_msl_as_agl_episodes_violating": 12,
-  "wall_s": 22.1
+  "wall_s": 69.2
  },
  "episodes": {
   "on": [
@@ -104,32 +104,33 @@
     "pilot": "level-cross",
     "x0": -60.0,
     "arm": "on",
-    "ticks": 600,
+    "ticks": 414,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 63
+     "agl-band": 311
     },
     "oracle": {
      "msl_ticks": 0,
-     "agl_ticks": 63,
-     "agl_resampled_ticks": 63,
-     "p0_ticks": 63,
-     "min_agl_m": 7.919,
-     "max_msl_m": 610.604,
-     "max_agl_floor_shortfall_m": 0.0805,
+     "agl_ticks": 0,
+     "agl_resampled_ticks": 0,
+     "p0_ticks": 0,
+     "min_agl_m": 10.192,
+     "max_msl_m": 600.549,
+     "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
     "fsm_states": [
      "Brake",
      "Loiter",
-     "Normal"
+     "Normal",
+     "RTL"
     ],
     "end": {
      "x": -60.0,
-     "y": 133.5,
-     "up": 13.53,
-     "msl_m": 610.6
+     "y": 1.5,
+     "up": 16.72,
+     "msl_m": 600.55
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -137,32 +138,33 @@
     "pilot": "level-cross",
     "x0": 0.0,
     "arm": "on",
-    "ticks": 600,
+    "ticks": 414,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 63
+     "agl-band": 311
     },
     "oracle": {
      "msl_ticks": 0,
-     "agl_ticks": 63,
-     "agl_resampled_ticks": 63,
-     "p0_ticks": 63,
-     "min_agl_m": 7.919,
-     "max_msl_m": 610.904,
-     "max_agl_floor_shortfall_m": 0.0805,
+     "agl_ticks": 0,
+     "agl_resampled_ticks": 0,
+     "p0_ticks": 0,
+     "min_agl_m": 10.192,
+     "max_msl_m": 600.849,
+     "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
     "fsm_states": [
      "Brake",
      "Loiter",
-     "Normal"
+     "Normal",
+     "RTL"
     ],
     "end": {
      "x": 0.0,
-     "y": 133.5,
-     "up": 13.53,
-     "msl_m": 610.9
+     "y": 1.5,
+     "up": 16.72,
+     "msl_m": 600.85
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -170,32 +172,33 @@
     "pilot": "level-cross",
     "x0": 60.0,
     "arm": "on",
-    "ticks": 600,
+    "ticks": 414,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 63
+     "agl-band": 311
     },
     "oracle": {
      "msl_ticks": 0,
-     "agl_ticks": 63,
-     "agl_resampled_ticks": 63,
-     "p0_ticks": 63,
-     "min_agl_m": 7.919,
-     "max_msl_m": 611.204,
-     "max_agl_floor_shortfall_m": 0.0805,
+     "agl_ticks": 0,
+     "agl_resampled_ticks": 0,
+     "p0_ticks": 0,
+     "min_agl_m": 10.192,
+     "max_msl_m": 601.149,
+     "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
     "fsm_states": [
      "Brake",
      "Loiter",
-     "Normal"
+     "Normal",
+     "RTL"
     ],
     "end": {
      "x": 60.0,
-     "y": 133.5,
-     "up": 13.53,
-     "msl_m": 611.2
+     "y": 1.5,
+     "up": 16.72,
+     "msl_m": 601.15
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -407,18 +410,18 @@
     "pilot": "descend",
     "x0": -60.0,
     "arm": "on",
-    "ticks": 401,
+    "ticks": 367,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 307
+     "agl-band": 309
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 12.442,
+     "min_agl_m": 14.623,
      "max_msl_m": 603.7,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -431,9 +434,9 @@
     ],
     "end": {
      "x": -60.0,
-     "y": 1.9,
-     "up": 16.62,
-     "msl_m": 600.48
+     "y": 1.6,
+     "up": 16.06,
+     "msl_m": 599.9
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -441,18 +444,18 @@
     "pilot": "descend",
     "x0": 0.0,
     "arm": "on",
-    "ticks": 401,
+    "ticks": 367,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 307
+     "agl-band": 309
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 12.442,
+     "min_agl_m": 14.623,
      "max_msl_m": 604.0,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -465,9 +468,9 @@
     ],
     "end": {
      "x": 0.0,
-     "y": 1.9,
-     "up": 16.62,
-     "msl_m": 600.78
+     "y": 1.6,
+     "up": 16.06,
+     "msl_m": 600.2
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -475,18 +478,18 @@
     "pilot": "descend",
     "x0": 60.0,
     "arm": "on",
-    "ticks": 401,
+    "ticks": 367,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 307
+     "agl-band": 309
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 12.442,
+     "min_agl_m": 14.624,
      "max_msl_m": 604.3,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -499,9 +502,9 @@
     ],
     "end": {
      "x": 60.0,
-     "y": 1.9,
-     "up": 16.62,
-     "msl_m": 601.08
+     "y": 1.6,
+     "up": 16.06,
+     "msl_m": 600.5
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    }
@@ -512,10 +515,10 @@
     "x0": -60.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 464,
+    "harness_true_p0_ticks": 514,
     "requested_ticks": {
      "msl-ceiling": 282,
-     "agl-band": 464
+     "agl-band": 514
     },
     "oracle": {
      "msl_ticks": 0,
@@ -541,10 +544,10 @@
     "x0": 0.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 464,
+    "harness_true_p0_ticks": 514,
     "requested_ticks": {
      "msl-ceiling": 232,
-     "agl-band": 464
+     "agl-band": 514
     },
     "oracle": {
      "msl_ticks": 0,
@@ -570,10 +573,10 @@
     "x0": 60.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 464,
+    "harness_true_p0_ticks": 514,
     "requested_ticks": {
      "msl-ceiling": 170,
-     "agl-band": 464
+     "agl-band": 514
     },
     "oracle": {
      "msl_ticks": 0,
@@ -602,7 +605,7 @@
     "harness_true_p0_ticks": 427,
     "requested_ticks": {
      "msl-ceiling": 427,
-     "agl-band": 90
+     "agl-band": 111
     },
     "oracle": {
      "msl_ticks": 317,
@@ -631,7 +634,7 @@
     "harness_true_p0_ticks": 454,
     "requested_ticks": {
      "msl-ceiling": 454,
-     "agl-band": 90
+     "agl-band": 111
     },
     "oracle": {
      "msl_ticks": 319,
@@ -660,7 +663,7 @@
     "harness_true_p0_ticks": 454,
     "requested_ticks": {
      "msl-ceiling": 454,
-     "agl-band": 90
+     "agl-band": 111
     },
     "oracle": {
      "msl_ticks": 322,
@@ -773,10 +776,10 @@
     "x0": -60.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 546,
+    "harness_true_p0_ticks": 562,
     "requested_ticks": {
      "msl-ceiling": 538,
-     "agl-band": 546
+     "agl-band": 562
     },
     "oracle": {
      "msl_ticks": 462,
@@ -802,10 +805,10 @@
     "x0": 0.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 546,
+    "harness_true_p0_ticks": 562,
     "requested_ticks": {
      "msl-ceiling": 538,
-     "agl-band": 546
+     "agl-band": 562
     },
     "oracle": {
      "msl_ticks": 459,
@@ -831,10 +834,10 @@
     "x0": 60.0,
     "arm": "off",
     "ticks": 600,
-    "harness_true_p0_ticks": 546,
+    "harness_true_p0_ticks": 562,
     "requested_ticks": {
      "msl-ceiling": 534,
-     "agl-band": 546
+     "agl-band": 562
     },
     "oracle": {
      "msl_ticks": 457,

@@ -657,16 +657,21 @@ custom data with a note (both load through the flight gate with no ground;
 leave them at their default 0); the stress harness's
 `--backend sitl|hil` refuses a scenario with a `ground` (its post-flight
 scoring has none), so this profile is flown by the commands above, not by
-a campaign. The AGL band over the grid has a known gap (the Shield's
-forecast holds the ground flat over its lookahead; `docs/data/
-msl_dem_rail.json` `finding_agl_over_dem`): headless, the independent
-oracle counts 189 P0 ticks a few centimetres (at most 0.081 m) under the
-AGL floor on level flight into the ridge, while the harness's own true-P0
-count is 0 (its judge Shield has the same flat-ground forecast); the MSL
-rule has no such gap (0 oracle ticks). On the node, the RTL watch
-(`rtl_path.check_leg`, its climb to `RTL_ALT` measured above home) is fed
-the height above the grid, the reference the Shield's bands are in, so over
-the ridge the leg's climb is judged against the wrong reference. The
+a campaign. The AGL band over the grid: until 2026-11-18 (wf20) the
+Shield's forecast held the ground flat over its lookahead, and the first
+flight of this profile (`msl_dem_sitl_01`) went under the AGL floor for
+2.0 s (at most 0.49 m; headless, 189 oracle ticks). Since wf20 each
+forecast pose stands over its own ground and the altitude repair climbs on
+that forecast: headless the oracle counts 0 AGL and 0 MSL ticks
+(`docs/data/msl_dem_rail.json` `finding_agl_over_dem`), and the stored
+rows of `msl_dem_sitl_01` replayed through it flag `agl-band` at tick 106,
+50 ticks before the flight's Shield did (tests/test_terrain_forecast.py).
+Not re-flown on SITL since. On the node, the RTL watch is handed both
+heights: `rtl_path.check_leg` judges the climb to `RTL_ALT` above home at
+its height above the grid under the aircraft, and the progress test
+(`remaining_to_home`) counts the climb above home; the Shield's bands stay
+in the grid's reference. The return leg's band is judged at the height it
+has at the aircraft, not along the leg over other ground. The
 home-reached test uses the pose's height above home.
 
 ## 12. Profile the Shield on the Orin

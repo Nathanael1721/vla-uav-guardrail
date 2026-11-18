@@ -1435,8 +1435,24 @@ class RTLFailureWatch:
             self.errors.append(f"t={float(t):.3f}: {type(e).__name__}: {e}")
 
     def assess(self, t: float, x: float, y: float, up: float, mode: str | None,
-               zones, band=None, battery: tuple = (None, "")) -> RTLCheck:
+               zones, band=None, battery: tuple = (None, ""), *,
+               up_home: float | None = None) -> RTLCheck:
+        """`up`: the height the Shield's rules (`zones`, `band`) are in.
+        `up_home`: the height above HOME, the reference RTL_ALT is in, when
+        the two differ (X-11: with a --ground grid the Shield is told the
+        height above the DEM, terrain.TerrainReference); None, every flight
+        without one, when they are the same. With it the climb's target is
+        RTL_ALT above home expressed in the rules' reference AT THE AIRCRAFT
+        (rtl_alt_m + up - up_home) and the progress test counts the climb
+        above home; the return leg's band is still judged at that one
+        height, exact at the aircraft, not along the leg over other
+        ground."""
         t = float(t)
+        rtl_alt = self.rtl_alt_m
+        up_rtl = up
+        if up_home is not None and math.isfinite(float(up_home)):
+            rtl_alt = self.rtl_alt_m + (float(up) - float(up_home))
+            up_rtl = float(up_home)
         if self._entered is None:
             self._entered = t
             self.n_rtls += 1
@@ -1445,7 +1461,7 @@ class RTLFailureWatch:
         leg = None
         if zones is not None:          # None: the rules could not be read (note_error)
             try:
-                leg = check_leg(x, y, up, self.home, zones, band, self.rtl_alt_m)
+                leg = check_leg(x, y, up, self.home, zones, band, rtl_alt)
             except Exception as e:                           # noqa: BLE001
                 self.note_error(t, e)
         if leg is not None and not leg.clear:
@@ -1457,7 +1473,7 @@ class RTLFailureWatch:
         judged = in_rtl and math.hypot(x - self.home[0], y - self.home[1]) > self.home_radius_m
         if judged:
             stuck, why = self._progress.update(
-                t, remaining_to_home(x, y, up, self.home, self.rtl_alt_m))
+                t, remaining_to_home(x, y, up_rtl, self.home, self.rtl_alt_m))
             if stuck:
                 kinds.append("no_progress")
                 reasons.append(f"{why}, the autopilot in RTL")
@@ -3537,13 +3553,19 @@ if HAVE_ROS:
             """The FSM's "landed" (G10, X5): landed_from on this node's view."""
             return landed_from(self.mode, self.landed, self.armed, self._flew_armed)
 
-        def _rtl_check(self, now: float, st: State) -> "RTLCheck | None":
+        def _rtl_check(self, now: float, st: State, pose: State | None = None
+                       ) -> "RTLCheck | None":
             """This tick's RTLCheck while the FSM is in RTL (THE RTL WATCH),
             None on every other tick (the watch reset). The zones and band are
             the Shield's hard, enforced P0 rules in force now (rtl_path.
             zones_from_shield / band_from_shield, as the harness reads them).
             Reading them is guarded: the watch never faults the FSM - an
-            error is recorded and the leg goes unjudged on that tick."""
+            error is recorded and the leg goes unjudged on that tick.
+
+            `pose`: the pose above HOME when `st` is not (a --ground grid:
+            `st` holds the height above the DEM, X-11). RTL_ALT is measured
+            above home, so the watch is handed both (RTLFailureWatch.assess,
+            up_home); the zones and band stay in the Shield's reference."""
             if self.fsm is None or self.fsm.terminal or self.fsm.state is not FSMState.RTL:
                 self.rtl_watch.reset()
                 return None
@@ -3552,8 +3574,10 @@ if HAVE_ROS:
             except Exception as e:                               # noqa: BLE001
                 zones = band = None
                 self.rtl_watch.note_error(now, e)
-            chk = self.rtl_watch.assess(now, st.x, st.y, st.up, self.mode, zones, band,
-                                        self.battery.verdict(time.monotonic()))
+            chk = self.rtl_watch.assess(
+                now, st.x, st.y, st.up, self.mode, zones, band,
+                self.battery.verdict(time.monotonic()),
+                up_home=(pose.up if pose is not None and pose is not st else None))
             if chk.failed:
                 self.rec.event("rtl_failed", t=now, kinds=list(chk.kinds),
                                reasons=list(chk.reasons), mode=self.mode)
@@ -4755,7 +4779,7 @@ if HAVE_ROS:
                     # entered RTL at all; reset on every other tick. Until
                     # then rtl_failed was False on every tick, and an RTL
                     # that could not get home stayed an RTL.
-                    rtl_check = self._rtl_check(now, st)
+                    rtl_check = self._rtl_check(now, st, pose)
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=bool(rtl_check is not None and rtl_check.failed),

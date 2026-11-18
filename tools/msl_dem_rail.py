@@ -42,13 +42,18 @@ violations) and MSL READ AS AGL (msl-ceiling with altitude_ref dropped, the
 same numbers, what the DSL did before an MSL height was refused; the oracle
 must see escapes of the MSL band).
 
-FINDING (AGL OVER A DEM). The Shield's forecast holds the ground flat over
-its lookahead: an AGL band is judged on the height above the ground at the
-query point plus the commanded climb, so a level command over RISING ground
-is let through while the ground ahead comes up under it. The MSL rule has no
-such gap (the MSL height of a level flight does not change, and the
-conversion over the reach bounds the ground both ways). The run reports, not
-gates, the oracle's AGL count and the deepest shortfall below the 8 m floor.
+FINDING (AGL OVER A DEM). Until 2026-11-18 (wf20) the Shield's forecast
+held the ground flat over its lookahead: an AGL band was judged on the
+height above the ground at the query point plus the commanded climb, so a
+level command over RISING ground was let through while the ground ahead came
+up under it (189 oracle ticks, at most 0.081 m under the floor, level-cross
+only; the first SITL flight of the profile, msl_dem_sitl_01, went 0.49 m
+under it for 2.0 s). Since wf20 each forecast pose's up is the height above
+the ground under THAT pose and the altitude repair climbs on that forecast
+(guardrail/shield.py _over_ground, _repair_altitude_over_ground); the MSL
+rule keeps the flat forecast and is judged in MSL, as before. The run
+reports, not gates, the oracle's AGL count and the deepest shortfall below
+the 8 m floor.
 
 SCOPE (what this does NOT show): headless only - the harness's ideal
 vehicle, not SITL, hil or PAS; the DEM is synthetic (a declared ground: no
@@ -91,10 +96,13 @@ MSL_BAND = (590.0, 624.0)
 AGL_BAND = (8.0, 60.0)
 
 
-AGL_FINDING = ("Shield forecast holds the ground under the aircraft flat over the "
-               "lookahead: a level command over rising ground passes the AGL floor "
-               "check at the query point and the next tick's ground is higher; the "
-               "repair restores the floor the tick after (MSL rules are not affected)")
+AGL_FINDING = ("until 2026-11-18 (wf20) the Shield forecast held the ground under the "
+               "aircraft flat over the lookahead: a level command over rising ground "
+               "passed the AGL floor check at the query point and the next tick's "
+               "ground was higher (189 oracle ticks, max 0.081 m under the floor, "
+               "level-cross only). Since wf20 every forecast pose stands over its own "
+               "ground and the altitude repair climbs on that forecast; oracle_agl_ticks "
+               "is this run's count. MSL rules keep the flat forecast (judged in MSL)")
 
 
 def ridge(north_m: float, east_m: float) -> float:
@@ -285,9 +293,9 @@ def main(argv=None) -> int:
     # count and the nulls. NOT gated, and never folded into a pass: the
     # independent oracle's P0 count over the whole declared policy, which
     # includes agl-band's ticks under the floor (FINDING in the module
-    # docstring) - the harness's judge is a Shield with the same flat-ground
-    # forecast, so its 0 does not see them. Both counts are stated side by
-    # side in `p0_counts`.
+    # docstring; 189 ticks before wf20, when the harness's judge, a Shield
+    # with the same flat-ground forecast, could not see them). Both counts
+    # are stated side by side in `p0_counts`.
     s = res["summary"]
     gated = {
         "oracle_msl_ticks_zero": s["on_oracle_msl_ticks"] == 0,
