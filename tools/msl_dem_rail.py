@@ -50,10 +50,17 @@ up under it (189 oracle ticks, at most 0.081 m under the floor, level-cross
 only; the first SITL flight of the profile, msl_dem_sitl_01, went 0.49 m
 under it for 2.0 s). Since wf20 each forecast pose's up is the height above
 the ground under THAT pose and the altitude repair climbs on that forecast
-(guardrail/shield.py _over_ground, _repair_altitude_over_ground); the MSL
-rule keeps the flat forecast and is judged in MSL, as before. The run
-reports, not gates, the oracle's AGL count and the deepest shortfall below
-the 8 m floor.
+(guardrail/shield.py _over_ground, _repair_altitude_over_ground), aiming
+DEM_BAND_MARGIN_M (0.25 m) inside the band; the MSL rule keeps the flat
+forecast and is judged in MSL, as before. The run reports, not gates, the
+oracle's AGL count and the deepest shortfall below the 8 m floor. The
+harness's vehicle is ideal: the margin is the repair's aim, not a tighter
+rule, so where nothing is repaired (a crest) the aircraft may settle onto
+the floor itself, and a SITL re-flight with baro or EKF noise may still
+show sub-cm agl-band ticks. Since wf20 the harness's RTL over the declared
+ground climbs to RTL_ALT above home (sweep_scenarios._autopilot, up_home)
+and flies the leg home level in MSL, as ArduCopter's RTL does; until then
+it climbed to RTL_ALT above the ground under the aircraft.
 
 SCOPE (what this does NOT show): headless only - the harness's ideal
 vehicle, not SITL, hil or PAS; the DEM is synthetic (a declared ground: no
@@ -101,8 +108,11 @@ AGL_FINDING = ("until 2026-11-18 (wf20) the Shield forecast held the ground unde
                "passed the AGL floor check at the query point and the next tick's "
                "ground was higher (189 oracle ticks, max 0.081 m under the floor, "
                "level-cross only). Since wf20 every forecast pose stands over its own "
-               "ground and the altitude repair climbs on that forecast; oracle_agl_ticks "
-               "is this run's count. MSL rules keep the flat forecast (judged in MSL)")
+               "ground and the altitude repair climbs on that forecast, aiming 0.25 m "
+               "inside the band (DEM_BAND_MARGIN_M); oracle_agl_ticks is this run's "
+               "count, on the harness's ideal vehicle (a SITL re-flight with baro/EKF "
+               "noise may still show sub-cm ticks: the margin is the repair's aim, not "
+               "a tighter rule). MSL rules keep the flat forecast (judged in MSL)")
 
 
 def ridge(north_m: float, east_m: float) -> float:

@@ -333,10 +333,23 @@ class RTLWatch:
         self._progress.reset()
 
     def assess(self, t: float, x: float, y: float, up: float,
-               zones: Iterable[Zone], band: Band | None = None) -> RTLVerdict:
-        leg = check_leg(x, y, up, self.home, zones, band, self.rtl_alt_m)
+               zones: Iterable[Zone], band: Band | None = None, *,
+               up_home: float | None = None) -> RTLVerdict:
+        """`up`: the height the rules (`zones`, `band`) are in. `up_home`:
+        the height above HOME, the reference RTL_ALT is in, when the two
+        differ (X-11: over a declared DEM the harness's `up` is the height
+        above the ground under the aircraft); None, every caller without a
+        DEM, when they are the same. With it the climb's target is RTL_ALT
+        above home in the rules' reference AT THE AIRCRAFT (rtl_alt_m + up -
+        up_home) and the progress test counts the climb above home, as the
+        ROS 2 node's RTLFailureWatch.assess does (wf20)."""
+        rtl_alt, up_rtl = self.rtl_alt_m, up
+        if up_home is not None and math.isfinite(float(up_home)):
+            rtl_alt = self.rtl_alt_m + (float(up) - float(up_home))
+            up_rtl = float(up_home)
+        leg = check_leg(x, y, up, self.home, zones, band, rtl_alt)
         stuck, why = self._progress.update(
-            t, remaining_to_home(x, y, up, self.home, self.rtl_alt_m))
+            t, remaining_to_home(x, y, up_rtl, self.home, self.rtl_alt_m))
         batt = self.battery.critical(t)
         reasons = [f"blocked path: {r}" for r in leg.reasons]
         if stuck:

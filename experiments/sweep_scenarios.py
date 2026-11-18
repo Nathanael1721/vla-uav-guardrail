@@ -631,7 +631,8 @@ def hold_reached(st: State, hold: dict | None) -> bool:
 
 def _autopilot(mode: str | None, st: State, home: tuple[float, float],
                dt: float, shaped: "ResponseParams | None" = None,
-               rtl_alt: float | None = None, hold: dict | None = None) -> Action4D:
+               rtl_alt: float | None = None, hold: dict | None = None,
+               up_home: float | None = None) -> Action4D:
     """The velocity ArduCopter's own mode flies this tick (see AP_* above).
 
     LOITER holds position; RTL climbs to AP_RTL_ALT_M if below it, then flies
@@ -714,13 +715,19 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
                   if shaped is not None else dz / dt)
             vz = max(-cz, min(cz, vz))
         return Action4D(vx=vx, vy=vy, vz_up=vz)
+    # RTL_ALT is a height above HOME. `up_home` (wf20): the aircraft's height
+    # above home when `st.up` is not (a declared DEM, X-11: st.up is above the
+    # ground under the aircraft); None, every episode without one, reads
+    # st.up as before. The climb is flown as a vertical rate either way, and
+    # the leg home is level in MSL, as ArduCopter's RTL flies it.
+    uh = st.up if up_home is None else up_home
     if mode == "RTL" and shaped is not None:
         target = AP_RTL_ALT_M if rtl_alt is None else rtl_alt
-        dz = target - st.up
+        dz = target - uh
         vz = math.copysign(_sqrt_controller(abs(dz), AP_POSXY_P, shaped.accel_z_mps2, dt),
                            dz)
         vz = max(-AP_CLIMB_MPS, min(AP_CLIMB_MPS, vz))
-        if st.up < target - 0.1:
+        if uh < target - 0.1:
             return Action4D(vz_up=vz)
         dx, dy = home[0] - st.x, home[1] - st.y
         d = math.hypot(dx, dy)
@@ -729,8 +736,8 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
         v = min(AP_RTL_SPEED_MPS, _sqrt_controller(d, AP_POSXY_P, shaped.accel_mps2, dt))
         return Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz)
     if mode == "RTL":
-        if st.up < AP_RTL_ALT_M - 1e-6:
-            return Action4D(vz_up=min(AP_CLIMB_MPS, (AP_RTL_ALT_M - st.up) / dt))
+        if uh < AP_RTL_ALT_M - 1e-6:
+            return Action4D(vz_up=min(AP_CLIMB_MPS, (AP_RTL_ALT_M - uh) / dt))
         dx, dy = home[0] - st.x, home[1] - st.y
         d = math.hypot(dx, dy)
         if d < 1e-9:
@@ -1894,6 +1901,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     rtl_watch = (RP.RTLWatch(home=m.home, rtl_alt_m=AP_RTL_ALT_M,
                              battery=RP.BatteryHook(critical_at_s=batt_at))
                  if esc else None)
+    # RTL_ALT is measured above HOME (the start). Over a declared ground
+    # (X-11) `st.up` is the height above the ground under the aircraft, so
+    # the RTL model, home_reached and the RTL watch are handed the height
+    # above home beside it (wf20; the ROS 2 node hands its pose's). None
+    # without a ground: every other episode reads st.up as before.
+    g_home = ground.elevation_at(*m.home) if ground is not None else None
+
+    def up_above_home(s: State) -> float | None:
+        if ground is None:
+            return None
+        return s.up + ground.elevation_at(s.x, s.y) - g_home
     rtl_failed_ticks = 0
     rtl_failures: list[dict] = []
     # The gust offset from the position target (wind model "guided").
@@ -2035,8 +2053,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # What the autopilot reports this tick, for the FSM's terminal
             # edges (G9 home reached, G10 landed). Home is reached at the end
             # of RTL's return leg: over the launch point, after the climb.
+            # The height above home (up_above_home): st.up without a ground.
+            uh = st.up if ground is None else up_above_home(st)
             flags = {"home_reached": ap_mode == "RTL"
-                     and RP.home_reached(st.x, st.y, st.up, m.home, tol_m=AP_HOME_TOL_M,
+                     and RP.home_reached(st.x, st.y, uh, m.home, tol_m=AP_HOME_TOL_M,
                                          rtl_alt_m=AP_RTL_ALT_M),
                      "landed": ap_mode == "LAND" and st.up <= AP_LANDED_M}
             # G6, RTL -> Land: the straight leg home blocked by a P0 zone or
@@ -2046,7 +2066,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             if ap_mode == "RTL":
                 v = rtl_watch.assess(t_now, st.x, st.y, st.up,
                                      RP.zones_from_shield(checker),
-                                     RP.band_from_shield(checker, st))
+                                     RP.band_from_shield(checker, st),
+                                     up_home=up_above_home(st))
                 flags["rtl_failed"] = v.failed
                 if v.failed:
                     rtl_note = v.note
@@ -2090,8 +2111,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         if esc and d.set_mode:
             if rsp is not None and d.set_mode == "RTL" and ap_mode != "RTL":
                 # The arm's RTL return altitude, captured on entry as
-                # ArduPilot computes it (_autopilot, `rtl_alt`).
-                rtl_alt = max(AP_RTL_ALT_M, st.up)
+                # ArduPilot computes it (_autopilot, `rtl_alt`), above home.
+                rtl_alt = max(AP_RTL_ALT_M, st.up if ground is None else up_above_home(st))
             ap_mode = d.set_mode
         if esc:
             # The FSM's hold point: None outside Loiter / Land (or on a fault,
@@ -2168,7 +2189,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 if hold is not None and not hold_done and hold_reached(st, hold):
                     hold_done = True
                 flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
-                                   hold=None if hold_done else hold)
+                                   hold=None if hold_done else hold,
+                                   up_home=up_above_home(st))
             flown_vios = checker.filter(seen, flown, t=t_now).violations
         if body_frame and owner == "shield":
             # THE ADAPTER (action_frame "body"): what the Shield streams is a

@@ -662,17 +662,27 @@ Shield's forecast held the ground flat over its lookahead, and the first
 flight of this profile (`msl_dem_sitl_01`) went under the AGL floor for
 2.0 s (at most 0.49 m; headless, 189 oracle ticks). Since wf20 each
 forecast pose stands over its own ground and the altitude repair climbs on
-that forecast: headless the oracle counts 0 AGL and 0 MSL ticks
+that forecast, aiming 0.25 m inside an AGL band (`DEM_BAND_MARGIN_M`):
+headless the oracle counts 0 AGL and 0 MSL ticks
 (`docs/data/msl_dem_rail.json` `finding_agl_over_dem`), and the stored
 rows of `msl_dem_sitl_01` replayed through it flag `agl-band` at tick 106,
-50 ticks before the flight's Shield did (tests/test_terrain_forecast.py).
-Not re-flown on SITL since. On the node, the RTL watch is handed both
+50 ticks before the flight's Shield did, and repair with a climb from that
+tick on (tests/test_terrain_forecast.py). Not re-flown on SITL since. The
+headless 0 is the harness's ideal vehicle. The margin is the repair's aim,
+not a tighter rule: once the forecast stays on or above the floor (a crest,
+where the ground stops rising) nothing is repaired and the aircraft can
+settle towards the floor itself, so on a re-flight a few cm of baro or EKF
+noise can still show as `agl-band` ticks of mm to cm. Read the depth
+(`min AGL`) beside the tick count. On the node, the RTL watch is handed both
 heights: `rtl_path.check_leg` judges the climb to `RTL_ALT` above home at
 its height above the grid under the aircraft, and the progress test
 (`remaining_to_home`) counts the climb above home; the Shield's bands stay
 in the grid's reference. The return leg's band is judged at the height it
 has at the aircraft, not along the leg over other ground. The
-home-reached test uses the pose's height above home.
+home-reached test uses the pose's height above home. The headless harness
+does the same over a declared ground since wf20: its modelled RTL climbs
+to `RTL_ALT` above home and flies the leg level in MSL, and its
+`home_reached` and RTL watch read the height above home.
 
 ## 12. Profile the Shield on the Orin
 

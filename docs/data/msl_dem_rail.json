@@ -71,13 +71,13 @@
    "descend": 0
   },
   "max_floor_shortfall_m": 0.0,
-  "mechanism": "until 2026-11-18 (wf20) the Shield forecast held the ground under the aircraft flat over the lookahead: a level command over rising ground passed the AGL floor check at the query point and the next tick's ground was higher (189 oracle ticks, max 0.081 m under the floor, level-cross only). Since wf20 every forecast pose stands over its own ground and the altitude repair climbs on that forecast; oracle_agl_ticks is this run's count. MSL rules keep the flat forecast (judged in MSL)"
+  "mechanism": "until 2026-11-18 (wf20) the Shield forecast held the ground under the aircraft flat over the lookahead: a level command over rising ground passed the AGL floor check at the query point and the next tick's ground was higher (189 oracle ticks, max 0.081 m under the floor, level-cross only). Since wf20 every forecast pose stands over its own ground and the altitude repair climbs on that forecast, aiming 0.25 m inside the band (DEM_BAND_MARGIN_M); oracle_agl_ticks is this run's count, on the harness's ideal vehicle (a SITL re-flight with baro/EKF noise may still show sub-cm ticks: the margin is the repair's aim, not a tighter rule). MSL rules keep the flat forecast (judged in MSL)"
  },
  "scope": "headless harness (experiments/sweep_scenarios.py run_episode, ideal vehicle, seed 1001); synthetic WGS84 DEM; no SITL, hil or PAS flight",
  "summary": {
   "episodes_per_arm": 12,
   "on_requested_ticks_msl_ceiling": 2061,
-  "on_requested_ticks_agl_band": 1860,
+  "on_requested_ticks_agl_band": 1836,
   "on_harness_true_p0_ticks": 0,
   "on_oracle_p0_ticks": 0,
   "on_oracle_msl_ticks": 0,
@@ -90,13 +90,13 @@
   },
   "on_max_agl_floor_shortfall_m": 0.0,
   "on_max_msl_band_excess_m": 0.0,
-  "on_min_agl_m": 10.192,
+  "on_min_agl_m": 10.327,
   "on_max_msl_m": 616.888,
   "null_off_oracle_p0_ticks": 4798,
   "null_off_episodes_violating": 12,
   "null_msl_as_agl_oracle_msl_ticks": 5902,
   "null_msl_as_agl_episodes_violating": 12,
-  "wall_s": 69.2
+  "wall_s": 61.9
  },
  "episodes": {
   "on": [
@@ -104,19 +104,19 @@
     "pilot": "level-cross",
     "x0": -60.0,
     "arm": "on",
-    "ticks": 414,
+    "ticks": 399,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 311
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 10.192,
-     "max_msl_m": 600.549,
+     "min_agl_m": 10.327,
+     "max_msl_m": 598.7,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
@@ -128,9 +128,9 @@
     ],
     "end": {
      "x": -60.0,
-     "y": 1.5,
-     "up": 16.72,
-     "msl_m": 600.55
+     "y": 1.8,
+     "up": 14.85,
+     "msl_m": 598.7
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -138,19 +138,19 @@
     "pilot": "level-cross",
     "x0": 0.0,
     "arm": "on",
-    "ticks": 414,
+    "ticks": 399,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 311
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 10.192,
-     "max_msl_m": 600.849,
+     "min_agl_m": 10.327,
+     "max_msl_m": 599.0,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
@@ -162,9 +162,9 @@
     ],
     "end": {
      "x": 0.0,
-     "y": 1.5,
-     "up": 16.72,
-     "msl_m": 600.85
+     "y": 1.8,
+     "up": 14.85,
+     "msl_m": 599.0
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -172,19 +172,19 @@
     "pilot": "level-cross",
     "x0": 60.0,
     "arm": "on",
-    "ticks": 414,
+    "ticks": 399,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 311
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 10.192,
-     "max_msl_m": 601.149,
+     "min_agl_m": 10.327,
+     "max_msl_m": 599.3,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
     },
@@ -196,9 +196,9 @@
     ],
     "end": {
      "x": 60.0,
-     "y": 1.5,
-     "up": 16.72,
-     "msl_m": 601.15
+     "y": 1.8,
+     "up": 14.85,
+     "msl_m": 599.3
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -410,18 +410,18 @@
     "pilot": "descend",
     "x0": -60.0,
     "arm": "on",
-    "ticks": 367,
+    "ticks": 362,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 309
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 14.623,
+     "min_agl_m": 14.891,
      "max_msl_m": 603.7,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -434,9 +434,9 @@
     ],
     "end": {
      "x": -60.0,
-     "y": 1.6,
-     "up": 16.06,
-     "msl_m": 599.9
+     "y": 1.5,
+     "up": 15.89,
+     "msl_m": 599.71
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -444,18 +444,18 @@
     "pilot": "descend",
     "x0": 0.0,
     "arm": "on",
-    "ticks": 367,
+    "ticks": 362,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 309
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 14.623,
+     "min_agl_m": 14.891,
      "max_msl_m": 604.0,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -468,9 +468,9 @@
     ],
     "end": {
      "x": 0.0,
-     "y": 1.6,
-     "up": 16.06,
-     "msl_m": 600.2
+     "y": 1.5,
+     "up": 15.89,
+     "msl_m": 600.01
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    },
@@ -478,18 +478,18 @@
     "pilot": "descend",
     "x0": 60.0,
     "arm": "on",
-    "ticks": 367,
+    "ticks": 362,
     "harness_true_p0_ticks": 0,
     "requested_ticks": {
      "msl-ceiling": 0,
-     "agl-band": 309
+     "agl-band": 306
     },
     "oracle": {
      "msl_ticks": 0,
      "agl_ticks": 0,
      "agl_resampled_ticks": 0,
      "p0_ticks": 0,
-     "min_agl_m": 14.624,
+     "min_agl_m": 14.891,
      "max_msl_m": 604.3,
      "max_agl_floor_shortfall_m": 0.0,
      "max_msl_band_excess_m": 0.0
@@ -502,9 +502,9 @@
     ],
     "end": {
      "x": 60.0,
-     "y": 1.6,
-     "up": 16.06,
-     "msl_m": 600.5
+     "y": 1.5,
+     "up": 15.89,
+     "msl_m": 600.31
     },
     "policy_hash": "sha256:b0ab7067e1171aaecba4593d5276f5a03a05e3e7e652f04736e55754965c5e1d"
    }
