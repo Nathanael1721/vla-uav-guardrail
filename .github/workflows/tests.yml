@@ -91,7 +91,10 @@
 #          SKIPs without the lab's run data), test_sweep_resume (2026-11-17,
 #          WP4-06: the broad sweep's checkpoints, shards and merge, on small
 #          headless slices), test_wgs84_writes (2026-11-17, WP1-14: every
-#          write path into a framed policy stores WGS84).
+#          write path into a framed policy stores WGS84),
+#          test_wgs84_ingest_writers (2026-11-18, WP1-14: the writer
+#          inventory over every shipped policy, the Mission Control GUI's
+#          writer, the legacy metre read form labelled, no hash moved).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
@@ -734,7 +737,7 @@ jobs:
               tests/test_replay_q3.py \
               tests/test_stack_revisions.py \
               tests/test_sweep_resume.py \
-              tests/test_wgs84_writes.py \
+              tests/test_wgs84_writes.py               tests/test_wgs84_ingest_writers.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \

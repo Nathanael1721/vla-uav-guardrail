@@ -83,16 +83,8 @@ TRAIL_LEN = 40
 FONT = ("Segoe UI", 9)
 
 
-# Fallback constraints if the base policy cannot be read (same structure as
-# policies/urban_demo_policy.yaml).
-FALLBACK_KEEP = [
-    {"id": "alt-band-urban", "type": "altitude_envelope",
-     "constraint_type": "hard", "scope": "mission", "priority": "P0",
-     "violation_action": "repair", "alt_min_m": 15, "alt_max_m": 25},
-    {"id": "kin-caps", "type": "kinematic_envelope",
-     "constraint_type": "hard", "scope": "mission", "priority": "P1",
-     "violation_action": "repair", "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
-]
+# The policy the GUI writes (and its fallback rules): demo/gui_policy.py.
+from gui_policy import gui_policy_doc  # noqa: E402
 
 
 def _point_in_poly(px, py, poly):
@@ -667,67 +659,21 @@ class MissionControl:
     # ------------------------------------------------------------ policy
     def _write_policy(self) -> Path:
         """Rewrite polygon_fence entries from drawn NFZs; keep the rest of the
-        base policy (altitude + kinematic envelopes) unchanged."""
-        keep = FALLBACK_KEEP
-        version = "0.1.0"
-        try:
-            import yaml
-            base = yaml.safe_load(BASE_POLICY.read_text(encoding="utf-8"))
-            keep = [c for c in base.get("constraints", [])
-                    if c.get("type") != "polygon_fence"]
-            version = base.get("version", version)
-        except Exception as e:
-            self._log(f"[policy] base policy read failed ({e}) — "
-                      "using built-in envelope constraints")
+        base policy (altitude + kinematic envelopes) unchanged.
 
-        fences = []
-        for i, (xmin, xmax, ymin, ymax) in enumerate(self.nfzs):
-            fences.append({
-                "id": f"gui-nfz-{i + 1}",
-                "type": "polygon_fence",
-                "constraint_type": "hard",
-                "scope": "mission",
-                "priority": "P0",
-                "violation_action": "repair",
-                "vertices": [
-                    {"x": round(xmin, 1), "y": round(ymin, 1)},
-                    {"x": round(xmax, 1), "y": round(ymin, 1)},
-                    {"x": round(xmax, 1), "y": round(ymax, 1)},
-                    {"x": round(xmin, 1), "y": round(ymax, 1)},
-                ],
-                "altitude_floor_m": 0,
-                "altitude_ceiling_m": 60,
-                "margin_m": 1.0,
-            })
-        # polygon NFZs: the policy schema already accepts arbitrary vertices, so
-        # these are enforced by the Shield exactly like the rectangles
-        for i, poly in enumerate(self.polys):
-            if len(poly) < 3:
-                continue
-            fences.append({
-                "id": f"gui-poly-{i + 1}",
-                "type": "polygon_fence",
-                "constraint_type": "hard",
-                "scope": "mission",
-                "priority": "P0",
-                "violation_action": "repair",
-                "vertices": [{"x": round(px, 1), "y": round(py, 1)}
-                             for (px, py) in poly],
-                "altitude_floor_m": 0,
-                "altitude_ceiling_m": 60,
-                "margin_m": 1.0,
-            })
-        # altitude band from the GUI selector (High = fly over the city roofs)
-        high = self.alt_var.get().startswith("High")
-        amin, amax = (35, 55) if high else (15, 25)
-        for c in keep:
-            if c.get("type") == "altitude_envelope":
-                c["alt_min_m"], c["alt_max_m"] = amin, amax
-        doc = {"policy_id": "gui-mission", "version": version,
-               "constraints": fences + keep}
+        Since 2026-11-18 (WP1-14) the zones drawn in local metres are written
+        in WGS84 about the base policy's origin, which the file states
+        (demo/gui_policy.py): the canonical form, the one every shipped
+        policy is stored in. Until then this wrote {x, y} metres with no
+        origin, turning the converted policies/gui_policy.yaml back into
+        the legacy metre form."""
+        import yaml
+        doc, notes = gui_policy_doc(self.nfzs, self.polys,
+                                    self.alt_var.get().startswith("High"), BASE_POLICY)
+        for n in notes:
+            self._log(f"[policy] {n}")
         path = ROOT / POLICY_REL
         try:
-            import yaml
             path.write_text(yaml.safe_dump(doc, sort_keys=False),
                             encoding="utf-8")
         except Exception as e:
