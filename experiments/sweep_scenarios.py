@@ -5347,6 +5347,29 @@ def rail_ground_check(spec: ScenarioSpec, metrics: dict) -> dict:
     return {"declared": declared, "flown": flown, "match": match}
 
 
+def ground_flight_problems(spec: ScenarioSpec, metrics: dict) -> list[str]:
+    """Why a rail run of a scenario with a declared ground cannot be scored
+    as that scenario ([] when it can, or the scenario declares none): its
+    metrics.json names no ground file, or another path or sha256
+    (rail_ground_check). FAIL CLOSED (X-11, 2026-11-18): every judge of
+    sitl_extra is built over the DECLARED ground, so a run the Shield flew
+    over another ground, or none, would be scored as if it had flown this
+    one. run_sitl, run_hil and rescore_rail_run refuse such a run (an
+    error, never a scored episode), as they refuse a run of the wrong arm."""
+    if getattr(spec, "ground", None) is None:
+        return []
+    chk = rail_ground_check(spec, metrics)
+    if chk["match"]:
+        return []
+    d = chk["declared"]
+    if chk["flown"] is None:
+        return [f"the run's metrics.json names no ground file, and the scenario declares "
+                f"{d['path']} (sha256 {d['sha256']}): not flown over it"]
+    f = chk["flown"]
+    return [f"the run flew over {f.get('path')} (sha256 {f.get('sha256')}), the scenario "
+            f"declares {d['path']} (sha256 {d['sha256']})"]
+
+
 def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
                generations: dict | None = None, *, max_s: float | None = None,
                dt: float | None = None, autopilot_texts: list[dict] | None = None) -> dict:
@@ -5385,7 +5408,8 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
         max_s = scenario_max_s(metrics)
     # The scenario's declared ground (X-11, 2026-11-18): every judge below is
     # built over it (rail_judge_kw), as the flying Shield was, and the run's
-    # own record must name the same file (`ground_check`). None without one:
+    # own record must name the same file (`ground_check`; run_sitl, run_hil and
+    # rescore_rail_run refuse one that does not, ground_flight_problems). None without one:
     # every call below is the one it was.
     ground = episode_ground(spec, policy)
     gkw = {} if ground is None else {"ground": ground}
@@ -5918,6 +5942,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         raise RuntimeError(f"{tag}: not the arc arm's flight: " + "; ".join(arc_problems))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # Fail closed (X-11): never scored over a ground it did not fly.
+        raise RuntimeError(f"{tag}: not flown over the scenario's ground: "
+                           + "; ".join(ground_problems))
     extra = sitl_extra(spec, rows, metrics, pol, gens,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(out_dir))
@@ -6473,6 +6502,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         problems.append("not the arc arm's flight: " + "; ".join(arc_problems))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # Fail closed (X-11): never scored over a ground it did not fly.
+        problems.append("not flown over the scenario's ground: " + "; ".join(ground_problems))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
     # Only now, the run accepted (its nonce, its mission_end, its stress and
@@ -6617,6 +6650,11 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
         before = verdict_record(stored.get("status"), stored.get("gates_failed") or [],
                                 stored.get("labels_failed") or [],
                                 stored.get("known_failure_reason"))
+    ground_problems = ground_flight_problems(spec, metrics)
+    if ground_problems:
+        # As the campaign accepted it (run_sitl / run_hil): fail closed.
+        raise RuntimeError("not flown over the scenario's ground: "
+                           + "; ".join(ground_problems))
     pol = spec.policy.load(ROOT)
     gens = run_generations(run_dir)
     max_s = meta.get("max_s")

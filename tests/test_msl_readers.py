@@ -18,17 +18,22 @@ WHAT IS PINNED
       = the DEM at the start, where sitl_home boots SITL); the Shield node
       and the VLA stub declare every flag; the hil backend sends the same
       for a signed bundle; the post-flight judges are built over the ground
-      (an MSL policy cannot be judged without it); the run's own record is
-      checked against the declared file. A rotated mission flies over the
-      same ground.
+      (an MSL policy cannot be judged without it); a run whose own record
+      names another file, or none, is refused on the rail backends and in a
+      rescore, never scored over the declared ground. A rotated mission
+      flies over the same ground.
   (c) The mission-style node, the GCS step, bundle_origin and
       bag_custom_data each take --ground (and --ground-sha256); the mission
       node judges every leg step at its height above the DEM.
   (d) The replay bundle carries the DEM, checks its sha256 and re-derives
       every terrain row's height from it; a row that disagrees fails it.
-  (e) The RTL leg is judged along the ground (rtl_path, THE LEG OVER A DEM).
-  (f) FENCE_ALT_MAX is capped by a hard MSL ceiling in force all flight; the
-      fence column test reads an MSL zone above home.
+      tools/replay_from_bag.py converts the bag's height above home over the
+      same DEM before it compares a pose.
+  (e) The RTL leg is judged along the ground (rtl_path, THE LEG OVER A DEM),
+      in the harness and in the Shield node's own RTL watch.
+  (f) FENCE_ALT_MAX is capped by a hard MSL ceiling in force all flight (an
+      altitude_envelope's or a keep-in corridor's; a keep-out zone caps
+      nothing); the fence column test reads an MSL zone above home.
   (g) experiments/profiles/msl_dem.yaml: three MSL families (polygon_fence,
       corridor, altitude_envelope) over the DEM, flown headless here, every
       cell passing its gates and labels, and planned on the sitl backend.
@@ -230,6 +235,93 @@ def test_the_post_flight_judges_score_over_the_ground():
     other = {"ground": {"file": {"path": DEM, "sha256": "0" * 64}}}
     assert S.rail_ground_check(spec, other)["match"] is False
     assert S.rail_ground_check(spec, {})["flown"] is None
+
+
+def test_a_rail_run_not_over_the_declared_ground_is_refused_not_scored():
+    """ground_flight_problems fails closed: a rail run whose metrics.json
+    names no ground or another file is an error on the hil (and sitl)
+    backend and in a rescore, never scored over the declared ground. Flown
+    on tests/test_sweep.py's fake hil rig (no ssh, no WSL)."""
+    import sweep_scenarios as S
+    import test_sweep as TS
+    from guardrail.scenario_spec import expand, load_profile
+    eps, _ = expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles" / "msl_dem.yaml"))
+    ep = next(e for e in eps if e.cell.spec.scenario_id == "msl-dem-zone-ridge")
+    spec = ep.cell.spec
+    good = {"ground": {"file": terrain.ground_file(DEM, root=ROOT)}}
+    other = {"ground": {"file": {"path": DEM, "sha256": "0" * 64}}}
+    assert S.ground_flight_problems(spec, good) == []
+    assert "names no ground file" in S.ground_flight_problems(spec, {})[0]
+    assert "the run flew over" in S.ground_flight_problems(spec, other)[0]
+    plain = _family_cells("altitude-ceiling-hold")[0].spec
+    assert S.ground_flight_problems(plain, {}) == []
+
+    path, _trust = _bundle(ZONE_POLICY)
+
+    class Rig(TS._FakeRig):
+        def __init__(self, cfg, ground):
+            super().__init__(cfg)
+            self.ground = ground
+
+        def run_mission(self, args, tag, shield, timeout_s):
+            self.calls.append(("run_mission", tag, shield, list(args), timeout_s))
+            meta = json.loads((self.remote / TS._val(args, "--scenario-meta")).read_text(
+                encoding="utf-8"))
+            run = S.run_episode(spec, LIBRARY.defaults, meta["seed"])
+            out = self.remote / "demo" / "out" / tag
+            out.mkdir(parents=True)
+            eid = 1793968079901861321
+            (out / "flight_log.jsonl").write_text("".join(
+                json.dumps(S._json_safe(dict(r, flown=r.get("owner") != "autopilot",
+                                             emitted_body=r["emitted"], episode_id=eid)))
+                + "\n" for r in run.rows), encoding="utf-8")
+            m = {"episode_id": eid, "shield": shield, "reached": run.extra["reached_goal"],
+                 "fsm": run.extra.get("fsm"), "scenario": meta,
+                 "scenario_family": meta["family"]}
+            if self.ground is not None:
+                m["ground"] = self.ground
+            (out / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+            (out / "events.jsonl").write_text(
+                json.dumps({"kind": "episode_start", "episode_id": eid}) + "\n"
+                + json.dumps({"kind": "mission_end", "why": "fake"}) + "\n",
+                encoding="utf-8")
+            (out / "policy_g0.json").write_bytes(run.policy.canonical_bytes())
+            return 0, f"fake mission {tag}"
+
+    store = _tmp()
+    cfg = S.HilConfig(store=str(store), bundles_dir=str(path.parent))
+    try:
+        _fly_three(S, spec, ep, cfg, Rig, store, other, good)
+    finally:
+        # run_hil writes each mission's files under demo/out/_campaign/.
+        for d in (ROOT / S.CAMPAIGN_DIR).glob("mslgnd_*"):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _fly_three(S, spec, ep, cfg, Rig, store, other, good):
+    for k, ground in enumerate((None, other["ground"])):
+        try:
+            S.run_hil(spec, ep, ep.seed, LIBRARY.defaults, cfg, Rig(cfg, ground),
+                      "mslgnd", k, store)
+        except RuntimeError as e:
+            assert "not flown over the scenario's ground" in str(e), e
+        else:
+            raise AssertionError(f"a run over {ground} was scored over {DEM}")
+    res = S.run_hil(spec, ep, ep.seed, LIBRARY.defaults, cfg, Rig(cfg, good["ground"]),
+                    "mslgnd", 2, store)
+    assert res["extra"]["ground_check"]["match"] is True
+    # A rescore of a fetched run refuses it the same way.
+    run_dir = res["run_dir"]
+    m = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    S.rescore_rail_run(run_dir, ep, LIBRARY.defaults)
+    m.pop("ground")
+    (run_dir / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    try:
+        S.rescore_rail_run(run_dir, ep, LIBRARY.defaults)
+    except RuntimeError as e:
+        assert "not flown over the scenario's ground" in str(e), e
+    else:
+        raise AssertionError("a rescore scored a run with no ground over the DEM")
 
 
 def test_a_rotated_mission_flies_over_the_same_ground():
