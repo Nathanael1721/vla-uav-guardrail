@@ -1575,6 +1575,61 @@ def _json(run, name):
     return json.loads((run / name).read_text())
 
 
+PEOPLE_POLICY = CAP_POLICY + """  - id: de-people
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    object_class: people
+    min_distance_m: 4.0
+"""
+
+
+class PeopleDetections(FakeDetections):
+    """FakeDetections plus the people phrase's publication
+    (follow_vlm.Grounder.latest()["people"]): one person box per inference,
+    no capture pose (placed from the tick's pose) and no depth range
+    (ranged by a person's width), a new frame every second call."""
+
+    def latest(self):
+        out = super().latest()
+        out["people"] = {"seq": self.n // 2, "t_capture": self.clock.t - 0.1, "pose": None,
+                         "depth_src": "none", "note": None,
+                         "boxes": [(384.0, 300.0, 10.0, 30.0, 0.3, 768, 432, None)]}
+        return out
+
+
+def test_a_people_policy_feeds_every_detected_person_to_the_shield():
+    """WP1-07 (2026-11-18) through run(): a distance_envelope over people.
+    The Shield is built with the perception people source, each detector
+    frame's person boxes are placed (people_estimates: the tick's pose,
+    width ranging, recorded so) and remembered, every row carries the
+    people the Shield was given, and metrics.people_feed records the
+    phrase, the placement and the memory. The same run with the fake
+    grounder that publishes no people runs with nobody, said so."""
+    rc, run, link = _fly("on", policy=PEOPLE_POLICY, grounder_cls=PeopleDetections)
+    assert rc == 0
+    rows = _rows(run)
+    assert rows and all(len(r["people"]) == 1 for r in rows), [r.get("people") for r in rows[:3]]
+    m = _json(run, "metrics.json")
+    pf = m["people_feed"]
+    assert pf["source"].startswith("perception: every box the detector scores 'a person'"), pf
+    assert pf["phrase"] == "a person" and pf["stale_s"] == 3.0, pf
+    pl = pf["placement"]
+    assert pl["frames"] >= 2 and pl["placed"] == pl["boxes"] == pl["frames"], pl
+    assert pl["pose"] == {"tick": pl["frames"]} and pl["src"] == {"width": pl["frames"]}, pl
+    assert pf["frames"] == pl["frames"] and pf["tracks"] >= 1, pf
+    # A policy without the rule: no people anywhere in the record.
+    rc, run, link = _fly("on", grounder_cls=PeopleDetections)
+    assert rc == 0 and "people" not in _rows(run)[0]
+    assert "people_feed" not in _json(run, "metrics.json")
+    # The rule with a grounder that publishes no people: nobody is fed.
+    rc, run, link = _fly("on", policy=PEOPLE_POLICY)
+    assert rc == 0 and all(r["people"] == [] for r in _rows(run))
+    assert _json(run, "metrics.json")["people_feed"]["frames"] == 0
+
+
 def test_only_the_shield_s_output_reaches_the_autopilot():
     rc, run, link = _fly("on")
     assert rc == 0
