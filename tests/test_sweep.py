@@ -3122,6 +3122,179 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
         assert rc in (0, 1), rc
 
 
+GRANT_BUNDLE_NAMES = ("manifest.json", "policy_bundle.tar.gz", "episode.bag2",
+                      "shield_audit.jsonl", "harness_events.jsonl", "kpi.json")
+
+
+def _rail_run_folder(d: Path, tag: str, *, bag: bool = True) -> dict:
+    """A flown rail run folder as the Shield node leaves it (its own names:
+    bag/, events.jsonl, policy_g<N>.json), with one hot-applied generation.
+    Returns {name: bytes} of every file in it."""
+    import hashlib
+    d.mkdir(parents=True)
+    g0 = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").canonical_bytes()
+    g1 = load_policy(ROOT / "policies" / "corridor_survey.yaml").canonical_bytes()
+    h0, h1 = ("sha256:" + hashlib.sha256(b).hexdigest() for b in (g0, g1))
+    (d / "policy_g0.json").write_bytes(g0)
+    (d / "policy_g1.json").write_bytes(g1)
+    (d / "manifest.json").write_text(json.dumps({
+        "code_revision": "0123456789abcdef0123456789abcdef01234567",
+        "vla_model_hash": "stub", "policy_hash": h1, "random_seed": 1001,
+        "sim_speedup": 1.0, "topology": "hil"}), encoding="utf-8")
+    (d / "metrics.json").write_text(json.dumps({"shield": "on"}), encoding="utf-8")
+    (d / "trajectory.json").write_text(json.dumps({"t": [0.0, 0.1]}), encoding="utf-8")
+    (d / f"{tag}.replay.tar.gz").write_bytes(b"signed replay bundle bytes")
+    (d / "shield_audit.jsonl").write_text('{"tick": 0}\n{"tick": 1}\n', encoding="utf-8")
+    (d / "kpi.json").write_text('{"the node": "its own"}\n', encoding="utf-8")
+    ev = [{"kind": "episode_start", "t": None, "episode_id": 7},
+          {"kind": "policy_generation", "t": None, "generation": 0, "policy_hash": h0,
+           "reason": "take-off"},
+          {"kind": "mission_start", "t": 0.0},
+          {"kind": "policy_generation", "t": 3.002, "generation": 1, "policy_hash": h1,
+           "reason": "hot_apply bar"},
+          {"kind": "scenario_event", "t": 3.002, "type": "hot_apply",
+           "event": "spawn_polygon_fence", "at_sim_t": 3.0, "op": "spawn",
+           "rule_id": "bar", "generation": 1, "policy_hash": h1},
+          {"kind": "mission_end", "t": 41.5, "why": "test"}]
+    (d / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ev),
+                                    encoding="utf-8")
+    if bag:
+        (d / "bag").mkdir()
+        (d / "bag" / "bag_0.mcap").write_bytes(b"\x89MCAP0\r\n rosbag2 bytes")
+        (d / "bag" / "metadata.yaml").write_text("rosbag2_bagfile_information: {}\n",
+                                                 encoding="utf-8")
+    return {p.relative_to(d).as_posix(): p.read_bytes()
+            for p in sorted(d.rglob("*")) if p.is_file()}
+
+
+def test_a_rail_run_is_bundled_under_the_grants_six_names_from_its_own_files():
+    """WP4-11 (2026-11-18): a flown rail episode's bundle carries the grant's
+    six names (Stress Testing, "Episode bundle") - manifest.json, a
+    policy_bundle.tar.gz holding every generation's IR, episode.bag2/,
+    shield_audit.jsonl, harness_events.jsonl and kpi.json - built from the
+    run folder, which keeps its own names and bytes. Until then every flown
+    KPI campaign (--backend hil) left bag/, events.jsonl and policy_g<N>.json
+    only. A run without a bag says so; it is never made up."""
+    import tarfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        run = td / "store" / "tst9_001_speed-cap"
+        before = _rail_run_folder(run, run.name)
+        spec = BY_ID["speed-cap"]
+        ep = td / "runs" / "episode-x--speed-cap--seed1001"
+        files = S.write_rail_episode_bundle(
+            ep, run, spec, 1001, {"id": "speed-cap", "template": spec.template,
+                                  "status": "pass", "kpi": {"ticks": 3}},
+            backend="hil", tag=run.name, rc=0)
+        for name in GRANT_BUNDLE_NAMES:
+            assert (ep / name).exists(), name
+        assert list(files) == ["manifest.json", "policy_bundle.tar.gz", "episode.bag2/",
+                               "shield_audit.jsonl", "harness_events.jsonl", "kpi.json"]
+        assert all(v.startswith("written") for v in files.values()), files
+        # the run folder is untouched: its own names, its own bytes
+        assert {p.relative_to(run).as_posix(): p.read_bytes()
+                for p in sorted(run.rglob("*")) if p.is_file()} == before
+        assert (ep / "manifest.json").read_bytes() == before["manifest.json"]
+        assert (ep / "shield_audit.jsonl").read_bytes() == before["shield_audit.jsonl"]
+        for n in ("bag_0.mcap", "metadata.yaml"):
+            assert (ep / "episode.bag2" / n).read_bytes() == before[f"bag/{n}"], n
+        # every hot-apply generation's IR, checked against the node's hash
+        with tarfile.open(ep / "policy_bundle.tar.gz") as tar:
+            names = set(tar.getnames())
+            idx = json.load(tar.extractfile("policy_bundle.json"))
+            assert tar.extractfile("generations/policy_g1.json").read() == \
+                before["policy_g1.json"]
+        assert {"generations/policy_g0.json", "generations/policy_g1.json"} <= names, names
+        assert idx["complete"] is True and [g["generation"] for g in idx["generations"]] \
+            == [0, 1], idx
+        assert idx["generations"][1]["t"] == 3.002 and \
+            idx["generations"][1]["event"] == "spawn_polygon_fence", idx["generations"]
+        assert idx["injected"]["member"], idx["injected"]   # the policy the rail was handed
+        # harness events in the headless bundle's shape (kpi_report load_stored)
+        ev = [json.loads(x) for x in
+              (ep / "harness_events.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert [e["type"] for e in ev] == ["episode_start", "hot_apply", "episode_end"], ev
+        assert ev[0]["shield"] == "on" and ev[0]["generation"] == 0 and ev[0]["backend"] == "hil"
+        assert ev[1]["rule_id"] == "bar" and "kind" not in ev[1]
+        assert ev[2]["generation"] == 1 and ev[2]["t"] == 41.5 and ev[2]["mission_rc"] == 0
+        # what a replay reads, beside; kpi.json is the campaign's, not the node's
+        assert (ep / "tst9_001_speed-cap.replay.tar.gz").read_bytes() == \
+            before["tst9_001_speed-cap.replay.tar.gz"]
+        assert (ep / "trajectory.json").read_bytes() == before["trajectory.json"]
+        assert not (ep / "flight_log.jsonl").exists()
+        kpi = json.loads((ep / "kpi.json").read_text(encoding="utf-8"))
+        assert kpi["status"] == "pass" and kpi["bundle_files"] == files
+        assert isinstance(kpi["kpi_grade"], bool) and kpi["kpi_grade_reasons"] is not None
+        assert kpi["rail_bundle"]["tag"] == run.name and kpi["rail_bundle"]["episode_bag"][
+            "files"][0]["sha256"].startswith("sha256:")
+        # no bag on the run: said, never made up
+        run2 = td / "store" / "tst9_002_speed-cap"
+        _rail_run_folder(run2, run2.name, bag=False)
+        ep2 = td / "runs" / "episode-y--speed-cap--seed1001"
+        f2 = S.write_rail_episode_bundle(ep2, run2, spec, 1001, {"kpi": {}}, backend="hil")
+        assert f2["episode.bag2/"].startswith("not written") and not (ep2 / "episode.bag2").exists()
+
+
+class _BagRig(_FakeRig):
+    """_FakeRig whose mission also leaves what the Shield node's run folder
+    holds beside the log: manifest.json, bag/, shield_audit.jsonl."""
+
+    def run_mission(self, args, tag, shield, timeout_s):
+        rc, out = super().run_mission(args, tag, shield, timeout_s)
+        d = self.remote / "demo" / "out" / tag
+        (d / "manifest.json").write_text(json.dumps({
+            "code_revision": "0123456789abcdef0123456789abcdef01234567",
+            "vla_model_hash": "stub", "policy_hash": "sha256:00", "random_seed": 1001,
+            "sim_speedup": 1.0, "topology": "hil"}), encoding="utf-8")
+        (d / "bag").mkdir()
+        (d / "bag" / "bag_0.mcap").write_bytes(b"rosbag2")
+        (d / "shield_audit.jsonl").write_text('{"tick": 0}\n', encoding="utf-8")
+        return rc, out
+
+
+def test_a_hil_campaign_writes_each_flown_episode_under_the_grants_six_names():
+    """--backend hil without --no-bundles (WP4-11, 2026-11-18): each flown
+    episode gets a bundle in --runs under the grant's six names, the sweep's
+    record names it, and its kpi.json carries the campaign's verdict."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        cfg = td / "hil.json"
+        cfg.write_text(json.dumps({"store": str(td / "store"),
+                                   "bundles_dir": str(_signed_like_bundles(td))}),
+                       encoding="utf-8")
+        saved = S.make_hil_transport
+        S.make_hil_transport = lambda c: _BagRig(c)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
+                             "--only", "speed-cap", "--hil-campaign", "tst8",
+                             "--out", str(td / "s.json"), "--runs", str(td / "runs")])
+        finally:
+            S.make_hil_transport = saved
+            for d in (ROOT / S.CAMPAIGN_DIR).glob("tst*"):
+                shutil.rmtree(d, ignore_errors=True)
+            for d in (ROOT / S.RAIL_STRESS_DIR).glob("tst*"):
+                shutil.rmtree(d, ignore_errors=True)
+        doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
+        r = doc["results"][0]
+        assert rc in (0, 1) and r["status"] == "pass", (rc, r.get("status"), r.get("error"))
+        ep = Path(r["bundle"])
+        ep = ep if ep.is_absolute() else ROOT / ep
+        assert ep.parent == td / "runs" and ep.name.startswith("episode-"), ep
+        for name in GRANT_BUNDLE_NAMES:
+            assert (ep / name).exists(), name
+        kpi = json.loads((ep / "kpi.json").read_text(encoding="utf-8"))
+        assert kpi["status"] == r["status"] and kpi["mission_tag"] == "tst8_001_speed-cap"
+        assert kpi["kpi"] == r["kpi"]
+        assert all(kpi["bundle_files"][n].startswith("written") for n in (
+            "manifest.json", "policy_bundle.tar.gz", "episode.bag2/", "shield_audit.jsonl",
+            "harness_events.jsonl", "kpi.json")), kpi["bundle_files"]
+        run = td / "store" / "tst8_001_speed-cap"
+        assert (ep / "episode.bag2" / "bag_0.mcap").read_bytes() == \
+            (run / "bag" / "bag_0.mcap").read_bytes()
+        assert (run / "bag").is_dir() and not (run / "episode.bag2").exists()
+
+
 def test_a_hil_run_is_accepted_by_its_own_records_not_by_file_times():
     """The fetched folder is this launch's only if its records say so: this
     episode's mission_end, metrics.json and every row of the same episode,
