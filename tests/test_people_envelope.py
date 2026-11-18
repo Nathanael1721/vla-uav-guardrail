@@ -445,6 +445,12 @@ def test_the_simulators_pedestrian_list_feeds_the_people():
     assert [(p.x, p.y) for p in cf.step(1.0)] == [(3.0, 4.0)]
     # No list at all: the memory only ages.
     assert fv.SimPeopleFeed(None, P.PeopleMemory()).step(1.0) == []
+    # follow_vlm polls a level crowd on a car follow only for the people feed
+    # (update_level_truth; before: only while the subject was a pedestrian).
+    crowd2 = LevelActors([SimpleNamespace(x=0.0, y=0.0, seen=True, stale=0)])
+    assert fv.update_level_truth(crowd2, "car", 1.0) is False and crowd2.n_calls == 1
+    assert fv.update_level_truth(crowd2, "car", 1.0, feed_people=True) is True
+    assert crowd2.n_calls == 2
 
 
 def test_the_sim_rails_name_their_source_or_refuse():
