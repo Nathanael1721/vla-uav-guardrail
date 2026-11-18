@@ -2218,7 +2218,9 @@ async def _fly(args, holder: dict) -> int:
                     sim_people = FV.SimPeopleFeed(level_people, people_mem)
                 else:
                     level_people.update(_tp)      # throttled: a poll every period
-                people_now = sim_people.step(_tp)
+                # Only those within reach of this tick's decision
+                # (people.PEOPLE_RANGE_M); the memory keeps the rest.
+                people_now = people_feed.within(sim_people.step(_tp), state.x, state.y)
                 shield.set_people(people_now)
             # the attitude, so the motion compares with follow_vlm's rows
             # (tools/compare_motion.py tilt and pitch/roll rates)

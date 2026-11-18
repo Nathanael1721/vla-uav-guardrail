@@ -80,6 +80,14 @@ from typing import Iterable
 PEOPLE_STALE_S = 3.0
 PERSON_SPEED_MPS = 1.5
 PEOPLE_ASSOC_M = 2.0
+# The rails hand the Shield only the people whose reach disc comes within
+# this distance of the aircraft (`within`). The grant's 5 s lookahead at the
+# 5 m/s cap of the CityLife follow policies reaches 25 m (and any repair
+# candidate no further), so a person beyond 100 m can neither raise nor
+# clear a violation of an envelope up to 75 m; the cull keeps the per-tick
+# cost from growing with a crowd spread over the whole 2 km level (the
+# Shield's distance query is a loop over the people it holds).
+PEOPLE_RANGE_M = 100.0
 # The step the clearance repairs probe a field's gradient with is half its
 # cell size (Shield._away_dir); the people field has no cells, and 0.5 m
 # gives a 0.25 m probe, well inside a disc of the smallest sensible envelope.
@@ -218,6 +226,17 @@ class PeopleMemory:
                 "fixes": self.n_fixes, "nonfinite": self.n_nonfinite,
                 "tracks": self.n_tracks, "dropped_stale": self.n_dropped_stale,
                 "max_live": self.max_live}
+
+
+def within(people, x: float, y: float, range_m: float = PEOPLE_RANGE_M) -> list[Person]:
+    """The people whose reach disc comes within `range_m` of (x, y): what a
+    rail hands Shield.set_people for an aircraft at (x, y) (PEOPLE_RANGE_M)."""
+    out = []
+    for p in people:
+        q = as_person(p)
+        if math.hypot(q.x - x, q.y - y) - q.reach_m() <= range_m:
+            out.append(q)
+    return out
 
 
 def needs_people(policy) -> list[str]:

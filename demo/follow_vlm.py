@@ -6948,7 +6948,10 @@ async def fly(args) -> int:
             if people_mem is not None:
                 if sim_people is None:
                     sim_people = SimPeopleFeed(people, people_mem)
-                people_now = sim_people.step(time.time() - t0)
+                # Only those within reach of this tick's decision
+                # (people.PEOPLE_RANGE_M); the memory keeps the rest.
+                people_now = people_feed.within(sim_people.step(time.time() - t0),
+                                                state.x, state.y)
                 shield.set_people(people_now)
 
             # --record-perturb (vla_record.Perturber): the EXECUTED command is

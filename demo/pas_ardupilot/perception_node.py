@@ -7485,7 +7485,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             people_place["pose"].get(prec["pose"], 0) + 1)
                         for k, v in prec["src"].items():
                             people_place["src"][k] = people_place["src"].get(k, 0) + v
-                    people_now = people_mem.current(t_tick)
+                    # Only those within reach of this tick's decision
+                    # (people.PEOPLE_RANGE_M); the memory keeps the rest.
+                    people_now = people_feed.within(people_mem.current(t_tick),
+                                                    st.x, st.y)
                     shield.set_people(people_now)
                 # The autopilot's measured velocity: logged on every tick
                 # (state_v), given to the Shield only with the own-velocity

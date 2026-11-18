@@ -523,6 +523,35 @@ def test_the_rig_policy_loads_for_flight_and_needs_its_people_source():
                for name, _ in policy_candidates()), "a run flown under it resolves"
 
 
+def test_the_rails_hand_the_shield_the_people_within_reach_of_the_decision():
+    """people.within / PEOPLE_RANGE_M: a person whose reach disc is more than
+    100 m away is not handed to the Shield (the 5 s lookahead at 5 m/s
+    reaches 25 m); the memory keeps it."""
+    assert P.PEOPLE_RANGE_M == 100.0
+    ppl = [P.Person(50.0, 0.0), P.Person(150.0, 0.0), P.Person(102.0, 0.0, 2.0)]
+    assert [p.x for p in P.within(ppl, 0.0, 0.0)] == [50.0, 102.0]   # 102 - 3 m reach
+    assert P.within([(0.0, 101.0)], 0.0, 0.0) == []
+    # Within the range, the culled and the full set decide alike.
+    sh_all, sh_cut = _shield(d=5.0), _shield(d=5.0)
+    crowd = [(3.0, 0.0), (-4.0, 2.0)] + [(float(200 + 7 * k), float(-300 + 11 * k))
+                                         for k in range(40)]
+    sh_all.set_people(crowd)
+    sh_cut.set_people(P.within(crowd, 0.0, 0.0))
+    assert len(sh_cut.people) == 2
+    for vx in (-4.0, 0.0, 4.0):
+        for vy in (-4.0, 0.0, 4.0):
+            a, b = sh_all.filter(ST, Action4D(vx=vx, vy=vy)), \
+                sh_cut.filter(ST, Action4D(vx=vx, vy=vy))
+            assert a.emitted == b.emitted and \
+                [v.rule_id for v in a.violations] == [v.rule_id for v in b.violations]
+    for rail, at in (("demo/follow_vlm.py", "state.x, state.y)"),
+                     ("demo/vla_fly.py", "state.x, state.y)"),
+                     ("demo/pas_ardupilot/perception_node.py", "st.x, st.y)")):
+        src = (ROOT / rail).read_text(encoding="utf-8")
+        i = src.index("people_now = people_feed.within(")
+        assert at in src[i:i + 160], rail
+
+
 def test_rows_people_is_what_a_flight_log_keeps():
     assert P.rows_people([P.Person(1.234567, -2.0, 0.12345), (3.0, 4.0)]) == \
         [[1.23, -2.0, 0.123], [3.0, 4.0, 0.0]]
