@@ -50,7 +50,18 @@ origin (home), which matches a FlatGround at the home elevation but not a
 DEM - the error would be g(x, y) - g(home), either sign. So a Shield refuses
 a GridGround unless its caller declares up_ref="terrain"
 (Shield(ground=dem, up_ref="terrain")), and a rail that measures above home
-converts first with `terrain_relative_up`. No rail does either yet.
+converts first with `terrain_relative_up`. Since 2026-11-18 two rails do,
+opt-in: the headless harness (a scenario's `ground`; its vehicle holds its
+MSL height and its `up` is kept above the DEM) and the ROS 2 Shield node
+(--ground, --ground-home-msl: `TerrainReference`). Neither has flown on
+SITL, hil or PAS. LIMIT: the Shield's forecast holds the ground under the
+aircraft flat over its lookahead, so an AGL band over a DEM lets a level
+command over rising ground through and is restored the tick after
+(docs/data/msl_dem_rail.json, finding_agl_over_dem); an MSL band has no
+such gap (its conversion bounds the ground over the reach both ways).
+
+A DEM as published is a WGS84 lat/lon grid: `Wgs84Grid` / `load_ground`
+(below) read one and resample it into the policy's frame.
 
 FRAME. A GridGround's x0, y0 are in a policy's local metre frame. It carries
 the WGS84 origin (lat, lon) of that frame (`origin`, None for a metre-only
@@ -319,6 +330,373 @@ def origin_problem(ground, frame_origin) -> str | None:
         return None
     return (f"the ground {ground!r} is in the frame of origin {go}, the policy's "
             f"frame origin is {frame_origin}: a DEM is read only in its own frame")
+
+
+# ---------------------------------------------------------------------------
+# A DEM as published: a WGS84 latitude / longitude grid (X-11, 2026-11-18)
+# ---------------------------------------------------------------------------
+#
+# Elevation models are published on a geographic grid (SRTM, Copernicus GLO-30
+# and the like: one elevation per node of a regular lat/lon lattice), not in a
+# policy's local metres. `Wgs84Grid` reads such a grid from a small JSON or NPZ
+# file (no GeoTIFF: no reader for it is in the flight environments) and
+# `to_ground` places it in a policy's frame as the GridGround the Shield reads:
+#
+#   {"kind": "wgs84_grid", "source": "...",
+#    "lat0": -35.3678, "lon0": 149.1597,      # the SOUTH-WEST node
+#    "dlat_deg": 0.0001, "dlon_deg": 0.0001,  # node spacing, north / east
+#    "elev_msl_m": [[...], ...]}              # rows south -> north, columns
+#                                             # west -> east, metres MSL
+#
+# (an .npz holds the same keys as arrays; `source` as a 0-d string array).
+#
+# RESAMPLING. The policy frame is this repository's equirectangular projection
+# about the policy's origin (guardrail/projection.py): north = R * dlat,
+# east = R * cos(lat_origin) * dlon, so the grid's nodes fall on an
+# axis-aligned lattice of spacings s_n (north) and s_e (east), which differ.
+# A GridGround has one square cell, so the grid is resampled: a node of the
+# square lattice (cell_m, default min(s_n, s_e)) takes the source's bilinear
+# elevation at its lat/lon. The resampled surface differs from the source's
+# by at most L * cell_m * sqrt(2), L the source surface's steepest slope
+# (`resample_bound_m`, recorded; a resampled bilinear value is a convex
+# combination of source values at nodes within cell_m * sqrt(2)).
+#
+# WHAT THAT ERROR CAN AND CANNOT MOVE. An MSL rule is judged at the rail's own
+# MSL height: a rail's up is z_above_home + home_msl - g(x, y) (g the
+# resampled surface; `terrain_relative_up`), and the Shield converts the MSL
+# band over the lowest / highest g within reach, which bound g(x, y) itself -
+# so g cancels and an MSL rule is enforced at least as strictly as declared
+# whatever g's error (a ceiling: z + home_msl <= C - (hi - g(x, y)) <= C).
+# What g's error moves is the terrain-relative height itself, i.e. how AGL
+# rules over that DEM read (by up to `resample_bound_m`), and how much
+# headroom the conversion takes.
+
+WGS84_GRID_KIND = "wgs84_grid"
+# A rail's home elevation and the DEM's elevation at home may disagree by
+# this much before the rail refuses the DEM (TerrainReference): more, and an
+# aircraft on its pad would read as above or below the ground the DEM puts
+# under it.
+GROUND_HOME_TOL_M = 2.0
+
+
+def _file_sha256(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class Wgs84Grid:
+    """A DEM on a WGS84 lat/lon grid (section comment above): `elev[r][c]`
+    metres MSL at (lat0 + r * dlat_deg, lon0 + c * dlon_deg), bilinear
+    between nodes, the edge nodes beyond. Read-only; `path` / `sha256` name
+    the file it came from (None for one built in memory)."""
+
+    def __init__(self, lat0: float, lon0: float, dlat_deg: float, dlon_deg: float,
+                 elev, source: str, path: str | None = None, sha256: str | None = None):
+        import numpy as np
+        z = np.array(elev, dtype=float)
+        if z.ndim != 2 or z.shape[0] < 2 or z.shape[1] < 2:
+            raise ValueError(f"a WGS84 grid needs at least 2 x 2 nodes, got shape {z.shape}")
+        if not np.isfinite(z).all():
+            raise ValueError("a WGS84 grid's elevations must all be finite")
+        vals = {"lat0": lat0, "lon0": lon0, "dlat_deg": dlat_deg, "dlon_deg": dlon_deg}
+        for k, v in vals.items():
+            if not isinstance(v, (int, float)) or not math.isfinite(float(v)):
+                raise ValueError(f"WGS84 grid {k} {v!r} is not a finite number")
+        if not (dlat_deg > 0 and dlon_deg > 0):
+            raise ValueError("a WGS84 grid needs dlat_deg > 0 and dlon_deg > 0")
+        lat1 = lat0 + (z.shape[0] - 1) * dlat_deg
+        lon1 = lon0 + (z.shape[1] - 1) * dlon_deg
+        if not (-90.0 <= lat0 and lat1 <= 90.0 and -180.0 <= lon0 and lon1 <= 180.0):
+            raise ValueError(f"WGS84 grid spans lat {lat0}..{lat1}, lon {lon0}..{lon1}: "
+                             f"not within -90..90 / -180..180")
+        if not source:
+            raise ValueError("a ground elevation must say where it comes from (source)")
+        z.setflags(write=False)
+        self.z = z
+        self.lat0, self.lon0 = float(lat0), float(lon0)
+        self.dlat, self.dlon = float(dlat_deg), float(dlon_deg)
+        self.source, self.path, self.sha256 = str(source), path, sha256
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return tuple(self.z.shape)
+
+    def elevation_at_latlon(self, lat, lon):
+        """Bilinear elevation (m MSL) at (lat, lon); scalars or numpy arrays."""
+        import numpy as np
+        nr, nc = self.z.shape
+        fr = np.clip((np.asarray(lat, dtype=float) - self.lat0) / self.dlat, 0.0, nr - 1.0)
+        fc = np.clip((np.asarray(lon, dtype=float) - self.lon0) / self.dlon, 0.0, nc - 1.0)
+        r = np.minimum(np.floor(fr).astype(int), nr - 2)
+        c = np.minimum(np.floor(fc).astype(int), nc - 2)
+        v, u = fr - r, fc - c
+        z = self.z
+        out = ((1 - u) * (1 - v) * z[r, c] + u * (1 - v) * z[r, c + 1]
+               + (1 - u) * v * z[r + 1, c] + u * v * z[r + 1, c + 1])
+        return float(out) if np.ndim(out) == 0 else out
+
+    def spacing_m(self, frame_origin: tuple[float, float]) -> tuple[float, float]:
+        """(s_n, s_e): the node spacings in metres north / east in the
+        equirectangular frame of `frame_origin` (guardrail/projection.py)."""
+        from .projection import projection_for
+        p = projection_for(float(frame_origin[0]), float(frame_origin[1]))
+        n1, _ = p.to_local(p.origin_lat + self.dlat, p.origin_lon)
+        _, e1 = p.to_local(p.origin_lat, p.origin_lon + self.dlon)
+        return abs(n1), abs(e1)
+
+    def max_slope(self, frame_origin: tuple[float, float]) -> float:
+        """L: an upper bound on the source surface's slope (m/m) in that
+        frame - the steepest node-to-node rise along north, along east,
+        combined: a bilinear cell's gradient is bounded by its edges'."""
+        import numpy as np
+        sn, se = self.spacing_m(frame_origin)
+        gn = float(np.abs(np.diff(self.z, axis=0)).max()) / sn
+        ge = float(np.abs(np.diff(self.z, axis=1)).max()) / se
+        return math.hypot(gn, ge)
+
+    def to_ground(self, frame_origin, cell_m: float | None = None,
+                  reach_m: float = 20.0, quantum_m: float = 0.5) -> "GeoGridGround":
+        """This grid as the GridGround of a policy whose frame origin is
+        `frame_origin` (lat, lon): resampled onto a square lattice of
+        `cell_m` (default the smaller node spacing) covering the grid's
+        extent (section comment above, RESAMPLING)."""
+        import numpy as np
+        from .projection import _EARTH_R, projection_for
+        if frame_origin is None:
+            raise ValueError("a WGS84 DEM is placed in a policy's frame, and this policy "
+                             "has none (written in metres only): give a metre-framed grid "
+                             "(GridGround) or a policy with a WGS84 origin")
+        o = (float(frame_origin[0]), float(frame_origin[1]))
+        p = projection_for(o[0], o[1])
+        sn, se = self.spacing_m(o)
+        c = float(cell_m) if cell_m is not None else min(sn, se)
+        if not (math.isfinite(c) and c > 0):
+            raise ValueError(f"cell_m {cell_m!r} must be a positive number of metres")
+        nr, nc = self.z.shape
+        x0, y0 = p.to_local(self.lat0, self.lon0)
+        x1, y1 = p.to_local(self.lat0 + (nr - 1) * self.dlat,
+                            self.lon0 + (nc - 1) * self.dlon)
+        ni = int(math.ceil((x1 - x0) / c - 1e-9)) + 1
+        nj = int(math.ceil((y1 - y0) / c - 1e-9)) + 1
+        if ni * nj > 4_000_000:
+            raise ValueError(f"resampling at {c:g} m gives {ni} x {nj} nodes: "
+                             f"give a larger cell_m")
+        xs = x0 + c * np.arange(ni)
+        ys = y0 + c * np.arange(nj)
+        X, Y = np.meshgrid(xs, ys)                        # rows along y (east)
+        lat = p.origin_lat + np.degrees(X / _EARTH_R)
+        lon = p.origin_lon + np.degrees(Y / (_EARTH_R * math.cos(math.radians(p.origin_lat))))
+        z = self.elevation_at_latlon(lat, lon)
+        L = self.max_slope(o)
+        bound = L * c * math.sqrt(2.0)
+        # The bound, checked where it is loosest: at the resampled cells'
+        # centres and edge midpoints (recorded beside it, not a proof).
+        mx = (xs[:-1] + xs[1:]) / 2.0
+        my = (ys[:-1] + ys[1:]) / 2.0
+        sampled = 0.0
+        for qx, qy in ((mx, my), (mx, ys[:-1]), (xs[:-1], my)):
+            QX, QY = np.meshgrid(qx, qy)
+            qlat = p.origin_lat + np.degrees(QX / _EARTH_R)
+            qlon = p.origin_lon + np.degrees(
+                QY / (_EARTH_R * math.cos(math.radians(p.origin_lat))))
+            src = self.elevation_at_latlon(qlat, qlon)
+            fi, fj = (QX - x0) / c, (QY - y0) / c
+            i, j = np.floor(fi).astype(int), np.floor(fj).astype(int)
+            u, v = fi - i, fj - j
+            res = ((1 - u) * (1 - v) * z[j, i] + u * (1 - v) * z[j, i + 1]
+                   + (1 - u) * v * z[j + 1, i] + u * v * z[j + 1, i + 1])
+            sampled = max(sampled, float(np.abs(src - res).max()))
+        geo = {"kind": WGS84_GRID_KIND, "path": self.path, "sha256": self.sha256,
+               "lat0": self.lat0, "lon0": self.lon0, "dlat_deg": self.dlat,
+               "dlon_deg": self.dlon, "shape": list(self.z.shape),
+               "spacing_m": [round(sn, 6), round(se, 6)],
+               "resample_cell_m": round(c, 6),
+               "max_slope": round(L, 6),
+               "resample_bound_m": round(bound, 6),
+               "resample_max_err_sampled_m": round(sampled, 6)}
+        return GeoGridGround(x0, y0, c, z, self.source, reach_m=reach_m,
+                             quantum_m=quantum_m, origin=o, geo=geo)
+
+    def to_dict(self) -> dict:
+        return {"kind": WGS84_GRID_KIND, "source": self.source, "lat0": self.lat0,
+                "lon0": self.lon0, "dlat_deg": self.dlat, "dlon_deg": self.dlon,
+                "elev_msl_m": self.z.tolist()}
+
+    def __repr__(self) -> str:
+        return (f"Wgs84Grid({self.z.shape[0]}x{self.z.shape[1]} from "
+                f"({self.lat0:g}, {self.lon0:g}) every ({self.dlat:g}, {self.dlon:g}) deg, "
+                f"{float(self.z.min()):g}-{float(self.z.max()):g} m MSL, {self.source!r})")
+
+
+def load_wgs84_grid(path: str | Path) -> Wgs84Grid:
+    """Read a WGS84 grid from a JSON or NPZ file (section comment above)."""
+    p = Path(path)
+    if p.suffix.lower() == ".npz":
+        import numpy as np
+        with np.load(p, allow_pickle=False) as f:
+            d = {k: f[k] for k in f.files}
+        missing = {"lat0", "lon0", "dlat_deg", "dlon_deg", "elev_msl_m", "source"} - set(d)
+        if missing:
+            raise ValueError(f"{p}: not a WGS84 grid (missing {sorted(missing)})")
+        kind = str(d["kind"]) if "kind" in d else WGS84_GRID_KIND
+        if kind != WGS84_GRID_KIND:
+            raise ValueError(f"{p}: kind {kind!r}, not {WGS84_GRID_KIND!r}")
+        return Wgs84Grid(float(d["lat0"]), float(d["lon0"]), float(d["dlat_deg"]),
+                         float(d["dlon_deg"]), d["elev_msl_m"], str(d["source"]),
+                         path=str(path), sha256=_file_sha256(p))
+    d = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(d, dict) or d.get("kind") != WGS84_GRID_KIND:
+        raise ValueError(f"{p}: not a WGS84 grid (kind "
+                         f"{d.get('kind') if isinstance(d, dict) else None!r})")
+    unknown = set(d) - {"kind", "source", "description", "lat0", "lon0", "dlat_deg",
+                        "dlon_deg", "elev_msl_m"}
+    if unknown:
+        raise ValueError(f"{p}: unknown key(s) {sorted(unknown)}")
+    return Wgs84Grid(d["lat0"], d["lon0"], d["dlat_deg"], d["dlon_deg"], d["elev_msl_m"],
+                     d.get("source", ""), path=str(path), sha256=_file_sha256(p))
+
+
+class GeoGridGround(GridGround):
+    """A GridGround resampled from a WGS84 grid (Wgs84Grid.to_ground): the
+    same surface to the Shield, with the source file and the resampling's
+    error bound in its record."""
+
+    def __init__(self, *a, geo: dict, **kw):
+        super().__init__(*a, **kw)
+        self.geo = dict(geo)
+
+    def record(self) -> dict:
+        rec = super().record()
+        rec["wgs84_dem"] = dict(self.geo)
+        return rec
+
+
+def load_ground(path: str | Path, frame_origin=None, *, root: str | Path | None = None,
+                reach_m: float | None = None):
+    """A ground from a file, in the frame of a policy whose WGS84 origin is
+    `frame_origin` ((lat, lon), or None for a metre-only policy):
+
+      * a WGS84 grid (.npz, or JSON `kind: wgs84_grid`) is resampled into that
+        frame (Wgs84Grid.to_ground), which it needs;
+      * a metre grid (JSON `kind: grid`, GridGround.to_dict) is read as it is
+        and must be in that frame (origin_problem);
+      * a flat ground (JSON `{"kind": "flat", "elevation_msl_m": ...,
+        "source": ...}`) is a FlatGround.
+
+    `root`: what a relative `path` is relative to (the repository root, as a
+    scenario or a rail flag names it). `reach_m`: override the grid's reach
+    (a WGS84 grid's default is GridGround's 20 m)."""
+    p = Path(path)
+    full = p if p.is_absolute() or root is None else Path(root) / p
+    if full.suffix.lower() == ".npz":
+        kind = WGS84_GRID_KIND
+        d = None
+    else:
+        d = json.loads(full.read_text(encoding="utf-8"))
+        kind = d.get("kind") if isinstance(d, dict) else None
+    if kind == WGS84_GRID_KIND:
+        grid = load_wgs84_grid(full)
+        grid.path = str(path)
+        g = grid.to_ground(frame_origin, **({} if reach_m is None else {"reach_m": reach_m}))
+        g.geo["path"] = str(path)
+        return g
+    if kind == "grid":
+        if reach_m is not None:
+            d = dict(d, reach_m=reach_m)
+        g = GridGround.from_dict(d)
+        why = origin_problem(g, None if frame_origin is None else
+                             (float(frame_origin[0]), float(frame_origin[1])))
+        if why:
+            raise ValueError(f"{path}: {why}")
+        return g
+    if kind == "flat":
+        return FlatGround(d["elevation_msl_m"], d.get("source") or str(path))
+    raise ValueError(f"{path}: not a ground file (kind {kind!r}; one of "
+                     f"{WGS84_GRID_KIND!r}, 'grid', 'flat')")
+
+
+def policy_file_frame_origin(bundle=None, yaml_path=None):
+    """The WGS84 frame origin of the policy a rail is about to fly (its
+    bundle or YAML), read WITHOUT the flight gate - which refuses an MSL rule
+    until it is given the ground this origin places. The flight loader
+    (bundle.load_for_flight) then reads the same file with that ground and
+    applies every check."""
+    if bundle:
+        from .bundle import check_bundle
+        chk = check_bundle(bundle)
+        pol = chk.flight_policy if chk.flight_policy is not None else chk.policy
+        return pol.frame_origin
+    if yaml_path:
+        from .models import load_policy
+        return load_policy(yaml_path, runtime=False).frame_origin
+    raise ValueError("no policy given: a bundle or a YAML file")
+
+
+def ground_for_flight(path, bundle=None, yaml_path=None, *, root=None):
+    """`load_ground(path)` in the frame of the policy a rail flies (its
+    bundle or YAML, `policy_file_frame_origin`)."""
+    return load_ground(path, policy_file_frame_origin(bundle, yaml_path), root=root)
+
+
+class TerrainReference:
+    """What a rail that measures height above its HOME tells a Shield given a
+    DEM (Shield(ground=dem, up_ref="terrain")): the height above the DEM
+    surface under the aircraft, `terrain_relative_up(z, home_msl_m, dem, x,
+    y)`.
+
+    `home_msl_m`: the elevation (m MSL) of the rail's home / EKF origin - the
+    autopilot's own home altitude (the SITL rails': 584 m, CMAC). The MSL
+    height a rule is judged at is z + home_msl_m, so this is the number that
+    must be right; the DEM's elevation at home (`home_xy`, policy frame) must
+    agree with it within `tol_m` (GROUND_HOME_TOL_M) or the rail is refused
+    before take-off: an aircraft on its pad would otherwise read as above or
+    below the ground the DEM puts under it. None: the DEM's own elevation at
+    home (a rail that takes off from the DEM's surface, as the headless
+    harness does)."""
+
+    def __init__(self, ground, home_msl_m: float | None = None,
+                 home_xy: tuple[float, float] = (0.0, 0.0), source: str = "",
+                 tol_m: float = GROUND_HOME_TOL_M):
+        if not is_dem(ground):
+            raise ValueError(f"{ground!r} is not a DEM: a flat ground needs no "
+                             f"terrain-relative height (the rails' height above home "
+                             f"is already its height above a flat ground at home)")
+        self.ground = ground
+        self.home_xy = (float(home_xy[0]), float(home_xy[1]))
+        g_home = float(ground.elevation_at(*self.home_xy))
+        if home_msl_m is None:
+            self.home_msl_m, self.home_source = g_home, "the DEM's elevation at home"
+        else:
+            h = float(home_msl_m)
+            if not math.isfinite(h):
+                raise ValueError(f"home elevation {home_msl_m!r} is not finite")
+            if abs(h - g_home) > tol_m:
+                raise ValueError(
+                    f"the home elevation {h:g} m MSL ({source or 'given'}) and the DEM's "
+                    f"elevation at home ({self.home_xy[0]:g}, {self.home_xy[1]:g}), "
+                    f"{g_home:.2f} m MSL, differ by {abs(h - g_home):.2f} m (over "
+                    f"{tol_m:g} m): the aircraft on its pad would read as "
+                    f"{'above' if h > g_home else 'below'} the DEM's ground")
+            self.home_msl_m, self.home_source = h, source or "given"
+        self.dem_at_home_msl_m = g_home
+
+    def up(self, z_above_home: float, x: float, y: float) -> float:
+        """Height above the DEM at (x, y) of an aircraft z metres above home."""
+        return terrain_relative_up(z_above_home, self.home_msl_m, self.ground, x, y)
+
+    def msl(self, up_terrain: float, x: float, y: float) -> float:
+        """The MSL height of an aircraft `up_terrain` above the DEM at (x, y)."""
+        return float(up_terrain) + float(self.ground.elevation_at(x, y))
+
+    def state(self, st):
+        """`st` (a models.State whose up is above home) with up above the DEM."""
+        return st.model_copy(update={"up": self.up(st.up, st.x, st.y)})
+
+    def record(self) -> dict:
+        return {"ground": self.ground.record(), "up_ref": "terrain",
+                "home_msl_m": self.home_msl_m, "home_source": self.home_source,
+                "home_xy": list(self.home_xy),
+                "dem_at_home_msl_m": round(self.dem_at_home_msl_m, 6)}
 
 
 # Rule fields that hold a height, per altitude-banded rule type.

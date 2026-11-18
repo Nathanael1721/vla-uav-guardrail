@@ -97,11 +97,23 @@ def _policy_file(name: str) -> Path:
     return POLICIES_DIR / f"{name}.yaml"
 
 
+def _ground_kw(ground: str | None, src: Path) -> dict:
+    """{"ground": the ground file `ground` in the frame of policy `src`}, or
+    {} without one (X-11: an MSL rule is flyable only over a ground, so its
+    bundle is built and verified over the ground it will fly over)."""
+    if not ground:
+        return {}
+    from guardrail.terrain import ground_for_flight
+    return {"ground": ground_for_flight(ground, yaml_path=src, root=ROOT)}
+
+
 def check_one(name: str, out_dir: Path | None = None,
-              trust_store=None) -> dict:
+              trust_store=None, ground: str | None = None) -> dict:
     """Is the flight bundle of policy `name` on disk, signed by a trusted key,
-    flyable, and still the YAML's policy? `{"policy", "bundle", "ok", "why"}`."""
+    flyable, and still the YAML's policy? `{"policy", "bundle", "ok", "why"}`.
+    `ground`: the ground file an MSL policy flies over (--ground)."""
     src = _policy_file(name)
+    gkw = _ground_kw(ground, src)
     pol = load_policy(src, runtime=False)
     out = flight_bundle_path(pol, out_dir)
     shown = src.resolve()
@@ -113,7 +125,7 @@ def check_one(name: str, out_dir: Path | None = None,
         row["why"] = "no bundle on disk"
         return row
     try:
-        flown, source = B.load_for_flight(out, trust_store=trust_store)
+        flown, source = B.load_for_flight(out, trust_store=trust_store, **gkw)
     except (ValueError, OSError) as exc:
         row["why"] = f"refused by the flight loader: {exc}"
         return row
@@ -128,22 +140,24 @@ def check_one(name: str, out_dir: Path | None = None,
 
 
 def build_one(name: str, signer: B.Signer, out_dir: Path | None = None, *,
-              issued_at=None, trust_store=None) -> dict:
+              issued_at=None, trust_store=None, ground: str | None = None) -> dict:
     """Write, sign and verify the flight bundle of policy `name`. Raises
-    ValueError for a policy that may not be released or flown."""
+    ValueError for a policy that may not be released or flown. `ground`:
+    the ground file an MSL policy flies over (--ground; X-11)."""
     src = _policy_file(name)
+    gkw = _ground_kw(ground, src)
     pol = load_policy(src, runtime=False)
     why = B._release_check(pol, str(src))     # the CLI's own release check
     if why:
         raise ValueError(why)
-    gaps = pol.flight_problems()
+    gaps = pol.flight_problems(**gkw)
     if gaps:
         raise ValueError(f"{src.name} is not flyable as written, so no flight "
                          f"bundle is written: " + "; ".join(gaps))
     out = flight_bundle_path(pol, out_dir)
     B.write_bundle(pol, out, f"flight bundle of {src.name}",
                    issued_at=issued_at, signer=signer)
-    row = check_one(name, out_dir, trust_store)
+    row = check_one(name, out_dir, trust_store, ground=ground)
     if not row["ok"]:
         raise ValueError(f"{out.name} was written but does not verify: "
                          f"{row['why']}")
@@ -152,7 +166,7 @@ def build_one(name: str, signer: B.Signer, out_dir: Path | None = None, *,
 
 def build(names=FLIGHT_POLICIES, out_dir: Path | None = None, *,
           signer: B.Signer | None = None, issued_at=None,
-          trust_store=None) -> list[dict]:
+          trust_store=None, ground: str | None = None) -> list[dict]:
     """Build every bundle in `names`; `signer` defaults to the lab key
     (guardrail.bundle.load_signer), and its absence stops the build."""
     if signer is None:
@@ -163,7 +177,8 @@ def build(names=FLIGHT_POLICIES, out_dir: Path | None = None, *,
                          f"register it (python -m guardrail.bundle keygen) or "
                          f"use the lab key")
     return [build_one(n, signer, out_dir, issued_at=issued_at,
-                      trust_store=trust_store) for n in names]
+                      trust_store=trust_store,
+                      **({} if ground is None else {"ground": ground})) for n in names]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -173,6 +188,11 @@ def main(argv: list[str] | None = None) -> int:
                          "default: " + ", ".join(FLIGHT_POLICIES))
     ap.add_argument("--check", action="store_true",
                     help="verify the bundles on disk; write nothing")
+    ap.add_argument("--ground", default=None, metavar="FILE",
+                    help="the ground the listed policies fly over (guardrail/terrain.py "
+                         "load_ground; X-11): a policy with an MSL rule is flyable, so "
+                         "bundled, only over one. Give it only with such policies "
+                         "(e.g. experiments/policies/msl_dem_sitl.yaml)")
     ap.add_argument("--out-dir", default=None,
                     help="default bundles/ (gitignored)")
     ap.add_argument("--key", default=None,
@@ -209,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
             return rc
 
     if args.check:
-        rows = [check_one(n, out_dir) for n in args.policies]
+        rows = [check_one(n, out_dir, ground=args.ground) for n in args.policies]
         for r in rows:
             print(f"{'OK     ' if r['ok'] else 'MISSING' if 'no bundle' in r['why'] else 'BAD    '}"
                   f" {Path(r['bundle']).name:44s} {r['policy']}"
@@ -220,7 +240,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         signer = B.load_signer(args.key, authority=args.authority)
         rows = build(args.policies, out_dir, signer=signer,
-                     issued_at=args.issued_at)
+                     issued_at=args.issued_at,
+                     **({} if args.ground is None else {"ground": args.ground}))
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"REFUSED  {type(exc).__name__}: {exc}")
         return 2

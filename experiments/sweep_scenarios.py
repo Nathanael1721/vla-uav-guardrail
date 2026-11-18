@@ -1357,6 +1357,29 @@ def _as_defaults(d) -> Defaults:
     return Defaults.model_validate(d or {})
 
 
+def episode_ground(spec, policy=None):
+    """The scenario's declared ground (ScenarioSpec.ground, X-11,
+    guardrail/terrain.py load_ground) in the frame of its policy, or None
+    for a scenario without one. Raises UnsupportedScenario for a ground file
+    that cannot be read or placed in the policy's frame. A flat ground is
+    refused here: the harness's heights are already above a flat ground at
+    the start, so a flat `ground` would change nothing it flies (an MSL rule
+    over a flat ground is the policy shifted by the elevation)."""
+    path = getattr(spec, "ground", None)
+    if path is None:
+        return None
+    from guardrail import terrain as TR
+    try:
+        pol = policy if policy is not None else spec.policy.load(ROOT)
+        g = TR.load_ground(path, pol.frame_origin, root=ROOT)
+    except (ValueError, OSError, KeyError) as e:
+        raise UnsupportedScenario(f"ground {path}: {type(e).__name__}: {e}") from e
+    if not TR.is_dem(g):
+        raise UnsupportedScenario(f"ground {path}: a flat ground; the harness's heights "
+                                  f"are above the start's ground already")
+    return g
+
+
 def episode_world(spec):
     """The scenario's declared world (ScenarioSpec.world, guardrail/
     world_map.py), read from the checkout, or None for a scenario without
@@ -1636,6 +1659,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                          f"happens: the run ends at {t_end:.1f} s")
 
     policy, source = spec.policy.load_with_source(ROOT)
+    # The scenario's declared ground (ScenarioSpec.ground, X-11): every
+    # Shield of the episode converts its MSL rules over it, told the height
+    # above that ground (up_ref="terrain"), which is what `st.up` is below
+    # (the integrator keeps it so). Nothing without a ground.
+    ground = episode_ground(spec, policy)
+    if ground is not None:
+        rec_kw.update(ground=ground, up_ref="terrain")
     hash0 = policy.policy_hash
     sim_t = [0.0]
     clock = None
@@ -1775,6 +1805,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # Only off the default frame, so every world-frame episode's events
         # are as they were.
         events[0]["action_frame"] = action_frame
+    if ground is not None:
+        # Only over a declared ground (X-11), so every other episode's
+        # events are as they were.
+        events[0]["ground"] = ground.record()
+        events[0]["up_ref"] = "terrain"
     es = _EventState(shields=shields)
     generation_irs: dict[int, bytes] = {int(policy.generation): policy.canonical_bytes()}
     st = m.start
@@ -2257,6 +2292,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # The trace's words, only on a tick that refused a floor (above).
             **slowed,
         }
+        if ground is not None:
+            # Over a declared ground `up` is the height above it; the true
+            # MSL height beside it, what an MSL rule is declared in (X-11).
+            row["msl_m"] = st.up + ground.elevation_at(st.x, st.y)
         if esc:
             row.update(fsm_state_before=d.fsm_state_before,
                        fsm_state_after=d.fsm_state_after, fsm_edge=d.fsm_edge,
@@ -2426,13 +2465,20 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         ground_v = (vgx, vgy)
         prev_st = st
         up_next = st.up + fvz * dt
+        nx, ny = st.x + vgx * dt, st.y + vgy * dt
+        if ground is not None:
+            # Over a declared ground (X-11) the vehicle holds its MSL height
+            # and `up` is its height above the ground under it: the climb,
+            # less the rise of the ground between the two positions (the
+            # terrain-relative height a rail gets from terrain.
+            # terrain_relative_up, with its home at the start's ground).
+            up_next += ground.elevation_at(st.x, st.y) - ground.elevation_at(nx, ny)
         if veh is not None and up_next < 0.0:
             # The ground stops a descent (a landing's last tick, carried by
             # the response past the commanded stop); the ideal vehicle never
             # reaches it, because every descent it flies ends on the tick.
             up_next = 0.0
-        st = State(x=st.x + vgx * dt, y=st.y + vgy * dt,
-                   up=up_next, yaw_deg=st.yaw_deg)
+        st = State(x=nx, y=ny, up=up_next, yaw_deg=st.yaw_deg)
         # Where the move landed, judged NOW - before the clock and the next
         # tick's events advance: was it already unsafe / inside a zone? (See
         # the breach and polygon-entry tests above.)
@@ -3099,7 +3145,7 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "wind_model": wind_model,
         "vehicle_response": run.extra.get("vehicle_response") or response_for(response),
         "library_defaults": dfl.model_dump(mode="json"),
-        "scenario_spec": spec.model_dump(mode="json", by_alias=True),
+        "scenario_spec": _spec_record(spec),
         "scenario_events": [e.model_dump(mode="json") for e in spec.events],
         "policy": _policy_record(spec, run.policy_hash_start),
         "generations": policy_generations(run.events),
@@ -3113,6 +3159,22 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         # Which world the Shields judged the distance_envelope in (its file
         # is named by scenario_spec.world; this pins its content).
         out["world"] = world.record()
+    ground = episode_ground(spec)
+    if ground is not None:
+        # The ground the Shields converted MSL rules over (X-11): the file
+        # scenario_spec.ground names, its hash and the resampling's bound.
+        out["ground"] = ground.record()
+    return out
+
+
+def _spec_record(spec: ScenarioSpec) -> dict:
+    """The scenario as recorded in its extras: the spec's JSON dump, without
+    a `ground` key when it has none (X-11, 2026-11-18), so every record of a
+    scenario without a ground is byte for byte what it was before the field
+    existed (rerun_from_extras reads the missing key as None)."""
+    out = spec.model_dump(mode="json", by_alias=True)
+    if out.get("ground") is None:
+        out.pop("ground", None)
     return out
 
 
@@ -4406,6 +4468,17 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         args.append(f"--events={events}")
     if meta:
         args.append(f"--scenario-meta={meta}")
+    if getattr(spec, "ground", None) is not None:
+        # A declared ground (X-11): the Shield node flies one from its own
+        # --ground flag (docs/RUNBOOK-orin-hil.md, "MSL over a DEM"), but this
+        # harness's post-flight scoring of a rail run (the rail judges, the
+        # per-step rebuild) is not given the ground, and would refuse the
+        # MSL rule after the flight. Refused before SITL boots instead.
+        raise UnsupportedScenario(
+            f"ground {spec.ground}: a scenario with a declared ground is flown headless "
+            f"only; on a rail, fly the Shield node with --ground directly "
+            f"(docs/RUNBOOK-orin-hil.md, 'MSL over a DEM') - the harness's rail "
+            f"scoring has no ground yet")
     if getattr(spec, "world", None) is not None:
         # The declared world (WP1-07): the Shield node builds its buildings
         # and roads maps from the same repo-relative file. Read here first,

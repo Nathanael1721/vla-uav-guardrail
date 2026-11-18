@@ -25,7 +25,9 @@
 #          point, MSL in the CSP over a ground, the headless MSL family),
 #          test_world_map (2026-11-17: the declared world that lets the SITL
 #          rails fly a distance_envelope, the city rails' road map, the
-#          people limit; one SKIP where the CityLife street mask is absent).
+#          people limit; one SKIP where the CityLife street mask is absent),
+#          test_msl_rail (2026-11-18, X-11: a WGS84 DEM, the headless
+#          harness's opt-in ground and the ROS 2 Shield node's --ground).
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
 #          test_prefix_eval, test_paraphraser, test_paraphraser_service (its
 #          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
@@ -753,6 +755,7 @@ jobs:
               tests/test_distance_envelope_msl.py \
               tests/test_msl_dem.py \
               tests/test_world_map.py \
+              tests/test_msl_rail.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
               tests/test_vla_link.py \

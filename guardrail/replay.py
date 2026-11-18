@@ -1514,11 +1514,16 @@ class EpisodeRecord:
                  rotate: bool = True,
                  wall_ns: Callable[[], int] = time.time_ns,
                  cost_map: bool = False,
-                 clock_record: dict | None = None) -> None:
+                 clock_record: dict | None = None,
+                 ground=None) -> None:
         self.dir = Path(run_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.policy = policy
         self.mission = mission
+        # The ground the rail's Shield converts MSL rules over (X-11,
+        # --ground): every generation's CSP compiles them over it too. None
+        # (every rail without --ground): compiled as before.
+        self.ground = ground
         self.lookahead_s = lookahead_s
         self.clock = clock
         self.clock_record = (dict(clock_record) if clock_record is not None else
@@ -1611,7 +1616,8 @@ class EpisodeRecord:
         else:
             try:
                 from .compiler import ConstraintCompiler
-                comp = ConstraintCompiler(self.policy)
+                comp = (ConstraintCompiler(self.policy) if self.ground is None
+                        else ConstraintCompiler(self.policy, ground=self.ground))
                 kw = {} if self.lookahead_s is None else {
                     "lookahead_s": self.lookahead_s}
                 cm = None

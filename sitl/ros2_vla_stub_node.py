@@ -281,6 +281,22 @@ def identity_record(policy, source: dict, mission, *, yaw_rate: float,
     return rec
 
 
+def stub_policy(args):
+    """`(policy, source)` the stub flies with: --bundle, else --policy, else
+    the default policy's YAML, through the flight loader; with --ground (X-11)
+    over that ground, so an MSL rule passes the gate as it does in the Shield
+    node. Without --ground: the call every run before 2026-11-18 made."""
+    bundle = args.bundle
+    yaml_path = args.policy or (None if args.bundle else
+                                ROOT / "policies" / "sim_demo_policy.yaml")
+    kw = {}
+    if getattr(args, "ground", None):
+        from guardrail.terrain import ground_for_flight
+        kw["ground"] = ground_for_flight(args.ground, bundle, yaml_path, root=ROOT)
+    return load_for_flight(bundle, yaml_path,
+                           allow_unverified=args.allow_unverified_bundle, **kw)
+
+
 def make_parser() -> argparse.ArgumentParser:
     # `--target -20,15` (negative X) parses as a value instead of exiting
     # with status 2 (mavlink_adapter_node.join_negative_xy); so do --start
@@ -291,6 +307,11 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--policy", default=None)
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--ground", default=None, metavar="FILE",
+                    help="the Shield node's declared ground (X-11, guardrail/terrain.py "
+                         "load_ground): read here so a policy with an MSL rule passes "
+                         "this node's flight gate too, and its CSP compiles over it. "
+                         "Default: none, as before 2026-11-18")
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
     ap.add_argument("--target", default=None, metavar="X,Y[,UP]",
                     help="the target in the policy frame (metres North, East), with "
@@ -349,11 +370,7 @@ if HAVE_ROS:
     class VlaStubNode(Node):
         def __init__(self, args) -> None:
             super().__init__("vla_stub")
-            policy, source = load_for_flight(
-                args.bundle,
-                args.policy or (None if args.bundle else
-                                ROOT / "policies" / "sim_demo_policy.yaml"),
-                allow_unverified=args.allow_unverified_bundle)
+            policy, source = stub_policy(args)
             mission = ConstraintCompiler(policy).parse_command(args.command)
             mission, target, start = mission_from_args(args, mission)
             self.vla, pilot = pilot_from_args(args, mission, target)
@@ -457,10 +474,7 @@ def prefix_preflight(args) -> dict | None:
     policy is read."""
     if getattr(args, "prefix", None) is None:
         return None
-    policy, _ = load_for_flight(
-        args.bundle,
-        args.policy or (None if args.bundle else ROOT / "policies" / "sim_demo_policy.yaml"),
-        allow_unverified=args.allow_unverified_bundle)
+    policy, _ = stub_policy(args)
     mission = ConstraintCompiler(policy).parse_command(args.command)
     mission, target, start = mission_from_args(args, mission)
     pilot, rec = pilot_from_args(args, mission, target)
