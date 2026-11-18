@@ -77,6 +77,7 @@ from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
+from guardrail.frames import filter_as_body                         # noqa: E402
 from guardrail.manifest import (                                    # noqa: E402
     DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
     is_kpi_grade, model_hash, pilot_record,
@@ -4448,9 +4449,11 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         v = min(3.0, 0.6 * d)
         vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
                            -args.climb_max, args.climb_max))
-        dec = shield.filter(State(x=p["x"], y=p["y"], up=up),
-                            Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz,
-                                     yaw_rate=0.0))
+        # In the BODY frame at the Shield's heading (0 here), as the mission
+        # loop hands it (frames.filter_as_body, 2026-11-18).
+        dec = filter_as_body(shield, State(x=p["x"], y=p["y"], up=up),
+                             Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz,
+                                      yaw_rate=0.0))
         n_touched += int(dec.touched)
         if pind is not None and recorder is not None:
             # The flight to the landing site goes through the Shield, so the
@@ -6777,7 +6780,13 @@ async def fly(args) -> int:
                     mode_label = ("VLA SEARCHING" if hier_rec.get("authority") == "vla_search"
                                   else "VLA HOLDING")
             _ta = time.time()
-            d = shield.filter(state, flown_in)
+            # Handed to the Shield in the BODY frame (2026-11-18, WP3-04 /
+            # ARCH-04: frames.filter_as_body, the arc off), at the heading the
+            # Shield turns it back with: `state`'s, 0 - this rail gives the
+            # Shield no heading - so both turns are the identity and the
+            # decision equals filter()'s exactly (only a zero's sign can
+            # change; tests/test_rail_body_frame.py).
+            d = filter_as_body(shield, state, flown_in)
             audit.log(tick, d)
             _ms_shield = (time.time() - _ta) * 1000
             pol = None

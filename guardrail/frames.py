@@ -76,10 +76,27 @@ updated.) As of that date:
   * `demo/pas_ardupilot/autopilot.py` (`body_to_world`, used by
     `perception_node.py`): `from_body` on the way in, `to_local_ned` for the
     MAVLink setpoint on the way out.
+  * `filter_as_body` (2026-11-18), at the boundary of the four dev rails
+    whose producers speak the world frame: `demo/follow_vlm.py` (the city
+    follow rail, the mission loop and the leg to the landing site),
+    `sitl/run_sitl_demo.py` (pymavlink SITL), `demo/pas_ardupilot/
+    perception_node.py` (PAS ArduPilot, --action-frame world, the default)
+    and `experiments/sweep_scenarios.py` (the headless harness, run_episode
+    action_frame "world", the default). Each turns its world action into
+    the body frame with `to_body` at the heading the Shield is given and
+    hands the Shield that BODY action (`Shield.filter_body`, the arc off);
+    the Shield's own `from_body` turns it back, and the rail flies the
+    emitted world action as before (tests/test_rail_body_frame.py: emitted
+    within 1e-9 of Shield.filter's, headings at +-180 included). The city
+    follow and pymavlink SITL rails give the Shield no heading (State.yaw_deg
+    0), so there both turns are the identity (exact; only a zero's sign can
+    change, -0.0 + 0.0 being +0.0). A world action
+    with a non-finite horizontal channel is still handed to `Shield.filter`
+    as it is (no body form keeps its finite channel).
   * `demo/pas_ardupilot/perception_node.py` (`VLAPilot.step`, --pilot vla,
     2026-10-23): `to_body` of the step tracker's world-frame action, for the
-    row's `body` and MAVROS's record copy only; by default the action itself
-    enters the Shield in world frame, never rotated. With --action-frame
+    row's `body` and MAVROS's record copy; by default the Shield is handed
+    the scene-frame action through `filter_as_body` (above). With --action-frame
     body (2026-11-17, opt-in) the BODY action enters the Shield
     (`Shield.filter_body`, the arc on) and the link is sent the emitted body
     action (`to_body` of a stop or a stop's answer at the tick's heading).
@@ -105,6 +122,10 @@ updated.) As of that date:
     body frame (metres forward / right of the heading).
 
 `sitl/run_sitl_demo.py` does what `to_local_ned` documents without calling it.
+The other demo loops that call `Shield.filter` on a world-frame action
+(demo/aerialvla_demo.py, aerialvla_pas_demo.py, real_vla_demo.py,
+semantic_demo.py, semantic_seek.py, vla_fly.py, vla_mission.py, run_demo.py)
+are not among the dev rails above and still hand the Shield the world frame.
 `tests/test_frame_contract.py` pins the conversions themselves. The module is
 not exported from `guardrail/__init__.py`, which lists only the core contract
 types - `bundle`, `kpi`, `manifest`, `compiler`, `projection` and `audit` are
@@ -171,3 +192,50 @@ def to_local_ned(action: Action4D) -> tuple:
     straight through.
     """
     return (action.vx, action.vy, -action.vz_up, action.yaw_rate)
+
+
+def body_action(action: Action4D, yaw_deg: float) -> Action4D:
+    """`to_body` as an Action4D: vx forward, vy right, vz_up up, yaw_rate rad/s
+    - the form `Shield.filter_body` and /vla/action carry a body action in."""
+    fwd, right, up, yaw_rate = to_body(action, yaw_deg)
+    return Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+
+
+def filter_as_body(shield, state, world: Action4D, t: float | None = None, **kw):
+    """A dev rail's world-frame action handed to the Shield in the BODY frame
+    (WP3-04 / ARCH-04, 2026-11-18). Returns the tick's ShieldDecision, whose
+    raw and emitted actions are in the world frame, as `Shield.filter`'s are.
+
+    The rail's producer speaks the world frame (a world-frame controller, the
+    step tracker, the stub VLA), so the rail turns the action into the body
+    frame here, at its boundary, at the heading the Shield itself turns it
+    back with (`state.yaw_deg`), and hands the Shield that BODY action
+    (`Shield.filter_body`). The Shield's one body -> world turn does the
+    rest, so the rail flies `decision.emitted` as it always has.
+
+    WHAT STAYS AS IT WAS. The arc forecast is OFF here (`arc=False`, whatever
+    the Shield's own `arc_forecast` default): `Shield.filter` never arcs, and
+    these rails fly as they did. The two rotations are exact up to rounding,
+    so the decision is `filter(state, world)`'s to rounding (the rails'
+    emitted actions within 1e-9: tests/test_rail_body_frame.py); at a heading
+    of 0 - the city follow and pymavlink SITL rails give the Shield none,
+    State.yaw_deg 0 - the rotations are the identity: the decision equals
+    filter()'s exactly (==; only a zero's sign can change).
+
+    THE ONE TICK HANDED IN THE WORLD FRAME. A world action with a non-finite
+    horizontal channel has no body-frame form that keeps the finite one: the
+    rotation mixes vx and vy, and NaN * 0 is NaN, so a NaN North speed would
+    arrive as NaN North AND East, and the Shield's _sanitise would zero both
+    where it zeroes the North channel alone today. So that tick (and one
+    whose rotation does not come out finite: a non-finite heading, an
+    overflow) is handed as it is, to `Shield.filter` - the same decision as
+    before, to the bit. It is a contract fault the Shield reports
+    (`contract`), never a command that flies as sent.
+
+    Keyword arguments are `Shield.filter`'s (rtl_failed, home_reached,
+    landed, hold_off_m, hold_reach_m)."""
+    body = body_action(world, state.yaw_deg)
+    if not all(math.isfinite(c) for c in (world.vx, world.vy, body.vx, body.vy)):
+        return shield.filter(state, world, t, **kw)
+    decision, _ = shield.filter_body(state, body, t, arc=False, **kw)
+    return decision

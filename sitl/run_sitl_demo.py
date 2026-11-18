@@ -91,6 +91,7 @@ from guardrail import AuditLogger, State                               # noqa: E
 from guardrail.audit import AUDIT_FILE                                 # noqa: E402
 from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
+from guardrail.frames import filter_as_body                            # noqa: E402
 from guardrail import holdpoint                                        # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig, FSMState,
@@ -722,7 +723,14 @@ def main() -> int:
         if (own_v and vel is not None and all(math.isfinite(c) for c in vel)):
             st_sh = state.model_copy(update={"velocity": vel})
             n_vel_used += 1
-        decision = shield.filter(st_sh, raw)
+        # The stub's world action handed to the Shield in the BODY frame
+        # (2026-11-18, WP3-04 / ARCH-04: frames.filter_as_body, the arc off),
+        # turned at the heading the Shield turns it back with - st_sh's, 0 on
+        # this rail, which gives the Shield no heading, so both turns are the
+        # identity and the decision equals filter()'s exactly (only a zero's
+        # sign can change; tests/test_rail_body_frame.py). The link flies the
+        # emitted world action, as before.
+        decision = filter_as_body(shield, st_sh, raw)
         emitted = decision.emitted if shield_on else raw
         extra = episode_row_fields(shield, state, policy, rec.episode_id)
 

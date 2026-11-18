@@ -384,7 +384,7 @@ from guardrail import prefix_consumer as PC                        # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
-from guardrail.frames import from_body, to_body                   # noqa: E402
+from guardrail.frames import filter_as_body, from_body, to_body   # noqa: E402
 from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
@@ -1408,8 +1408,12 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     pause, so a stepped episode and this one share one integrator.
 
     `action_frame` (ACTION_FRAMES, 2026-11-17, WP3-04 / ARCH-04): "world"
-    (the default, every episode before it) hands the Shield the pilot's
-    world-frame action (Shield.filter). "body" hands it the BODY-frame
+    (the default, every episode before it) flies the Shield's emitted
+    world-frame action; since 2026-11-18 the Shield is handed the pilot's
+    action in the BODY frame on this arm too (frames.filter_as_body, at the
+    heading the Shield is given, the arc off), and its own body -> world turn
+    gives the same emitted action as Shield.filter on the world action did,
+    to the rotations' rounding (tests/test_rail_body_frame.py). "body" hands it the BODY-frame
     action (frames.to_body at the heading the Shield is given), through
     Shield.filter_body with the arc forecast, and the Shield's emitted body
     action is turned back into the world frame the integrator flies only
@@ -2036,7 +2040,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 seen, Action4D(vx=fwd, vy=right, vz_up=up_b, yaw_rate=yr_b),
                 t=t_now, arc=True, **flags)
         else:
-            d = shield.filter(seen, raw, t=t_now, **flags)
+            # The default arm (2026-11-18, WP3-04 / ARCH-04): the pilot's
+            # world action turned into the BODY frame here, at the heading
+            # the Shield is given, and handed to the Shield in that frame
+            # (frames.filter_as_body: filter_body, the arc off). The Shield's
+            # one body -> world turn does the rest, and the integrator flies
+            # its emitted world action as before (tests/test_rail_body_frame.py).
+            d = filter_as_body(shield, seen, raw, t=t_now, **flags)
         a_rec = auditor.record(i, d)
         if a_rec is not None:
             audit.append(auditor.line(a_rec))
