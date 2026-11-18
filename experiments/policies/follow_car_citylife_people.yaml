@@ -1,0 +1,101 @@
+# The CityLife car follow with the grant's distance_envelope over people
+# (WP1-07, 2026-11-18): policies/follow_car_citylife.yaml's rules, plus
+# "keep at least 4 m from any person" - every person the rail reports, not
+# only the followed subject (guardrail/people.py).
+#
+# WHY IT IS NOT UNDER policies/
+#
+# A people envelope is flyable only on a rail that tells the Shield where
+# people are (Shield(people_source=...); refused otherwise, never inert), and
+# the CI's policy tests load every file under policies/ without one. So it
+# lives beside the experiment that flies it, unlocked (policies/
+# policy.lock.json has no entry for it), as experiments/policies/
+# msl_dem_sitl.yaml does. Its signed bundle (on the host that flies it):
+#
+#   python tools/build_flight_bundles.py experiments/policies/follow_car_citylife_people.yaml
+#
+# WHERE THE PEOPLE COME FROM, PER RAIL
+#
+#   the PAS / CityLife perception rail (demo/pas_ardupilot/perception_node.py)
+#       every box the detector scores "a person" >= follow_vlm.
+#       PEOPLE_DET_THRESH in each frame, placed as the subject is placed
+#       (--people-query / --people-thresh / --people-stale-s);
+#   follow_vlm / vla_fly   the level's pedestrians polled by tag
+#       (--level-peds 40; --level-truth-period 0.5 on follow_vlm keeps the
+#       ~100 ms poll of 40 names off most ticks).
+#
+# THE NUMBER. 4 m horizontal: the aircraft flies 6-14 m up (alt-band) over
+# the carriageway the car drives, and the pedestrians walk the pavements
+# beside it, so the rule is "do not fly over a person": it binds when the
+# follow line cuts a corner over a pavement, or a person crosses the street
+# under the aircraft. P1, not P0, for its first flights: the person
+# threshold is not tuned on flight data (no flight has asked the detector
+# for people yet), and a false person box under a P0 rule would count as a
+# P0 event and escalate the FSM on detector noise. Raising it to P0 is a
+# policy change to make once a flight has measured the boxes it keeps.
+policy_id: follow-car-citylife-people
+version: 0.1.0
+# Frame origin: the Project AirSim scenes' home-geo-point, as every CityLife
+# policy (follow_car_citylife.yaml).
+origin:
+  lat: 35.6895
+  lon: 139.6917
+constraints:
+  - id: standoff-pedestrian
+    type: subject_standoff
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    subject_class: pedestrian
+    min_range_m: 10.0
+    soft_margin_m: 2.0
+
+  - id: standoff-any
+    type: subject_standoff
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    subject_class: "*"
+    min_range_m: 5.0
+    soft_margin_m: 1.0
+
+  # Every person the rail reports, the followed subject among them while it
+  # is classified as a person (models.DistanceEnvelope, people).
+  - id: de-people
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    object_class: people
+    min_distance_m: 4.0
+
+  - id: bld-clearance
+    type: obstacle_clearance
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    min_clearance_m: 3.0
+    soft_margin_m: 2.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    alt_min_m: 6
+    alt_max_m: 14
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    speed_max_mps: 5.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

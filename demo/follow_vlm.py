@@ -77,6 +77,7 @@ from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
+from guardrail import people as people_feed                         # noqa: E402
 from guardrail.frames import filter_as_body                         # noqa: E402
 from guardrail.manifest import (                                    # noqa: E402
     DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
@@ -707,7 +708,8 @@ def subject_truth_names(subject_class, car, people):
     return None
 
 
-def update_level_truth(people, subject_class, t: float) -> bool:
+def update_level_truth(people, subject_class, t: float,
+                       feed_people: bool = False) -> bool:
     """Advance the pedestrian source for this tick; True when it was asked.
 
     `people` is one of two very different things. Client-spawned figures
@@ -726,16 +728,77 @@ def update_level_truth(people, subject_class, t: float) -> bool:
 
     Nothing reads pedestrian truth unless the subject IS a pedestrian
     (subject_truth_pts, subject_truth_names, _live_sep), so a level crowd is
-    polled only then. A retarget to a person happens at the top of the tick,
-    before this, and LevelActors.update polls at once when its period has
-    passed, so the first pedestrian tick still carries fresh truth.
+    polled only then - or when `feed_people`: the Shield is told every
+    pedestrian for a distance_envelope over people (SimPeopleFeed; since
+    2026-11-18), at the poll period --level-truth-period sets. A retarget to
+    a person happens at the top of the tick, before this, and
+    LevelActors.update polls at once when its period has passed, so the
+    first pedestrian tick still carries fresh truth.
     """
     if people is None:
         return False
-    if type(people).__name__ == "LevelActors" and subject_class != "pedestrian":
+    if (type(people).__name__ == "LevelActors" and subject_class != "pedestrian"
+            and not feed_people):
         return False
     people.update(t)
     return True
+
+
+def sim_people_source(policy, args) -> str | None:
+    """The people source this rail gives the Shield for a distance_envelope
+    over people (Shield(people_source=...), guardrail/people.py): the
+    simulator's pedestrian list - the level's own crowd polled by tag
+    (--level-peds) or the client's spawned figures (--pedestrians). None for
+    a policy without such a rule (the Shield it builds is the one it built).
+    A people policy flown with neither is refused: CityLife walks pedestrians
+    of its own, which the Shield would not know about."""
+    ids = people_feed.needs_people(policy)
+    if not ids:
+        return None
+    if getattr(args, "level_peds", 0) > 0:
+        return (f"simulator: the level's {args.level_peds} pedestrians polled by tag "
+                f"({args.level_ped_prefix}*, level_actors.LevelActors, every "
+                f">= {args.level_truth_period:g} s)")
+    if getattr(args, "pedestrians", 0) > 0:
+        return (f"simulator: the client's {args.pedestrians} spawned figures "
+                f"(pedestrians.Pedestrians, commanded positions)")
+    raise SystemExit(f"[policy] {', '.join(ids)}: a distance_envelope over people "
+                     f"needs the simulator's pedestrian list on this rail: "
+                     f"--level-peds N (the level's crowd) or --pedestrians N")
+
+
+class SimPeopleFeed:
+    """The simulator's pedestrian list into the people memory, once a tick
+    (a distance_envelope over people on the city sim rails, 2026-11-18).
+
+    step(t) is called after the list was brought up to date for mission
+    time `t` (LevelActors.update / Pedestrians.update) and returns the
+    people for Shield.set_people. A level crowd (level_actors.LevelActors)
+    is a POLL: observed once, at the tick it was made (its poll count is
+    the key; between polls the memory ages the last one), and the poll
+    `resolve` made before the mission - seconds to minutes before the first
+    tick - is never observed: the first step polls afresh. Client figures
+    (pedestrians.Pedestrians) are where they were commanded this tick. Only
+    usable fixes (people.figure_points). `people` None: nobody is listed,
+    and the memory only ages and drops."""
+
+    def __init__(self, people, memory: "people_feed.PeopleMemory"):
+        self.people = people
+        self.memory = memory
+        self._first = True
+
+    def step(self, t: float) -> list:
+        ppl = self.people
+        if ppl is not None:
+            if type(ppl).__name__ == "LevelActors":
+                if self._first:
+                    ppl.refresh()
+                key = ("level", ppl.n_calls)
+            else:
+                key = ("client", float(t))
+            self.memory.observe(float(t), people_feed.figure_points(ppl.figures), key=key)
+        self._first = False
+        return self.memory.current(float(t))
 
 
 # Share of the mission's ticks that must carry the subject's ground truth for
@@ -3334,6 +3397,82 @@ def subject_scores_with_negatives(logits, scores, labels, thresh: float):
                   "count_unknown": None}, n_sup
 
 
+# THE PEOPLE PHRASE (2026-11-18, WP1-07). For a distance_envelope over people
+# the perception rail asks the detector for every person in the frame, in the
+# subject's own forward pass (Grounder(people_query=...)): the phrase, the
+# score a box needs for it, the overlap above which two boxes are one person
+# (non-maximum suppression over OWL-ViT's per-patch boxes), and how many a
+# frame may give. The threshold is not tuned on flight data - no flight has
+# asked for people yet - so a flight records every box it kept (detections.
+# jsonl `people`) and the rail's record how many fixes became tracks.
+PEOPLE_QUERY = "a person"
+PEOPLE_DET_THRESH = 0.10
+PEOPLE_NMS_IOU = 0.3
+PEOPLE_MAX_BOXES = 32
+
+
+def subject_column_scores(logits, scores, labels) -> list:
+    """The subject phrase's own score per box when the people phrase (and no
+    negative phrase) was asked beside it: post-processing keeps the best
+    sigmoid over the phrases, which may be the people phrase's, so the
+    subject's is read from its column (0) of the logits, as
+    subject_scores_with_negatives reads it. When post-processing dropped a
+    box (the rows cannot be paired) the labels decide: a box another phrase
+    won scores 0 for the subject, the rest keep their score."""
+    lg = np.asarray(logits, dtype=np.float64)
+    sc = [float(v) for v in scores]
+    if lg.ndim != 2 or lg.shape[0] != len(sc):
+        return [v if int(lab) == 0 else 0.0 for v, lab in zip(sc, labels)]
+    return np.exp(-np.logaddexp(0.0, -lg[:, 0])).tolist()
+
+
+def people_boxes(logits, boxes, col: int, thresh: float, W: int, H: int,
+                 iou: float = PEOPLE_NMS_IOU, max_boxes: int = PEOPLE_MAX_BOXES):
+    """Every person in one inference: `(boxes, note)`.
+
+    `logits`: OWL-ViT's class logits for the image (one row per box, one
+    column per phrase); `col` is the people phrase's column. `boxes`: the
+    post-processed (x0, y0, x1, y1) per box, row i = box i (post-processing at
+    threshold 0.0 keeps every box in the logits' order unless it dropped one;
+    then the rows cannot be paired, the answer is [] and `note` says so).
+    Each box whose people-phrase sigmoid is >= `thresh` is a candidate;
+    greedy non-maximum suppression (best first, IoU > `iou` with a kept box
+    is the same person) leaves at most `max_boxes`, best first, each as the
+    7-tuple the follow places a box from: (cx, cy, w, h, score, W, H).
+    Pure, on CPU arrays, so tests/test_people_envelope.py checks it without
+    a GPU."""
+    lg = np.asarray(logits, dtype=np.float64)
+    bx = np.asarray(boxes, dtype=np.float64).reshape(-1, 4)
+    if lg.ndim != 2 or lg.shape[1] <= col:
+        raise ValueError(f"logits of shape {lg.shape} have no column {col}")
+    if lg.shape[0] != bx.shape[0]:
+        return [], f"{bx.shape[0]} boxes for {lg.shape[0]} logits: not paired"
+    sig = np.exp(-np.logaddexp(0.0, -lg[:, col]))
+    order = [int(i) for i in np.argsort(-sig, kind="stable") if sig[i] >= thresh]
+    kept: list[int] = []
+    area = np.maximum(bx[:, 2] - bx[:, 0], 0.0) * np.maximum(bx[:, 3] - bx[:, 1], 0.0)
+    for i in order:
+        if len(kept) >= max_boxes:
+            break
+        ok = True
+        for j in kept:
+            ix = max(0.0, min(bx[i, 2], bx[j, 2]) - max(bx[i, 0], bx[j, 0]))
+            iy = max(0.0, min(bx[i, 3], bx[j, 3]) - max(bx[i, 1], bx[j, 1]))
+            inter = ix * iy
+            union = area[i] + area[j] - inter
+            if union > 0 and inter / union > iou:
+                ok = False
+                break
+        if ok:
+            kept.append(i)
+    out = []
+    for i in kept:
+        x0, y0, x1, y1 = (float(v) for v in bx[i])
+        out.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0, x1 - x0, y1 - y0,
+                    float(sig[i]), int(W), int(H)))
+    return out, None
+
+
 # How many of the detector's best boxes the screen looks at, per inference.
 SCREEN_TOP_K = 12
 # How long a published box keeps the jump gate shut on a box too far from it.
@@ -3471,7 +3610,9 @@ class Grounder:
                  colour_min: float = 0.10, lock: "TargetLock | None" = None,
                  colour_mask: bool = True, legacy_sat: bool = False,
                  identity: dict | None = None, negatives: list | None = None,
-                 teacher=None, teacher_dims: tuple = (4.0, 1.5)):
+                 teacher=None, teacher_dims: tuple = (4.0, 1.5),
+                 people_query: str | None = None,
+                 people_thresh: float = PEOPLE_DET_THRESH):
         # --teacher-truth (teacher_truth_fn; 2026-10-30): a TEACHER for
         # training labels, never a follow result. Each frame's candidates are
         # replaced by ONE box drawn where the subject TRULY is (_teacher_box)
@@ -3488,6 +3629,16 @@ class Grounder:
         # keeps the single-phrase query exactly.
         self.negatives = [str(n) for n in (negatives or []) if str(n).strip()]
         self.n_neg_suppressed = 0
+        # THE PEOPLE PHRASE (people_boxes; 2026-11-18): asked LAST, after the
+        # subject and the negatives, in the same forward pass, for every
+        # person in the frame (a distance_envelope over people). None keeps
+        # the query list, the subject's scores and latest() exactly.
+        self.people_query = (str(people_query).strip() or None) if people_query else None
+        self.people_thresh = float(people_thresh)
+        self._people_pub = None
+        self.n_people_frames = 0
+        self.n_people_boxes = 0
+        self.n_people_unpaired = 0
         # Measure the colour on the object's pixels rather than the whole box.
         # `mask_stats` records which path actually ran, because a fix that
         # silently never engages is the failure mode to watch for here - the
@@ -3666,6 +3817,13 @@ class Grounder:
             self.acquiring = False
             self._seed = None if cand is None else (cand, yaw)
 
+    def _phrases(self) -> list:
+        """The phrase list one forward pass asks: the subject first (index
+        0, the one candidates come from), the negative phrases, then the
+        people phrase when there is one."""
+        return [[self.query] + self.negatives
+                + ([self.people_query] if self.people_query else [])]
+
     def start(self):
         self._thread.start()
 
@@ -3681,8 +3839,9 @@ class Grounder:
         print(f"[grounder] {DETECTOR_ID} loaded in {time.time()-t0:.0f}s "
               f"(VRAM {torch.cuda.memory_allocated()/1e9:.2f} GB)", flush=True)
         # The subject phrase first: index 0 is the one candidates come from;
-        # the negative phrases, if any, follow it (negative_suppress).
-        queries = [[self.query] + self.negatives]
+        # the negative phrases, if any, follow it (negative_suppress), and the
+        # people phrase last (people_boxes).
+        queries = self._phrases()
         gen = self._query_gen
         last = None
         while not self._stop:
@@ -3691,7 +3850,7 @@ class Grounder:
             if self._query_gen != gen:
                 with self._lock:
                     gen = self._query_gen
-                    queries = [[self.query] + self.negatives]
+                    queries = self._phrases()
                 # The jump gate compares against where the OLD target was, so it
                 # would reject the new one on exactly the frames that matter.
                 last = None
@@ -3760,6 +3919,8 @@ class Grounder:
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
             sc, bx = res["scores"], res["boxes"]
             neg_rec = None
+            lg_np = (out.logits[0].float().cpu().numpy()
+                     if self.people_query else None)
             if self.negatives:
                 # post_process takes the max over the phrases; with a negative
                 # phrase that max may be the negative's. The subject's own
@@ -3768,7 +3929,8 @@ class Grounder:
                 # and the fallback when post_process dropped a box, tested on
                 # CPU arrays).
                 kept, nr, n_sup = subject_scores_with_negatives(
-                    out.logits[0].float().cpu().numpy(), sc.tolist(),
+                    (out.logits[0].float().cpu().numpy() if lg_np is None
+                     else lg_np[:, :1 + len(self.negatives)]), sc.tolist(),
                     res["labels"].tolist(), self.thresh)
                 sc = torch.tensor(kept, device=sc.device, dtype=sc.dtype)
                 self.n_neg_suppressed += n_sup
@@ -3780,6 +3942,12 @@ class Grounder:
                             "top": (None if top is None else
                                     [round(float(v), 1) for v in bx[top].tolist()]
                                     + [round(nr["top_pos"], 4), round(nr["top_neg"], 4)])})
+            elif self.people_query:
+                # The people phrase alone beside the subject: the subject's
+                # own column, not post-processing's best over both phrases.
+                sc = torch.tensor(subject_column_scores(lg_np, sc.tolist(),
+                                                        res["labels"].tolist()),
+                                  device=sc.device, dtype=sc.dtype)
             # One depth frame per inference, not per candidate box. It indexes
             # straight into the scene image because both captures are configured
             # at the same resolution and the same field of view - the same
@@ -3803,6 +3971,19 @@ class Grounder:
             else:
                 dep, dep_src, dep_dt = None, "none", None
             self.depth_src[dep_src] = self.depth_src.get(dep_src, 0) + 1
+            people_pub = None
+            if self.people_query:
+                # Every person in the frame (people_boxes), each with its range
+                # in THIS capture's depth frame, as the subject box's is read.
+                pb, p_note = people_boxes(lg_np, bx.cpu().numpy(), lg_np.shape[1] - 1,
+                                          self.people_thresh, W, H)
+                if p_note is not None:
+                    self.n_people_unpaired += 1
+                people_pub = {"t_cap": t_cap, "t_capture": t_capture, "pose": cap_pose,
+                              "depth_src": dep_src, "note": p_note,
+                              "boxes": [b + ((None if dep is None
+                                              else range_from_depth(dep, b)),)
+                                        for b in pb]}
             det, switched = None, False
             # Score every plausible box, do not just take the detector's top
             # one. Ranking by detector score alone is what let a city object
@@ -3917,6 +4098,10 @@ class Grounder:
                 self._cand_feats = list(feats)
                 self._lock_why = lock_why
                 self._inf_cap = {"t_cap": t_cap, "t_capture": t_capture, "pose": cap_pose}
+                if people_pub is not None:
+                    self._people_pub = dict(people_pub, seq=self._seq, t=self._t)
+                    self.n_people_frames += 1
+                    self.n_people_boxes += len(people_pub["boxes"])
                 # (The generation is re-checked at the top of this block, not
                 # only at the top of the loop: an inference takes ~287 ms, and a
                 # retarget inside it would otherwise publish the OLD subject box
@@ -3999,6 +4184,15 @@ class Grounder:
                     # many boxes over the threshold, and the best of them
                     # (x0, y0, x1, y1, subject score, negative score).
                     rec["neg"] = neg_rec
+                if people_pub is not None:
+                    # Every person box kept (people_boxes): cx, cy, w, h, the
+                    # people phrase's score, and the range in this frame's depth.
+                    rec["people"] = [[round(b[0], 1), round(b[1], 1), round(b[2], 1),
+                                      round(b[3], 1), round(b[4], 4),
+                                      None if b[7] is None else round(b[7], 2)]
+                                     for b in people_pub["boxes"]]
+                    if people_pub["note"] is not None:
+                        rec["people_note"] = people_pub["note"]
                 if self.identity is not None:
                     # EVERY candidate, HARD ones included, with what it was
                     # judged on - so a tier can be re-derived offline and a
@@ -4093,17 +4287,22 @@ class Grounder:
 
     def latest(self) -> dict:
         with self._lock:
-            return {"seq": self._seq, "t": self._t, "t_det": self._t_det,
-                    "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
-                    "switched": getattr(self, "_det_switched", False),
-                    "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
-                    "n_seen": self._n_seen, "n_miss": self._n_miss,
-                    "cands": list(self._cands),
-                    "cand_tiers": list(self._cand_tiers),
-                    "cand_feats": list(self._cand_feats),
-                    "tier": self._det_tier, "feat": self._det_feat,
-                    "cap": self._det_cap, "lock_why": self._lock_why,
-                    "inf_cap": getattr(self, "_inf_cap", None)}
+            out = {"seq": self._seq, "t": self._t, "t_det": self._t_det,
+                   "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
+                   "switched": getattr(self, "_det_switched", False),
+                   "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
+                   "n_seen": self._n_seen, "n_miss": self._n_miss,
+                   "cands": list(self._cands),
+                   "cand_tiers": list(self._cand_tiers),
+                   "cand_feats": list(self._cand_feats),
+                   "tier": self._det_tier, "feat": self._det_feat,
+                   "cap": self._det_cap, "lock_why": self._lock_why,
+                   "inf_cap": getattr(self, "_inf_cap", None)}
+            if self.people_query:
+                # The last inference's people (people_boxes), with its capture
+                # pose and time: for a distance_envelope over people.
+                out["people"] = self._people_pub
+            return out
 
 
 def identity_rule_key(reason: str) -> str:
@@ -4194,24 +4393,29 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 # flight before 2026-11-03 flew; `grant_forecast` the grant forecast with the
 # FSM off, as the --grant-forecast runs before then flew.
 def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
-                  legacy_forecast: bool = False, road_map: dict | None = None):
+                  legacy_forecast: bool = False, road_map: dict | None = None,
+                  people_source: str | None = None):
     """The flight's Shield: the grant's 5 s / 0.1 s with the escalation FSM
     (the default since 2026-11-03), 3 s / 0.5 s with the FSM (legacy), or the
     grant's forecast with the FSM off (--grant-forecast). `road_map`: the
-    street mask, for a distance_envelope over roads (WP1-07)."""
+    street mask, for a distance_envelope over roads (WP1-07);
+    `people_source`: sim_people_source's, for one over people (None: no
+    such rule, and the keyword is not passed)."""
     if legacy_forecast and grant_forecast:
         raise ValueError("--legacy-forecast and --grant-forecast are two different "
                          "Shields; give one")
     # PathRepair off on this follow rail (guardrail.replay
     # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
     from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR as pr
+    ppl = {} if people_source is None else {"people_source": people_source}
     if legacy_forecast:
         return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map,
-                      road_map=road_map, path_repair=pr)
+                      road_map=road_map, path_repair=pr, **ppl)
     if grant_forecast:
         return Shield(policy, obstacle_map=obstacle_map, escalation=False,
-                      road_map=road_map, path_repair=pr)
-    return Shield(policy, obstacle_map=obstacle_map, road_map=road_map, path_repair=pr)
+                      road_map=road_map, path_repair=pr, **ppl)
+    return Shield(policy, obstacle_map=obstacle_map, road_map=road_map, path_repair=pr,
+                  **ppl)
 
 
 def shield_lookahead_record(shield) -> dict:
@@ -4697,8 +4901,19 @@ async def fly(args) -> int:
     # The grant's 5 s / 0.1 s with the escalation FSM unless --legacy-forecast
     # or --grant-forecast; see flight_shield. Recorded either way
     # (metrics/kpi "shield_lookahead").
+    # The people of a distance_envelope over people (since 2026-11-18): the
+    # simulator's pedestrian list, fed every tick (SimPeopleFeed); refused
+    # without one. None for every other policy: nothing below changes.
+    people_source = sim_people_source(policy, args)
+    people_mem = (people_feed.PeopleMemory(stale_s=args.people_stale_s)
+                  if people_source is not None else None)
+    sim_people = None          # SimPeopleFeed, at the first tick (people exists then)
+    if people_source is not None:
+        print(f"[people] {people_source}; a person unseen for "
+              f"{people_mem.stale_s:g} s is dropped")
     shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast,
-                           legacy_forecast=args.legacy_forecast, road_map=rmap)
+                           legacy_forecast=args.legacy_forecast, road_map=rmap,
+                           people_source=people_source)
     print(f"[shield] forecast {shield.lookahead_s:g} s at {shield.dt:g} s "
           f"({'the grant forecast, escalation FSM off' if args.grant_forecast else '3 s / 0.5 s, the city rail before 2026-11-03' if args.legacy_forecast else 'the grant forecast, escalation FSM on'})")
     clr = policy.by_type(ObstacleClearance)
@@ -5866,7 +6081,8 @@ async def fly(args) -> int:
             # only while the subject is a pedestrian (update_level_truth).
             # Scenery is never allowed to fail a flight, so update() swallows
             # its own errors.
-            update_level_truth(people, subject_class, time.time() - t0)
+            update_level_truth(people, subject_class, time.time() - t0,
+                               feed_people=people_mem is not None)
             if traffic is not None:
                 traffic.update(time.time() - t0, tick)
             elif car is not None and type(car).__name__ == "LevelCar":
@@ -6726,6 +6942,14 @@ async def fly(args) -> int:
                                              and math.isfinite(svy) else None))
             else:
                 shield.set_subject(None)
+            # Every pedestrian the simulator lists, for a distance_envelope
+            # over people (people_mem: only with such a rule).
+            people_now = None
+            if people_mem is not None:
+                if sim_people is None:
+                    sim_people = SimPeopleFeed(people, people_mem)
+                people_now = sim_people.step(time.time() - t0)
+                shield.set_people(people_now)
 
             # --record-perturb (vla_record.Perturber): the EXECUTED command is
             # knocked off for 1.0-1.5 s every 5-8 s, after the controller and
@@ -6886,6 +7110,9 @@ async def fly(args) -> int:
                 "ms": {"kin": round(_ms_kin, 1), "truth": round(_ms_truth, 1),
                        "shield": round(_ms_shield, 1),
                        "work": round((time.time() - _tk0) * 1000, 1)},
+                # The people the Shield was given (a people envelope only).
+                **({} if people_now is None else
+                   {"people": people_feed.rows_people(people_now)}),
             })
             stage_ms["kin"].append(_ms_kin)
             stage_ms["truth"].append(_ms_truth)
@@ -7281,6 +7508,10 @@ async def fly(args) -> int:
         **loop_timing(stage_ms, cmd_times),
         # The forecast the Shield really used (flight_shield).
         "shield_lookahead": shield_lookahead_record(shield),
+        # Where the Shield was told about people (a people envelope only).
+        **({} if people_mem is None else
+           {"people_feed": {"source": people_source, **people_mem.record(),
+                            "people_nonfinite": shield.n_people_nonfinite}}),
         # Estimator measurements by the pose they were placed at: "capture"
         # (the box's own frame) or "tick" (--legacy-tick-pose, or no capture
         # pose to be had). See estimator_measurement.
@@ -7827,6 +8058,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "The simulator loops the names on the game thread, so "
                          "16 names is 16 round trips; raise this if the control "
                          "loop drops below its 9.5 Hz gate.")
+    ap.add_argument("--people-stale-s", type=float, default=people_feed.PEOPLE_STALE_S,
+                    help="a distance_envelope over people only (the Shield is told "
+                         "every pedestrian of --level-peds / --pedestrians): a "
+                         "pedestrian unseen for longer is dropped "
+                         "(guardrail/people.py; default %(default)s s)")
     ap.add_argument("--people-dir", default=None,
                     help="baked figures from tools/bake_glb_poses.py; defaults "
                          "to VLA_PEOPLE_DIR or D:/models/quaternius_people/posed")

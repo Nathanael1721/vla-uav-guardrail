@@ -438,6 +438,7 @@ from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E4
 from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
                                     policy_zones, zone_clearance_m, zones_near)
 from guardrail.gc_pacing import GcPacer                               # noqa: E402
+from guardrail import people as people_feed                           # noqa: E402
 from guardrail.frames import filter_as_body, to_body                  # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
@@ -2344,7 +2345,8 @@ def gate_truth_verdict(gate_rec: dict, truth, state, hfov_deg: float, fv=None) -
     return out
 
 
-def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
+def build_grounder(args, obs, out: Path, fv, hfov_deg: float,
+                   people_query: str | None = None) -> tuple:
     """The detector this rail flies: `(grounder, record)`.
 
     follow_vlm.Grounder as before, plus what follow_vlm's city flights give
@@ -2365,7 +2367,11 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
         taken back through its Reacquirer;
       * --negative-query P (repeatable): P asked beside the subject phrase,
         a box that looks more like P is no candidate
-        (follow_vlm.negative_suppress)."""
+        (follow_vlm.negative_suppress);
+      * `people_query` (a distance_envelope over people, 2026-11-18;
+        people_source_for): the people phrase asked last in the same pass,
+        every person box published with its capture (follow_vlm.
+        people_boxes) at --people-thresh. None: the query list as before."""
     id_cfg, lock, why_id = None, None, None
     if getattr(args, "identity", False):
         import identity as identity_mod
@@ -2384,9 +2390,12 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
     if strict or (id_cfg is None and not getattr(args, "no_lock_target", False)):
         lock = fv.TargetLock(hfov_deg=hfov_deg, gate_frac=getattr(args, "lock_gate", 0.12))
     negs = [n for n in (getattr(args, "negative_query", None) or []) if str(n).strip()]
+    ppl = ({} if people_query is None else
+           {"people_query": people_query,
+            "people_thresh": getattr(args, "people_thresh", None) or fv.PEOPLE_DET_THRESH})
     g = fv.Grounder(obs, args.object, thresh=args.det_thresh, colour_min=args.colour_min,
                     log_path=out / "detections.jsonl", lock=lock, identity=id_cfg,
-                    negatives=negs)
+                    negatives=negs, **ppl)
     rec = {"lock": ({"kind": "TargetLock", "strict": True, "gate_frac": lock.gate_frac,
                      "prior": "the target estimator (--target-estimator: "
                               "demo/subject_track.SubjectTrack)"} if strict else
@@ -2398,6 +2407,8 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
                          "street_mask": id_cfg["street"] is not None, "why": why_id,
                          "noun": id_cfg["nouns"][args.object]}),
            "negative_queries": negs}
+    if people_query is not None:
+        rec["people_query"] = {"phrase": people_query, "thresh": ppl["people_thresh"]}
     return g, rec
 
 
@@ -2574,6 +2585,84 @@ def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
     horiz = math.sqrt(max(0.0, r * r - dh * dh))
     ang = yaw_rad + b
     return (state.x + horiz * math.cos(ang), state.y + horiz * math.sin(ang), src)
+
+
+def people_source_for(policy, args, *, detector: bool) -> tuple[str | None, str | None]:
+    """(people_source, people phrase) for a distance_envelope over people on
+    this rail (2026-11-18, WP1-07; guardrail/people.py): every person the
+    detector finds in each frame - the people phrase (--people-query) asked
+    in the subject's own forward pass - placed as the subject is placed
+    (people_estimates). (None, None) for a policy without such a rule: the
+    detector's query list and the Shield are the ones flown before. Refused
+    (SystemExit) where no detector runs (a VLA GOTO): nothing could tell the
+    Shield where people are."""
+    ids = people_feed.needs_people(policy)
+    if not ids:
+        return None, None
+    if not detector:
+        raise SystemExit(f"[policy] {', '.join(ids)}: a distance_envelope over people "
+                         f"needs the detector's person boxes, and no detector runs "
+                         f"here (--pilot vla --mission goto)")
+    phrase = getattr(args, "people_query", None) or _fv().PEOPLE_QUERY
+    if _fv().subject_width(phrase)[1] != "pedestrian":
+        # A box is placed at a person's width when it has no depth range; a
+        # phrase follow_vlm's tables do not read as a person has no width.
+        raise SystemExit(f"[people] --people-query {phrase!r} does not name a person "
+                         f"(follow_vlm.subject_width: person, pedestrian, human, "
+                         f"man, woman)")
+    thr = getattr(args, "people_thresh", None) or _fv().PEOPLE_DET_THRESH
+    try:     # refused before take-off, not at the loop's first tick
+        people_feed.PeopleMemory(stale_s=getattr(args, "people_stale_s",
+                                                 people_feed.PEOPLE_STALE_S))
+    except ValueError as exc:
+        raise SystemExit(f"[people] --people-stale-s: {exc}") from None
+    if not (0.0 < float(thr) < 1.0):
+        raise SystemExit(f"[people] --people-thresh {thr!r}: a score in (0, 1)")
+    return (f"perception: every box the detector scores {phrase!r} >= {thr:g} in "
+            f"each frame, ground-projected as the subject is "
+            f"(perception_node.people_estimates)", phrase)
+
+
+def people_estimates(pub: dict | None, state: State, yaw_rad: float, pitch_rad: float,
+                     hfov_deg: float, width_m: float, fv=None) -> tuple[list, dict]:
+    """Where each person box of one inference is: `(points, record)`.
+
+    `pub`: the Grounder's last people publication (latest()["people"]:
+    boxes (cx, cy, w, h, score, W, H, range_m) with the capture's pose and
+    time; follow_vlm.people_boxes). Every box is placed with
+    subject_estimate - the geometry the follow places its subject with:
+    bearing from the box column, the range read inside the box in the
+    capture's own depth frame (else the box width at `width_m`, a person's
+    width), slant to horizontal over the capture's height - from the
+    CAPTURE's pose (estimate_inputs' rule); with no capture pose, from this
+    tick's (`state`, `yaw_rad`, `pitch_rad`) and the record says so.
+    `record`: {boxes, placed, pose, src: {source: count}}."""
+    rec = {"boxes": 0, "placed": 0, "pose": None, "src": {}}
+    if not pub:
+        return [], rec
+    fv = fv or _fv()
+    pose = pub.get("pose")
+    if pose is not None:
+        yaw_c, pitch_c = float(pose["yaw"]), float(pose.get("pitch") or 0.0)
+        origin = State(x=float(pose["x"]), y=float(pose["y"]), up=float(pose["up"]),
+                       yaw_deg=math.degrees(yaw_c))
+        rec["pose"] = f"capture:{pose.get('src', 'ring')}"
+    else:
+        origin, yaw_c, pitch_c = state, yaw_rad, pitch_rad
+        rec["pose"] = "tick"
+    pts = []
+    for b in pub.get("boxes") or ():
+        rec["boxes"] += 1
+        est = subject_estimate(tuple(b[:7]), None, origin, yaw_c, hfov_deg, width_m, fv,
+                               body_pitch_rad=pitch_c,
+                               range_m=b[7] if len(b) > 7 else None, width_src="width")
+        if est is None:
+            rec["src"]["unplaced"] = rec["src"].get("unplaced", 0) + 1
+            continue
+        pts.append((est[0], est[1]))
+        rec["src"][est[2]] = rec["src"].get(est[2], 0) + 1
+        rec["placed"] += 1
+    return pts, rec
 
 
 def depth_check(det, depth, state: State, hfov_deg: float, fv=None,
@@ -4889,6 +4978,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ask PHRASE beside the subject phrase: a box that scores "
                          "higher for it (e.g. 'a traffic light') is no candidate. "
                          "Repeatable")
+    ap.add_argument("--people-query", default=None, metavar="PHRASE",
+                    help="a distance_envelope over people only: the phrase the detector "
+                         "is asked for every person, in the subject's forward pass "
+                         "(default follow_vlm.PEOPLE_QUERY, 'a person'); policies "
+                         "without such a rule never ask it")
+    ap.add_argument("--people-thresh", type=float, default=None,
+                    help="a distance_envelope over people only: the people phrase's "
+                         "score a box needs (default follow_vlm.PEOPLE_DET_THRESH)")
+    ap.add_argument("--people-stale-s", type=float, default=people_feed.PEOPLE_STALE_S,
+                    help="a distance_envelope over people only: a person unseen for "
+                         "longer is dropped (guardrail/people.py; default %(default)s s)")
     ap.add_argument("--identity", action="store_true",
                     help="judge every candidate physically (demo/identity.py) at its "
                          "own frame's pose and depth; only an identity-OK box may "
@@ -6399,10 +6499,22 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # PathRepair off on this perception rail (guardrail.replay
     # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
     from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
+    # The people of a distance_envelope over people (2026-11-18): every
+    # person box the detector finds, placed as the subject is
+    # (people_source_for; refused where no detector runs). None for every
+    # other policy: the Shield and the detector's query are the ones flown.
+    people_source, people_query = people_source_for(
+        policy, args, detector=not (getattr(args, "pilot", "servo") == "vla"
+                                    and getattr(args, "mission", None) == "goto"))
+    if people_source is not None:
+        print(f"[people] {people_source}; a person unseen for "
+              f"{args.people_stale_s:g} s is dropped")
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          obstacle_map=smap, road_map=rmap, clock=rule_now,
                          velocity_response=vresp.ARDUCOPTER_GUIDED,
-                         pipe_clock=clock, path_repair=FOLLOW_RAIL_PATH_REPAIR)
+                         pipe_clock=clock, path_repair=FOLLOW_RAIL_PATH_REPAIR,
+                         **({} if people_source is None
+                            else {"people_source": people_source}))
     shield_on = args.shield == "on"
     # The own-velocity forecast and the hold that stops clear (OWN_VELOCITY_
     # DEFAULT). Off: the Shield's State carries no velocity, so its decisions
@@ -6612,7 +6724,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     if sim_cfg else fv.CAMERA_HFOV_DEG)
         if grounder is None:
             live.beat(detail="loading the detector")                        # memory only
-            grounder, grounder_rec = build_grounder(args, obs, out, fv, hfov)
+            grounder, grounder_rec = build_grounder(args, obs, out, fv, hfov,
+                                                    people_query=people_query)
             grounder_rec["injected"] = False
             grounder.start()
             print(f"[detect] {fv.DETECTOR_ID} loading in its own thread (lock "
@@ -6827,6 +6940,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
 
         # ---- subject and pilot (the detector started before SITL, above) -------
         width_m, subject_class = (fv or _fv()).subject_width(args.object)
+        # A person's width, for a person box with no depth range (the people
+        # feed, people_estimates): what follow_vlm's table says of the phrase.
+        people_width_m = ((fv or _fv()).subject_width(people_query)[0]
+                          if people_source is not None else None)
         if vla_goto:
             # A VLA GOTO has no subject: the Shield is given none (every
             # stand-off inert, set_subject(None) on each tick), no stand-off
@@ -7063,6 +7180,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         work_ms: list[float] = []
         n_touched = n_braked = n_escaped = n_no_state = n_subject = 0
         subject_src: dict = {}
+        # THE PEOPLE FEED (a distance_envelope over people only, 2026-11-18):
+        # each detector frame's person boxes placed (people_estimates) and
+        # tracked with the staleness rule (guardrail/people.PeopleMemory).
+        people_mem = (people_feed.PeopleMemory(stale_s=args.people_stale_s)
+                      if people_source is not None else None)
+        people_last_seq = None
+        people_place: dict = {"frames": 0, "boxes": 0, "placed": 0, "pose": {}, "src": {}}
         # Where each estimate's pose and depth came from (estimate_inputs),
         # and how old its box was when it was placed.
         pairing_pose: dict = {}
@@ -7340,6 +7464,29 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     subject_src[subj[2]] = subject_src.get(subj[2], 0) + 1
                 else:
                     shield.set_subject(None)
+                # Every person the detector found (people_mem: only with a
+                # distance_envelope over people). A frame is placed once, from
+                # its own capture, at its capture time; the memory drops a
+                # person unseen for longer than its staleness.
+                people_now = None
+                if people_mem is not None:
+                    pub = (grounder.latest() or {}).get("people")
+                    if pub and pub.get("seq") != people_last_seq:
+                        people_last_seq = pub.get("seq")
+                        pts, prec = people_estimates(pub, st, yaw, s.pitch or 0.0, hfov,
+                                                     people_width_m, fv)
+                        t_seen = pub.get("t_capture") or pub.get("t_cap") or pub.get("t")
+                        people_mem.observe(t_tick if t_seen is None else float(t_seen),
+                                           pts, key=people_last_seq)
+                        people_place["frames"] += 1
+                        people_place["boxes"] += prec["boxes"]
+                        people_place["placed"] += prec["placed"]
+                        people_place["pose"][prec["pose"]] = (
+                            people_place["pose"].get(prec["pose"], 0) + 1)
+                        for k, v in prec["src"].items():
+                            people_place["src"][k] = people_place["src"].get(k, 0) + v
+                    people_now = people_mem.current(t_tick)
+                    shield.set_people(people_now)
                 # The autopilot's measured velocity: logged on every tick
                 # (state_v), given to the Shield only with the own-velocity
                 # forecast on (OWN_VELOCITY_DEFAULT); the Shield's position
@@ -7740,6 +7887,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     # When this tick's setpoint went out, on the loop clock
                     # (None: nothing sent), and the tick's start to it.
                     **publish_latency_fields(t_tick, t_pub_abs, t0),
+                    # The people the Shield was given (a people envelope only):
+                    # [x, y, age of the fix in s].
+                    **({} if people_now is None else
+                       {"people": people_feed.rows_people(people_now)}),
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
                     "yaw_deg": round(st.yaw_deg, 2),
                     # The autopilot's measured velocity (North, East, up, m/s)
@@ -8197,6 +8348,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "track_ticks": getattr(pilot, "n_track", None),
             "search_ticks": getattr(pilot, "n_search", None),
             "subject_known_ticks": n_subject, "subject_source": subject_src,
+            # Where the Shield was told about people (a distance_envelope over
+            # people only): the source, the placement of every person box,
+            # and the memory's staleness rule and counts.
+            **({} if people_mem is None else
+               {"people_feed": {"source": people_source, "phrase": people_query,
+                                "placement": people_place, **people_mem.record(),
+                                "people_nonfinite": shield.n_people_nonfinite,
+                                "detector_frames": getattr(grounder, "n_people_frames", None),
+                                "detector_boxes": getattr(grounder, "n_people_boxes", None),
+                                "detector_unpaired": getattr(grounder, "n_people_unpaired",
+                                                             None)}}),
             "subject_class": subject_class,
             # The width the range from box width assumed, the stand-off rules
             # that class binds (only "*" ones for an unclassified subject), and

@@ -24,8 +24,12 @@
 #          test_msl_dem (2026-11-17, X-11: MSL over a gridded DEM at the query
 #          point, MSL in the CSP over a ground, the headless MSL family),
 #          test_world_map (2026-11-17: the declared world that lets the SITL
-#          rails fly a distance_envelope, the city rails' road map, the
-#          people limit; one SKIP where the CityLife street mask is absent),
+#          rails fly a distance_envelope, the city rails' road map, every
+#          reported person; one SKIP where the CityLife street mask is absent),
+#          test_people_envelope (2026-11-18: the people class binds every
+#          known person - the people field and its staleness, synthetic
+#          detections through the perception rail's placement, the sim
+#          rails' pedestrian list, the declared subject on SITL),
 #          test_msl_rail (2026-11-18, X-11: a WGS84 DEM, the headless
 #          harness's opt-in ground and the ROS 2 Shield node's --ground),
 #          test_terrain_forecast (2026-11-18, X-11: the Shield's forecast
@@ -765,7 +769,7 @@ jobs:
               tests/test_policy_dsl_grant_form.py \
               tests/test_distance_envelope_msl.py \
               tests/test_msl_dem.py \
-              tests/test_world_map.py \
+              tests/test_world_map.py               tests/test_people_envelope.py \
               tests/test_msl_rail.py \
               tests/test_terrain_forecast.py \
               tests/test_replay_identity.py \

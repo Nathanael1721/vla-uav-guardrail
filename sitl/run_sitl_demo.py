@@ -561,9 +561,18 @@ def main() -> int:
     # PathRepair off on this rail (guardrail.replay FOLLOW_RAIL_PATH_REPAIR):
     # the chain it flew before 2026-11-17; the ROS 2 node flies it.
     from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
+    # A distance_envelope over people (2026-11-18, guardrail/people.py):
+    # SITL's world has no pedestrians, so its one person is a --subject
+    # declared as one; refused without it. Nothing for any other policy.
+    from guardrail.people import declared_subject_source
+    ppl_kw, ppl_gaps = declared_subject_source(
+        policy, args.subject.split(",") if args.subject else None, args.subject_class,
+        rail="the ArduPilot SITL rail")
+    if ppl_gaps:
+        raise SystemExit("[policy] REFUSED before take-off: " + "; ".join(ppl_gaps))
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          clock=clock, pipe_clock=lambda: time.time(),
-                         path_repair=FOLLOW_RAIL_PATH_REPAIR)
+                         path_repair=FOLLOW_RAIL_PATH_REPAIR, **ppl_kw)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
     n_vel_used = 0

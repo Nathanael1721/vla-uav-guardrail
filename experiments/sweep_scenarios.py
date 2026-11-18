@@ -386,6 +386,7 @@ from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
 from guardrail.frames import filter_as_body, from_body, to_body   # noqa: E402
 from guardrail.geometry import ring_contains                     # noqa: E402
+from guardrail.people import declared_subject_source             # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
@@ -1678,6 +1679,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     ground = episode_ground(spec, policy)
     if ground is not None:
         rec_kw.update(ground=ground, up_ref="terrain")
+    # A distance_envelope over people (2026-11-18, guardrail/people.py): the
+    # harness's world has no pedestrians, so its one person is the
+    # scenario's subject when that is one (every Shield of the episode is
+    # told it); refused without it. Nothing for a policy without the rule.
+    _subj = spec.mission.subject
+    ppl_kw, ppl_gaps = declared_subject_source(
+        policy, _subj, _subj.class_ if _subj is not None else None,
+        rail="the headless harness")
+    if ppl_gaps:
+        raise UnsupportedScenario("; ".join(ppl_gaps))
+    rec_kw.update(ppl_kw)
     hash0 = policy.policy_hash
     sim_t = [0.0]
     clock = None
