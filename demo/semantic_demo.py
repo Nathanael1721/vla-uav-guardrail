@@ -438,7 +438,8 @@ async def fly(args) -> int:
             fwd, dwn, yr, _land = vla.latest()
             raw = Action4D(vx=fwd, vy=0.0, vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
 
-            d, e_body = shield.filter_body(state, limiter(raw))
+            # the limiter caps the WORLD reading's change, as before wf21
+            d, e_body = shield.filter_body(state, limiter(raw, state.yaw_deg))
             audit.log(tick, d)
             if d.touched:
                 n_touched += 1

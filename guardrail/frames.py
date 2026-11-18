@@ -55,6 +55,23 @@ a single boundary in the codebase." In this codebase:
     is done as a permutation there) and within a few ulp elsewhere
     (tests/test_frame_boundary.py: |to_body(from_body(b)) - b| <= 4e-15 m/s
     over seeded actions at 0, 90, 179.9, -90 and random headings).
+    This is how the grant's own reference implementation keeps "repair
+    operators acting on the same frame the VLA emits in": its operators take
+    and return the body-frame Action4D and, for their geometry, turn it into
+    the IR's ENU plane and back inside the operator
+    (kuanting-vla-uav-guardrail packages/safety-shield/src/safety_shield/
+    repair.py LateralProjection and GeofenceEscape: `body_to_enu`, the
+    projection in ENU, `enu_to_body`; checker.py and kinematics.py `predict`
+    forecast in ENU the same way). Ours turns once around the whole operator
+    stack instead of once per operator; neither side sees local NED (ours
+    is North / East / up, the reference's East / North / up). That the
+    repair is the body-frame one - the same body action in a scene that
+    turns with the aircraft gets the same emitted body action - is pinned
+    for each rule family in tests/test_frame_boundary.py: zone, kinematic
+    and altitude envelopes, corridor, stand-off (and its overhead
+    recovery), PathRepair's stand-off detour at any heading, the clearance
+    rule on a raster map at the four quarter turns (a raster turned by any
+    other angle is not the same map).
   * THE ONE BODY -> NED CROSSING is `body_to_local_ned` (who calls it: the
     first entry below).
 
@@ -108,6 +125,23 @@ And besides those adapters:
     `guardrail/hold_flight.py` (`body_command`: the hold's own world-frame
     leg, never a VLA action, for a rail whose setpoints are body frame).
     `BODY_STOP` and `streamed_body` say what a rail streams on a stop.
+    The step tracker (`guardrail/vla_link.py` StepTracker, behind vla_fly,
+    vla_mission, the PAS VLA pilot and the ROS 2 VLA bridge) is such a
+    world-frame controller between the VLA's decision and the Shield's
+    input: its position steps fly to world points fixed at the capture, its
+    carry continues the last world velocity, and its acceleration limits
+    scale the world velocity's change as a vector - so its rate steps, too,
+    compose the step's (forward, right) speed at the heading in the world
+    frame, and the rail hands the Shield their body reading.
+  * PRODUCER-SIDE SMOOTHING, before the Shield's input (or a jerk shaping the
+    Shield re-checks, `demo/run_demo.py`): `limit_in_world` in the demo
+    loops' rate limiters (`demo/aerialvla_demo.py` RateLimiter, imported by
+    `demo/aerialvla_pas_demo.py`, `demo/semantic_demo.py`,
+    `demo/semantic_seek.py`; `demo/real_vla_demo.py` and `demo/run_demo.py`
+    their own) caps the change of the action's world reading, as these
+    loops did before wf21, and hands back the body frame; `rebase_body`
+    turns `demo/real_vla_demo.py`'s action from its frame's capture heading
+    to the control tick's (a body-frame turn).
   * RECORDS, not commands: `guardrail/audit.py` (`to_body` writes each audit
     record's raw and emitted actions in the grant's body-frame keys),
     `guardrail/repair.py` (`to_body` logs PathRepair's detour waypoint in
@@ -236,6 +270,43 @@ def _channels(body) -> tuple:
         return (body.vx, body.vy, body.vz_up, body.yaw_rate)
     fwd, right, up, yaw_rate = body
     return (float(fwd), float(right), float(up), float(yaw_rate))
+
+
+def rebase_body(body: Action4D, from_yaw_deg: float, to_yaw_deg: float) -> Action4D:
+    """A body action given at heading `from_yaw_deg`, as the same velocity
+    seen from heading `to_yaw_deg`: turned by the heading change, in the body
+    frame (no world frame in between). Returns an Action4D (vx forward, vy
+    right at the new heading).
+
+    For a producer whose action was made from a view captured at one heading
+    and is flown at a later control tick's heading (demo/real_vla_demo.py:
+    OpenVLA's ~1 s inference): the velocity keeps the direction the model
+    meant relative to what it SAW, so the aircraft's turn since the capture
+    does not swing it. A turn by d degrees clockwise is `to_body` at d."""
+    return body_action(body, float(to_yaw_deg) - float(from_yaw_deg))
+
+
+def limit_in_world(limit, body, yaw_deg: float) -> Action4D:
+    """A per-tick rate limiter run on the WORLD reading of a body action, the
+    result handed back in the body frame at the same heading.
+
+    `limit` takes and returns a world-frame Action4D (a demo loop's
+    RateLimiter: a per-axis cap on the change since the last tick). It is a
+    smoother on the PRODUCER's side of the Shield (before its input, or, in
+    demo/run_demo.py, a jerk shaping that the Shield re-checks), not a repair
+    operator and not a body -> NED crossing toward an autopilot; nothing it
+    returns leaves the body frame.
+
+    Why the world reading: the cap is on the change of the velocity the
+    aircraft flies. A per-axis clip does not commute with a rotation, and a
+    body-frame clip does not see the change a turn makes - a constant forward
+    speed while the heading turns 90 degrees is a world velocity that swings
+    through 90 degrees, which the world-frame cap limits and a body-frame cap
+    passes unchanged. Every demo loop limited the world reading before wf21;
+    this keeps that behaviour (tests/test_frame_boundary.py pins it through a
+    turn)."""
+    fwd, right, up, yaw_rate = _channels(body)
+    return body_action(limit(from_body(fwd, right, up, yaw_rate, yaw_deg)), yaw_deg)
 
 
 def body_to_local_ned(body, yaw_deg: float) -> tuple:

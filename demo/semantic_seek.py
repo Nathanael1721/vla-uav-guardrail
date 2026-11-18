@@ -490,7 +490,8 @@ async def fly(args) -> int:
 
             raw, info = vla_action(vla, yaw, args.yaw_gain, time.time(),
                                    args.hold_s, args.fade_s)
-            smooth = limiter(raw)
+            # the limiter caps the WORLD reading's change, as before wf21
+            smooth = limiter(raw, state.yaw_deg)
 
             # The Shield ALWAYS runs. With --no-shield we simply do not apply its
             # correction, which turns the off-arm into evidence in its own right:

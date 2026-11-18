@@ -43,7 +43,8 @@ from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.aerialvla_codec import parse_action                  # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
-from guardrail.frames import body_action, body_to_local_ned         # noqa: E402
+from guardrail.frames import (body_action, body_to_local_ned,      # noqa: E402
+                              limit_in_world)
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import Action4D                               # noqa: E402
 from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
@@ -340,11 +341,23 @@ class AerialVLABackend:
 
 
 class RateLimiter:
+    """Cap the per-tick change of the commanded velocity, per axis, in the
+    WORLD frame (the velocity the aircraft flies).
+
+    Called with `yaw_deg` the action is a BODY action at that heading (what
+    the loops hand the Shield since wf21): its world reading is limited and
+    the result handed back in the body frame (frames.limit_in_world), so the
+    cap - and what flies - is the one these loops had before wf21, when they
+    limited the world action; a turn's swing of the velocity is limited too.
+    Without `yaw_deg` the action is limited as given."""
+
     def __init__(self, dv_h=0.25, dv_z=0.15):
         self.dv_h, self.dv_z = dv_h, dv_z
         self.prev = Action4D()
 
-    def __call__(self, a: Action4D) -> Action4D:
+    def __call__(self, a: Action4D, yaw_deg: float | None = None) -> Action4D:
+        if yaw_deg is not None:
+            return limit_in_world(self, a, yaw_deg)
         p = self.prev
         out = Action4D(
             vx=p.vx + float(np.clip(a.vx - p.vx, -self.dv_h, self.dv_h)),
@@ -437,7 +450,8 @@ def main() -> int:
                                 state.yaw_deg)
                 fwd_b, right_b = (1 - a) * fwd_b + a * g.vx, (1 - a) * right_b + a * g.vy
         raw = Action4D(vx=fwd_b, vy=right_b, vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
-        smooth = limiter(raw)
+        # the limiter caps the WORLD reading's change, as before wf21
+        smooth = limiter(raw, state.yaw_deg)
         d, e_body = shield.filter_body(state, smooth)
         audit.log(tick, d)
         if d.touched:

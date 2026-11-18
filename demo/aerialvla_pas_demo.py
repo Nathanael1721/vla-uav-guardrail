@@ -550,7 +550,8 @@ async def fly(args) -> int:
                         sc = max(0.2, dmin / 8.0)
                         vx, vy = vx * sc, vy * sc
                 raw = Action4D(vx=vx, vy=vy, vz_up=vz_up, yaw_rate=yaw_rate)
-            smooth = limiter(raw)
+            # the limiter caps the WORLD reading's change, as before wf21
+            smooth = limiter(raw, state.yaw_deg)
             if args.no_shield:
                 # COMPARISON BASELINE: no guardrail. Emit the raw action as-is —
                 # the drone WILL enter no-fly-zones / bust the altitude band.
