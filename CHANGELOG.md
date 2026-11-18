@@ -16,6 +16,11 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-19
+
+Release for the final hil smoke (WP4-14): every dated entry below, back to
+0.5.1, ships in it.
+
 ### 2026-11-19 (wf21, code) — the open rows' code side: MSL readers, one evaluation path, WGS84-only flights, one body-frame boundary, replay at the flown revision, people from the feed, a prefix for a text-reading VLA
 
 Seven branches (wf21-msl-readers, wf21-onepath3, wf21-wgs84-writers,
