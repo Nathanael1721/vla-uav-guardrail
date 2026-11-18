@@ -86,7 +86,11 @@ own audit log was appended across flights instead of belonging to one
                      transitions, in order;
   bag/               the rosbag2 recording, when the rail recorded one and it
                      overlaps this episode's start;
-  adapter_log.jsonl  what the MAVLink adapter turned each setpoint into.
+  adapter_log.jsonl  what the MAVLink adapter turned each setpoint into;
+  trajectory.json    (since 2026-11-18) the position's own doubles per tick,
+                     which the log rounds to 1 mm: what an open-loop replay
+                     of the Shield needs to be bit for bit from the bundle
+                     alone.
 
 and `verify_replay` refuses a bundle whose log or audit records name a policy
 hash that none of the archived generations has, which is exactly the WP2-15
@@ -199,6 +203,13 @@ EPISODE_FILES = {
     "events.jsonl": False,
     "prompt.yaml": False,
     "adapter_log.jsonl": False,
+    # Since 2026-11-18 (WP4-11): the position's own doubles per tick (and the
+    # rule clock's reading), which flight_log.jsonl rounds to 1 mm. Without
+    # it a bundle replayed open loop gives the Shield the rounded position,
+    # and a repair's size can differ in its last digits for that alone
+    # (tools/replay_at_revision.py, tools/replay_q3.py). Absent from every
+    # earlier bundle; the run folder kept it beside.
+    "trajectory.json": False,
 }
 
 # One policy IR and one CSP per policy generation, by generation number.
@@ -973,6 +984,7 @@ def read_replay(path: str | Path,
             "manifest": _json(EPISODE + "manifest.json"),
             "audit": _jsonl(_audit_member(blobs)[1]),
             "events": _jsonl(blobs.get(EPISODE + "events.jsonl")),
+            "trajectory": _json(EPISODE + "trajectory.json"),
             "generation_policies": gen_policies,
             "generation_problems": gen_problems,
             # The carried ground file's bytes (THE GROUND A RUN FLEW OVER),

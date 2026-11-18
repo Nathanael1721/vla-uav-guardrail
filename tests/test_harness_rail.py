@@ -560,6 +560,21 @@ def test_a_hil_session_is_one_flown_scored_episode_with_the_grants_bundle():
     assert {f["path"]: f["sha256"] for f in info["files"]} == {
         p.name: _sha(p.read_bytes()) for p in bag.iterdir()}, info
     assert info["how"] in ("hard links", "copies", "hard links and copies")
+    # what a replay reads beyond the six names, byte for byte, or why not
+    # (WP4-11, 2026-11-18: the bundle alone replays at its flown revision)
+    rf = kpi["harness"]["replay_files"]
+    for name in ("metrics.json", "trajectory.json"):
+        if (run_dir / name).is_file():
+            assert rf[name].startswith("written") and \
+                (d / name).read_bytes() == (run_dir / name).read_bytes(), (name, rf)
+        else:
+            assert rf[name].startswith("not written") and not (d / name).exists(), (name, rf)
+    assert rf["metrics.json"].startswith("written"), rf
+    tars = sorted(run_dir.glob("*.replay.tar.gz"))
+    if tars:
+        assert (d / tars[0].name).read_bytes() == tars[0].read_bytes(), rf
+    else:
+        assert rf["<tag>.replay.tar.gz"].startswith("not written"), rf
 
     # ---- every hot-apply generation's IR, not its hash only
     names, blobs, idx = _policy_bundle(d)

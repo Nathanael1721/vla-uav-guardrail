@@ -8602,6 +8602,231 @@ def write_bundle(ep_dir: Path, manifest: dict, kpi_doc: dict, events: list[dict]
             "".join(json.dumps(_json_safe(a)) + "\n" for a in audit), encoding="utf-8")
 
 
+def write_episode_policy_bundle(ep_dir: Path, spec: ScenarioSpec, run: EpisodeRun) -> dict:
+    """`policy_bundle.tar.gz` in a headless episode's bundle: the grant's
+    "exact bundle that was active (incl. all hot-apply generations)" (Stress
+    Testing, "Episode bundle"), written by the harness service's own
+    `write_policy_bundle` (the policy file the scenario names, byte for byte,
+    and the canonical IR of every generation the run held, each checked
+    against the hash the episode recorded; its index says which, if any, it
+    does not hold). Until 2026-11-18 only the gRPC harness's bundles carried
+    it; a sweep bundle had the policy only inside manifest_extras.json.
+
+    Returns kpi.json's `bundle_files`: each of the grant's six names and
+    whether it was written, or why not (no episode.bag2/: the headless
+    backend runs no ROS 2 graph, so nothing records a rosbag2)."""
+    from guardrail.harness_service import (NO_EPISODE_BAG, POLICY_BUNDLE_FILE,
+                                           write_policy_bundle)
+    src = Path(spec.policy.source)
+    try:
+        start_pol, _ = spec.policy.load_with_source(ROOT)
+    except Exception:                                            # noqa: BLE001
+        start_pol = None            # said in the index: generation 0's IR is missing
+    pb = write_policy_bundle(ep_dir, src if src.is_absolute() else ROOT / src, start_pol,
+                             run.policy, policy_generations(run.events),
+                             held=getattr(run, "generations", None))
+    return {"manifest.json": "written",
+            POLICY_BUNDLE_FILE: ("written, complete" if pb["complete"]
+                                 else f"written, incomplete: {pb['missing']}"),
+            "episode.bag2/": NO_EPISODE_BAG,
+            "shield_audit.jsonl": "written",
+            "harness_events.jsonl": "written",
+            "kpi.json": "written"}
+
+
+def rail_policy_source(spec: ScenarioSpec, backend: str = "sitl",
+                       bundles_dir: str | Path | None = None) -> Path:
+    """The policy file a rail mission was handed, as this desktop holds it:
+    the reference rail_policy_args gives the node (on the hil rail the
+    signed bundle, under the rig's bundles_dir when the scenario names none
+    of its own), else - that reference refused or unreadable - the
+    scenario's own policy file. What policy_bundle.tar.gz's injected/ member
+    is read from (the gRPC Harness's rail session and the rail campaign's
+    bundle, write_rail_episode_bundle)."""
+    src = Path(spec.policy.source)
+    src = src if src.is_absolute() else ROOT / src
+    try:
+        rel = Path(rail_policy_args(spec, backend, bundles_dir)[1])
+    except Exception:                                            # noqa: BLE001
+        return src
+    if backend == "hil" and bundles_dir and spec.policy.bundle_path is None:
+        return Path(bundles_dir) / rel.name
+    return rel if rel.is_absolute() else ROOT / rel
+
+
+# Where a rail campaign's harness_events.jsonl comes from (kpi.json bundle_files).
+RAIL_EVENTS_NOTE = ("built from the mission's own events.jsonl: its episode start, each "
+                    "scenario event the Shield node applied from --events (the rail's "
+                    "record, its kind dropped), and its end; the full events.jsonl is in "
+                    "the run's signed replay bundle beside")
+
+
+def _jsonl_dicts(path: Path) -> list[dict]:
+    out = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                out.append(r)
+    return out
+
+
+def rail_bundle_events(run_dir: Path, spec: ScenarioSpec, seed: int, *, backend: str,
+                       tag: str | None, rc, held: dict) -> tuple[list[dict], list[dict]]:
+    """(harness_events.jsonl's records, the policy generations) of a flown
+    rail run, from its own events.jsonl and policy_g<N>.json files.
+
+    The records have the headless bundle's shape (an `episode_start` with
+    the Shield arm, which tools/kpi_report.py load_stored reads; each hot
+    apply as `type: hot_apply`; an `episode_end`): the rail's
+    `scenario_event` records with their `kind` dropped and `source` added.
+    The generations are every one the node recorded (`policy_generation`)
+    and every one whose IR the run kept, each with the hash the node
+    recorded (else its kept IR's), its mission time (generation 0's: 0.0),
+    and the scenario event that made it."""
+    recs = _jsonl_dicts(Path(run_dir) / "events.jsonl")
+    gen_rec: dict[int, dict] = {}
+    for r in recs:
+        n = r.get("generation")
+        if r.get("kind") == "policy_generation" and isinstance(n, int):
+            gen_rec.setdefault(n, r)
+    scen = [r for r in recs if r.get("kind") == "scenario_event"]
+    made_by = {r.get("generation"): r for r in scen
+               if not r.get("refused") and isinstance(r.get("generation"), int)}
+
+    def hash_of(n: int) -> str | None:
+        if (gen_rec.get(n) or {}).get("policy_hash"):
+            return gen_rec[n]["policy_hash"]
+        if n in held:
+            return "sha256:" + hashlib.sha256(held[n]).hexdigest()
+        return None
+
+    gens = []
+    for n in sorted(set(gen_rec) | set(held)):
+        g, ev = gen_rec.get(n) or {}, made_by.get(n) or {}
+        t = g.get("t")
+        gens.append({"generation": n, "policy_hash": hash_of(n),
+                     "t": 0.0 if (t is None and n == 0) else t,
+                     "event": ev.get("event"),
+                     "rule_id": ev.get("rule_id") or ev.get("zone") or ev.get("target")})
+    shield = "on" if spec.shield else "off"
+    events = [{"t": 0.0, "type": "episode_start", "scenario_id": spec.scenario_id,
+               "seed": seed, "policy_hash": hash_of(0), "generation": 0,
+               "shield": shield, "backend": backend, "rail_run": tag,
+               "events_source": RAIL_EVENTS_NOTE}]
+    for r in scen:
+        x = {k: v for k, v in r.items() if k != "kind"}
+        x.setdefault("type", "scenario_event")
+        x["source"] = "events.jsonl"
+        events.append(x)
+    end = next((r for r in reversed(recs) if r.get("kind") == "mission_end"), None)
+    last = gens[-1]["generation"] if gens else None
+    events.append({"t": (end or {}).get("t"), "type": "episode_end", "generation": last,
+                   "policy_hash": hash_of(last) if last is not None else None,
+                   "mission_rc": rc, "mission_end": end is not None})
+    return events, gens
+
+
+def write_rail_episode_bundle(ep_dir: Path, run_dir: Path, spec: ScenarioSpec, seed: int,
+                              kpi_doc: dict, *, backend: str, tag: str | None = None,
+                              rc=None, bundles_dir: str | Path | None = None,
+                              extras: dict | None = None) -> dict:
+    """A rail campaign's episode bundle under the grant's six names (Stress
+    Testing, "Episode bundle"), from the flown run folder `run_dir`, in
+    `ep_dir` beside the campaign's sweep.json (WP4-11, 2026-11-18). Until
+    then only the gRPC Harness's rail session and the headless sweep wrote
+    them; every flown KPI campaign (--backend hil) left its runs with the
+    rail's own names only (bag/, events.jsonl, policy_g<N>.json).
+
+      manifest.json         the mission's own, byte for byte;
+      policy_bundle.tar.gz  the policy file the rail was handed
+                            (rail_policy_source) and every generation's
+                            IR from the run's policy_g<N>.json, each
+                            checked against the hash the node recorded
+                            (write_policy_bundle);
+      episode.bag2/         the run's bag/, aliased (hard links on one
+                            volume), never renamed in the run folder;
+      shield_audit.jsonl    the run's, byte for byte (a hard link where the
+                            volume allows);
+      harness_events.jsonl  rail_bundle_events, from the run's events.jsonl;
+      kpi.json              `kpi_doc` (the campaign's verdict and KPI table),
+                            kpi_grade by guardrail.manifest.is_kpi_grade on
+                            the mission's manifest and metrics, and
+                            `bundle_files` (each of the six: written, or
+                            why not) and `rail_bundle` (the run it came
+                            from, the bag's digests, the replay inputs).
+
+    Beside them, as the Harness's rail session writes them
+    (bundle_replay_inputs): metrics.json, trajectory.json and the run's
+    signed <tag>.replay.tar.gz (a hard link), so the bundle alone replays
+    at its flown revision (tools/replay_at_revision.py). flight_log.jsonl
+    is NOT copied: it is in that signed bundle, and a bundle with a log
+    beside its kpi.json is read by tools/kpi_report.py as a headless one
+    re-scored from it. Nothing in the run folder is changed. A file the run
+    lacks is said in bundle_files, never made up. Returns bundle_files."""
+    import shutil
+    from guardrail.harness_service import (POLICY_BUNDLE_FILE, bundle_replay_inputs,
+                                           rail_bag_and_audit, read_held_generations,
+                                           write_policy_bundle)
+    from guardrail.manifest import is_kpi_grade
+    run_dir, ep_dir = Path(run_dir), Path(ep_dir)
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    files: dict[str, str] = {}
+
+    def read(name):
+        try:
+            doc = json.loads((run_dir / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return doc if isinstance(doc, dict) else None
+
+    manifest, metrics = read("manifest.json"), read("metrics.json")
+    if manifest is not None:
+        shutil.copyfile(run_dir / "manifest.json", ep_dir / "manifest.json")
+        files["manifest.json"] = "written: the mission's own manifest.json, byte for byte"
+        try:
+            grade, why_not = is_kpi_grade(manifest, metrics or {})
+        except Exception as err:                                 # noqa: BLE001
+            grade, why_not = False, [f"is_kpi_grade could not read the manifest: "
+                                     f"{type(err).__name__}: {err}"]
+    else:
+        files["manifest.json"] = (f"not written: the run folder {run_dir.name} has no "
+                                  f"readable manifest.json, and none is made up")
+        grade, why_not = False, [f"the run folder {run_dir.name} has no manifest.json"]
+
+    held = read_held_generations(run_dir)
+    events, gens = rail_bundle_events(run_dir, spec, seed, backend=backend, tag=tag, rc=rc,
+                                      held=held)
+    pb = write_policy_bundle(ep_dir, rail_policy_source(spec, backend, bundles_dir), None,
+                             None, gens, held=held)
+    files[POLICY_BUNDLE_FILE] = ("written, complete" if pb["complete"]
+                                 else f"written, incomplete: {pb['missing']}")
+    got, bag_info = rail_bag_and_audit(run_dir, ep_dir, link_audit=True)
+    files.update(got)
+    with open(ep_dir / "harness_events.jsonl", "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("".join(json.dumps(_json_safe(e)) + "\n" for e in events))
+    files["harness_events.jsonl"] = "written: " + RAIL_EVENTS_NOTE
+    replay_files = bundle_replay_inputs(run_dir, ep_dir)
+    files["kpi.json"] = "written"
+    if extras:
+        with open(ep_dir / "manifest_extras.json", "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(_json_safe(extras), indent=2) + "\n")
+    doc = _json_safe({**kpi_doc, "kpi_grade": bool(grade), "kpi_grade_reasons": why_not,
+                      "bundle_files": files,
+                      "rail_bundle": {"backend": backend, "run": run_dir.as_posix(),
+                                      "tag": tag, "mission_rc": rc,
+                                      "episode_bag": bag_info,
+                                      "replay_files": replay_files,
+                                      "flight_log.jsonl": "not copied: it is in the run's "
+                                                          "signed replay bundle"}})
+    with open(ep_dir / "kpi.json", "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(doc, indent=2, allow_nan=False) + "\n")
+    return files
+
+
 def runner_facts() -> dict:
     """The interpreter this sweep ran under (WP1-25 / X-06: the grant's non-VLA
     stack is Python 3.11+). On a hil campaign the Shield node records the
@@ -9774,6 +9999,9 @@ def main(argv: list[str] | None = None) -> int:
                                             autopilot_hold=args.autopilot_hold,
                                             response=ep.response,
                                             recovery=args.recovery_law)}
+            # The grant's policy_bundle.tar.gz beside it: the policy file
+            # and every generation's IR (write_episode_policy_bundle).
+            files = write_episode_policy_bundle(ep_dir, spec, run)
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
@@ -9782,8 +10010,36 @@ def main(argv: list[str] | None = None) -> int:
                             "breaches": extra.get("breaches"),
                             "shield": "on" if spec.shield else "off",
                             "fsm": extra.get("fsm")},
-                "kpi": res}), events, rows if args.keep_logs else None,
+                "kpi": res, "bundle_files": files}), events,
+                rows if args.keep_logs else None,
                 _json_safe(full_extras), audit=run.audit)
+            bundle = _show(ep_dir)
+        elif args.backend in RAIL_BACKENDS and not args.no_bundles:
+            # A flown rail episode's bundle under the grant's six names
+            # (write_rail_episode_bundle, 2026-11-18), beside the campaign's
+            # summary; the run folder keeps its own names and files.
+            rail_dir = (Path(hil_run["run_dir"]) if hil_run is not None
+                        else ROOT / "demo" / "out" / sitl_run_tag)
+            ep_dir = runs / ep.dir_name(stamp)
+            write_rail_episode_bundle(
+                ep_dir, rail_dir, spec, ep.seed, {
+                    **common, "status": status, "gates_failed": bad,
+                    "arm_record": arm_record, "rule_priorities": prios,
+                    "gates_basis": basis_used, "gates": gates_used,
+                    "gates_derivation": derivation, "other_verdicts": other,
+                    "metrics": {"reached_goal": extra.get("reached_goal"),
+                                "breaches": extra.get("breaches"),
+                                "shield": "on" if spec.shield else "off",
+                                "fsm": extra.get("fsm")},
+                    "kpi": res},
+                backend=args.backend,
+                tag=hil_run["tag"] if hil_run is not None else sitl_run_tag,
+                rc=hil_run.get("rc") if hil_run is not None else None,
+                bundles_dir=(hil_cfg.bundles_dir if hil_run is not None else None),
+                extras={"backend": args.backend,
+                        "rail_run": (hil_run["tag"] if hil_run is not None
+                                     else sitl_run_tag),
+                        "rail_run_path": rail_dir.as_posix(), **(extras or {})})
             bundle = _show(ep_dir)
 
         item = {**common, "status": status, "gates_failed": bad, "kpi": res,
