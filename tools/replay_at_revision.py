@@ -813,7 +813,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     t0 = time.perf_counter()
     if a.runs:
-        runs, root = list(a.runs), None
+        # absolute: the drivers run inside the revision's worktree, where a path
+        # relative to the caller's directory names nothing (2026-11-19: every
+        # run of a relative glob read 'no flight log')
+        runs, root = [Path(r).resolve() for r in a.runs], None
     elif a.root is not None and a.root.is_dir():
         runs, root = find_runs(a.root), a.root
     else:

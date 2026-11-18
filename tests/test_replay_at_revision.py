@@ -624,6 +624,27 @@ def test_the_cli_writes_the_summary_and_exits_by_verdict():
     assert d["audit_records_differing"][0]["fields"] == ["emitted_action_world"], d
 
 
+def test_a_run_named_relative_to_the_callers_directory_is_found():
+    """The drivers run inside the revision's worktree: a run folder given
+    relative to the caller's directory is resolved before they start, never
+    read as 'no flight log' (rel060, 2026-11-19)."""
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    root = _CACHE["root"]
+    here = os.getcwd()
+    try:
+        os.chdir(root)
+        dst = _tmp("rar_rel_") / "rar.json"
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = RA.main(["rail_ok", "--out", str(dst), "--scratch", str(_tmp("rar_rel_wt_"))])
+    finally:
+        os.chdir(here)
+    assert rc == 0, buf.getvalue()
+    s = json.loads(dst.read_text(encoding="utf-8"))
+    assert s["verdicts"]["identical"] == 1 and s["verdicts"]["not_replayable"] == 0, s
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
