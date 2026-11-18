@@ -31,8 +31,11 @@ carry no projected coordinate. The zone enforced LIVE is the lazy
 projection of the stored lat/lon (the rule is bound to the policy's frame
 as it is written), bit for bit what the snapshot, reloaded, enforces: the
 metres sent, for values on the micrometre grid (at most six decimals),
-else within 0.6 um of them. Only a policy written wholly in metres, the
-legacy form, keeps metre writes:
+else within 0.6 um of them. A policy with no frame origin (written wholly
+in metres, the legacy read form, or with no point and no stated origin)
+has no WGS84 position for the metres sent: since 2026-11-18 such a body is
+refused with a 422 naming the missing origin (models.NoFrameOrigin), where
+until then it was stored in metres:
 
     {"id": "nfz-landslide-007", "scope": "mission",
      "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix",

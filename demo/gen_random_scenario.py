@@ -83,7 +83,12 @@ def id_claimed_elsewhere(policy_id: str, out: str | Path) -> list[str]:
 
 def policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float,
                 version: str = "0.1.0") -> str:
-    """The generated policy's text: one 12 m keep-out square per leg, the
+    """The generated policy's rules drafted in local metres (x = North, y =
+    East of the scene's home): the INPUT of `wgs84_policy_yaml`, which writes
+    them in WGS84 about the scene's origin. Never written to disk itself
+    since 2026-11-18 (WP1-14: the `--metres` option that wrote it is gone).
+
+    The rules: one 12 m keep-out square per leg, the
     altitude band and the kinematic caps. The breach action is the grant's
     `project_fix` (IR schema 3.0.0; it was this repository's `repair` until
     2026-11-02, when the shipped files moved to 0.1.1 under the same rules).
@@ -136,6 +141,13 @@ def wgs84_policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float,
     return text
 
 
+METRES_REMOVED = (
+    "--metres was removed on 2026-11-18 (WP1-14): it wrote the legacy local-metre "
+    "form, and the grant's Policy DSL never carries projected coordinates. The "
+    "generator writes WGS84 about the scene's origin (the Project AirSim home-geo-"
+    "point); its metres are a view the Shield computes")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=7)
@@ -148,11 +160,13 @@ def main():
     ap.add_argument("--band-lo", type=float, default=35.0)
     ap.add_argument("--band-hi", type=float, default=55.0)
     ap.add_argument("--nfz", type=float, default=12.0, help="NFZ side length (m)")
-    ap.add_argument("--metres", action="store_true",
-                    help="DEPRECATED (WP1-14): write the legacy local-metre form "
-                         "(no origin) instead of WGS84; the grant's DSL never "
-                         "carries projected coordinates")
+    # Removed 2026-11-18 (WP1-14): it wrote the legacy local-metre form (no
+    # origin), and the grant's DSL never carries projected coordinates. Kept
+    # as a hidden option only to refuse it by name rather than as unknown.
+    ap.add_argument("--metres", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.metres:
+        ap.error(METRES_REMOVED)
     policy_id = args.policy_id or default_policy_id(args.out)
     clash = id_claimed_elsewhere(policy_id, args.out)
     if clash:
@@ -206,13 +220,10 @@ def main():
         if cp.plan(test, res, ox, oy, a, b) is not None:
             nfzs.append((mid[0] - h, mid[0] + h, mid[1] - h, mid[1] + h))
 
-    # write the policy YAML (WGS84 since 2026-11-03; --metres for the legacy form)
-    write = policy_yaml if args.metres else wgs84_policy_yaml
-    if args.metres:
-        print("WARNING: --metres is deprecated (WP1-14): it writes the legacy "
-              "local-metre form, which loads but is not the canonical WGS84 form",
-              file=sys.stderr)
-    Path(args.out).write_text(write(policy_id, nfzs, args.band_lo, args.band_hi),
+    # write the policy YAML: WGS84 about the scene's origin, the only form
+    # (since 2026-11-03; the metre option was removed on 2026-11-18)
+    Path(args.out).write_text(wgs84_policy_yaml(policy_id, nfzs, args.band_lo,
+                                                args.band_hi),
                               encoding="utf-8")
 
     route = "; ".join(f"{x},{y}" for x, y in wps)

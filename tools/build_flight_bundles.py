@@ -87,7 +87,12 @@ FLIGHT_POLICIES = ("sim_demo_policy", "corridor_survey", "follow_car_citylife",
                    "follow_car_nfz", "follow_pedestrian", "vla_goto_citylife",
                    # The distance_envelope family on the SITL rails (WP1-07,
                    # 2026-11-17; experiments/profiles/distance_envelope.yaml).
-                   "distance_envelope_sitl")
+                   "distance_envelope_sitl",
+                   # The three-zone CityLife follow tasks (28 Oct - 4 Nov,
+                   # flown with --bundle up to v0.1.1, the legacy metre form):
+                   # their WGS84 bundles at the current version, which a
+                   # re-flight takes (WP1-14, 2026-11-18; tools/bundle_census.py).
+                   "follow_car_citylife_nfz3", "follow_car_citylife_nfz3b")
 
 
 def _policy_file(name: str) -> Path:

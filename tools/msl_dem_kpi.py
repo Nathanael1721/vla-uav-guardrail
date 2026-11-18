@@ -51,6 +51,16 @@ WHAT THIS MEASURES
    at points across many bands, the local runtime built from cold, on a
    Shield with segment_check=True (the only path that reads the tube).
 
+FRAME (WP1-14, 2026-11-18): every policy here states a WGS84 origin
+(FRAME, the bench's BENCH_ORIGIN) and stores its points in lat/lon, since
+the grant's DSL "never carries projected coordinates", and the DEM is read
+in that frame (load_dem / in_frame place the metre grid of
+experiments/worlds/dem_ridge.json, which states no origin, at FRAME). The
+geometry is laid out in metres on the micrometre grid, so the Shield's view
+of every point is the metre value it was laid out at. Until 2026-11-18 the
+policies were metre-only with no origin; the hot-apply phase then stopped
+working, because a policy with no frame origin refuses an event with points.
+
 SCOPE (what this does NOT show): no rail passes a ground yet; the rails'
 State.up is height above home, which a DEM Shield refuses (up_ref); the DEM
 is synthetic; no SITL, hil or PAS flight has carried an MSL rule.
@@ -71,13 +81,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "experiments"))
 
+from bench_shield_50rules import BENCH_ORIGIN                        # noqa: E402
 from guardrail import terrain                                        # noqa: E402
 from guardrail.models import Action4D, State, policy_from_raw         # noqa: E402
+from guardrail.projection import raw_points_in_wgs84                 # noqa: E402
 from guardrail.shield import Shield                                  # noqa: E402
 
 DEM_PATH = ROOT / "experiments" / "worlds" / "dem_ridge.json"
 OUT = ROOT / "docs" / "data" / "msl_dem_kpi.json"
 DT = 0.1
+# The WGS84 frame every policy here states and the DEM is read in (module
+# docstring, FRAME): the bench's, since the 50-rule MSL set is its grid.
+FRAME = BENCH_ORIGIN
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
 
@@ -102,8 +117,31 @@ def ridge_dem(x0=-300.0, y0=-300.0, nx=81, ny=101, cell=10.0, reach_m=20.0):
                               reach_m=reach_m)
 
 
+def in_frame(dem: terrain.GridGround) -> terrain.GridGround:
+    """`dem` placed in FRAME: a metre grid that states no origin (the ridge
+    file) gets FRAME as its origin, the nodes unchanged; a grid already in
+    FRAME comes back as it is; one in another frame is refused."""
+    if dem.origin is None:
+        d = dem.to_dict()
+        d["origin"] = list(FRAME)
+        return terrain.GridGround.from_dict(d)
+    why = terrain.origin_problem(dem, FRAME)
+    if why:
+        raise ValueError(why)
+    return dem
+
+
 def load_dem() -> terrain.GridGround:
-    return terrain.GridGround.load(DEM_PATH) if DEM_PATH.exists() else ridge_dem()
+    """The ridge (experiments/worlds/dem_ridge.json, else ridge_dem()) read in
+    FRAME. The file itself stays a metre grid with no origin."""
+    return in_frame(terrain.GridGround.load(DEM_PATH) if DEM_PATH.exists() else ridge_dem())
+
+
+def framed(raw: dict) -> dict:
+    """A raw policy laid out in metres, stored as the DSL stores it: the
+    origin stated (FRAME) and every point in WGS84 about it."""
+    return {**raw, "origin": {"lat": FRAME[0], "lon": FRAME[1]},
+            "constraints": raw_points_in_wgs84(raw["constraints"], FRAME)}
 
 
 def family_policy(env_action: str = "project_fix", ref: str | None = "MSL") -> dict:
@@ -117,8 +155,8 @@ def family_policy(env_action: str = "project_fix", ref: str | None = "MSL") -> d
         env["altitude_ref"] = zone["altitude_ref"] = ref
     kin = {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 3.0,
            "climb_rate_max_mps": 2.5, "yaw_rate_max_dps": 60.0}
-    return {"policy_id": f"msl-ridge-{env_action}", "version": "1.0.0",
-            "constraints": [env, zone, kin]}
+    return framed({"policy_id": f"msl-ridge-{env_action}", "version": "1.0.0",
+                   "constraints": [env, zone, kin]})
 
 
 # name -> (pilot (vx, vz), start MSL height, start y, start xs, envelope
@@ -159,6 +197,7 @@ def truth_p0(x: float, y: float, z: float) -> list[str]:
 
 def run_episode(dem, name: str, x0: float, arm: str = "on", seconds: float = 40.0) -> dict:
     (vx, vz), z0, y0, _, action, expected, clause, free = SCENARIOS[name]
+    dem = in_frame(dem)
     if arm == "msl_as_agl":
         pol = policy_from_raw(family_policy(action, ref=None))
         sh = Shield(pol)
@@ -206,6 +245,7 @@ def run_episode(dem, name: str, x0: float, arm: str = "on", seconds: float = 40.
 
 
 def family(dem) -> dict:
+    dem = in_frame(dem)
     eps = {"on": [], "off": [], "msl_as_agl": []}
     for name, spec in SCENARIOS.items():
         for x0 in spec[3]:
@@ -239,9 +279,12 @@ def family(dem) -> dict:
 
 def fifty_rule_msl_raw() -> dict:
     """bench_shield_50rules.fifty_rule_policy() with every banded rule MSL
-    (heights + 40 m, the ridge's foot)."""
+    (heights + 40 m, the ridge's foot), in its stored form: origin FRAME,
+    points in lat/lon only."""
     import bench_shield_50rules as bench
-    data = bench.fifty_rule_policy().model_dump(mode="json", exclude_none=True)
+    pol = bench.fifty_rule_policy()
+    assert pol.frame_origin == FRAME, (pol.frame_origin, FRAME)
+    data = pol.model_dump(mode="json", exclude_none=True, context={"points": "stored"})
     for c in data["constraints"]:
         if c["type"] == "altitude_envelope":
             c["alt_min_m"] += 40.0
@@ -284,6 +327,7 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
              tmp: Path) -> dict:
     import bench_shield_50rules as bench
     from guardrail.models import DynamicNFZ
+    dem = in_frame(dem)
     raw = fifty_rule_msl_raw()
     tmp.mkdir(parents=True, exist_ok=True)
     pol_file = tmp / "bench50_msl.json"
@@ -352,13 +396,13 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
         hot_tick.append((t2 - t0) * 1e3)
     # the MSL corridor path: an MSL corridor across the ridge + an MSL
     # envelope, _check at points spread over many bands, each from cold
-    cor_raw = {"policy_id": "msl-corridor-bench", "constraints": [
+    cor_raw = framed({"policy_id": "msl-corridor-bench", "constraints": [
         {"id": "cor-msl", "type": "corridor", **H, "altitude_ref": "MSL",
          "centerline": [{"x": -250.0, "y": 20.0}, {"x": 0.0, "y": 40.0},
                         {"x": 250.0, "y": 20.0}],
          "width_m": 30.0, "altitude_floor_m": 110.0, "altitude_ceiling_m": 220.0},
         {"id": "env-msl", "type": "altitude_envelope", **H, "altitude_ref": "MSL",
-         "alt_min_m": 100.0, "alt_max_m": 240.0}]}
+         "alt_min_m": 100.0, "alt_max_m": 240.0}]})
     # segment_check=True: the only path that reads the corridor's tube
     # (Shield._corridor_segment_exit), so the tube cache is exercised.
     sh = Shield(policy_from_raw(cor_raw, ground=dem), ground=dem, up_ref="terrain",
@@ -380,6 +424,7 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
     n_tubes = len({id(v) for k, v in sh._tubes.items() if isinstance(k, tuple)})
     return {
         "policy": "bench_shield_50rules.fifty_rule_policy, 49 banded rules MSL",
+        "frame_origin": list(FRAME),
         "query_check_msl_corridor_local_runtime_cold": _stats(cor_q),
         "msl_corridor_tubes_buffered": n_tubes,
         "cold_start_fresh_process": _stats(fresh) if fresh else None,
@@ -418,8 +463,8 @@ CAVEATS = {
                        "fail-safe KPI result",
     "scope": "headless only: no rail passes a ground; a DEM Shield requires "
              "up_ref='terrain' and the rails' State.up is height above home; the DEM is "
-             "synthetic and metre-framed (origin null); no SITL, hil or PAS flight has "
-             "carried an MSL rule",
+             "synthetic (a metre grid with no origin on disk, read in the policies' "
+             "stated WGS84 frame); no SITL, hil or PAS flight has carried an MSL rule",
 }
 
 

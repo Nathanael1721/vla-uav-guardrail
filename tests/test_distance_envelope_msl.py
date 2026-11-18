@@ -248,8 +248,12 @@ def test_a_ground_that_is_not_flat_is_refused_not_approximated():
 
 def test_an_msl_hot_apply_follows_the_shields_ground():
     """Before (2026-10-19): an MSL hot-apply was refused outright. Now it is
-    refused by a Shield with no ground and accepted by one with a ground."""
-    base = policy_from_raw(_msl_raw(ref=None, lo=5.0, hi=60.0))
+    refused by a Shield with no ground and accepted by one with a ground.
+    The base states a frame origin: since 2026-11-18 (WP1-14) a zone's metres
+    are written as WGS84 about it, and a policy with no origin refuses them
+    (models.NoFrameOrigin) before the MSL test is reached."""
+    base = policy_from_raw({**_msl_raw(ref=None, lo=5.0, hi=60.0),
+                            "origin": {"lat": 25.0421, "lon": 121.531}})
     zone = DynamicNFZ(id="dz", type="dynamic_nfz", **H, altitude_ref="MSL",
                       vertices=[{"x": 50, "y": -5}, {"x": 60, "y": -5}, {"x": 60, "y": 5},
                                 {"x": 50, "y": 5}],
@@ -279,7 +283,15 @@ def test_the_rails_state_their_ground_and_a_flight_records_it():
     import tempfile
     d = Path(tempfile.mkdtemp())
     f = d / "msl.yaml"
-    f.write_text(json.dumps(_msl_raw()), encoding="utf-8")
+    # Stored as a flown policy is since 2026-11-18 (WP1-14): the frame stated
+    # and the fence in WGS84 about it; the flight loader refuses a metre-only
+    # document (bundle.LegacyPointFormRefused).
+    from guardrail.projection import raw_points_in_wgs84
+    o = (25.0421, 121.531)
+    raw = _msl_raw()
+    f.write_text(json.dumps({**raw, "origin": {"lat": o[0], "lon": o[1]},
+                             "constraints": raw_points_in_wgs84(raw["constraints"], o)}),
+                 encoding="utf-8")
     _refused(lambda: load_for_flight(yaml_path=f), "altitude_ref MSL")
     pol, rec = load_for_flight(yaml_path=f, ground=terrain.SITL_CMAC)
     assert rec["ground"] == {"kind": "flat", "elevation_msl_m": 584.0,

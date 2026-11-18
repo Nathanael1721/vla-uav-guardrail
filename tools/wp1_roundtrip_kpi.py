@@ -742,7 +742,9 @@ def reference_cross_load(run_reference_loader: bool = True) -> dict:
 # 2 time-window switches, a third of the rules on weekly schedules. "grid": the
 # 50-rule load every monitor budget in this repository is quoted against
 # (experiments/bench_shield_50rules.fifty_rule_policy, 2 envelopes + 48 square
-# fences in metres). Both are signed with a fixed Ed25519 seed whose public key
+# fences written in metres; bundled since 2026-11-18 in WGS84 about
+# DOC_ANCHOR, grid_fifty_rule_policy, since a bundle carries no projected
+# coordinate - WP1-14). Both are signed with a fixed Ed25519 seed whose public key
 # sits in a trust store FILE written beside them, so the signature status is
 # "verified" on any machine, with or without the lab's private key.
 #
@@ -909,7 +911,34 @@ def _cold_start_policies() -> dict:
     raw = typical_fifty_rule_raw()
     typical = policy_from_raw(raw, source="wp1-cold-start-typical")
     return {"typical": (typical, yaml.safe_dump(raw, sort_keys=False)),
-            "grid": (bench.fifty_rule_policy(), None)}
+            "grid": (grid_fifty_rule_policy(bench.fifty_rule_policy()), None)}
+
+
+def grid_fifty_rule_policy(metre_grid):
+    """The bench grid (experiments/bench_shield_50rules.fifty_rule_policy,
+    laid out in local metres) as it is bundled: every point in WGS84 about
+    DOC_ANCHOR, the origin stated (projection.raw_points_in_wgs84). A bundle
+    is issued in WGS84 only since 2026-11-18 (WP1-14, bundle.write_bundle);
+    until then the timing bundle carried the grid's metres. The grid's
+    metres are on the micrometre grid, so the Shield's view of every vertex
+    is the metre value it was written at; the rule and zone counts are the
+    same.
+
+    Since 2026-11-18 (review of WP1-14) the bench itself stores the grid this
+    way (bench_shield_50rules.BENCH_ORIGIN == DOC_ANCHOR), so for it this is
+    the identity: its points are already lat/lon and are left as they are,
+    and the canonical IR is the one this function produced from the metre
+    grid (checked when the change was made). A policy already framed about
+    another origin is refused: re-stating the origin would move its points."""
+    from guardrail.projection import raw_points_in_wgs84
+    fo = metre_grid.frame_origin
+    if fo is not None and (abs(fo[0] - DOC_ANCHOR[0]) > 1e-12
+                           or abs(fo[1] - DOC_ANCHOR[1]) > 1e-12):
+        raise ValueError(f"grid policy framed about {fo}, not DOC_ANCHOR {DOC_ANCHOR}")
+    doc = metre_grid.model_dump(mode="json", exclude_none=True)
+    doc["origin"] = {"lat": DOC_ANCHOR[0], "lon": DOC_ANCHOR[1]}
+    doc["constraints"] = raw_points_in_wgs84(doc["constraints"], DOC_ANCHOR)
+    return policy_from_raw(doc, source="wp1-cold-start-grid")
 
 
 def _cold_start_signer(seed: bytes = COLD_START_SEED):

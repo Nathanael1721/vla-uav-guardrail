@@ -28,8 +28,9 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
     micrometre grid (every REST body, every hand-written scenario); a
     computed off-grid ring (rotate, a spawn at an off-grid vehicle position)
     moves by at most 0.6 um;
-  * a policy written only in metres (the legacy form) keeps metre writes, and
-    no stored policy's hash moves;
+  * a policy with no frame origin (the legacy metre form, or no point and no
+    stated origin) refuses every write with points since 2026-11-18, and no
+    stored policy's hash moves;
   * a derived frame (no stated origin) is never moved by an event;
   * no unbound mode is left (no Shield.wgs84_bind_frame, no
     VLAGUARD_WGS84_BIND); a lat/lon body whose x/y disagree with the frame
@@ -355,21 +356,39 @@ def test_csp_and_decisions_unchanged():
 
 # ------------------------------------------------------ the legacy and frames
 
-def test_metre_policy_keeps_metre_writes():
-    """A policy written only in metres has no WGS84 position for a metre
-    point: its events write metres, as before, to the same hash."""
+def test_a_policy_with_no_frame_refuses_event_writes():
+    """A policy with no WGS84 frame origin (no stated origin, no lat/lon
+    point) has no WGS84 position for a metre point. Until 2026-11-18 its
+    events wrote metres; now the write is refused (models.NoFrameOrigin ->
+    HotApplyRefused -> 422 over REST) and the policy is left as it was, so
+    no writer stores projected coordinates. The metre writes of before stay
+    reachable only through `wgs84_writes = False`, the comparison switch."""
+    from guardrail.models import NoFrameOrigin
     doc = {"policy_id": "legacy-metres", "version": "0.1.0",
            "constraints": [{"id": "speed", "type": "kinematic_envelope", **RULE,
                             "speed_max_mps": 6,
                             "climb_rate_max_mps": 3, "yaw_rate_max_dps": 90}]}
     new, old = Shield(Policy.model_validate(doc)), Shield(Policy.model_validate(doc))
     old.wgs84_writes = False
-    for sh in (new, old):
-        api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
-        api.apply_nfz_edit(sh, ZONE["id"], {"op": "rotate", "angle_deg": 15})
-    assert new.policy.policy_hash == old.policy.policy_hash
-    assert not any(v.geographic for v in new.policy.constraints[-1].vertices)
-    assert rule_in_wgs84(new.policy.constraints[-1], None) is new.policy.constraints[-1]
+    h0, g0 = new.policy.policy_hash, new.policy.generation
+    try:
+        api.apply_dynamic_nfz(new, copy.deepcopy(ZONE))
+    except api.ApiError as e:
+        assert e.status == 422 and "no WGS84 frame origin" in e.detail, (e.status, e.detail)
+    else:
+        raise AssertionError("an event on a policy with no frame wrote metres")
+    assert (new.policy.policy_hash, new.policy.generation) == (h0, g0)
+    api.apply_dynamic_nfz(old, copy.deepcopy(ZONE))
+    api.apply_nfz_edit(old, ZONE["id"], {"op": "rotate", "angle_deg": 15})
+    assert not any(v.geographic for v in old.policy.constraints[-1].vertices)
+    # The converter itself: a rule with points refuses, one without passes.
+    try:
+        rule_in_wgs84(old.policy.constraints[-1], None)
+    except NoFrameOrigin as e:
+        assert "nfz-landslide-007" in str(e), e
+    else:
+        raise AssertionError("rule_in_wgs84 kept metres with no frame")
+    assert rule_in_wgs84(old.policy.constraints[0], None) is old.policy.constraints[0]
 
 
 def test_stored_policy_hashes_unchanged():
@@ -573,7 +592,8 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
     generation, without Shield._in_frame) gives the same answer: every fence
     - the static zones of gps-noise-within-margin and wind-beyond-authority,
     which a global 2e-6 m changed - keeps 1e-9 m, as does a dynamic_nfz in a
-    policy written only in metres."""
+    policy written only in metres (since 2026-11-18 only the comparison
+    switch `wgs84_writes = False` can put one there)."""
     from guardrail import shield as SH
     sh = Shield(load_policy(SITL))
     api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
@@ -589,6 +609,7 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
                           "vertices": [{"x": 0, "y": 0}, {"x": 9, "y": 0}, {"x": 9, "y": 9}],
                           "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}))
     assert legacy.policy.frame_origin is None
+    legacy.wgs84_writes = False
     api.apply_dynamic_nfz(legacy, {**ZONE, "vertices": OFF_GRID})
     assert all(SH.tie_tolerance_m(c) == SH._TIE_M for c in legacy.policy.constraints)
 
@@ -688,8 +709,16 @@ def test_derive_on_a_framed_base_matches_hot_apply():
     assert got.policy_hash == new.policy.policy_hash
     _all_wgs84(got)
     was = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0",
-                 wgs84_writes=False)
+                 wgs84_writes=False, legacy_read=True)
     assert was.policy_hash == old.policy.policy_hash != got.policy_hash
+    # The metre-write rebuild is a read of a recorded run only (2026-11-18).
+    try:
+        derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0",
+               wgs84_writes=False)
+    except ValueError as e:
+        assert "legacy_read=True" in str(e), e
+    else:
+        raise AssertionError("derive(wgs84_writes=False) wrote metres as a new derivation")
 
 
 def _geo_tool():

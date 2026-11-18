@@ -47,6 +47,10 @@ HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "demo_policy.yaml"
+# The frame origin an event fixture states (the Project AirSim home-geo-point,
+# demo_policy.yaml's): since 2026-11-18 (WP1-14) an event's metres are written
+# as WGS84 about it, and a policy with no frame origin refuses them.
+FRAME = {"lat": 35.6895, "lon": 139.6917}
 
 
 def _sq(cx, cy, half):
@@ -164,7 +168,7 @@ def test_a_moving_zone_is_enforced_where_it_will_be():
     it repairs by moving away at the zone's own speed (into-zone motion is
     measured relative to the zone). A Shield that froze the zone where it was
     spawned (the 401305a hot_apply did) never sees it."""
-    sh = Shield(Policy(policy_id="m", constraints=[]))
+    sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     st = State(x=0.0, y=0.0, up=10.0)
     sh.hot_apply(_zone(cx=35.0, cy=0.0, half=5.0, margin=0.5,
                        motion={"vx_mps": -2.0}), t=0.0)
@@ -191,7 +195,7 @@ def test_a_moving_zone_follows_ring_at_from_its_anchor():
     spawn time): the model's own motion, translation and rotation."""
     z = _zone(cx=0.0, cy=50.0, half=3.0, motion={"vx_mps": 1.0, "vy_mps": -0.5,
                                                  "yaw_rate_dps": 10.0})
-    sh = Shield(Policy(policy_id="m", constraints=[]))
+    sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     sh.hot_apply(z, t=2.0)
     for t in (2.0, 3.0, 4.5):
         sh.filter(State(x=-100.0, y=-100.0, up=5.0), Action4D(), t=t)
@@ -200,7 +204,7 @@ def test_a_moving_zone_follows_ring_at_from_its_anchor():
 
 def test_editing_a_moving_zone_reanchors_it_where_it_is_now():
     z = _zone(cx=0.0, cy=50.0, half=3.0, motion={"vx_mps": 1.0})
-    sh = Shield(Policy(policy_id="m", constraints=[]))
+    sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     sh.hot_apply(z, t=0.0)
     sh.filter(State(x=-100.0, y=-100.0, up=5.0), Action4D(), t=4.0)
     sh.translate_nfz("dyn", 0.0, 10.0)             # at t = 4 the zone is 4 m north
@@ -220,7 +224,7 @@ def test_the_lookahead_frame_of_a_turning_zone_is_ring_at():
     from guardrail.shield import _to_zone_frame
     z = _zone(cx=0.0, cy=0.0, half=6.0, motion={"vx_mps": 1.5, "vy_mps": -0.7,
                                                "yaw_rate_dps": 25.0})
-    sh = Shield(Policy(policy_id="m", constraints=[]))
+    sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     sh.hot_apply(z, t=1.0)
     sh.filter(State(x=-500.0, y=-500.0, up=5.0), Action4D(), t=3.0)     # age 2 s
     with sh._scope(sh._new_tick(3.0)):
@@ -289,7 +293,7 @@ def test_a_moving_zone_out_of_reach_costs_no_point_test():
     forecast; its swept box over the horizon says so, and it is skipped."""
     far = _zone(zid="far", cx=400.0, cy=0.0, half=5.0, motion={"vx_mps": -1.0})
     near = _zone(zid="near", cx=20.0, cy=0.0, half=3.0, motion={"vx_mps": -1.0})
-    sh = Shield(Policy(policy_id="m", constraints=[]))
+    sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     sh.hot_apply(far, t=0.0)
     sh.hot_apply(near, t=0.0)
     st, a = State(x=0.0, y=0.0, up=5.0), Action4D(vx=3.0)
@@ -373,7 +377,7 @@ def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
 # ----------------------------------------------------------------- corridor_swap
 
 def _lanes():
-    return Policy.model_validate({"policy_id": "lanes", "constraints": [
+    return Policy.model_validate({"policy_id": "lanes", "origin": FRAME, "constraints": [
         {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 50}]})
@@ -585,12 +589,43 @@ def test_hot_apply_fits_the_grants_50_ms_at_50_rules():
     from bench_shield_50rules import fifty_rule_policy
     ms = []
     for i in range(30):
+        # The bench policy as it is: it states its own frame origin since
+        # 2026-11-18 (bench_shield_50rules.BENCH_ORIGIN), so the spawn is
+        # written in WGS84 about it, as the bench's hot-apply phase does.
         sh = Shield(fifty_rule_policy())
         sh.filter(State(x=-50, y=-50, up=20), Action4D())
         t0 = time.perf_counter()
         sh.hot_apply(_zone(zid=f"hot-{i}", cx=-25.0, cy=-25.0, half=5.0))
         ms.append((time.perf_counter() - t0) * 1e3)
     assert statistics.median(ms) <= 50.0, statistics.median(ms)
+
+
+def test_the_bench_runs_its_hot_apply_phase_on_its_own_policy():
+    """experiments/bench_shield_50rules.py is the command the Policy DSL page's
+    hot-apply <= 50 ms evidence comes from. Its policy states a WGS84 frame
+    origin and stores every vertex in lat/lon (WP1-14, review 2026-11-18):
+    with no origin, its hot-apply phase - a metre fence written into the
+    50-rule policy - was refused (models.NoFrameOrigin) and the bench
+    crashed. Run end to end here with small n: exit 0, 30 hot-applies timed,
+    the grid's metres read back exactly as laid out."""
+    import bench_shield_50rules as B
+    pol = B.fifty_rule_policy()
+    assert pol.point_form == "wgs84" and pol.frame_origin == B.BENCH_ORIGIN
+    assert B.fifty_rule_policy(False).frame_origin == B.BENCH_ORIGIN
+    first = next(c for c in pol.constraints if c.id == "nfz-0-1")
+    assert [(v.x, v.y) for v in first.vertices] == [
+        (40.0, 0.0), (52.0, 0.0), (52.0, 12.0), (40.0, 12.0)], first.vertices
+    for kind in ("edge", "moving"):
+        assert B.variant_policy(kind).point_form == "wgs84", kind
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "bench.json"
+        rc = B.main(["--n-check", "6", "--n-filter", "3", "--scenarios", "clear", "near",
+                     "--impl", "current", "--json", str(out)])
+        rec = json.loads(out.read_text(encoding="utf-8"))
+    assert rc == 0 and rec["failures"] == [], rec["failures"]
+    life = rec["lifecycle"]["current"]
+    assert life["hot_apply"]["n"] == 30 and life["construct"]["n"] == 30, life
+    assert life["hot_apply"]["median_ms"] <= 50.0, life
 
 
 # -------------------------------------------------------------------------- audit
@@ -693,7 +728,7 @@ def _layered(extra_reg=(), extra_mis=()):
     mission layer (altitude band, hard mission zone). Built fresh each call:
     the Shield edits the policy it is given."""
     from guardrail.models import merge_layers
-    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "nfz-airport", "type": "polygon_fence", **HARD_P0, "layer": "regulation",
          "vertices": _SQ},
         {"id": "nfz-park", "type": "polygon_fence",
@@ -702,7 +737,7 @@ def _layered(extra_reg=(), extra_mis=()):
          "vertices": [{"x": -40, "y": 7}, {"x": -30, "y": 7}, {"x": -30, "y": 23},
                       {"x": -40, "y": 23}]},
         *extra_reg]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40},
         {"id": "nfz-mission", "type": "polygon_fence", **HARD_P0,
          "vertices": [{"x": 50, "y": 7}, {"x": 60, "y": 7}, {"x": 60, "y": 23},
@@ -761,9 +796,9 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
     assert sh.set_rule_active("nfz-airport", True)["op"] == "switch_on"   # holding it on
     # A re-declared regulation zone may not be expired from the mission layer...
     tfr = {"id": "tfr", "type": "dynamic_nfz", **HARD_P0, "vertices": _SQ}
-    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "origin": FRAME, "constraints": [
         {**tfr, "layer": "regulation"}]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         tfr, {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=15, up=4), Action4D())
@@ -774,9 +809,9 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
     lane = {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 20,
             "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
             "altitude_floor_m": 5, "altitude_ceiling_m": 30}
-    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "origin": FRAME, "constraints": [
         {**lane, "layer": "regulation"}]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         lane]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=0, up=10), Action4D())
@@ -809,11 +844,11 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
     monitor_only replacement is refused; a narrower one inside the old tube is
     accepted and enforced."""
     from guardrail.models import merge_layers
-    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "lane", "type": "corridor", **HARD_P0, "layer": "regulation", "width_m": 20,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
          "altitude_floor_m": 5, "altitude_ceiling_m": 30}]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=0, up=10), Action4D())
@@ -840,9 +875,9 @@ def test_a_zone_of_another_layer_cannot_be_moved_reshaped_or_expired():
     a mission-layer translate, scale or expire is refused; the same edit from
     the regulation layer (Python API, layer=) goes through."""
     from guardrail.models import merge_layers
-    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "tfr", "type": "dynamic_nfz", **HARD_P0, "layer": "regulation", "vertices": _SQ}]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=15, up=4), Action4D())
@@ -1029,7 +1064,7 @@ def test_a_zone_spawned_on_top_is_left_the_same_way_in_every_vertex_order():
     start = (-150.0, 20.0)
     runs = []
     for pts in _orders(_square_ring(*start, 20.0, deg)):
-        sh = Shield(Policy(policy_id="spawn", constraints=[]), escalation=False)
+        sh = Shield(Policy(policy_id="spawn", origin=FRAME, constraints=[]), escalation=False)
         x, y = start
         sh.filter(State(x=x, y=y, up=15.0), Action4D(vx=4 * hx, vy=4 * hy), t=0.0)
         sh.hot_apply(_zone_in_order(pts), t=0.0)

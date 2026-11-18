@@ -234,9 +234,17 @@ def test_the_dynamic_runs_rebuild_from_the_lock():
     from guardrail.models import IR2_FORM
     lock = load_lock()
     (d,) = [x for x in lock["derived"] if x["base"] == "fase3-sim-demo@0.1.1"]
-    pol = derive(as_version(load_policy(DEMO).ir3_form().metre_form(), "0.1.1"),
-                 d["hot_apply"], d["generations"])
+    meter_base = as_version(load_policy(DEMO).ir3_form().metre_form(), "0.1.1")
+    pol = derive(meter_base, d["hot_apply"], d["generations"], legacy_read=True)
     assert pol.generation == 1
+    # A NEW derivation on that metre base is refused (WP1-14, 2026-11-18): it
+    # would write metres into a policy with no WGS84 frame origin.
+    try:
+        derive(meter_base, d["hot_apply"], d["generations"])
+    except ValueError as e:
+        assert "no WGS84 frame origin" in str(e), e
+    else:
+        raise AssertionError("a new derivation on a metre base wrote metres")
     assert all(c.scope is None for c in pol.constraints), "the 2.x recipe gained a scope"
     assert pol.hash_form(DYNAMIC_RUNS) == "legacy16-exclude-none"
     assert pol.hash_form(d["policy_hash"]) == IR2_FORM

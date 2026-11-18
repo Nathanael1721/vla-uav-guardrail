@@ -36,9 +36,11 @@ closes the one writer that still produced the metre form:
     its derived frame origin, not PAS_HOME;
   * the legacy metre READ form is labelled: Policy.point_form, and
     bundle.load_for_flight records `point_form` / `point_note` for it; a
-    WGS84 policy's flight record is unchanged (no key added); what can still
-    write the legacy form is listed (derived recipes on a metre base,
-    gen_random_scenario --metres, deprecated);
+    WGS84 policy's flight record is unchanged (no key added); since
+    2026-11-18 nothing writes the legacy form (an event on a policy with no
+    frame origin, a new derivation on a metre base and gen_random_scenario
+    --metres are refused; tests/test_wgs84_frameless_writers.py), and the
+    lock's derived recipes on a metre base are only read back;
   * no stored policy hash moves: every policies/*.yaml hashes to its lock
     entry and check_lock() is clean.
 """
@@ -60,6 +62,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import api                                          # noqa: E402
 from guardrail.bundle import (LEGACY_POINT_NOTE, check_lock,       # noqa: E402
+                              LegacyPointFormRefused,
                               load_for_flight, load_lock, policy_candidates)
 from guardrail.harness_service import scenario_event_from_rule     # noqa: E402
 from guardrail.models import (LEGACY_POINT_FORMS,                  # noqa: E402
@@ -430,20 +433,29 @@ def test_point_form_labels_every_form():
                                             {"x": 31, "y": 14}]})
     snap = Policy.model_validate(json.loads(sh.policy.model_dump_json()))
     assert snap.point_form == POINTS_LEGACY_MIXED
-    # an event on a metre-only policy keeps writing metres (no WGS84 frame)
+    # an event on a metre-only policy is refused since 2026-11-18 (no WGS84
+    # frame to write it in; tests/test_wgs84_frameless_writers.py), so the
+    # policy stays as it was loaded
     leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)))
-    api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
-                                "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
-                                             {"x": 60, "y": 9}]})
-    assert leg.policy.point_form == POINTS_LEGACY_METRES
+    try:
+        api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
+                                    "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
+                                                 {"x": 60, "y": 9}]})
+    except api.ApiError as e:
+        assert e.status == 422 and "no WGS84 frame origin" in e.detail, e.detail
+    else:
+        raise AssertionError("an event on a metre-only policy wrote metres")
+    assert leg.policy.point_form == POINTS_LEGACY_METRES and leg.policy.generation == 0
 
 
-def test_writers_still_producing_the_legacy_form():
-    """The inventory's other side: what can still WRITE the metre form.
-    The lock's derived recipes rebuilt on a metre base (no frame) keep
-    metres; no recipe records `wgs84_writes: false` today; and
-    demo/gen_random_scenario.py --metres is the one opt-in file writer,
-    labelled deprecated."""
+def test_the_legacy_form_is_only_read_back():
+    """The inventory's other side. Until 2026-11-18 three writers could still
+    produce the metre form; now none does (tests/test_wgs84_frameless_writers.py
+    proves each refusal). What is left is READING: the lock's derived recipes
+    on a metre base are rebuilt as the recorded runs flew them (bundle.derive
+    legacy_read, which policy_candidates passes), in the legacy form; no
+    recipe records `wgs84_writes: false` today; demo/gen_random_scenario.py
+    has no metre writer (--metres is refused by name)."""
     lock = load_lock()
     derived = lock.get("derived") or []
     assert not any(d.get("wgs84_writes") is False for d in derived), derived
@@ -451,25 +463,41 @@ def test_writers_still_producing_the_legacy_form():
     forms = {d["name"]: by_name[d["name"]].point_form for d in derived if d["name"] in by_name}
     assert len(forms) == len(derived), (forms, [d["name"] for d in derived])
     assert all(f in LEGACY_POINT_FORMS for f in forms.values()), forms
-    print(f"  derived lock recipes: {forms}")
+    print(f"  derived lock recipes (read back): {forms}")
     src = (ROOT / "demo" / "gen_random_scenario.py").read_text(encoding="utf-8")
-    assert "DEPRECATED (WP1-14)" in src and "--metres is deprecated" in src
+    assert "METRES_REMOVED" in src and "DEPRECATED (WP1-14)" not in src
+    assert "write = policy_yaml" not in src
 
 
-def test_flight_record_labels_only_the_legacy_form():
+def test_flight_refuses_the_legacy_form_and_labels_its_read():
+    """Since 2026-11-18 (review of WP1-14) the flight loader refuses a metre-only
+    document; until then it flew it, labelled. Every policies/*.yaml flies
+    with no label; a refusal of one of them for its point form is a failure,
+    not a skip. The legacy form loads under legacy_read only (a re-run of a
+    recorded flight), and its record says so."""
     n = 0
     for p in POLICIES:
         try:
             pol, rec = load_for_flight(yaml_path=p)
+        except LegacyPointFormRefused as e:
+            raise AssertionError(f"{p.name}: {e}")
         except ValueError:
             continue
         assert "point_form" not in rec and "point_note" not in rec, (p.name, rec)
+        assert "legacy_read" not in rec, (p.name, rec)
         n += 1
     assert n >= 32, n
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "legacy.yaml"
         f.write_text(yaml.safe_dump(METRE_DOC, sort_keys=False), encoding="utf-8")
-        pol, rec = load_for_flight(yaml_path=f)
+        try:
+            load_for_flight(yaml_path=f)
+        except LegacyPointFormRefused as e:
+            assert POINTS_LEGACY_METRES in str(e) and "VLAGUARD_LEGACY_READ" in str(e), e
+        else:
+            raise AssertionError("a metre-only document was flown")
+        pol, rec = load_for_flight(yaml_path=f, legacy_read=True)
+    assert rec["legacy_read"] is True
     assert rec["point_form"] == POINTS_LEGACY_METRES == pol.point_form
     assert rec["point_note"] == LEGACY_POINT_NOTE and "legacy read form" in LEGACY_POINT_NOTE
 

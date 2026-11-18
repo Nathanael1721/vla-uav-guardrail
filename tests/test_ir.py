@@ -66,6 +66,10 @@ HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
 
 POLICIES = sorted((ROOT / "policies").glob("*.yaml"))
+# The frame origin a fixture that receives events states (the Project AirSim
+# home-geo-point): since 2026-11-18 (WP1-14) an event's metres are written as
+# WGS84 about it, and a policy with no frame origin refuses them.
+FRAME = {"lat": 35.6895, "lon": 139.6917}
 CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
 
 
@@ -98,7 +102,7 @@ def _caps(speed=4.0):
 def _overlap_policy() -> Policy:
     """Fences that overlap, touch and nest, so a repair against one can aim the
     vehicle at the next - the case the per-iteration re-query exists for."""
-    return Policy(policy_id="overlap", constraints=[
+    return Policy(policy_id="overlap", origin=FRAME, constraints=[
         *_caps(),
         _square("a", 0, 0, 20, margin=2.0),
         _square("b", 15, 5, 20, margin=1.0),          # overlaps a

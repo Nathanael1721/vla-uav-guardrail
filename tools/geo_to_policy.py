@@ -81,6 +81,14 @@ no stated `origin`, whose frame comes from its first polygon_fence) are
 refused - metre or lat/lon alike, so a GeoJSON / KML zone that master
 accepted onto such a base is now refused - because every WGS84 point of the
 result would land elsewhere. No stored policy has a derived origin.
+
+Since 2026-11-18 (WP1-14) the tool never emits the legacy metre form: metre
+rules for a base with NO frame (no stated origin, no lat/lon point) are
+refused (models.no_frame_message), as the live Shield refuses them, where
+until then they were appended in metres; and a whole policy with any point
+in metres is refused rather than bundled, with the converter to use
+(tools/convert_policies_wgs84.py states the origin and raises the version;
+converting here would give one id@version two contents).
 """
 from __future__ import annotations
 
@@ -97,8 +105,10 @@ sys.path.insert(0, str(ROOT))
 import yaml                                                         # noqa: E402
 
 from guardrail.models import (IR2_RULE_DEFAULTS, DynamicNFZ, Policy,  # noqa: E402
-                              load_policy, parse_policy_text, policy_from_raw)
-from guardrail.projection import geo_points, raw_points_in_wgs84     # noqa: E402
+                              load_policy, no_frame_message, parse_policy_text,
+                              policy_from_raw)
+from guardrail.projection import (geo_points, metre_point_count,      # noqa: E402
+                                  raw_points_in_wgs84)
 
 DSL_PROPERTIES = ("priority", "constraint_type", "violation_action", "layer",
                   "scope", "margin_m", "altitude_floor_m", "altitude_ceiling_m",
@@ -417,11 +427,29 @@ def ingest(source, base: Policy | None = None, defaults: dict | None = None,
         if base is not None:
             raise ConversionError(f"{where} is a whole policy; --base is for "
                                   f"rules to append, not for two policies")
+        n = metre_point_count(obj.get("constraints", []) if isinstance(obj, dict) else [])
+        if n:
+            # WP1-14 (2026-11-18): a whole document in the legacy metre form
+            # is not re-emitted as a bundle. Converting it here would give
+            # its id@version a second content; tools/convert_policies_wgs84.py
+            # converts it about a stated anchor and raises the version.
+            raise ConversionError(
+                f"{where}: {n} point(s) written in local metres (x/y). The "
+                f"canonical form is WGS84 and the DSL never carries projected "
+                f"coordinates (grant, Policy DSL page; WP1-14), so this tool does "
+                f"not bundle it: convert it first with tools/convert_policies_"
+                f"wgs84.py (it states the origin and raises the version), or "
+                f"ingest its rules with --base onto a policy that has a frame")
         return policy_from_raw(obj, source=where, runtime=runtime)
     if base is None:
         raise ConversionError(
             f"{where} carries {len(new)} rule(s) but no policy to add them to; "
             f"pass --base (a payload alone has no policy_id, version or frame)")
+    if base.frame_origin is None and metre_point_count(new):
+        # WP1-14 (2026-11-18): no frame, so no WGS84 position for a metre
+        # point; until then they were appended in metres.
+        raise ConversionError(no_frame_message(f"{where} ({len(new)} rule(s) for "
+                                               f"{base.policy_id})"))
     geo_new = bool(geo_points(new))
     if geo_new and base.origin is None and not base.is_geographic and any(
             getattr(c, "vertices", None) or getattr(c, "centerline", None)

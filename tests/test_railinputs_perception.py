@@ -68,7 +68,7 @@ def _fly(policy: str, *, shield="on", max_s="3", extra=(), dev_yaml=True,
     """tests/test_pas_ardupilot.py's _fly, with the link and camera chosen."""
     out = _tmp()
     pol = out / "policy.yaml"
-    pol.write_text(policy, encoding="utf-8")
+    pol.write_text(T._as_flown(policy), encoding="utf-8")   # metre fixtures framed
     args = pn.build_parser().parse_args([
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
@@ -271,7 +271,7 @@ def _bundle_of(yaml_text: str, bundles: Path) -> tuple[Path, Path]:
     from guardrail.bundle import write_bundle
     from guardrail.manifest import flight_bundle_path
     y = _tmp() / "policy.yaml"
-    y.write_text(yaml_text, encoding="utf-8")
+    y.write_text(T._as_flown(yaml_text), encoding="utf-8")   # metre fixtures framed
     pol = load_policy(y)
     b = flight_bundle_path(pol, bundles)
     write_bundle(pol, b, signer=None)

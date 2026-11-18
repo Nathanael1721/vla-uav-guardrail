@@ -1531,12 +1531,33 @@ class FakeMavrosLink(FakeLink):
 _LAST: dict = {}
 
 
+# The scene's home-geo-point (the FrameAnchor _fly gives the link).
+SCENE_HOME = (35.6895, 139.6917)
+
+
+def _as_flown(policy_text: str) -> str:
+    """A fixture laid out in local metres, stored as a flown policy is since
+    2026-11-18 (WP1-14): the flight loader refuses the legacy metre form
+    (bundle.LegacyPointFormRefused), so a metre fixture states the scene's
+    home as its origin and its points are written in WGS84 about it. The
+    metres are on the micrometre grid, so the Shield reads them back exactly.
+    A fixture with no metre point, or already framed, is written as it is."""
+    import yaml
+    from guardrail.projection import metre_point_count, raw_points_in_wgs84
+    doc = yaml.safe_load(policy_text)
+    if doc.get("origin") is not None or not metre_point_count(doc.get("constraints")):
+        return policy_text
+    doc["origin"] = {"lat": SCENE_HOME[0], "lon": SCENE_HOME[1]}
+    doc["constraints"] = raw_points_in_wgs84(doc["constraints"], SCENE_HOME)
+    return yaml.safe_dump(doc, sort_keys=False)
+
+
 def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
          grounder_kw=None, max_s="3", camera_log=None, popen=None, run_cmd=None,
          depth_m=None, clk=None, grounder_cls=None, pre=None):
     out = _tmp()
     pol = out / "policy.yaml"
-    pol.write_text(policy, encoding="utf-8")
+    pol.write_text(_as_flown(policy), encoding="utf-8")
     args = pn.build_parser().parse_args([
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",

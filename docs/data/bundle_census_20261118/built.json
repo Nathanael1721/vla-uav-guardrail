@@ -1,0 +1,31 @@
+{
+  "row": "WP1-14",
+  "date": "2026-11-18",
+  "why": "The two legacy metre-only tasks whose current policies/ version (0.1.3) had no bundle in the lab checkout's bundles/ (census_before.json problems). Every other legacy task already had a WGS84 bundle at its current version.",
+  "command": "python tools/build_flight_bundles.py follow_car_citylife_nfz3 follow_car_citylife_nfz3b --key <lab checkout>/policies/keys/lab-dev-ed25519.pem --issued-at 2026-11-18T00:00:00Z",
+  "reproducible": "built twice (bundles/ and a scratch --out-dir): byte-identical, same sha256 below",
+  "bundles": [
+    {
+      "file": "follow-car-citylife-nfz3-v0.1.3.tar.gz",
+      "policy": "policies/follow_car_citylife_nfz3.yaml",
+      "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+      "point_form": "wgs84",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "signature": "verified",
+      "sha256": "64153e4583381bd3c8970cf6e17f7744dd989914879a9e4e53db1c5f5db47384",
+      "replaces_for_flight": ["follow-car-citylife-nfz3-v0.1.0.tar.gz", "follow-car-citylife-nfz3-v0.1.1.tar.gz"]
+    },
+    {
+      "file": "follow-car-citylife-nfz3b-v0.1.3.tar.gz",
+      "policy": "policies/follow_car_citylife_nfz3b.yaml",
+      "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+      "point_form": "wgs84",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+      "signature": "verified",
+      "sha256": "7c45898647984dd58d6c386021ea8df66741f6a92fa0d246c251b5b3c28b949b",
+      "replaces_for_flight": ["follow-car-citylife-nfz3b-v0.1.0.tar.gz", "follow-car-citylife-nfz3b-v0.1.1.tar.gz"]
+    }
+  ]
+}
