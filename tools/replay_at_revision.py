@@ -676,8 +676,14 @@ def summarise(records: list[dict], worktrees: list[dict], *, command: str,
                                     and r.get("difference_class") == c)
                              for c in sorted({r.get("difference_class") or "decision"
                                               for r in records if r["verdict"] == "differs"})},
-        "differs": [{k: r.get(k) for k in ("run", "kind", "code_revision_flown",
-                                           "difference_class", "first_difference")}
+        # Where each difference is; the values are in the per-run records.
+        "differs": [{**{k: r.get(k) for k in ("run", "kind", "code_revision_flown",
+                                              "difference_class")},
+                     "first_difference": {k: (r.get("first_difference") or {}).get(k)
+                                          for k in ("where", "tick", "field")},
+                     "fields_max_abs": {f: v.get("max_abs") for f, v in (
+                         (r.get("audit") or {}).get("fields_differing") or {}).items()},
+                     "log_emitted_max_abs": (r.get("log") or {}).get("emitted_max_abs_diff")}
                     for r in records if r["verdict"] == "differs"],
         "worktrees": worktrees,
         "worktrees_left_behind": [w["path"] for w in worktrees if not w.get("removed")],
