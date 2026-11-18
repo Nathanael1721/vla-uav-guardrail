@@ -94,6 +94,11 @@
 #          test_replay_q3 (2026-11-17, WP4-11: a stored rail run's logged
 #          raw actions re-run through the Shield with the generations it
 #          flew, tools/replay_q3.py; on synthetic run folders),
+#          test_replay_at_revision (2026-11-18, WP4-11: an episode replayed
+#          at its manifest's code_revision in a temporary detached git
+#          worktree, tools/replay_at_revision.py: a rail run open loop and a
+#          headless bundle re-flown, flown here at HEAD; its end-to-end
+#          tests SKIP outside a git checkout),
 #          test_stack_revisions (2026-11-17, ARCH-31: the per-host revision
 #          record beside manifest.json; its replay of a real hil manifest
 #          SKIPs without the lab's run data), test_sweep_resume (2026-11-17,
@@ -743,7 +748,7 @@ jobs:
               tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
               tests/test_harness_hil.py \
               tests/test_replay_from_bag.py \
-              tests/test_replay_q3.py \
+              tests/test_replay_q3.py               tests/test_replay_at_revision.py \
               tests/test_stack_revisions.py \
               tests/test_sweep_resume.py \
               tests/test_wgs84_writes.py \

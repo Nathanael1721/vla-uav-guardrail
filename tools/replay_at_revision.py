@@ -1102,13 +1102,16 @@ def _open_loop(run: Path, code_root: Path) -> dict:
            "escalation": bool(la.get("escalation_fsm", False))}
     params = inspect.signature(Shield).parameters
     kw: dict[str, Any] = {}
-    pr = bool((fc or {}).get("path_repair", False))
-    if "path_repair" in params:
-        kw["path_repair"] = pr
-    elif pr:
-        raise Refused("a Shield configuration this replay does not rebuild (path_repair "
-                      "recorded on, and this revision's Shield takes no such argument)")
-    cfg["path_repair"] = pr
+    # PathRepair: as recorded (the ROS 2 node records it since 2026-11-17);
+    # a run that records nothing flew this revision's default, which is what
+    # its rail passed (nothing), so nothing is passed here either.
+    pr = (fc or {}).get("path_repair")
+    if isinstance(pr, bool):
+        if "path_repair" in params:
+            kw["path_repair"] = pr
+        elif pr:
+            raise Refused("a Shield configuration this replay does not rebuild (path_repair "
+                          "recorded on, and this revision's Shield takes no such argument)")
     pin: list = [None]
     clock = (lambda: pin[0]) if clocks else None
     if cfg["escalation"] or rail_shield is None:
@@ -1118,6 +1121,8 @@ def _open_loop(run: Path, code_root: Path) -> dict:
     else:
         shield = rail_shield(policies[gens[0]], lookahead_s=cfg["lookahead_s"], dt=cfg["dt"],
                              clock=clock, **kw)
+    cfg["path_repair"] = getattr(shield, "path_repair", None)
+    cfg["path_repair_from"] = "metrics.json" if isinstance(pr, bool) else "revision default"
     state_fields = getattr(State, "model_fields", {})
 
     def install(target) -> None:
