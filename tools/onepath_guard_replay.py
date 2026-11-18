@@ -1,18 +1,22 @@
-"""How much FenceGuard's decisions would move if its building half read the
-Shield's distance field (--guard-field shield; cards WP3-22 / X-13).
+"""How much FenceGuard's decisions move now that its building half reads the
+Shield's distance field and threshold test (cards WP3-22 / X-13).
 
 Run:  python tools/onepath_guard_replay.py [RUN ...] [--root DIR] [--json OUT]
 
-The city controller's FenceGuard (demo/follow_vlm.py) measures building
-clearance with a grid scan by default (guard_field="grid",
-guardrail/shield.py nearest_cell_clearance: the nearest blocked cell centre). The Shield
-measures the same rule (obstacle_clearance, min_clearance_m) on its signed
-chamfer distance field, read bilinearly (guardrail/shield.py field_distance).
-guard_field="shield" makes the guard read the Shield's field; it is opt-in
-until flown. This replays stored CityLife follow flights' logged ticks
-through the WHOLE guard decision - gate() (fence and building brake) and,
-where the flight loop calls it, slide() (the sidestep) - once per measure,
-and counts the ticks whose decision differs.
+Until 2026-11-18 the city controller's FenceGuard (demo/follow_vlm.py)
+measured building clearance with a grid scan (guard_field="grid",
+guardrail/shield.py nearest_cell_clearance: the nearest blocked cell
+centre) and compared it with min_clearance_m itself; every follow flight
+stored before that date flew it. The Shield measures the same rule
+(obstacle_clearance) on its signed chamfer distance field, read bilinearly
+(guardrail/shield.py field_distance), and judges it with
+clearance_breached. Since 2026-11-18 FenceGuard asks the Shield for both
+(Shield.clearance_ruler; guard_field="shield", the only value). This
+replays stored CityLife follow flights' logged ticks through the WHOLE
+guard decision - gate() (fence and building brake) and, where the flight
+loop calls it, slide() (the sidestep) - once as flown (GridScanGuard below:
+DIAGNOSTIC ONLY, the one reader of nearest_cell_clearance) and once as
+fly() builds the guard now, and counts the ticks whose decision differs.
 
 What is replayed, honestly:
   * the logged position and the commanded velocity before the guard, which
@@ -34,7 +38,11 @@ What is replayed, honestly:
     demo/out/citymap_citylife/occ_day.npz banded as follow_vlm selects it,
     with the street mask beside it as fly() loads it;
   * it is an open-loop replay: a changed decision would have changed the
-    flight from that tick on, which no replay of a stored log can show.
+    flight from that tick on, which no replay of a stored log can show;
+  * GridScanGuard reproduces the as-flown MEASURE. Its "inside the ring"
+    test is FenceGuard's, now the Shield's (`d < min`), where the flown
+    building brake had `<=`: the two differ only on a grid distance exactly
+    equal to the limit (a cell-centre hypot of 5.0 m to the last bit).
 
 Nothing here flies, and nothing it prints is a flight result.
 """
@@ -60,13 +68,37 @@ DEFAULT_RUNS = ("agx_follow_01", "agx_manual_20261103", "agx_hier_r1_20261103",
 
 SLIDE_SPEED = 2.5            # follow_vlm --slide-speed default
 
+from follow_vlm import FenceGuard                                  # noqa: E402
+from guardrail.shield import nearest_cell_clearance                # noqa: E402
+
+
+class GridScanGuard(FenceGuard):
+    """DIAGNOSTIC ONLY: FenceGuard measuring building clearance as every
+    follow flight stored before 2026-11-18 flew it (guard_field="grid": the
+    nearest blocked cell centre, guardrail/shield.py nearest_cell_clearance).
+    It exists to replay those flights' guard decisions; nothing in a flight
+    loop builds it (FenceGuard itself refuses guard_field="grid", and
+    tests/test_shieldcore_onepath.py fails if anything but this module calls
+    nearest_cell_clearance). Its threshold test is FenceGuard's - the
+    Shield's (module doc)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.guard_field = "grid (diagnostic replay)"
+
+    def clearance(self, px: float, py: float, cap_m: float) -> float:
+        if not self.occ:
+            return cap_m
+        return nearest_cell_clearance(self.occ, px, py, cap_m)
+
 
 def flight_setup(lab: Path, policy_path: Path):
-    """(policy, map, guard on the grid scan, guard on the Shield field) as
-    follow_vlm.fly() builds them for this policy over the CityLife day map."""
+    """(policy, map, the guard as flown before 2026-11-18 (GridScanGuard),
+    the guard as follow_vlm.fly() builds it now) for this policy over the
+    CityLife day map."""
     import city_planner
     import occ_bands
-    from follow_vlm import FenceGuard, flight_shield
+    from follow_vlm import flight_shield
     from guardrail.models import AltitudeEnvelope, ObstacleClearance, load_policy
     pol = load_policy(policy_path)
     cdir = lab / "demo" / "out" / "citymap_citylife"
@@ -86,10 +118,10 @@ def flight_setup(lab: Path, policy_path: Path):
     shield = flight_shield(pol, smap)
     clr = pol.by_type(ObstacleClearance)
     mc = clr[0].min_clearance_m if clr else 5.0
-    grid = FenceGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
-                      shield=shield, guard_field="grid")
+    grid = GridScanGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
+                         shield=shield)
     field = FenceGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
-                       shield=shield, guard_field="shield")
+                       shield=shield)
     return pol, smap, grid, field
 
 

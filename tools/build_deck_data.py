@@ -54,7 +54,7 @@ from guardrail import load_policy                                  # noqa: E402
 from guardrail.bundle import (_issued_at, check_bundle,             # noqa: E402
                              write_bundle)
 from guardrail.models import Action4D, State                       # noqa: E402
-from guardrail.shield import Shield                                # noqa: E402
+from guardrail.shield import Shield, altitude_outside              # noqa: E402
 
 DEMO_POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 DT = 0.1
@@ -119,8 +119,11 @@ def altitude_study() -> dict:
         return round(trace[min(len(trace) - 1, int(t_s / DT))], 5)
 
     def first_inside(trace):
+        """The first sample the Shield's altitude check no longer calls below
+        the floor (guardrail/shield.py altitude_outside; until 2026-11-18
+        this compared `v > alt_min_m` itself, WP3-22 / X-13)."""
         for i, v in enumerate(trace):
-            if v > env.alt_min_m:
+            if not altitude_outside(env, v)[0]:
                 return round(i * DT, 1)
         return None
 

@@ -807,9 +807,14 @@ def _watched_only(c: Any) -> bool:
 CAP_REL_SLACK = 1e-6
 
 
-def cap_exceeded(value: float, cap: float) -> bool:
-    """`value` is over `cap` by more than the float32 contract's slack."""
-    return value > cap + max(1e-9, CAP_REL_SLACK * abs(cap))
+def cap_exceeded(value: float, cap: float, tol: float | None = None) -> bool:
+    """`value` is over `cap` by more than the float32 contract's slack, or
+    by more than `tol` when one is given. THE kinematic cap's threshold test:
+    the Shield's check and clamps, this module's mirror of them, the CSP's
+    action set, the compiler's relevance facts and the sweep's entry speed
+    call it (WP3-22 / X-13)."""
+    slack = max(1e-9, CAP_REL_SLACK * abs(cap)) if tol is None else tol
+    return value > cap + slack
 
 
 @dataclass(frozen=True)
@@ -873,10 +878,8 @@ class KinematicCaps:
         (cap_exceeded) when `tol` is None: an excess the clamps leave alone
         must not read as a decision made under other caps."""
         h, z = math.hypot(vx, vy), abs(vz)
-        if tol is None:
-            return (cap_exceeded(h, self.speed_max_mps)
-                    or cap_exceeded(z, self.climb_rate_max_mps))
-        return h > self.speed_max_mps + tol or z > self.climb_rate_max_mps + tol
+        return (cap_exceeded(h, self.speed_max_mps, tol)
+                or cap_exceeded(z, self.climb_rate_max_mps, tol))
 
     def to_dict(self) -> dict[str, float]:
         return {"speed_max_mps": self.speed_max_mps,

@@ -408,7 +408,11 @@ class PolicyIndicator:
                     rv.id, (float("inf"), False, False, False))
                 if not in_band:
                     state_, bound = "idle", False
-                    value = "above zone" if state.up > rule.altitude_ceiling_m else "below zone"
+                    # Which side of the band: the Shield's band test's
+                    # (zone_band_outside), not one of the HUD's own.
+                    from guardrail.shield import zone_band_outside
+                    value = ("above zone" if zone_band_outside(rule, state.up)[1]
+                             else "below zone")
                 else:
                     # INSIDE only inside the polygon itself, which is what
                     # nfz_entered in metrics.json measures; IN MARGIN for the

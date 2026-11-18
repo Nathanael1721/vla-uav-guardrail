@@ -456,7 +456,7 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from guardrail import response as vresp                               # noqa: E402
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S, altitude_out_of_band  # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E402
                                   HOLD_MODES, ModeRequests,
                                   autopilot_mode, fence_alt_plan,
@@ -8072,7 +8072,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"in nfz_s: the end-of-flight count has no per-tick position")
         env = policy.by_type(AltitudeEnvelope)
         alt_out = [(p, w) for p, w in zip(traj, traj_s) for e in env
-                   if not (e.alt_min_m <= p["up"] <= e.alt_max_m)]
+                   if altitude_out_of_band(e, p["up"])]
         alt_ticks, alt_s = len(alt_out), sum(w for _, w in alt_out)
         loop_hz = round(len(rows) / mission_s, 3) if rated else None
         # THE GATE JUDGES THE PACING, NOT THE MISSION CLOCK (review

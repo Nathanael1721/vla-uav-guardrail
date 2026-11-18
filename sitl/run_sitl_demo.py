@@ -111,6 +111,7 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
+from guardrail.shield import altitude_out_of_band                     # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
                                   ModeRequests, XYArgumentParser,
@@ -978,7 +979,7 @@ def main() -> int:
     # both rails report the same quantities under the same names.
     envelopes = policy.by_type(AltitudeEnvelope)
     alt_bad = sum(1 for p in traj for e in envelopes
-                  if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+                  if altitude_out_of_band(e, p["up"]))
     alt_seconds = alt_bad * TICK
 
     # Seconds spent inside a declared subject's stand-off ring, reported the

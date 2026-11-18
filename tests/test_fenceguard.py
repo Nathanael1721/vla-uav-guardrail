@@ -55,7 +55,11 @@ def _missing(what):
     return SKIP
 
 
-def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False, guard_field="grid"):
+def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False, guard_field="shield"):
+    """The guard as fly() builds it (guard_field="shield", the Shield's
+    clearance field and test, the flown default since 2026-11-18), or with
+    guard_field="grid" the DIAGNOSTIC as-flown guard of every flight before
+    then (tools/onepath_guard_replay.py GridScanGuard: the grid scan)."""
     smap = street = None
     if with_map and CITYMAP.exists():
         import city_planner
@@ -72,10 +76,14 @@ def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False, guard_field="gri
     from guardrail.models import ObstacleClearance
     pol = load_policy(path)
     clr = pol.by_type(ObstacleClearance)
-    return FenceGuard(pol, brake_m=brake_m, stand_off_m=stand_off_m,
-                      obstacle_map=smap, street_mask=street,
-                      min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
-                      guard_field=guard_field)
+    cls = FenceGuard
+    if guard_field == "grid":
+        sys.path.insert(0, str(ROOT / "tools"))
+        from onepath_guard_replay import GridScanGuard
+        cls = GridScanGuard
+    return cls(pol, brake_m=brake_m, stand_off_m=stand_off_m,
+               obstacle_map=smap, street_mask=street,
+               min_clearance_m=(clr[0].min_clearance_m if clr else 5.0))
 
 
 # The car drives north up lane x = 38, so the aircraft approaches heading +y.
@@ -274,25 +282,35 @@ def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
         f"slide() found the gap at the default 14 m reach, returning "
         f"({sx},{sy}) cost {cost}. If the reach was raised, check that every "
         f"FenceGuard caller now passes street_mask first.")
-    sx2, sy2, cost2 = g.slide(38.0, -6.0, *NORTH, reach_m=20.0)
+    # As flown until 2026-11-18 (the grid scan, diagnostic now): found at
+    # reach 20, cost 15.0. On the Shield's field (the flown default since)
+    # the first accepted column lies further east: reach 30, cost 26.0
+    # (test_on_the_shield_field_the_gap_detour_is_26_m_not_15).
+    gg = _guard(GAP, with_map=True, guard_field="grid")
+    sx2, sy2, cost2 = gg.slide(38.0, -6.0, *NORTH, reach_m=20.0)
     assert sx2 > 0.5 and 14.0 < cost2 < 20.0, (
         f"the gap should still exist at a longer reach; got ({sx2},{sy2}) {cost2}")
+    sx3, sy3, cost3 = g.slide(38.0, -6.0, *NORTH, reach_m=30.0)
+    assert sx3 > 0.5 and 20.0 < cost3 < 30.0, (
+        f"on the Shield's field the gap should exist at reach 30; got ({sx3},{sy3}) {cost3}")
 
 
 def test_on_the_shield_field_the_gap_detour_is_26_m_not_15():
-    """The opt-in --guard-field shield (WP3-22 / X-13, not yet flown) moves
-    slide(), not only gate()'s brake: measured on the Shield's own distance
-    field (bilinear, chamfer-scaled, so nearer than the grid scan beside the
-    street furniture) the first column it also accepts lies further east, and
-    the gap detour that the default grid scan finds at reach 20 (cost 15.0)
-    needs reach 30 (cost 26.0). Pinned so the size of the change is on record
-    before anyone flies it; the default stays the grid scan."""
+    """The Shield's field (guard_field="shield", the flown default since
+    2026-11-18; WP3-22 / X-13) moves slide(), not only gate()'s brake:
+    measured on the Shield's own distance field (bilinear, chamfer-scaled, so
+    nearer than the grid scan beside the street furniture) the first column
+    it also accepts lies further east, and the gap detour that the grid scan
+    every earlier flight flew finds at reach 20 (cost 15.0; diagnostic
+    GridScanGuard now) needs reach 30 (cost 26.0). Pinned so the size of the
+    change is on record."""
     if not CITYMAP.exists():
         return _missing(CITYMAP.relative_to(ROOT))
-    g = _guard(GAP, with_map=True)
-    assert g.guard_field == "grid"
+    g = _guard(GAP, with_map=True, guard_field="grid")
+    assert g.guard_field.startswith("grid")
     assert g.slide(38.0, -6.0, *NORTH, reach_m=20.0) == (1.0, -0.0, 15.0)
-    s = _guard(GAP, with_map=True, guard_field="shield")
+    s = _guard(GAP, with_map=True)
+    assert s.guard_field == "shield"
     sx, sy, cost = s.slide(38.0, -6.0, *NORTH, reach_m=20.0)
     assert (sx, sy) == (0.0, 0.0) and not math.isfinite(cost), (sx, sy, cost)
     assert s.slide(38.0, -6.0, *NORTH, reach_m=30.0) == (1.0, -0.0, 26.0)

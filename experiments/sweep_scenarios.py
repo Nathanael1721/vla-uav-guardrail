@@ -385,6 +385,7 @@ from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
 from guardrail.frames import filter_as_body, from_body, to_body   # noqa: E402
+from guardrail.fsm import cap_exceeded                           # noqa: E402
 from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
@@ -1166,10 +1167,12 @@ def entry_velocity(raw: Action4D, policy) -> tuple[float, float, float]:
     for c in getattr(policy, "constraints", []) or []:
         if getattr(c, "type", None) != "kinematic_envelope":
             continue
+        # The kinematic cap's own test (fsm.cap_exceeded; WP3-22 / X-13), with
+        # no slack: the entry speed this has clamped since it was written.
         h = math.hypot(vx, vy)
-        if h > c.speed_max_mps:
+        if cap_exceeded(h, c.speed_max_mps, 0.0):
             vx, vy = vx * c.speed_max_mps / h, vy * c.speed_max_mps / h
-        if abs(vz) > c.climb_rate_max_mps:
+        if cap_exceeded(abs(vz), c.climb_rate_max_mps, 0.0):
             vz = math.copysign(c.climb_rate_max_mps, vz)
     return vx, vy, vz
 

@@ -232,12 +232,17 @@ def test_the_yaw_rate_is_slewed():
 # ------------------------------------------------------ the guard smoother --
 
 def _wall_guard():
-    """follow_car.yaml (no fence) and a synthetic wall: every cell with
-    y >= 5.2 is occupied, a 5 m clearance ring - the verifier's setup."""
+    """follow_car.yaml (no fence) and a synthetic wall, a 5 m clearance ring
+    - the verifier's setup: the aircraft at the origin just OUTSIDE the
+    ring. The verifier's wall (cells from y = 5.2) read 5.20 m on the grid
+    scan FenceGuard flew until 2026-11-18; on the Shield's field, which it
+    reads since (chamfer-scaled, bilinear), that wall reads 4.80 m, inside
+    the ring. The wall now starts at y = 5.7, which the Shield's field reads
+    5.27 m at the origin: the same regime, measured as the guard measures."""
     res, ox, oy = 0.5, -60.0, -29.8
     occ = np.zeros((400, 120), dtype=bool)
     ys = oy + np.arange(120) * res
-    occ[:, ys >= 5.2 - 1e-9] = True
+    occ[:, ys >= 5.7 - 1e-9] = True
     pol = load_policy(ROOT / "policies" / "follow_car.yaml")
     return F.FenceGuard(pol, brake_m=12.0, stand_off_m=3.0,
                         obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy},
@@ -317,7 +322,9 @@ def test_inside_the_building_ring_the_brake_bites_at_once_with_or_without_a_fenc
         g = _jutting_guard(zones)
         s, fd, fb = g.gate(0.0, 0.5, 5.0, 0.0)
         assert g.last_cause == "obstacle" and s < 1.0 and not fb, (zones, s, fd, fb)
-        assert abs(g.last_obstacle_d - 4.70) < 0.05, g.last_obstacle_d
+        # 4.70 m on the grid scan flown until 2026-11-18; 4.34 m on the
+        # Shield's field the guard reads since: inside the 5 m ring either way
+        assert abs(g.last_obstacle_d - 4.34) < 0.05, g.last_obstacle_d
         assert F.guard_urgent(g, fb), (zones, s, fd, g.last_obstacle_d, g.last_fence_d)
         # and through the smoother it bites in the same tick
         gs = F.GuardSmoother()
@@ -370,7 +377,8 @@ def test_a_building_hit_that_does_not_brake_is_not_urgent():
 
 def test_an_ordinary_guard_brake_is_not_urgent_and_stays_ramped():
     """Outside every ring and stand-off, and not blocked, the brake is
-    ramped: beside the 5.2 m wall (clearance 5.2 > 5) heading a few degrees
+    ramped: beside _wall_guard's wall (clearance 5.27 > 5 on the Shield's
+    field; the verifier's 5.2 m wall on the grid scan) heading a few degrees
     toward it, and 8 m short of a fence (scale 0.56)."""
     from shapely.geometry import box
     fence = _wall_guard()

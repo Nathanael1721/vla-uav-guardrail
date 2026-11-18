@@ -2358,6 +2358,7 @@ async def _fly(args, holder: dict) -> int:
     # ---- the records: every part guarded (P3-12), so a fault in one still
     # leaves metrics.json - with the error - and the manifest if it builds ---
     from guardrail.replay import zone_dwell
+    from guardrail.shield import altitude_outside
     records_errors: list[str] = []
 
     def guard(name, fn, default=None):
@@ -2372,7 +2373,7 @@ async def _fly(args, holder: dict) -> int:
     records = list(backend.records)
     dwell = guard("zone_dwell", lambda: zone_dwell(shield, traj, TICK), {}) or {}
     band = policy.by_type(AltitudeEnvelope)
-    alt_bad = (sum(1 for p in traj if p["up"] < band[0].alt_min_m or p["up"] > band[0].alt_max_m)
+    alt_bad = (sum(1 for p in traj if any(altitude_outside(band[0], p["up"])))
                if band else 0)
     goal = args.goal if args.mission == "goto" else None
     scores = guard("mission_scores",

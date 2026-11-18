@@ -499,6 +499,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa:
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.projection import LocalProjection                          # noqa: E402
+from guardrail.shield import altitude_out_of_band                          # noqa: E402
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_for_flight,      # noqa: E402
                                is_dem, is_msl)
@@ -949,7 +950,7 @@ def alt_dwell_ticks(traj: list[dict], envelopes) -> int:
     def height(p: dict, e) -> float:
         return p["msl_m"] if is_msl(e) and "msl_m" in p else p["up"]
     return sum(1 for p in traj for e in envelopes
-               if not (e.alt_min_m <= height(p, e) <= e.alt_max_m))
+               if altitude_out_of_band(e, height(p, e)))
 
 
 def zones_at(shield, st: State) -> tuple[list[str], float | None]:
