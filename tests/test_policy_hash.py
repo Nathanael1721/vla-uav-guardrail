@@ -404,6 +404,30 @@ def test_the_reference_delta_rebuilds_the_source_exactly_and_nothing_else():
     assert _geo_policy(margin_m=1.0).reference_delta() is None, "not representable"
 
 
+def test_an_experiment_profile_run_resolves_to_its_file():
+    """A run flown under an unlocked experiment profile (an MSL rule that flies
+    only with its ground, experiments/policies/msl_dem_sitl.yaml; first flown
+    as msl_dem_sitl_01 on 2026-11-18) resolves to that file, after every
+    shipped policy, and a shipped run still resolves to policies/."""
+    files = sorted((ROOT / "experiments" / "policies").glob("*.yaml"))
+    assert files, "no experiment profile to resolve"
+    cands = policy_candidates()
+    shipped = {f.name for f in _policy_files()}
+    labels = [n for n, _ in cands]
+    first_exp = min(i for i, n in enumerate(labels) if n.startswith("experiments/policies/"))
+    assert all(not n.startswith("experiments/") for n in labels[:first_exp])
+    for f in files:
+        pol = load_policy(f, runtime=False)
+        got, form, label = resolve_run_policy({"policy_hash": pol.policy_hash}, cands)
+        assert label == f"experiments/policies/{f.name}", (f.name, label)
+        assert got.policy_hash == pol.policy_hash and form is not None
+    # a candidate list built from another directory offers no experiment file
+    assert not any(n.startswith("experiments/")
+                   for n, _ in policy_candidates(ROOT / "policies"))
+    some = load_policy(ROOT / "policies" / sorted(shipped)[0], runtime=False)
+    assert resolve_run_policy({"policy_hash": some.policy_hash}, cands)[2] in shipped
+
+
 def test_resolve_run_policy_refuses_rather_than_guesses():
     cands = policy_candidates()
     for man in ({}, {"policy_hash": ""}, {"policy_hash": "unresolved"},

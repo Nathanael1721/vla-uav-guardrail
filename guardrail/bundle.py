@@ -3055,6 +3055,17 @@ def policy_candidates(policies_dir: str | Path | None = None,
                                       d.get("generations"),
                                       ir_schema_version=d.get("ir_schema_version"),
                                       wgs84_writes=d.get("wgs84_writes", True))))
+    if policies_dir is None:
+        # Experiment profiles that fly only with their declared ground (an
+        # MSL rule, experiments/policies/msl_dem_sitl.yaml) live beside their
+        # experiment, unlocked, so a run flown under one still resolves.
+        # Offered after every shipped policy and lock derivation.
+        for f in sorted((ROOT / "experiments" / "policies").glob("*.yaml")):
+            try:
+                pol = load_policy(f, runtime=False)
+            except Exception:                             # noqa: BLE001
+                continue
+            out.append((f"experiments/policies/{f.name}", pol))
     return out
 
 
