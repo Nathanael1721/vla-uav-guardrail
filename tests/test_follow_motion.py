@@ -231,8 +231,24 @@ def test_the_yaw_rate_is_slewed():
 
 # ------------------------------------------------------ the guard smoother --
 
+def _follow_car_ring(ring_m: float):
+    """follow_car.yaml with its obstacle_clearance limit set to `ring_m`.
+
+    The guard judges building clearance against the clearance rules the
+    Shield holds in force (FenceGuard.clearance_limits, since 2026-11-18),
+    not against the min_clearance_m it is handed; these scenarios are built
+    around a 5 m ring, so the policy now carries it (follow_car.yaml's own
+    rule is 3 m, and fly() hands the guard that same 3 m)."""
+    pol = load_policy(ROOT / "policies" / "follow_car.yaml")
+    cons = [c.model_copy(update={"min_clearance_m": ring_m})
+            if c.type == "obstacle_clearance" else c for c in pol.constraints]
+    assert sum(c.type == "obstacle_clearance" for c in cons) == 1
+    return pol.model_copy(update={"constraints": cons})
+
+
 def _wall_guard():
-    """follow_car.yaml (no fence) and a synthetic wall, a 5 m clearance ring
+    """follow_car.yaml (no fence) with a 5 m clearance rule
+    (_follow_car_ring) and a synthetic wall
     - the verifier's setup: the aircraft at the origin just OUTSIDE the
     ring. The verifier's wall (cells from y = 5.2) read 5.20 m on the grid
     scan FenceGuard flew until 2026-11-18; on the Shield's field, which it
@@ -243,7 +259,7 @@ def _wall_guard():
     occ = np.zeros((400, 120), dtype=bool)
     ys = oy + np.arange(120) * res
     occ[:, ys >= 5.7 - 1e-9] = True
-    pol = load_policy(ROOT / "policies" / "follow_car.yaml")
+    pol = _follow_car_ring(5.0)
     return F.FenceGuard(pol, brake_m=12.0, stand_off_m=3.0,
                         obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy},
                         min_clearance_m=5.0)
@@ -304,7 +320,7 @@ def _jutting_guard(zones=()):
     occ[:, ys >= 5.2 - 1e-9] = True
     X, Y = np.meshgrid(xs, ys, indexing="ij")
     occ[(X >= 7.5) & (X <= 12.0) & (Y >= 4.0)] = True
-    g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+    g = _ZonesGuard(_follow_car_ring(5.0),
                     brake_m=12.0, stand_off_m=3.0, min_clearance_m=5.0,
                     obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy})
     g.zones = list(zones)
@@ -362,7 +378,7 @@ def test_a_building_hit_that_does_not_brake_is_not_urgent():
     occ[:, ys >= 5.2 - 1e-9] = True                  # the wall 4.70 m abeam
     X, Y = np.meshgrid(xs, ys, indexing="ij")
     occ[(X >= 18.0) & (X <= 21.0) & (Y >= 2.0)] = True   # a building 18 m ahead
-    g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+    g = _ZonesGuard(_follow_car_ring(5.0),
                     brake_m=12.0, stand_off_m=3.0, min_clearance_m=5.0,
                     obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy})
     g.zones = []

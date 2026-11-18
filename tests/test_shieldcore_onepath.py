@@ -900,15 +900,18 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
     except ValueError:
         pass
     r = g._ruler_clr()
-    assert isinstance(r, ClearanceRuler) and r.limit_m == 5.0
+    # judged against the policy's rule (3.0 m), not the 5.0 handed in: that
+    # is the guard's own ring for a rule set with no clearance rule only
+    L = [c.min_clearance_m for c in pol.constraints if c.type == "obstacle_clearance"]
+    assert isinstance(r, ClearanceRuler) and r.limit_m is None and r.limits_m() == (3.0,)         and L == [3.0], (r.limit_m, r.limits_m(), L)
     rng = __import__("random").Random(3)
     for _ in range(200):
         x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
         d = sh.clearance_at(x, y)
         assert g.clearance(x, y, 12.0) == min(12.0, d)
-        assert g.building_breached(d) == SH.clearance_breached(d, 5.0) == (d < 5.0)
+        assert g.building_breached(d) == SH.clearance_breached(d, 3.0) == (d < 3.0)
     # AT the limit: no breach, as the Shield's own row says
-    assert not g.building_breached(5.0) and g.building_breached(5.0 - 1e-9)
+    assert not g.building_breached(3.0) and g.building_breached(3.0 - 1e-9)
     # without the flight's Shield: the same field, the same reader
     g2 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0)
     assert not g2.shield.holds_map(omap)
@@ -1089,12 +1092,19 @@ _LIBRARY_CLEARANCE_MEASURES = {
 # agreement (a corridor's width), the FSM's tolerance branch, the sweep's
 # entry clamp, the HUD's "above zone", the deck's "enters band" and the BC
 # evaluator's zone band each compared with a rule threshold of their own;
-# each asks the checker now.
+# each asks the checker now. So, since the review of 350d0b0 widened this
+# scan (a list or max() of thresholds, getattr, a renamed self attribute, a
+# threshold handed to a function as a parameter), do the end-of-flight
+# stand-off counts of run_sitl_demo, ros2_shield_node and the PAS
+# perception node's truth_summary, the stand-off scorer's "truly inside"
+# (demo/track_truth.py) and the deck's altitude-repair model
+# (tools/build_deck_data.py _simulate): standoff_breached / standoff_ring_m
+# and altitude_outside.
 #
 # What remains outside is listed here, and none of it judges a position or
 # a command. An entry must say what it is (NOT A RULE THRESHOLD / SCENARIO
-# SETUP / PLANNING / GEOMETRY / POLICY LINT) and that it judges no flight;
-# an unlisted comparison fails, and so does a stale entry.
+# SETUP / PLANNING / GEOMETRY / POLICY LINT / EXPORT) and that it judges no
+# flight; an unlisted comparison fails, and so does a stale entry.
 _THRESHOLD_COMPARISONS_NOT_VERDICTS = {
     ("demo/pas_ardupilot/perception_node.py", "publish"):
         "NOT A RULE THRESHOLD: self.margin_m is the autopilot's FENCE_MARGIN "
@@ -1113,6 +1123,43 @@ _THRESHOLD_COMPARISONS_NOT_VERDICTS = {
         "GEOMETRY: builds a corridor's inner tube only when the corridor is "
         "wider than twice the consumer's margin; it compares the rule's width "
         "with a planning margin, it judges no position",
+    ("demo/pas_ardupilot/perception_node.py", "approach_scores"):
+        "NOT A RULE THRESHOLD: radius_m is the approach mission's goal radius "
+        "(--approach-radius-m), a parameter named like CircleFence.radius_m; "
+        "it scores whether the mission reached its goal, it judges no rule",
+    ("tools/build_eval_data.py", "_longest_within"):
+        "NOT A RULE THRESHOLD: radius_m is the follow metric's 30 m range "
+        "(the longest stretch within it), a parameter named like "
+        "CircleFence.radius_m; it scores the follow, it judges no rule",
+    ("demo/follow_vlm.py", "object_mask_from_depth"):
+        "NOT A RULE THRESHOLD: margin_m is the depth mask's height above the "
+        "ground plane, a parameter named like PolygonFence.margin_m; it "
+        "segments a depth image, it judges no rule",
+    ("guardrail/fence_export.py", "deferral"):
+        "NOT A RULE THRESHOLD: margin_m is the autopilot's FENCE_MARGIN (as in "
+        "perception_node.publish); it holds a zone's upload back while the "
+        "aircraft is within it of the zone, it judges no rule",
+    ("guardrail/fence_export.py", "zones_near"):
+        "NOT A RULE THRESHOLD: margin_m is the autopilot's FENCE_MARGIN; it "
+        "names the exported zones the aircraft is near for the upload "
+        "schedule, it judges no rule",
+    ("guardrail/fence_export.py", "iter_zones"):
+        "EXPORT: whether a zone's altitude band covers the autopilot fence's "
+        "column (FENCE_ALT_MAX), i.e. whether a 2-D autopilot fence would be "
+        "stricter than the policy; it chooses what to upload, it judges no "
+        "flight",
+    ("guardrail/compiler.py", "_clearance_mask"):
+        "PLANNING: the cost map's blocked cells around mapped obstacles "
+        "(rasterise_cost_map), measured to the whole blocked square so never "
+        "fewer than the Shield's; it shapes a plan, it judges no position",
+    ("guardrail/prefix_consumer.py", "_clip"):
+        "PLANNING: the VLA prefix consumer clamps a command into the CSP's "
+        "allowed action set (the yaw-rate cap among the ranges it is handed) "
+        "before the Shield sees it; it shapes a command, it judges no flight",
+    ("demo/aerialvla_pas_demo.py", "fly"):
+        "PLANNING: raises the A* planner's own clearance to at least the "
+        "policy's obstacle_clearance limit so plan and Shield agree; it "
+        "configures the planner, it judges no position",
     ("guardrail/models.py", "start_conflicts"):
         "POLICY LINT: at load, is the frame origin inside a hard keep-out "
         "zone's footprint or within its margin (`<=`, conservative, every "
@@ -1205,25 +1252,50 @@ def rule_threshold_fields() -> set:
 
 
 def _scopes(tree):
-    """(name, own nodes) for the module body, every class body and every
-    function (a nested def is a scope of its own; a lambda's body counts as
-    its enclosing scope's)."""
-    yield "<module>", _own_nodes(tree)
+    """(name, def node or None, own nodes) for the module body, every class
+    body and every function (a nested def is a scope of its own; a lambda's
+    body and a comprehension's count as their enclosing scope's)."""
+    yield "<module>", None, _own_nodes(tree)
     for n in ast.walk(tree):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            yield n.name, _own_nodes(n)
+            yield n.name, n, _own_nodes(n)
+
+
+# Library functions that RETURN a rule threshold: a reader holding their
+# answer holds a threshold, and comparing it itself is a second evaluation.
+_THRESHOLD_SOURCES = {"standoff_ring_m"}
+
+# The checker's own threshold tests that sit outside the four library
+# modules (fsm.py is imported BY shield.py, so the kinematic cap's test
+# lives there): skipped by name, nothing else in their module is.
+_CHECKER_FUNCTIONS = {
+    ("guardrail/fsm.py", "cap_exceeded"):
+        "THE kinematic cap's threshold test (the Shield's _check_kinematic, "
+        "its clamps, the CSP's action set and the compiler's facts call it)",
+}
+
+# numpy's comparison ufuncs: an ordering written as a call.
+_ORDER_UFUNCS = {"less", "less_equal", "greater", "greater_equal"}
+
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.GeneratorExp)
 
 
 def _leaves(expr, fields, tainted):
     """The value leaves of `expr`, each 'threshold' (an attribute named after
-    a rule threshold, or a local assigned from one), 'const' (a literal, or
-    an ALL_CAPS module constant) or 'measured' (any other name, attribute or
-    subscript). A call's callee is not a value; its arguments are."""
+    a rule threshold, `getattr(x, "<threshold>")`, a `self.<attr>` assigned
+    from one (".<attr>" in `tainted`), a local assigned from one, a
+    parameter named after one or handed one, or a call to a library function
+    that returns one), 'const' (a literal, or an ALL_CAPS module constant)
+    or 'measured' (any other name, attribute or subscript). A call's callee
+    is not a value; its arguments are. A comprehension's value is its
+    element's (its `for` and `if` clauses select, they are not the value)."""
     out, stack = [], [expr]
     while stack:
         x = stack.pop()
         if isinstance(x, ast.Attribute):
-            out.append("threshold" if x.attr in fields else "measured")
+            own = (isinstance(x.value, ast.Name) and x.value.id == "self"
+                   and "." + x.attr in tainted)
+            out.append("threshold" if x.attr in fields or own else "measured")
         elif isinstance(x, ast.Name):
             out.append("threshold" if x.id in tainted
                        else "const" if x.id.isupper() or x.id in ("inf", "nan")
@@ -1233,8 +1305,20 @@ def _leaves(expr, fields, tainted):
         elif isinstance(x, ast.Subscript):
             out.append("measured")
         elif isinstance(x, ast.Call):
-            stack.extend(x.args)
-            stack.extend(k.value for k in x.keywords)
+            callee = _called_name(x)
+            if (callee == "getattr" and len(x.args) >= 2
+                    and isinstance(x.args[1], ast.Constant)
+                    and x.args[1].value in fields):
+                out.append("threshold")
+            elif callee in _THRESHOLD_SOURCES:
+                out.append("threshold")
+            else:
+                stack.extend(x.args)
+                stack.extend(k.value for k in x.keywords)
+        elif isinstance(x, _COMPREHENSIONS):
+            stack.append(x.elt)
+        elif isinstance(x, ast.DictComp):
+            stack.append(x.value)
         elif isinstance(x, (ast.Lambda, ast.FunctionDef)):
             continue
         else:
@@ -1242,17 +1326,25 @@ def _leaves(expr, fields, tainted):
     return out
 
 
-def _tainted_names(nodes, fields) -> set:
-    """Local names that hold a rule threshold: assigned from an expression of
-    thresholds and constants alone (`ring = self.min_clearance_m`,
+def _threshold_only(expr, fields, tainted) -> bool:
+    kinds = _leaves(expr, fields, tainted)
+    return "threshold" in kinds and "measured" not in kinds
+
+
+def _tainted_names(nodes, fields, start=()) -> set:
+    """Local names that hold a rule threshold: `start` (the scope's tainted
+    parameters and self attributes) and every name assigned from an
+    expression of thresholds and constants alone (`ring = self.min_clearance_m`,
     `lo, hi = t.altitude_floor_m, t.altitude_ceiling_m`,
-    `r = c.min_clearance_m + c.soft_margin_m`), to a fixed point. A value
-    that mixes a threshold with a measured one (`vx * c.speed_max_mps / h`,
-    a clamped command) is a measured value, not an alias: so a verdict
-    split over two statements through such a value (`m = d - c.min_clearance_m`,
-    then `m < 0`) is not followed - the scan's known limit, as is a
-    threshold handed to another function as a plain argument."""
-    tainted: set = set()
+    `r = c.min_clearance_m + c.soft_margin_m`, `rings = [c.min_range_m for c
+    in ...]`, `ring = max(rings)`, `r = getattr(c, "min_clearance_m")`), to a
+    fixed point. A value that mixes a threshold with a measured one
+    (`vx * c.speed_max_mps / h`, a clamped command) is a measured value, not
+    an alias: so a verdict split over two statements through such a value
+    (`m = d - c.min_clearance_m`, then `m < 0`) is not followed - the scan's
+    known limit, as is a threshold handed to a function in ANOTHER module
+    (inside one module the hand-off is followed: `_file_taint`)."""
+    tainted: set = set(start)
     while True:
         before = len(tainted)
         for n in nodes:
@@ -1265,21 +1357,96 @@ def _tainted_names(nodes, fields) -> set:
                              and len(n.value.elts) == len(t.elts)
                              else [(e, n.value) for e in t.elts])
                     for tgt, val in pairs:
-                        kinds = _leaves(val, fields, tainted)
-                        if (isinstance(tgt, ast.Name) and "threshold" in kinds
-                                and "measured" not in kinds):
+                        if isinstance(tgt, ast.Name) and _threshold_only(val, fields, tainted):
                             tainted.add(tgt.id)
         if len(tainted) == before:
             return tainted
 
 
+def _params(fn) -> list:
+    a = fn.args
+    return [p.arg for p in a.posonlyargs + a.args]
+
+
+def _file_taint(tree, fields):
+    """The taint one module's scopes start from, to a fixed point over the
+    module: parameters named after a rule threshold; parameters a call in
+    this module hands a threshold (by keyword or position, to a def of that
+    name in this module); `self.<attr>` assigned a threshold anywhere in it.
+    Returns ({id(def): set(names)}, set(".attr"))."""
+    scopes = list(_scopes(tree))
+    defs: dict = {}
+    params: dict = {}
+    for _, fn, _ in scopes:
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(fn.name, []).append(fn)
+            names = _params(fn) + [p.arg for p in fn.args.kwonlyargs]
+            params[id(fn)] = {p for p in names if p in fields}
+    attrs: set = set()
+    while True:
+        size = sum(len(v) for v in params.values()) + len(attrs)
+        for _, fn, nodes in scopes:
+            tainted = _tainted_names(nodes, fields, params.get(id(fn), set()) | attrs)
+            for n in nodes:
+                if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    for t in targets:
+                        if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                                and t.value.id == "self"
+                                and _threshold_only(n.value, fields, tainted)):
+                            attrs.add("." + t.attr)
+                if not isinstance(n, ast.Call):
+                    continue
+                for target in defs.get(_called_name(n), ()):
+                    ps = _params(target)
+                    if isinstance(n.func, ast.Attribute) and ps[:1] in (["self"], ["cls"]):
+                        ps = ps[1:]
+                    for p, arg in zip(ps, n.args):
+                        if not isinstance(arg, ast.Starred) and _threshold_only(
+                                arg, fields, tainted):
+                            params[id(target)].add(p)
+                    names = set(_params(target)) | {p.arg for p in target.args.kwonlyargs}
+                    for k in n.keywords:
+                        if k.arg in names and _threshold_only(k.value, fields, tainted):
+                            params[id(target)].add(k.arg)
+        if sum(len(v) for v in params.values()) + len(attrs) == size:
+            return params, attrs
+
+
+def _is_threshold_comparison(n, fields, tainted) -> bool:
+    """An ordering of a threshold with a measured value: `<`, `<=`, `>`,
+    `>=`; numpy's ordering ufuncs (`np.less(a, c.min_clearance_m)`); and an
+    (in)equality with a min()/max() of a threshold and a measured value
+    (`min(d, c.min_clearance_m) == c.min_clearance_m`, an ordering written as
+    a clamp)."""
+    if isinstance(n, ast.Compare):
+        if any(isinstance(o, _ORDER) for o in n.ops):
+            kinds = _leaves(n, fields, tainted)
+            return "threshold" in kinds and "measured" in kinds
+        if any(isinstance(o, (ast.Eq, ast.NotEq)) for o in n.ops):
+            for side in [n.left] + list(n.comparators):
+                if isinstance(side, ast.Call) and _called_name(side) in ("min", "max"):
+                    kinds = _leaves(side, fields, tainted)
+                    if "threshold" in kinds and "measured" in kinds:
+                        return True
+        return False
+    if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr in _ORDER_UFUNCS):
+        kinds = _leaves(n, fields, tainted)
+        return "threshold" in kinds and "measured" in kinds
+    return False
+
+
 def rule_threshold_comparisons(tree_list=None, fields=None) -> dict:
     """{(file, scope): (line, [comparison])} for every comparison outside the
     checker (guardrail/{geometry,planar,shield,ir}.py) of a rule threshold
-    with a measured value: an ordering (<, <=, >, >=) one of whose operands
-    reads a threshold (or a local alias of one) and some operand reads
-    anything that is neither a threshold nor a constant. Identity,
-    membership and (in)equality tests are not limits; a threshold against a
+    with a measured value (`_is_threshold_comparison`): one of whose
+    operands reads a threshold - an attribute, a `getattr`, a local alias or
+    a list/max/min over them, a renamed `self` attribute, a parameter named
+    after one or handed one by a call in the same module, or the answer of a
+    library function that returns one (`_THRESHOLD_SOURCES`) - and some
+    operand reads anything that is neither a threshold nor a constant.
+    Identity and membership tests are not limits; a threshold against a
     constant (`c.alt_min_m > 0`) or against another threshold (a policy's
     validation, `alt_max_m <= alt_min_m`) is not a verdict on a flight.
     tests/ is not scanned (its legacy copies are the nulls)."""
@@ -1288,16 +1455,12 @@ def rule_threshold_comparisons(tree_list=None, fields=None) -> dict:
     for rel, tree in (tree_list if tree_list is not None else trees()):
         if rel in _LIBRARY or rel.startswith("tests/"):
             continue
-        for name, nodes in _scopes(tree):
-            tainted = _tainted_names(nodes, fields)
-            hits = []
-            for n in nodes:
-                if not isinstance(n, ast.Compare) or not any(
-                        isinstance(o, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)) for o in n.ops):
-                    continue
-                kinds = _leaves(n, fields, tainted)
-                if "threshold" in kinds and "measured" in kinds:
-                    hits.append(n)
+        params, attrs = _file_taint(tree, fields)
+        for name, fn, nodes in _scopes(tree):
+            if (rel, name) in _CHECKER_FUNCTIONS:
+                continue
+            tainted = _tainted_names(nodes, fields, params.get(id(fn), set()) | attrs)
+            hits = [n for n in nodes if _is_threshold_comparison(n, fields, tainted)]
             if hits:
                 key = (rel, name)
                 line, cmp = found.get(key, (10 ** 9, []))
@@ -1377,12 +1540,13 @@ def test_no_rule_threshold_is_compared_outside_the_checker():
     stale = sorted(k for k in _THRESHOLD_COMPARISONS_NOT_VERDICTS if k not in found)
     assert not stale, f"_THRESHOLD_COMPARISONS_NOT_VERDICTS names no comparison: {stale}"
     assert all(why.startswith(("NOT A RULE THRESHOLD:", "SCENARIO SETUP:", "PLANNING:",
-                               "GEOMETRY:", "POLICY LINT:"))
+                               "GEOMETRY:", "POLICY LINT:", "EXPORT:"))
                and "judges no" in why
                for why in _THRESHOLD_COMPARISONS_NOT_VERDICTS.values())
-    # FenceGuard and guard_urgent make none (they did until 2026-11-18)
-    assert not [k for k in found if k[0] == "demo/follow_vlm.py"], \
-        [k for k in found if k[0] == "demo/follow_vlm.py"]
+    # FenceGuard and guard_urgent make none (they did until 2026-11-18); the
+    # one follow_vlm entry is the depth mask's margin, no rule's
+    fv = [k for k in found if k[0] == "demo/follow_vlm.py"]
+    assert fv == [("demo/follow_vlm.py", "object_mask_from_depth")], fv
     src = ("LIMIT = 3.0\n"
            "def direct(c, d):\n    return d < c.min_clearance_m\n"
            "def alias(self, c):\n    ring = self.min_clearance_m\n    return c <= ring\n"
@@ -1399,6 +1563,189 @@ def test_no_rule_threshold_is_compared_outside_the_checker():
     got = rule_threshold_comparisons([("tools/mine.py", ast.parse(src))], fields)
     assert set(got) == {("tools/mine.py", n) for n in
                         ("direct", "alias", "pair", "inside_call", "<module>")}, got
+
+
+def test_the_threshold_scan_sees_the_patterns_the_review_planted():
+    """The review of 350d0b0 planted seven comparisons the scan missed - a
+    max() over a list of thresholds, a threshold parameter, a max() over a
+    generator, getattr, a renamed self attribute, np.less, a min()-clamp
+    equality - and the three end-of-flight stand-off counts it could not see
+    (run_sitl_demo, ros2_shield_node, the PAS node's truth_summary, whose
+    ring is built in one function and compared in another). Each is found
+    now, so is the stand-off scorer's `near < rng` and a comparison with the
+    answer of standoff_ring_m; the library's own tests asked
+    (standoff_breached, standoff_inside) are not. And the one checker
+    function outside the library, fsm.cap_exceeded, is skipped by name only:
+    the same code in another module is found."""
+    src = (
+        "import numpy as np\n"
+        # run_sitl_demo / ros2_shield_node as they stood at 350d0b0
+        "def rings_max(policy, d, cls):\n"
+        "    rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)\n"
+        "             if c.binds(cls)]\n"
+        "    ring = max(rings) if rings else 0.0\n"
+        "    return sum(1 for v in d if v < ring)\n"
+        "def param(d, min_clearance_m):\n    return d < min_clearance_m\n"
+        "def gen(d, policy):\n"
+        "    r = max((so.min_range_m for so in policy.constraints), default=0.0)\n"
+        "    return d < r\n"
+        "def by_getattr(d, c):\n    return d <= getattr(c, 'min_clearance_m')\n"
+        "class Renamed:\n"
+        "    def __init__(self, c):\n        self.ring = c.min_clearance_m\n"
+        "    def inside(self, d):\n        return d <= self.ring\n"
+        "def ufunc(a, c):\n    return np.less(a, c.min_clearance_m)\n"
+        "def clamp(d, c):\n    return min(d, c.min_clearance_m) == c.min_clearance_m\n"
+        # the PAS node's truth_summary and its caller as they stood at 350d0b0
+        "def summary(rows, ranges, ring_m):\n"
+        "    n = sum(1 for d in ranges if d < ring_m)\n"
+        "    return n, sum(1 for r in rows if r['subject_range_m'] < ring_m)\n"
+        "def run(policy, rows, ranges, cls):\n"
+        "    rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)\n"
+        "             if c.binds(cls)]\n"
+        "    ring_m = max(rings) if rings else None\n"
+        "    return summary(rows, ranges, ring_m=ring_m)\n"
+        # demo/track_truth.py score_standoff_firings as it stood at 350d0b0
+        "def scored(rows, so):\n"
+        "    rng = float(getattr(so, 'min_range_m', 0.0))\n"
+        "    return [r for r in rows if r['near'] < rng]\n"
+        "def held(d, constraints, cls):\n"
+        "    ring = standoff_ring_m(constraints, cls)\n    return d < ring\n"
+        # the library asked: not verdicts of their own
+        "def asked(d, constraints, cls):\n"
+        "    ring = standoff_ring_m(constraints, cls)\n"
+        "    return ring is not None and standoff_breached(d, ring)\n"
+        "def asked_rule(d, so):\n    return standoff_inside(so, d)\n")
+    got = rule_threshold_comparisons([("tools/mine.py", ast.parse(src))])
+    assert set(got) == {("tools/mine.py", n) for n in (
+        "rings_max", "param", "gen", "by_getattr", "inside", "ufunc", "clamp",
+        "summary", "scored", "held")}, sorted(got)
+    # the checker function is skipped by its name in its module, nothing more
+    assert set(_CHECKER_FUNCTIONS) == {("guardrail/fsm.py", "cap_exceeded")}
+    fsm_tree = dict(trees())["guardrail/fsm.py"]
+    assert ("guardrail/fsm.py", "cap_exceeded") not in rule_threshold_comparisons(
+        [("guardrail/fsm.py", fsm_tree)])
+    assert ("guardrail/fsm_copy.py", "cap_exceeded") in rule_threshold_comparisons(
+        [("guardrail/fsm_copy.py", fsm_tree)])
+
+
+def test_the_standoff_counts_ask_the_shields_standoff_test():
+    """The end-of-flight stand-off counts (run_sitl_demo, ros2_shield_node,
+    the PAS node's truth_summary) and the stand-off scorer's "truly inside"
+    (demo/track_truth.py) ask the Shield's test, standoff_breached, against
+    the ring standoff_ring_m reads - the rules the Shield enforces, a
+    distance_envelope over people included. Until 2026-11-18 each compared
+    `v < ring` itself, without the Shield's 1e-9 m of slack. At the ring
+    less half that slack the Shield reports no breach and so do they now;
+    a patched standoff_breached moves the scorer."""
+    pol = _pol(
+        {"id": "ped", "type": "subject_standoff", **HARD_P0, "subject_class": "pedestrian",
+         "min_range_m": 10.0},
+        {"id": "any", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
+         "min_range_m": 5.0},
+        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
+         "min_distance_m": 12.0})
+    assert [c.id for c in SH.standoff_rules(pol.constraints, "pedestrian")] == \
+        ["ped", "any", "people"]
+    assert SH.standoff_ring_m(pol.constraints, "pedestrian") == 12.0
+    assert SH.standoff_ring_m(pol.constraints, "car") == 5.0
+    assert SH.standoff_ring_m(pol.constraints, None) == 5.0
+    assert SH.standoff_ring_m(_pol(pol.constraints[0].model_dump()).constraints, "car") is None
+    # the test is the Shield's own: rule_status's breach for the same range
+    sh = Shield(pol, escalation=False)
+    sh.set_subject(0.0, 0.0, "pedestrian")
+    for d in (12.0, 12.0 - 5e-10, 12.0 - 2e-9, 11.0, 12.5, float("nan")):
+        rows = {r["id"]: r for r in sh.rule_status(State(x=d, y=0.0, up=10.0))}
+        if math.isfinite(d):
+            assert rows["people"]["breach"] == SH.standoff_breached(d, 12.0), d
+        assert SH.standoff_breached(d, 12.0) == (math.isfinite(d) and d < 12.0 - 1e-9), d
+    assert sh._standoff_inside(pol.constraints[0], 10.0 - 5e-10) is False
+    # every count asks the library, and none compares a ring itself
+    want = {("sitl/run_sitl_demo.py", "main"), ("sitl/ros2_shield_node.py", "_standoff_metrics"),
+            ("demo/pas_ardupilot/perception_node.py", "truth_summary"),
+            ("demo/track_truth.py", "score_standoff_firings")}
+    for rel, fn in want:
+        calls = _calls_in(rel, fn)
+        assert "standoff_breached" in calls, (rel, fn, sorted(calls))
+    assert "standoff_ring_m" in _calls_in("sitl/run_sitl_demo.py", "main")
+    assert "standoff_ring_m" in _calls_in("sitl/ros2_shield_node.py", "_standoff_metrics")
+    assert "standoff_ring_m" in _calls_in("demo/pas_ardupilot/perception_node.py", "run")
+    found = rule_threshold_comparisons()
+    assert not [k for k in found if k in want or k[1] == "run"], sorted(found)
+    # the scorer: a true range within the slack is not inside, as the Shield says
+    sys.path.insert(0, str(ROOT / "demo"))
+    import track_truth as TT
+    from guardrail.models import SubjectStandoff
+
+    ring = SubjectStandoff.model_validate({"id": "ped", "type": "subject_standoff",
+                                           **HARD_P0, "subject_class": "pedestrian",
+                                           "min_range_m": 10.0})
+
+    def tick(n, near, fired=()):
+        return {"tick": n, "x": 0.0, "y": 0.0, "psi": 0.0,
+                "truth": {"class": "pedestrian", "pts": [(near, 0.0)]},
+                "violations": [{"rule_id": r} for r in fired]}
+    rows = [tick(1, 10.0 - 5e-10), tick(2, 10.0 - 1e-6), tick(3, 10.0)]
+    s = TT.score_standoff_firings(rows, [ring])["ped"]
+    assert (s["tp"], s["fp"], s["fn"]) == (0, 0, 1), s
+    orig = SH.standoff_breached
+    SH.standoff_breached = lambda d, r: True
+    try:
+        s = TT.score_standoff_firings(rows, [ring])["ped"]
+        assert s["fn"] == 3, "the scorer compares the ring itself"
+    finally:
+        SH.standoff_breached = orig
+
+
+def test_the_building_guard_judges_against_the_clearance_rules_in_force():
+    """FenceGuard's building half judges a clearance against the limits of
+    the obstacle_clearance rules the Shield holds in force at that instant
+    (Shield.clearance_limits_now), not the first rule's limit read at
+    start-up: a second, wider rule counts; a rule switched off mid-flight
+    (a hot-applied time_window_switch) stops counting without the guard
+    being rebuilt; and its verdict is rule_status's at every distance. Only
+    a rule set that declares no clearance rule over the buildings falls
+    back to the guard's own planning ring. (Review of d8fd243: the guard
+    held the first rule's min_clearance_m as a float.)"""
+    import numpy as np
+    sys.path.insert(0, str(ROOT / "demo"))
+    import follow_vlm as F
+    from guardrail.models import TimeWindowSwitch
+    occ = np.zeros((40, 40), dtype=np.uint8)
+    occ[20:24, 20:24] = 1
+    om = {"occ": occ, "res": 1.0, "ox": 0.0, "oy": 0.0}
+    clr = {"type": "obstacle_clearance", **HARD_P0}
+    pol = _pol({"id": "near", **clr, "min_clearance_m": 3.0},
+               {"id": "wide", **clr, "min_clearance_m": 8.0})
+    sh = Shield(pol, obstacle_map=om, escalation=False)
+    g = F.FenceGuard(pol, obstacle_map=om, min_clearance_m=3.0, shield=sh)
+    assert sh.declares_clearance() and g.clearance_limits() == (3.0, 8.0)
+
+    def row_breach(d):
+        return any(r["breach"] for r in sh.rule_status(State(x=0.0, y=0.0, up=10.0),
+                                                        clearance_m=d)
+                   if r["type"] == "obstacle_clearance")
+    for d in (2.0, 3.0, 5.0, 8.0 - 1e-9, 8.0, 9.0):
+        assert g.building_breached(d) == row_breach(d) == (d < 8.0), d
+    # switched off mid-flight: the guard follows the rule set, unrebuilt
+    sh.hot_apply(TimeWindowSwitch.model_validate(
+        {"id": "sw-wide", "type": "time_window_switch", **HARD_P0, "target_id": "wide",
+         "active": False}))
+    assert g.clearance_limits() == (3.0,)
+    for d in (2.0, 3.0, 5.0, 9.0):
+        assert g.building_breached(d) == row_breach(d) == (d < 3.0), d
+    # no clearance rule at all: the guard's own planning ring
+    bare = _pol({"id": "alt", "type": "altitude_envelope", **HARD_P0,
+                 "alt_min_m": 5.0, "alt_max_m": 50.0})
+    sb = Shield(bare, obstacle_map=om, escalation=False)
+    gb = F.FenceGuard(bare, obstacle_map=om, min_clearance_m=5.0, shield=sb)
+    assert not sb.declares_clearance() and sb.clearance_limits_now() == ()
+    assert gb.clearance_limits() == (5.0,) and gb.building_breached(4.9) \
+        and not gb.building_breached(5.0)
+    # a distance_envelope over roads is the road map's rule, not the buildings'
+    roads = _pol({"id": "road", "type": "distance_envelope", **HARD_P0,
+                  "object_class": "roads", "min_distance_m": 2.0})
+    sr = Shield(roads, escalation=False, require_maps=False)
+    assert not sr.declares_clearance() and sr.clearance_limits_now() == ()
 
 
 def test_at_the_limit_the_guard_and_the_shield_give_one_verdict():

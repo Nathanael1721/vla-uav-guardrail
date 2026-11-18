@@ -496,10 +496,10 @@ from guardrail.kpi import compute_from_dir                                # noqa
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
                                 flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade, pilot_record)
-from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
-                              SubjectStandoff, XY)
+from guardrail.models import AltitudeEnvelope, PolygonFence, XY          # noqa: E402
 from guardrail.projection import LocalProjection                          # noqa: E402
-from guardrail.shield import altitude_out_of_band                          # noqa: E402
+from guardrail.shield import (altitude_out_of_band, standoff_breached,       # noqa: E402
+                              standoff_ring_m, standoff_rules)
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_for_flight,      # noqa: E402
                                is_dem, is_msl)
@@ -2855,8 +2855,8 @@ if HAVE_ROS:
             if subject is not None:
                 self.shield.set_subject(subject[0], subject[1], self.subject_class)
                 rings = [(c.id, c.min_range_m)
-                         for c in self.policy.by_type(SubjectStandoff)
-                         if c.binds(self.subject_class)]
+                         for c in standoff_rules(self.policy.constraints,
+                                                 self.subject_class)]
                 self.get_logger().info(
                     f"{self.subject_class} DECLARED at ({subject[0]:.1f}, "
                     f"{subject[1]:.1f}); "
@@ -5137,13 +5137,15 @@ if HAVE_ROS:
             if self.subject is None:
                 return {"standoff_s": None, "standoff_min_range_m": None,
                         "subject": None}
-            rings = [c.min_range_m for c in self.policy.by_type(SubjectStandoff)
-                     if c.binds(self.subject_class)]
-            ring = max(rings) if rings else 0.0
+            # Inside = the Shield's stand-off test (standoff_breached, 1e-9 m
+            # of slack) against the outermost binding ring; until 2026-11-18
+            # this compared `v < ring` itself (WP3-22 / X-13).
+            ring = standoff_ring_m(self.policy.constraints, self.subject_class)
             d = [math.hypot(p["x"] - self.subject[0], p["y"] - self.subject[1])
                  for p in self.traj]
+            n_in = 0 if ring is None else sum(1 for v in d if standoff_breached(v, ring))
             return {
-                "standoff_s": round(sum(1 for v in d if v < ring) * TICK, 2),
+                "standoff_s": round(n_in * TICK, 2),
                 "standoff_min_range_m": (round(min(d), 2) if d else None),
                 "subject": {"class": self.subject_class, "x": self.subject[0],
                             "y": self.subject[1], "position_source": "declared"},

@@ -2313,11 +2313,13 @@ class FenceGuard:
     it with min_clearance_m itself (`<=` in the brake's ring and in
     guard_urgent, `>=` in slide). It now asks the Shield's ClearanceRuler
     (`Shield.clearance_ruler`): the Shield's clearance field for the
-    distance and the Shield's obstacle_clearance test for "inside the
-    ring" (`building_breached`). This changed the flown default (module
-    note at `clearance`). The fence stand-off and brake distances are the
-    controller's own planning distances (--fence-standoff, --fence-brake),
-    not rule thresholds.
+    distance and the Shield's obstacle_clearance threshold test
+    (clearance_breached) for "inside the ring" (`building_breached`),
+    against the limits of the clearance rules the Shield holds in force at
+    that instant (`clearance_limits`). This changed the flown default
+    (module note at `clearance`). The fence stand-off and brake distances
+    are the controller's own planning distances (--fence-standoff,
+    --fence-brake), not rule thresholds.
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
@@ -2462,13 +2464,31 @@ class FenceGuard:
         ClearanceRuler over the guard's obstacle map (Shield.clearance_ruler:
         Shield.clearance_at when the guard's Shield holds this map, else the
         same field built over it and read by the same function,
-        guardrail/shield.py ClearanceField / field_distance), its limit the
-        guard's ring, `min_clearance_m` (the policy's obstacle_clearance
-        limit as fly() hands it in)."""
+        guardrail/shield.py ClearanceField / field_distance), judged against
+        `clearance_limits` at the moment of asking."""
         r = self._clr
         if r is None:
-            r = self._clr = self.shield.clearance_ruler(self.occ, self.min_clearance_m)
+            r = self._clr = self.shield.clearance_ruler(self.occ, self.clearance_limits)
         return r
+
+    def clearance_limits(self) -> tuple:
+        """The limits the building half judges a clearance against NOW: the
+        Shield's own - the min_clearance_m of every obstacle_clearance rule
+        over the buildings in force at this instant, from the rule set the
+        Shield enforces now (Shield.clearance_limits_now: a time window, a
+        hot-applied rule and a second clearance rule all count, as they do
+        in rule_status) - whenever that rule set declares one; only on a
+        rule set that declares none, the guard's own planning ring
+        `min_clearance_m` (the controller still keeps off buildings the
+        policy does not protect). Until 2026-11-18 the ring was always
+        `min_clearance_m`, the FIRST obstacle_clearance rule's limit as
+        fly() read it at start-up (review of d8fd243). Identical on every
+        stored follow policy: each declares exactly one such rule, with no
+        time window."""
+        sh = self.shield
+        if sh.declares_clearance():
+            return sh.clearance_limits_now()
+        return (self.min_clearance_m,)
 
     def clearance(self, px: float, py: float, cap_m: float) -> float:
         """Distance to the nearest mapped obstacle, no more than `cap_m`.
@@ -2499,9 +2519,10 @@ class FenceGuard:
 
     def building_breached(self, d: float) -> bool:
         """Is a building clearance `d` (one `clearance` measured) inside the
-        ring: the Shield's obstacle_clearance verdict on it
+        ring: the Shield's obstacle_clearance threshold test on it
         (guardrail/shield.py clearance_breached, through the ruler: strictly
-        nearer than `min_clearance_m`, AT the limit is clear). The guard's
+        nearer than a limit in force now, `clearance_limits`; AT the limit
+        is clear). The guard's
         ONLY comparison with the limit: the building brake's ring, slide()'s
         clear-of-buildings test and guard_urgent() all ask it. Until
         2026-11-18 the brake's ring and guard_urgent compared with `<=` and
@@ -2713,13 +2734,17 @@ class FenceGuard:
             return bool(st[i, j])
 
         def _clear_of_obstacles(px: float, py: float) -> bool:
-            """Far enough from every MAPPED obstacle: the Shield's verdict on
-            `clearance` here is no breach (`building_breached`; capped at
-            min_clearance_m, which changes no verdict: the capped value is
-            below the limit exactly when the distance is)."""
-            if not self.occ:
+            """Far enough from every MAPPED obstacle: the Shield's threshold test on
+            `clearance` here is no breach (`building_breached`), capped at
+            the widest limit in force (`clearance_limits`), which changes no
+            verdict: the capped value is below a limit exactly when the
+            distance is. With no limit in force nothing can be breached.
+            (Until 2026-11-18 capped at min_clearance_m, the one limit then
+            read.)"""
+            lims = self.clearance_limits()
+            if not self.occ or not lims:
                 return True
-            return not self.building_breached(self.clearance(px, py, self.min_clearance_m))
+            return not self.building_breached(self.clearance(px, py, max(lims)))
 
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)
@@ -2951,7 +2976,7 @@ def guard_urgent(fence: "FenceGuard", fblocked: bool) -> bool:
     a zone's stand-off; the stand-off test is kept so this function says what
     it promises whatever gate()'s blocked flag later becomes.
 
-    "Inside the clearance ring" is the Shield's verdict on that distance
+    "Inside the clearance ring" is the Shield's threshold test on that distance
     (FenceGuard.building_breached: strictly nearer than the limit), since
     2026-11-18 (WP3-22 / X-13); it was `<=` here, so AT the limit the brake
     bit at once where the Shield reported no breach."""
@@ -4743,9 +4768,14 @@ async def fly(args) -> int:
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
                        street_mask=street, shield=shield,
                        guard_field=getattr(args, "guard_field", "shield"))
+    _lims = fence.clearance_limits()
     print(f"[fence] building clearance measured and judged by the Shield "
           f"(guard_field={fence.guard_field}: its clearance field and its "
-          f"obstacle_clearance test, limit {fence.min_clearance_m:g} m)")
+          f"obstacle_clearance test against "
+          + (f"the rules in force, now {', '.join(f'{v:g}' for v in _lims) or 'none'} m)"
+             if shield.declares_clearance() else
+             f"the guard's own {fence.min_clearance_m:g} m ring: the policy "
+             f"declares no obstacle_clearance rule)"))
 
     audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 

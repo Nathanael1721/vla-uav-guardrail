@@ -62,19 +62,23 @@ TICKS = 300
 START_UP = 3.0
 
 
-def _simulate(aim_inside: bool, floor: float, ceiling: float,
-              climb_cap: float, lookahead: float) -> list[float]:
+def _simulate(aim_inside: bool, env, climb_cap: float,
+              lookahead: float) -> list[float]:
     """Reproduce AltitudeFix's arithmetic, with or without the re-entry margin.
 
     `aim_inside=False` is the old rule: target the floor exactly, which makes the
-    approach a decaying exponential. `True` is the current one.
+    approach a decaying exponential. `True` is the current one. "Below the
+    floor" of altitude_envelope `env` is the Shield's own test
+    (guardrail/shield.py altitude_outside; until 2026-11-18 this compared
+    `end_up < floor` itself, WP3-22 / X-13).
     """
+    floor, ceiling = env.alt_min_m, env.alt_max_m
     margin = min(1.0, (ceiling - floor) / 4.0) if aim_inside else 0.0
     up = START_UP
     trace = [up]
     for _ in range(TICKS):
         end_up = up                       # the pilot commands vz = 0
-        if end_up < floor:
+        if altitude_outside(env, end_up)[0]:
             vz = ((floor + margin) - up) / lookahead
         else:
             vz = 0.0
@@ -91,10 +95,8 @@ def altitude_study() -> dict:
     kin = policy.by_type(KinematicEnvelope)[0]
     lookahead = 3.0
 
-    before = _simulate(False, env.alt_min_m, env.alt_max_m,
-                       kin.climb_rate_max_mps, lookahead)
-    after = _simulate(True, env.alt_min_m, env.alt_max_m,
-                      kin.climb_rate_max_mps, lookahead)
+    before = _simulate(False, env, kin.climb_rate_max_mps, lookahead)
+    after = _simulate(True, env, kin.climb_rate_max_mps, lookahead)
 
     # Cross-check the model of the CURRENT rule against the real Shield, on
     # the recovery law the model is of (see the module docstring).

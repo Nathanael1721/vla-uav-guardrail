@@ -449,14 +449,15 @@ from guardrail.manifest import (DEV_YAML_FLAG, MAX_HEADING_ERR_DEG,   # noqa: E4
                                 is_kpi_grade, projectairsim_simulator,
                                 write_stack_revisions)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
-                              DistanceEnvelope, ObstacleClearance, SubjectStandoff)
+                              DistanceEnvelope, ObstacleClearance)
 from guardrail.projection import LocalProjection                      # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from guardrail import response as vresp                               # noqa: E402
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S, altitude_out_of_band  # noqa: E402
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, altitude_out_of_band,  # noqa: E402
+                              standoff_breached, standoff_ring_m, standoff_rules)
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E402
                                   HOLD_MODES, ModeRequests,
                                   autopilot_mode, fence_alt_plan,
@@ -3846,15 +3847,18 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
     frame = (truth.frame_summary() if callable(getattr(truth, "frame_summary", None))
              else None)
     frame_bad = frame is not None and frame.get("agrees") is False
+    # Inside the ring = the Shield's stand-off test (guardrail/shield.py
+    # standoff_breached, 1e-9 m of slack); until 2026-11-18 these two counts
+    # compared `d < ring_m` themselves (WP3-22 / X-13).
     n_ring = (None if ring_m is None or not read
-              else sum(1 for d in ranges if d < ring_m))
+              else sum(1 for d in ranges if standoff_breached(d, ring_m)))
     ring_s = None
     if n_ring is not None:
         w = (list(point_s) if point_s is not None and len(point_s) == len(rows) else
              point_durations([r["t"] for r in rows], tick_s)
              if all(r.get("t") is not None for r in rows) else [tick_s] * len(rows))
         ring_s = sum(wi for r, wi in zip(rows, w) if r.get("subject_truth") is not None
-                     and r["subject_range_m"] < ring_m)
+                     and standoff_breached(r["subject_range_m"], ring_m))
     coverage = None if not rows else round(len(read) / len(rows), 4)
     complete = coverage is not None and coverage >= TRUTH_MIN_COVERAGE
     frac30 = (None if not read else
@@ -6842,8 +6846,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # Shield no subject at all when the class was None, so every
         # stand-off went inert while the record (standoff_ring_m, the HUD's
         # rule panel) still showed the catch-all ring in force.
-        standoff_ids = [c.id for c in policy.by_type(SubjectStandoff)
-                        if c.binds(subject_class) and not vla_goto]
+        standoff_ids = ([] if vla_goto else
+                        [c.id for c in standoff_rules(policy.constraints, subject_class)])
         unclassified = None
         if subject_class is None and not vla_goto:
             unclassified = {"object": args.object, "width_m": width_m,
@@ -6875,9 +6879,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             subject_actor_for(getattr(args, "subject_actor", "auto"),
                                               args.object, subject_class))
         truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor, rpc=rpc)
-        rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)
-                 if c.binds(subject_class) and not vla_goto]
-        ring_m = max(rings) if rings else None
+        # The outermost binding ring (guardrail/shield.py standoff_ring_m: the
+        # Shield's own reading of which rules bind, a distance_envelope over
+        # people included); truth_summary judges ranges against it with the
+        # Shield's test.
+        ring_m = None if vla_goto else standoff_ring_m(policy.constraints, subject_class)
         print(f"[truth]  subject pose: {truth.source or truth.why_off}")
 
         # ---- the hover before the mission, watched (HoverWatch) ---------------
