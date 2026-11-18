@@ -62,6 +62,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import api                                          # noqa: E402
 from guardrail.bundle import (LEGACY_POINT_NOTE, check_lock,       # noqa: E402
+                              LegacyPointFormRefused,
                               load_for_flight, load_lock, policy_candidates)
 from guardrail.harness_service import scenario_event_from_rule     # noqa: E402
 from guardrail.models import (LEGACY_POINT_FORMS,                  # noqa: E402
@@ -468,20 +469,35 @@ def test_the_legacy_form_is_only_read_back():
     assert "write = policy_yaml" not in src
 
 
-def test_flight_record_labels_only_the_legacy_form():
+def test_flight_refuses_the_legacy_form_and_labels_its_read():
+    """Since 2026-11-18 (review of WP1-14) the flight loader refuses a metre-only
+    document; until then it flew it, labelled. Every policies/*.yaml flies
+    with no label; a refusal of one of them for its point form is a failure,
+    not a skip. The legacy form loads under legacy_read only (a re-run of a
+    recorded flight), and its record says so."""
     n = 0
     for p in POLICIES:
         try:
             pol, rec = load_for_flight(yaml_path=p)
+        except LegacyPointFormRefused as e:
+            raise AssertionError(f"{p.name}: {e}")
         except ValueError:
             continue
         assert "point_form" not in rec and "point_note" not in rec, (p.name, rec)
+        assert "legacy_read" not in rec, (p.name, rec)
         n += 1
     assert n >= 32, n
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "legacy.yaml"
         f.write_text(yaml.safe_dump(METRE_DOC, sort_keys=False), encoding="utf-8")
-        pol, rec = load_for_flight(yaml_path=f)
+        try:
+            load_for_flight(yaml_path=f)
+        except LegacyPointFormRefused as e:
+            assert POINTS_LEGACY_METRES in str(e) and "VLAGUARD_LEGACY_READ" in str(e), e
+        else:
+            raise AssertionError("a metre-only document was flown")
+        pol, rec = load_for_flight(yaml_path=f, legacy_read=True)
+    assert rec["legacy_read"] is True
     assert rec["point_form"] == POINTS_LEGACY_METRES == pol.point_form
     assert rec["point_note"] == LEGACY_POINT_NOTE and "legacy read form" in LEGACY_POINT_NOTE
 

@@ -6287,6 +6287,12 @@ class Shield:
     # as of 47b3fde (which accepted a lat/lon pre-start fence that moved a
     # derived frame origin); tests/test_wgs84_writes.py compares the
     # conversion on and off with it. No stored policy has a derived origin.
+    # It is a COMPARISON switch only (tests and tools/wgs84_bind_compare.py
+    # set it; no flight entry point, REST server or harness does): with it
+    # off, a metre write is stored as metres, so the policy's point_form
+    # becomes a legacy form, which bundle.write_bundle refuses to issue and
+    # bundle.load_for_flight refuses to fly (WP1-14, 2026-11-18;
+    # tests/test_wgs84_frameless_writers.py).
     wgs84_writes: bool = True
 
     def _in_frame(self, rule, op: str):

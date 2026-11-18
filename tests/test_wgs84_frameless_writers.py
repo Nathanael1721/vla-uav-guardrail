@@ -35,6 +35,13 @@ and leaves the policy as it was; this file checks every one:
     whole metre document are refused; metre rules onto a base with a frame
     are converted (as before);
   * demo/gen_random_scenario.py --metres is refused by name, writing nothing;
+  * bundle.load_for_flight refuses a legacy metre bundle at load, naming
+    the flight-ready WGS84 bundle beside it; legacy_read (or
+    VLAGUARD_LEGACY_READ=1) re-runs a recorded flight and records it; a
+    point-free bundle with no origin still flies (no projected coordinate)
+    and is not flight_ready;
+  * Shield.wgs84_writes=False, the comparison switch: what it stores is a
+    legacy form, which write_bundle and the flight loader refuse;
   * the same writes on a policy WITH a frame still succeed and store WGS84.
 """
 from __future__ import annotations
@@ -298,6 +305,90 @@ def test_no_bundle_is_written_in_the_metre_form():
         assert out.exists()
         # a point-free policy without origin carries no projected coordinate
         write_bundle(_pointfree(), Path(td) / "caps.tar.gz", signer=None)
+
+
+def test_the_comparison_switch_cannot_reach_a_bundle_or_a_flight():
+    """Shield.wgs84_writes=False stores an event's metres as given: on a
+    framed policy that is the legacy MIXED form, which write_bundle will not
+    issue, so nothing written under the switch is bundled or flown."""
+    from guardrail.models import POINTS_LEGACY_MIXED
+    from guardrail.projection import raw_points_in_wgs84
+    doc = copy.deepcopy(METRE_DOC)
+    base = Policy.model_validate({**doc, "origin": FRAME, "constraints": raw_points_in_wgs84(
+        doc["constraints"], (FRAME["lat"], FRAME["lon"]))})
+    assert base.point_form == POINTS_WGS84
+    sh = Shield(base)
+    sh.wgs84_writes = False
+    sh.hot_apply(_zone())
+    assert sh.policy.point_form == POINTS_LEGACY_MIXED, sh.policy.point_form
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            write_bundle(sh.policy, Path(td) / "mixed.tar.gz", signer=None)
+        except ValueError as e:
+            assert "canonical WGS84 form only" in str(e), e
+        else:
+            raise AssertionError("a policy written under wgs84_writes=False was bundled")
+
+
+def test_the_flight_loader_flies_wgs84_only_and_names_the_bundle_to_fly():
+    """bundle.load_for_flight (review of WP1-14, 2026-11-18): a bundle stored
+    in the legacy metre form is refused AT LOAD (LegacyPointFormRefused),
+    naming the flight-ready WGS84 bundle of the same policy beside it when
+    there is one; until then it flew, labelled, and a spawned zone was
+    refused mid-flight. A recorded flight is re-run under legacy_read
+    (argument or VLAGUARD_LEGACY_READ=1) and its record says so. A framed
+    policy flies with no new key in its record; a point-free one with no
+    origin flies as before (it carries no projected coordinate) but is not
+    flight_ready, and wgs84_successor names its framed version."""
+    import os
+    from guardrail.bundle import (LEGACY_READ_ENV, LegacyPointFormRefused,
+                                  flight_ready, load_for_flight, wgs84_successor)
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        old = write_bundle(_metre(), d / "legacy-metre-v0.0.1.tar.gz", signer=None,
+                           allow_legacy_metres=True)
+        e = _refused(lambda: load_for_flight(old, allow_unverified=True),
+                     LegacyPointFormRefused)
+        assert "local-metres" in str(e) and "No WGS84 bundle of legacy-metre" in str(e), e
+        assert wgs84_successor(old, _metre()) is None
+        # its successor: the same rules in WGS84 about a stated origin
+        from guardrail.projection import raw_points_in_wgs84
+        o = (FRAME["lat"], FRAME["lon"])
+        doc = copy.deepcopy(METRE_DOC)
+        succ_pol = Policy.model_validate({**doc, "version": "0.0.2", "origin": FRAME,
+                                          "constraints": raw_points_in_wgs84(
+                                              doc["constraints"], o)})
+        assert flight_ready(succ_pol) and not flight_ready(_metre())
+        new = write_bundle(succ_pol, d / "legacy-metre-v0.0.2.tar.gz", signer=None)
+        e = _refused(lambda: load_for_flight(old, allow_unverified=True),
+                     LegacyPointFormRefused)
+        assert "Fly its WGS84 bundle legacy-metre-v0.0.2.tar.gz" in str(e), e
+        pol, rec = load_for_flight(new, allow_unverified=True)
+        assert pol.point_form == POINTS_WGS84
+        assert not {"legacy_read", "point_form", "point_note"} & set(rec), rec
+        # the read of a recorded flight: by argument, or by the rig's variable
+        pol, rec = load_for_flight(old, allow_unverified=True, legacy_read=True)
+        assert rec["legacy_read"] is True and rec["point_form"] == POINTS_LEGACY_METRES
+        saved = os.environ.get(LEGACY_READ_ENV)
+        os.environ[LEGACY_READ_ENV] = "1"
+        try:
+            assert load_for_flight(old, allow_unverified=True)[1]["legacy_read"] is True
+        finally:
+            if saved is None:
+                os.environ.pop(LEGACY_READ_ENV, None)
+            else:
+                os.environ[LEGACY_READ_ENV] = saved
+        # point-free with no origin: flies, unlabelled, but is not
+        # flight_ready (every spawned zone would be refused on it)
+        caps = write_bundle(_pointfree(), d / "caps-only-v0.0.1.tar.gz", signer=None)
+        pol, rec = load_for_flight(caps, allow_unverified=True)
+        assert pol.point_form == POINTS_NONE and not flight_ready(pol)
+        assert not {"legacy_read", "point_form", "point_note"} & set(rec), rec
+        framed = Policy.model_validate({**_framed().model_dump(
+            mode="json", exclude_none=True), "version": "0.0.2"})
+        write_bundle(framed, d / "caps-only-v0.0.2.tar.gz", signer=None)
+        assert flight_ready(framed)
+        assert wgs84_successor(caps, pol).name == "caps-only-v0.0.2.tar.gz"
 
 
 def _geo_tool():

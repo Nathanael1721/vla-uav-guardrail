@@ -151,6 +151,18 @@ def _raw(**over):
     return doc
 
 
+# The frame a document that is FLOWN states: since 2026-11-18 (WP1-14) the
+# flight loader flies a policy bound to a WGS84 frame only, so a fixture laid
+# out in metres is stored as the DSL stores it (origin stated, points lat/lon).
+FLIGHT_FRAME = (25.04245, 121.5314)
+
+
+def _framed(doc: dict) -> dict:
+    from guardrail.projection import raw_points_in_wgs84
+    return {**doc, "origin": {"lat": FLIGHT_FRAME[0], "lon": FLIGHT_FRAME[1]},
+            "constraints": raw_points_in_wgs84(doc["constraints"], FLIGHT_FRAME)}
+
+
 def _refused(fn, *words):
     try:
         fn()
@@ -1823,10 +1835,10 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     it with the polygon fences (Policy.static_keepout_zones), so the same
     zone declared without motion flies, while one with motion is refused as
     before - no rail records the Shield's clock to place it per point."""
-    still = _raw(constraints=[
+    still = _framed(_raw(constraints=[
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
         {"id": "dz", "type": "dynamic_nfz", **HARD_P0,
-         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}]}])
+         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}]}]))
     ps = _yaml(json.dumps(still), "dz_still.json")
     flies = load_policy(ps)
     assert flies.flight_problems() == [] and [c.id for c in flies.static_keepout_zones()] == ["dz"]
@@ -1865,11 +1877,10 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
          "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 10}],
          "valid_time": {"recurrence": {"days": ["Sun"], "start_time": "08:00",
                                        "end_time": "09:00"}}}])
-    p2 = _yaml(json.dumps(raw), "sw.json")
+    p2 = _yaml(json.dumps(_framed(raw)), "sw.json")
     flies = load_policy(p2)
     assert flies.flight_problems() == []
-    flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None,
-                                                allow_legacy_metres=True),
+    flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None),
                                  allow_unverified=True)
     assert flown.policy_hash == flies.policy_hash
 

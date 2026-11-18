@@ -1657,10 +1657,16 @@ class Policy(BaseModel):
         back: a lock recipe on a metre base or recording `wgs84_writes:
         false` is rebuilt as its run flew (bundle.derive legacy_read). Every
         writer into a policy with a frame converts (models.rule_in_wgs84,
-        projection.raw_points_in_wgs84, demo/gui_policy.py). The flight
-        loader records the legacy forms (bundle.load_for_flight:
-        `point_form`, `point_note`); tools/bundle_census.py lists the
-        bundles stored in them and the WGS84 bundle to fly instead.
+        projection.raw_points_in_wgs84, demo/gui_policy.py); the one
+        exception is Shield.wgs84_writes=False, a comparison switch no
+        flight path sets, whose result write_bundle and the flight loader
+        refuse. The flight loader REFUSES the legacy forms since 2026-11-18
+        (bundle.load_for_flight; until then it flew them, labelled; a
+        point-free policy with no origin still flies, and refuses every
+        event with points); a declared read of a recorded
+        flight (legacy_read / VLAGUARD_LEGACY_READ=1) loads them and records
+        `point_form`, `point_note`. tools/bundle_census.py lists the bundles
+        stored in them and the WGS84 bundle to fly instead.
 
         This labels how POINTS are stored; it is not bundle.FRAME_FORM, the
         name of a hash form in a lock entry's migration record."""

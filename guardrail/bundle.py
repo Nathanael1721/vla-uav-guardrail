@@ -252,6 +252,9 @@ CHAIN_NONE = "none"
 
 # Set to 1 by a rail that flies only bundles whose chain was verified.
 REQUIRE_CHAIN_ENV = "VLAGUARD_REQUIRE_CHAIN"
+# Set to 1 to re-run a recorded flight under its legacy metre-only policy:
+# load_for_flight's `legacy_read` (WP1-14, 2026-11-18).
+LEGACY_READ_ENV = "VLAGUARD_LEGACY_READ"
 # The authority a key certified by more than one signs under (load_signer).
 SIGNING_AUTHORITY_ENV = "VLAGUARD_SIGNING_AUTHORITY"
 # The authority name `issue-cert` gives the lab root CA.
@@ -260,6 +263,11 @@ LAB_CA = "lab-ca"
 
 class BundleSignatureError(ValueError):
     """The bundle is intact but its signature could not be verified as trusted."""
+
+
+class LegacyPointFormRefused(ValueError):
+    """A flight loader was given a policy whose points are stored in local
+    metres, the legacy read form (load_for_flight, WP1-14 2026-11-18)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -2396,7 +2404,8 @@ def load_for_flight(bundle: str | Path | None = None,
                     allow_unverified: bool = False,
                     trust_store: str | Path | dict | None = None,
                     ground=None,
-                    require_chain: bool | None = None) -> tuple[Policy, dict]:
+                    require_chain: bool | None = None,
+                    legacy_read: bool | None = None) -> tuple[Policy, dict]:
     """The one way a flight entry point gets its policy: `(policy, source)`.
 
     Audit cards ARCH-29 / WP3-21: every flight script built its rules straight
@@ -2434,10 +2443,33 @@ def load_for_flight(bundle: str | Path | None = None,
     It judges bundles only: a YAML policy has no signer, the rails already
     refuse one without --dev-yaml, and its record says unsigned. Either way
     the record carries `require_chain`, the value in force for this load.
+
+    WGS84 ONLY (WP1-14, 2026-11-18). The grant's Policy DSL page: "WGS84
+    latitude / longitude is canonical ... the DSL itself never carries
+    projected coordinates". A policy whose points are stored in local metres
+    (Policy.point_form, the legacy read form of the bundles built before
+    2026-11-03) is REFUSED here (LegacyPointFormRefused), with the
+    flight-ready WGS84 bundle of the same policy beside it named when there
+    is one (wgs84_successor; tools/bundle_census.py lists them all). Until
+    2026-11-18 such a policy flew, labelled, and a spawned zone was then
+    refused mid-flight. `legacy_read=True` (None reads VLAGUARD_LEGACY_READ,
+    1 = on) is the one exception, and it is a READ: re-running a recorded
+    flight under the policy it flew. The record then carries
+    `legacy_read: true`, `point_form` and `point_note`.
+
+    NOT refused: a point-free policy with no frame origin (envelopes only, no
+    stated `origin`). It carries no projected coordinate and flies as before,
+    but no zone can be written into it in flight (models.NoFrameOrigin:
+    every event with points is refused); flight_ready() is False for it and
+    tools/bundle_census.py lists such bundles with the framed version to fly
+    instead. Every policies/*.yaml states an origin.
     """
     from .manifest import policy_source_record
     if require_chain is None:
         require_chain = os.environ.get(REQUIRE_CHAIN_ENV, "").strip().lower() \
+            not in ("", "0", "false", "no")
+    if legacy_read is None:
+        legacy_read = os.environ.get(LEGACY_READ_ENV, "").strip().lower() \
             not in ("", "0", "false", "no")
     if bundle and yaml_path:
         raise ValueError("give a policy bundle or a YAML policy, not both - a "
@@ -2474,18 +2506,75 @@ def load_for_flight(bundle: str | Path | None = None,
     notes = pol.runtime_notes()
     if notes:
         rec["runtime_notes"] = notes
-    # The legacy metre read form is labelled where a run records its policy
-    # (WP1-14, 2026-11-18): it still flies, for the bundles and runs from
-    # before 2026-11-03, but a record never reads as the canonical WGS84
-    # form when it was not. A WGS84 or point-free policy (every policies/
-    # *.yaml since 2026-11-03) adds no key, so its record is what it was.
-    # The keys say how POINTS are stored; bundle.FRAME_FORM is unrelated
-    # (a hash form in a lock entry's migration record).
+    # WGS84 only (docstring): a policy stored in the legacy metre form is
+    # refused unless this load is a declared read of a recorded flight
+    # (legacy_read), and then the record says so. A WGS84 or point-free
+    # policy adds no key, so its record is what it was. The keys say how
+    # POINTS are stored; bundle.FRAME_FORM is unrelated (a hash form in a
+    # lock entry's migration record).
     form = pol.point_form
     if form in LEGACY_POINT_FORMS:
+        if not legacy_read:
+            raise LegacyPointFormRefused(
+                _not_wgs84_message(pol, bundle if bundle else yaml_path,
+                                   is_bundle=bool(bundle)))
+        rec["legacy_read"] = True
         rec["point_form"] = form
         rec["point_note"] = LEGACY_POINT_NOTE
     return pol, rec
+
+
+def _not_wgs84_message(pol: Policy, path, *, is_bundle: bool) -> str:
+    what = f"its points are stored as {pol.point_form}"
+    if pol.frame_origin is None:
+        what += " and it has no WGS84 frame origin"
+    msg = (f"{Path(path).name} ({pol.policy_id}@{pol.version}): {what}. A flight "
+           f"flies a policy bound to a WGS84 frame only; the DSL never carries "
+           f"projected coordinates (grant, Policy DSL page; WP1-14). ")
+    succ = wgs84_successor(path, pol) if is_bundle else None
+    if succ is not None:
+        msg += f"Fly its WGS84 bundle {succ.name} instead. "
+    elif is_bundle:
+        msg += (f"No WGS84 bundle of {pol.policy_id} newer than {pol.version} is "
+                f"beside it: build one from its current policies/ version "
+                f"(tools/build_flight_bundles.py; tools/bundle_census.py --check "
+                f"lists what is missing). ")
+    else:
+        msg += ("Convert it first (tools/convert_policies_wgs84.py states the "
+                "origin and raises the version). ")
+    return msg + (f"To re-run a recorded flight under the policy it flew, a read, "
+                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read).")
+
+
+def flight_ready(pol: Policy) -> bool:
+    """True when `pol` flies with every grant event available: points in
+    WGS84 (or none) AND a WGS84 frame origin, so a zone can be written into
+    it in flight (WP1-14). A legacy metre policy is refused by
+    load_for_flight; a point-free one with no origin flies, but refuses
+    every event with points (models.NoFrameOrigin)."""
+    return pol.point_form not in LEGACY_POINT_FORMS and pol.frame_origin is not None
+
+
+def wgs84_successor(path: str | Path, pol: Policy) -> Path | None:
+    """The newest bundle in `path`'s folder of the same policy_id, at a
+    version above `pol`'s, that is flight_ready; None when there is none. Replay packs and bundles that
+    fail check_bundle are skipped. tools/bundle_census.py gives the same
+    answer for a whole folder."""
+    best = None
+    folder = Path(path).parent
+    for cand in sorted(folder.glob("*.tar.gz")):
+        if cand.name.endswith(".replay.tar.gz") or cand.resolve() == Path(path).resolve():
+            continue
+        try:
+            other = check_bundle(cand).policy
+        except Exception:                                     # noqa: BLE001
+            continue
+        if other.policy_id != pol.policy_id or not flight_ready(other):
+            continue
+        key = _semver_key(other.version)
+        if key > _semver_key(pol.version) and (best is None or key > best[0]):
+            best = (key, cand)
+    return None if best is None else best[1]
 
 
 # What a flight record says of a policy stored in the legacy metre form.
