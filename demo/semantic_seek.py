@@ -58,6 +58,7 @@ from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E4
                               altitude_band_report, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
+from guardrail.frames import body_to_local_ned                      # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, ObstacleClearance,
 )
@@ -198,7 +199,10 @@ def staleness_factor(age_s: float, hold_s: float, fade_s: float) -> float:
 
 def vla_action(vla, yaw: float, yaw_gain: float, now: float,
                hold_s: float, fade_s: float):
-    """Body-frame VLA output -> world-frame Action4D, with a stale-YAW fade.
+    """The VLA's output as a BODY-frame Action4D (vx forward, vy right: the
+    frame the Shield takes, WP3-04 / ARCH-04; until wf21 it was rotated into
+    the world frame here), with a stale-YAW fade. `yaw` is kept in the
+    signature for the callers; the body action does not depend on it.
 
     Takes no target and no state beyond the current heading, by construction:
     this is the whole steering path, and it must be impossible for ground truth
@@ -221,8 +225,7 @@ def vla_action(vla, yaw: float, yaw_gain: float, now: float,
     k = staleness_factor(age, hold_s, fade_s)
     fwd, dwn = info["fwd"], info["down"]
     yr = info["yaw"] * k
-    a = Action4D(vx=fwd * math.cos(yaw), vy=fwd * math.sin(yaw),
-                 vz_up=-dwn, yaw_rate=yr * yaw_gain)
+    a = Action4D(vx=fwd, vy=0.0, vz_up=-dwn, yaw_rate=yr * yaw_gain)
     info = dict(info, age_s=age, stale_k=k)
     return a, info
 
@@ -467,7 +470,8 @@ async def fly(args) -> int:
             kin = drone.get_ground_truth_kinematics()
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
-            state = State(x=p["x"], y=p["y"], up=-p["z"])
+            # The aircraft's heading goes to the Shield (WP3-04 / ARCH-04).
+            state = State(x=p["x"], y=p["y"], up=-p["z"], yaw_deg=math.degrees(yaw))
             obs.put_pose(p["x"], p["y"], yaw)
 
             # Drive the car. Updated at 5 Hz rather than 10: one extra RPC per
@@ -492,18 +496,20 @@ async def fly(args) -> int:
             # correction, which turns the off-arm into evidence in its own right:
             # it shows the guardrail predicted the violation it was not allowed
             # to prevent.
-            d = shield.filter(state, smooth)
+            # In the BODY frame (Shield.filter_body): the Shield hands back
+            # the emitted body action, which is what flies with it on.
+            d, e_body = shield.filter_body(state, smooth)
             if guard_on:
-                chosen, shadow = d, None
+                chosen, shadow, sent = d, None, e_body
             else:
                 chosen = SimpleNamespace(emitted=smooth, touched=False,
                                          violations=[], repairs=[], braked=False)
-                shadow = d
+                shadow, sent = d, smooth
             audit.log(tick, d)
             if d.touched:
                 n_touched += 1
 
-            e, clamped = integrity_clamp(chosen.emitted, state.up)
+            e, clamped = integrity_clamp(sent, state.up)
             if clamped:
                 n_clamp += 1
 
@@ -519,6 +525,10 @@ async def fly(args) -> int:
                 "vla_fwd": info["fwd"], "vla_down": info["down"],
                 "vla_yaw": info["yaw"], "vla_bins": info["bins"],
                 "vla_px": info["px"], "vla_py": info["py"], "vla_psi": info["psi"],
+                # raw / smooth / emitted are in the BODY frame since wf21
+                # (`frame`); experiments/analyze_semantic_ab.py turns them
+                # with `psi` for its world-frame measures.
+                "frame": "body",
                 "raw": raw.model_dump(), "smooth": smooth.model_dump(),
                 "emitted": e.model_dump(),
                 "touched": bool(chosen.touched), "braked": bool(chosen.braked),
@@ -536,9 +546,12 @@ async def fly(args) -> int:
                 "tgt_y": (car.pos[1] if car is not None else tgt[1]),
             })
 
+            # THE ADAPTER: the BODY action into the simulator's NED command,
+            # after the projection (frames.body_to_local_ned).
+            v_n, v_e, v_d, w = body_to_local_ned(e, state.yaw_deg)
             await drone.move_by_velocity_async(
-                e.vx, e.vy, -e.vz_up, duration=0.3,
-                yaw_is_rate=True, yaw=e.yaw_rate)
+                v_n, v_e, v_d, duration=0.3,
+                yaw_is_rate=True, yaw=w)
             if tick % 50 == 0:
                 print(f"  tick {tick}: pos=({state.x:6.1f},{state.y:6.1f},"
                       f"{state.up:4.1f}) psi={math.degrees(yaw):+6.1f} "

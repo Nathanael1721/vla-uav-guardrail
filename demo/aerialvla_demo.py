@@ -43,6 +43,7 @@ from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.aerialvla_codec import parse_action                  # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
+from guardrail.frames import body_action, body_to_local_ned         # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import Action4D                               # noqa: E402
 from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
@@ -416,32 +417,39 @@ def main() -> int:
         q = pose.orientation
         yaw = math.atan2(2 * (q.w_val * q.z_val + q.x_val * q.y_val),
                          1 - 2 * (q.y_val ** 2 + q.z_val ** 2))
-        state = State(x=pos.x_val, y=pos.y_val, up=-pos.z_val)
+        # The aircraft's heading goes to the Shield (WP3-04 / ARCH-04).
+        state = State(x=pos.x_val, y=pos.y_val, up=-pos.z_val, yaw_deg=math.degrees(yaw))
 
         fwd, dwn, yr, land = vla.latest()
-        # body (fwd along heading) -> world frame for the shield's forecast
-        vx, vy = fwd * math.cos(yaw), fwd * math.sin(yaw)
+        # The VLA's action in its own BODY frame (forward along the heading),
+        # which is what the Shield takes; it is no longer rotated here.
+        fwd_b, right_b = fwd, 0.0
         # optional mission-direction assist: blend a unit vector toward the
         # compiled target into the VLA's horizontal action (guidance lives on
-        # the guardrail side; the VLA still does the seeing and steering)
+        # the guardrail side; the VLA still does the seeing and steering), the
+        # guidance vector turned into the body frame (frames.to_body)
         a = args.goal_blend
         if a > 0:
             gd = math.hypot(target[0] - state.x, target[1] - state.y)
             if gd > 1e-6:
-                gvx = (target[0] - state.x) / gd * mission.speed_pref_mps
-                gvy = (target[1] - state.y) / gd * mission.speed_pref_mps
-                vx, vy = (1 - a) * vx + a * gvx, (1 - a) * vy + a * gvy
-        raw = Action4D(vx=vx, vy=vy, vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
+                g = body_action(Action4D(vx=(target[0] - state.x) / gd * mission.speed_pref_mps,
+                                         vy=(target[1] - state.y) / gd * mission.speed_pref_mps),
+                                state.yaw_deg)
+                fwd_b, right_b = (1 - a) * fwd_b + a * g.vx, (1 - a) * right_b + a * g.vy
+        raw = Action4D(vx=fwd_b, vy=right_b, vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
         smooth = limiter(raw)
-        d = shield.filter(state, smooth)
+        d, e_body = shield.filter_body(state, smooth)
         audit.log(tick, d)
         if d.touched:
             n_touched += 1
         traj.append({"x": state.x, "y": state.y, "up": state.up, "touched": d.touched})
         e = d.emitted
+        # THE ADAPTER: the emitted BODY action into AirSim's NED command,
+        # after the projection (frames.body_to_local_ned).
+        v_n, v_e, v_d, w = body_to_local_ned(e_body, state.yaw_deg)
         client.moveByVelocityAsync(
-            e.vx, e.vy, -e.vz_up, duration=0.3,
-            yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(e.yaw_rate)))
+            v_n, v_e, v_d, duration=0.3,
+            yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(w)))
         if math.hypot(state.x - target[0], state.y - target[1]) < 3.0:
             reached = True
             print(f"  [flight] target reached at tick {tick}")

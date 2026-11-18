@@ -46,6 +46,7 @@ from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E402
                               altitude_band_report, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
+from guardrail.frames import body_to_local_ned                      # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, ObstacleClearance,
@@ -427,24 +428,28 @@ async def fly(args) -> int:
             kin = drone.get_ground_truth_kinematics()
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
-            state = State(x=p["x"], y=p["y"], up=-p["z"])
+            # The aircraft's heading goes to the Shield (WP3-04 / ARCH-04).
+            state = State(x=p["x"], y=p["y"], up=-p["z"], yaw_deg=math.degrees(yaw))
             obs.put_pose(p["x"], p["y"], yaw)
 
             # ---- the ONLY steering input: the VLA's reading of the scene ----
+            # in its own BODY frame (forward along the heading), as the
+            # Shield takes it; no longer rotated here.
             fwd, dwn, yr, _land = vla.latest()
-            raw = Action4D(vx=fwd * math.cos(yaw), vy=fwd * math.sin(yaw),
-                           vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
+            raw = Action4D(vx=fwd, vy=0.0, vz_up=-dwn, yaw_rate=yr * args.yaw_gain)
 
-            d = shield.filter(state, limiter(raw))
+            d, e_body = shield.filter_body(state, limiter(raw))
             audit.log(tick, d)
             if d.touched:
                 n_touched += 1
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": d.touched})
-            e = d.emitted
+            # THE ADAPTER: the emitted BODY action into the simulator's NED
+            # command, after the projection (frames.body_to_local_ned).
+            v_n, v_e, v_d, w = body_to_local_ned(e_body, state.yaw_deg)
             await drone.move_by_velocity_async(
-                e.vx, e.vy, -e.vz_up, duration=0.3,
-                yaw_is_rate=True, yaw=e.yaw_rate)
+                v_n, v_e, v_d, duration=0.3,
+                yaw_is_rate=True, yaw=w)
             if tick % 50 == 0:
                 print(f"  tick {tick}: pos=({state.x:6.1f},{state.y:6.1f},"
                       f"{state.up:4.1f}) vla_fwd={fwd:.2f} "
