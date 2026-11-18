@@ -129,11 +129,21 @@ def flight_setup(lab: Path, policy_path: Path, citymap: str = "citymap_citylife"
 
 
 def seeded_ticks(grid, n: int, seed: int):
-    """`n` seeded ticks (x, y, cvx, cvy) for a policy with no stored flight:
+    """`n` SYNTHETIC ticks (x, y, cvx, cvy) for a policy with no stored flight:
     a position on a street cell of the guard's street mask (else on a free
     cell of its obstacle map), jittered within the cell, a heading uniform
     in [0, 2 pi) and a commanded speed uniform in [0.5, 5] m/s (the follow
-    controller's --speed-max default is 5)."""
+    controller's --speed-max default is 5).
+
+    What the figure over them is: a SENSITIVITY figure - how often the two
+    guards decide differently at random street positions and headings over
+    the map given (--citymap), under that policy's rules - not "the
+    decisions that change on that policy's flights". FenceGuard exists only
+    in the follow controller (demo/follow_vlm.py); a policy flown on another
+    rail, such as semantic_conflict.yaml on the semantic demo, has no
+    FenceGuard decision to change, and its seeded ticks are drawn over
+    whatever map --citymap names (the CityLife day map by default), not a
+    map that policy flies over (review of 350d0b0)."""
     import random
     import numpy as np
     rng = random.Random(seed)
@@ -204,22 +214,54 @@ def skirt_candidates(gi, sc):
             for sgn in (1.0, -1.0)]
 
 
-def flown_guard_field(run_dir: Path) -> str:
-    """What the run's FenceGuard flew: metrics.json "guard_field" ("shield"
-    since 2026-11-18); a run without the key flew the grid scan."""
-    m = run_dir / "metrics.json"
+# The commit that made FenceGuard's Shield field an opt-in flag
+# (--guard-field shield, 17 Nov 2026). A checkout from it up to the one-path
+# change flew "grid" by default, or that opt-in field (its own `<=` tests)
+# when the flag was passed - and recorded neither in metrics.json.
+OPT_IN_SINCE = "497f016"
+
+
+def _is_ancestor(repo: Path, older: str, rev: str) -> bool | None:
+    """Is `older` an ancestor of `rev` in `repo` (None: git cannot say)?"""
+    import subprocess
     try:
-        return json.loads(m.read_text(encoding="utf-8")).get("guard_field") or "grid"
+        r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", older, rev],
+                           capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+
+def flown_guard_field(run_dir: Path, repo: Path = ROOT) -> str:
+    """What the run's FenceGuard flew: metrics.json "guard_field" ("shield"
+    since 2026-11-18). Without the key: "grid" when the run's code_revision
+    (manifest.json) predates OPT_IN_SINCE, when only the grid scan could
+    fly; "unknown" when it does not, or git cannot place it - such a run may
+    have flown the opt-in field, and its replay cannot be told which
+    (review of 350d0b0)."""
+    try:
+        gf = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8")).get("guard_field")
     except (OSError, ValueError):
-        return "grid"
+        gf = None
+    if gf:
+        return gf
+    try:
+        rev = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["code_revision"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown"
+    rev = str(rev).removesuffix("-dirty")
+    # False only when git resolved both commits and the run's is older.
+    return "grid" if _is_ancestor(repo, OPT_IN_SINCE, rev) is False else "unknown"
 
 
-def replay_run(run_dir: Path, grid, field) -> dict:
+def replay_run(run_dir: Path, grid, field, repo: Path = ROOT) -> dict:
     """The decision counts over one stored run. Its commanded velocity on a
     skirt tick is solved with the guard the run FLEW (flown_guard_field),
     and the null is that guard's mode against the logged one."""
     rows = [json.loads(line) for line in (run_dir / "flight_log.jsonl").open(encoding="utf-8")]
-    flown_name = flown_guard_field(run_dir)
+    flown_name = flown_guard_field(run_dir, repo)
+    if flown_name not in ("grid", "shield"):
+        raise ValueError(f"{run_dir.name}: which guard flew is {flown_name!r}")
     flown = field if flown_name == "shield" else grid
     n = n_skirt = unrec = agree = agree_flown = 0
     mode_d = side_d = ms_d = brake_d = scale_d = 0
@@ -282,7 +324,8 @@ def main(argv=None) -> int:
                     help="the map directory under demo/out (default the CityLife map)")
     ap.add_argument("--seeded", type=int, default=0,
                     help="instead of stored runs, compare the two guards on this many "
-                         "seeded ticks (seeded_ticks) - for a policy no stored flight flew")
+                         "SYNTHETIC seeded ticks (seeded_ticks) over --citymap under "
+                         "--policy's rules: a sensitivity figure, not flight decisions")
     ap.add_argument("--seed", type=int, default=1118)
     a = ap.parse_args(argv)
     lab = Path(a.root)
@@ -290,7 +333,8 @@ def main(argv=None) -> int:
     if a.seeded:
         res = compare_seeded(grid, field, seeded_ticks(grid, a.seeded, a.seed))
         n = res["ticks"]
-        print(f"seeded {n} ticks ({Path(a.policy).name} over demo/out/{a.citymap}, seed "
+        print(f"SYNTHETIC sensitivity figure, not flight decisions: seeded {n} ticks "
+              f"({Path(a.policy).name}'s rules over demo/out/{a.citymap}, seed "
               f"{a.seed}): building brake on/off differs on "
               f"{res['building_brake_on_off_changed']} ({res['building_brake_on_off_changed'] / n:.2%}), "
               f"guard scale on {res['scale_changed']} ({res['scale_changed'] / n:.2%}), "
@@ -299,7 +343,11 @@ def main(argv=None) -> int:
               f"-> {res['skirt_ticks_shield']}")
         if a.json:
             Path(a.json).write_text(json.dumps({"seeded": res, "policy": Path(a.policy).name,
-                                                "citymap": a.citymap, "seed": a.seed},
+                                                "citymap": a.citymap, "seed": a.seed,
+                                                "what": "synthetic ticks seeded over the "
+                                                        "map under the policy's rules: a "
+                                                        "sensitivity figure, not decisions "
+                                                        "on that policy's flights"},
                                                indent=1), encoding="utf-8")
         return 0
     out = []
@@ -308,7 +356,12 @@ def main(argv=None) -> int:
         if not (rd / "flight_log.jsonl").is_file():
             print(f"{name}: no flight_log.jsonl, skipped")
             continue
-        res = replay_run(rd, grid, field)
+        if flown_guard_field(rd, lab) == "unknown":
+            print(f"{name}: no guard_field in metrics.json and its code_revision does not "
+                  f"predate {OPT_IN_SINCE} (it may have flown --guard-field shield's "
+                  f"opt-in field): skipped")
+            continue
+        res = replay_run(rd, grid, field, lab)
         out.append(res)
         print(f"{name}: replayed {res['ticks_replayed']}/{res['ticks_logged']} ticks "
               f"({res['skirt_reconstructed']} skirt reconstructed, "

@@ -874,7 +874,11 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
     elif isinstance(rule, AltitudeEnvelope):
         # The altitude check's own comparison (shield.altitude_outside) and
         # the kinematic cap's (fsm.cap_exceeded), not one of the facts' own
-        # (WP3-22 / X-13, 2026-11-18).
+        # (WP3-22 / X-13, 2026-11-18). The bands differ: 1e-9 m for the
+        # altitude, but the cap's RELATIVE slack, max(1e-9, 1e-6 * cap) -
+        # 1e-5 m/s at a 10 m/s cap - for the speed fact, the slack the
+        # Shield's own speed check (_check_kinematic) applies; until then the
+        # fact compared with a plain `<=`.
         a = m.cruise_alt_m
         below, above = altitude_outside(rule, a)
         where = ("below" if below else "above" if above or math.isnan(a)

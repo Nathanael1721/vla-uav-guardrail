@@ -56,15 +56,29 @@ args=(demo/follow_vlm.py --sim-address "$SIM"
       --identity --land-site --search-planner
       --level-car Car_10 --want-width 0.16 --start-max-range-m 30
       --trail-follow --speed-max 5.0
-      # FenceGuard measures and judges building clearance with the Shield
-      # (WP3-22 / X-13; the default and only value since 2026-11-18). Named
-      # so a Jetson checkout synced before then flies it too, not its old
-      # default grid scan.
+      # FenceGuard measures and judges building clearance with the Shield's
+      # ruler (WP3-22 / X-13; the default and only value since 2026-11-18).
+      # Naming it does NOT make an older checkout fly that: one synced
+      # between 497f016 and the one-path change accepts the flag but flies
+      # its old opt-in field with its own `<=` tests, and records no
+      # guard_field. The check after the flight refuses such a run.
       --guard-field shield)
 [ "$SAVE_VIEW" = "1" ] && args+=(--save-view)
 # shellcheck disable=SC2206
 [ -n "${EXTRA:-}" ] && args+=($EXTRA)
 rm -f "demo/out/$TAG/metrics.json"
+echo "==> code $(git rev-parse HEAD 2>/dev/null || echo unversioned)$(git diff --quiet HEAD 2>/dev/null || echo ' (dirty)')"
 echo "==> python ${args[*]}"
 python "${args[@]}"
+# The run is evidence for the one-path building guard only if THIS checkout's
+# FenceGuard flew the Shield's ruler, which follow_vlm records in metrics.json.
+python - "demo/out/$TAG/metrics.json" <<'EOF'
+import json, sys
+gf = json.load(open(sys.argv[1], encoding="utf-8")).get("guard_field")
+if gf != "shield":
+    sys.exit(f"*** metrics.json guard_field = {gf!r}, not 'shield': this checkout's "
+             f"FenceGuard did not fly the Shield's ruler (synced before the WP3-22 / X-13 "
+             f"one-path change?). Not evidence for the one-path guard: sync and re-fly.")
+print("==> metrics.json guard_field = 'shield' (FenceGuard flew the Shield's ruler)")
+EOF
 echo "==> read demo/out/$TAG/metrics.json (frac_within_30m, det_hz) and kpi.json"
