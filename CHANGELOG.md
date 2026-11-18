@@ -16,6 +16,80 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-18 (MSL flown) — the Shield's forecast stands over the DEM, an MSL rule flown on the ArduPilot SITL rail three times, the MSL altitude panel in the track video
+
+#### Changed
+- **Terrain-aware forecast over a DEM** (X-11; guardrail/shield.py,
+  guardrail/terrain.py, guardrail/rtl_path.py, experiments/sweep_scenarios.py,
+  sitl/ros2_shield_node.py, tools/msl_dem_rail.py,
+  tests/test_terrain_forecast.py, docs/RUNBOOK-orin-hil.md step 11a).
+  - Each forecast pose is judged at its own height above the DEM (predicted
+    MSL minus the ground under that pose); MSL rules stay judged on the flat
+    forecast. Until now the lookahead held the ground under the aircraft
+    flat.
+  - Over a DEM the altitude repair aims 0.25 m inside an AGL band
+    (DEM_BAND_MARGIN_M), phased in over 1.0 s; the rule still asks for the
+    edge. Closed-loop scratch sim: minimum AGL 8.000 -> 8.054 m.
+  - The headless harness over a declared ground models RTL above home, as
+    the ROS 2 node does (RTLWatch.assess(up_home), home_reached).
+  - Headless rail run (docs/data/msl_dem_rail.json): independent-oracle AGL
+    ticks 189 -> 0, minimum AGL 10.327 m; msl-ceiling requested on 2061 ticks,
+    agl-band on 1836; nulls unchanged (Shield off 4798, MSL read as AGL 5902).
+  - Without a ground 141/141 library episodes are byte-identical
+    (164658 rows) at dc7f3fb against 7b0f50c, digests saved
+    (docs/data/msl_rail_identity_20261118_wf20.json; the base digests equal
+    the wf19 record's). filter() with a DEM costs about 2x (0.47 -> 0.96 ms
+    without velocity); without one unchanged.
+  - The stored rows of msl_dem_sitl_01 replayed through the new forecast
+    flag agl-band at tick 106 (5.00 s ahead), 50 ticks before the flight's
+    Shield did (tests/test_terrain_forecast.py 10/10).
+- **The track video draws an MSL run in MSL** (tools/render_track_video.py,
+  tests/test_render_track_video.py 19/19): for an up_ref terrain run the
+  altitude panel's axis is MSL, with the ground, home and the AGL band
+  following the ground; intervals outside a band are shaded on every frame.
+  Stills of runs without a ground are byte-identical (10/10).
+- **A run flown under an experiment profile resolves to its file**
+  (guardrail/bundle.py policy_candidates, tests/test_policy_hash.py):
+  experiments/policies/*.yaml are offered after every shipped policy and
+  lock derivation, so msl_dem_sitl_01 resolves to
+  experiments/policies/msl_dem_sitl.yaml (the lab checkout's
+  test_policy_hash and test_wp1_roundtrip_kpi had failed on it).
+- **CI:** test_terrain_forecast runs in the loop and is named in the header.
+
+#### Flown (ArduCopter 4.5.7 SITL + ROS 2 rail, topology dev, not KPI-grade)
+Bundle msl-dem-sitl-v0.1.0 (signed), ground
+experiments/worlds/dem_cmac_wgs84.json (a synthetic ridge about CMAC, home
+584 m MSL), goto pilot at 3 m/s, AGL band 8-60 m, MSL ceiling 624 m. Videos
+`<run>_track.mp4` beside each run (msl_dem_sitl_01 re-rendered as
+`_track_mslpanel.mp4`; the original kept).
+
+| run | code | target | ticks under the 8 m AGL floor before RTL | min AGL before RTL | max MSL | FSM |
+|---|---|---|---|---|---|---|
+| msl_dem_sitl_01 | 5966c5c (before wf20) | up 15 | 20 | 7.514 m | 602.752 m | G1 Brake, G3 Loiter, G5 RTL |
+| msl_dem_sitl_02 | dc7f3fb | up 15 | 0 | 10.822 m | 599.568 m | G1 Brake, G3 Loiter (vertical repair 0.51 m vs theta 0.50 m), G5 RTL |
+| msl_dem_sitl_03 | dc7f3fb | up 50 (634 m MSL) | 0 | 14.984 m | 612.037 m | X1 Brake (vertical repair 1.94 m vs theta 0.50 m), G3 Loiter, G5 RTL |
+
+- Each run: P0 escape rate 0.0 (P0 violation ticks 18, 4 and 2, each acted
+  on), 0 ticks above the 624 m MSL ceiling, 0 false-trigger ticks. Ticks
+  under the floor after that appear only during the RTL landing at home
+  (175, 176 and 180). The FSM's Loiter holds the aircraft in GUIDED
+  (BRAKE on the autopilot in msl_dem_sitl_01).
+- msl_dem_sitl_03 stayed under the ceiling by escalation, not by a converged
+  repair: the projection was abandoned 12 m under it.
+- Max tick 5.828, 2.858 and 18.979 ms (the last a stale hold during a 1.14 s
+  pose gap); max e2e 5.858, 2.9 and 50.609 ms (the last on the tick after
+  that gap).
+- **Still open:** none of the three reached its target: over the ridge the
+  forecast asks for a climb larger than the FSM's vertical theta (0.50 m),
+  so the projection is abandoned and the Loiter times out to RTL. The DEM is
+  synthetic; no hil or PAS flight has carried an MSL rule, and in flight
+  only an altitude_envelope carried MSL (MSL zones and corridors over a DEM
+  are headless tests). The stress harness's sitl/hil backends, the mission
+  node, gcs_backstop, bundle_origin and BAG_MANIFEST custom data refuse a
+  ground; a replay tarball does not carry the DEM.
+- **Appendix A:** X-11 stays PARTIAL after an independent review against the
+  grant wording (2 PARTIAL, 1 DONE); its evidence and gap text updated.
+
 ### 2026-11-18 (code rows, wave 4) — one clearance path closer, the GUI writes WGS84, dev rails hand over the body frame, MSL on the ROS 2 rail; all four rows stay PARTIAL
 
 #### Changed
