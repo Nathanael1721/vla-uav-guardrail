@@ -579,6 +579,42 @@ def test_the_backstop_is_capped_by_an_msl_ceiling_in_force_all_flight():
         assert abs(c2 - (60.0 + top - 584.0)) < 1e-9 and "capped" not in src2, (upd, c2)
     # Without a ground: as before.
     assert A.policy_ceiling_m(pol, 15.0) == (624.0, "altitude_envelope")
+    # A hard MSL keep-in corridor in force all flight caps it too: no legal
+    # position is above its 610 m MSL ceiling (26 m above home).
+    cor, _ = load_for_flight(None, ROOT / "experiments" / "policies" /
+                             "msl_dem_corridor.yaml", ground=g)
+    c3, src3 = A.policy_ceiling_m(cor, 15.0, ground=g, home_msl_m=584.0)
+    assert c3 == 26.0 and "capped by msl-corridor" in src3 and "corridor" in src3, src3
+    assert A.fence_alt_plan(c3, 30.0)["raise_to"] == 31.0   # the .parm's 30 m, + 1 m
+    assert A.fence_alt_plan(c3, 31.0)["ok"] is True
+    # ... and without an envelope it caps the cruise altitude.
+    no_env = cor.model_copy(update={"constraints": [
+        c for c in cor.constraints if c.type != "altitude_envelope"]})
+    assert A.policy_ceiling_m(no_env, 40.0, ground=g, home_msl_m=584.0)[0] == 26.0
+    assert A.policy_ceiling_m(no_env, 20.0, ground=g, home_msl_m=584.0) == (
+        20.0, "mission cruise altitude (no altitude_envelope)")
+    # A corridor a corridor_swap can switch off, or a soft one, caps nothing.
+    raw = cor.model_dump(mode="json", by_alias=True, exclude_none=True)
+    corridor = next(cc for cc in raw["constraints"] if cc["id"] == "msl-corridor")
+    swap = dict(corridor, id="swap-west", type="corridor_swap", target_id="msl-corridor",
+                valid_time={"recurrence": {"days": ["Mon"], "start_time": "07:00",
+                                           "end_time": "08:00"}})
+    from guardrail.models import policy_from_raw
+    for extra, upd in (([swap], {}), ([], {"constraint_type": "soft"})):
+        r2 = json.loads(json.dumps(raw))
+        for cc in r2["constraints"]:
+            if cc["id"] == "msl-corridor":
+                cc.update(upd)
+        r2["constraints"] += extra
+        p3 = policy_from_raw(r2, source="t", runtime=False)
+        c4, src4 = A.policy_ceiling_m(p3, 15.0, ground=g, home_msl_m=584.0)
+        assert abs(c4 - (60.0 + top - 584.0)) < 1e-9 and "capped" not in src4, (upd, c4)
+    # A keep-out MSL zone bounds nothing above or beside it: the AGL band's
+    # figure over the DEM's highest ground stands (msl_dem_zone).
+    zone, _ = load_for_flight(None, ZONE_POLICY, ground=g)
+    c5, src5 = A.policy_ceiling_m(zone, 15.0, ground=g, home_msl_m=584.0)
+    assert top == 605.5 and c5 == 81.5 and "capped" not in src5, (c5, src5)
+    assert A.fence_alt_plan(c5, 30.0)["raise_to"] == 86.5
 
 
 def test_the_fence_column_reads_an_msl_zone_above_home():

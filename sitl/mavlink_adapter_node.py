@@ -579,14 +579,27 @@ def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
     monitor_only is different: it holds everywhere, at every instant, at one
     height above home, so no altitude above it is ever legal and the figure
     is capped by it - the lowest such MSL ceiling less home's elevation.
-    On msl_dem_sitl: max(40, 81.26) = 81.26 m became min(81.26, 40) = 40 m,
-    so FENCE_ALT_MAX is raised to 45 m (fence_alt_plan's headroom), not
-    86.26 m: the autopilot's backstop now sits 5 m over the MSL rule instead
-    of 46 m. The source string names the capping rule."""
-    envs = [c for c in getattr(policy, "constraints", [])
+    The same holds for the MSL ceiling of a hard keep-in corridor in force
+    all flight (the same tests, and no corridor_swap targets it: a swap
+    switches its target off): each corridor is its own keep-in
+    (Shield._check_corridor), so no legal position is above its ceiling.
+    The figure capped is the envelopes', or without one the mission's
+    cruise altitude. A keep-out zone (polygon_fence, circle_fence,
+    dynamic_nfz) forbids the band inside it and bounds nothing above or
+    beside it, so it caps nothing.
+    On msl_dem_sitl: max(40, 81.5) = 81.5 m became min(81.5, 40) = 40 m
+    (home 584 m MSL, the DEM's highest 605.5 m MSL), so FENCE_ALT_MAX is
+    raised to 45 m (fence_alt_plan's headroom), not 86.5 m: the autopilot's
+    backstop sits 5 m over the MSL rule instead of 46.5 m. On
+    msl_dem_corridor the msl-corridor's 610 m MSL ceiling caps 81.5 m to
+    26 m (31 m with the headroom). msl_dem_zone keeps the agl-band's 81.5 m
+    (86.5 m): its MSL rule is a keep-out zone. The source string names the
+    capping rule."""
+    constraints = list(getattr(policy, "constraints", []))
+    envs = [c for c in constraints
             if getattr(c, "type", "") == "altitude_envelope"
             and getattr(c, "alt_max_m", None) is not None]
-    if envs and ground is not None:
+    if ground is not None and (envs or fallback_m is not None):
         from guardrail.fence_export import _rule_clock, time_controls
         from guardrail.terrain import ground_band, is_dem, is_msl
         top = float(ground_band(ground)[1])
@@ -594,20 +607,34 @@ def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
             home_msl_m = float(ground.elevation_at(0.0, 0.0) if is_dem(ground)
                                else ground.elevation_at())
         home = float(home_msl_m)
-        ceilings = [float(c.alt_max_m) - home if is_msl(c)
-                    else float(c.alt_max_m) + (top - home) for c in envs]
-        src = (f"altitude_envelope, above home ({home:g} m MSL): MSL ceilings less "
-               f"home, AGL ceilings plus the ground's highest {top:g} m MSL less home")
-        clock = _rule_clock()(list(getattr(policy, "constraints", [])))
-        caps = sorted((float(c.alt_max_m) - home, c.id) for c in envs
-                      if is_msl(c) and getattr(c, "constraint_type", "hard") == "hard"
-                      and getattr(c, "violation_action", None) != "monitor_only"
-                      and not time_controls(c, clock.off_switches(c.id)))
-        if caps and caps[0][0] < max(ceilings):
-            return caps[0][0], (f"{src}; capped by {caps[0][1]}, a hard MSL ceiling "
+        clock = _rule_clock()(constraints)
+        swapped = getattr(clock, "swaps_on", None) or {}
+
+        def all_flight(c) -> bool:
+            return (getattr(c, "constraint_type", "hard") == "hard"
+                    and getattr(c, "violation_action", None) != "monitor_only"
+                    and not time_controls(c, clock.off_switches(c.id))
+                    and c.id not in swapped)
+        caps = sorted(
+            [(float(c.alt_max_m) - home, c.id, "MSL ceiling")
+             for c in envs if is_msl(c) and all_flight(c)]
+            + [(float(c.altitude_ceiling_m) - home, c.id, "MSL keep-in corridor ceiling")
+               for c in constraints if getattr(c, "type", "") == "corridor"
+               and is_msl(c) and getattr(c, "altitude_ceiling_m", None) is not None
+               and all_flight(c)])
+        if envs:
+            ceilings = [float(c.alt_max_m) - home if is_msl(c)
+                        else float(c.alt_max_m) + (top - home) for c in envs]
+            figure = max(ceilings)
+            src = (f"altitude_envelope, above home ({home:g} m MSL): MSL ceilings less "
+                   f"home, AGL ceilings plus the ground's highest {top:g} m MSL less home")
+        else:
+            figure, src = float(fallback_m), "mission cruise altitude (no altitude_envelope)"
+        if caps and caps[0][0] < figure:
+            return caps[0][0], (f"{src}; capped by {caps[0][1]}, a hard {caps[0][2]} "
                                 f"in force for the whole flight: {caps[0][0]:g} m "
                                 f"above home")
-        return max(ceilings), src
+        return figure, src
     ceilings = [float(c.alt_max_m) for c in envs]
     if ceilings:
         return max(ceilings), "altitude_envelope"
