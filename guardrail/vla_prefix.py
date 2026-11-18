@@ -26,6 +26,21 @@ instruction on the PAS follow (demo/pas_ardupilot/perception_node.py
            length-matched to the CSP within the same budget, in the same
            place: is a delta the rules, or any text in front of the words?
 
+LENGTH-MATCHING THE NEUTRAL ARM (review of 94a7d7b)
+
+Both texts are counted with the model's OWN tokenizer (PromptSlot.
+exact_counter), never with an upper bound. AerialVLA's CSP is budgeted with
+the compiler's table counter, which counts a templated rule word exactly but
+any other word at its UTF-8 bytes plus one: matched under it, the neutral
+sentence came out at 18 real OpenVLA tokens against the CSP's 85, while the
+record said 86 against 85. So the neutral arm is matched with OpenVLA's
+tokenizer.json (guardrail.csp.openvla_token_counter, OPENVLA_DIR) and refused
+before take-off ("no_tokenizer") where it is not on the machine - a
+mis-matched control is worse than none. Its budget check is in those exact
+tokens too (the table count is an upper bound of them, so the CSP that fits
+the budget under it fits in exact tokens as well). AIoT-VLA's counter is
+already exact (CLIP's own BPE).
+
 WHERE THE TEXT GOES, PER MODEL (PromptSlot, slot_for)
 
   AerialVLA (and its fine-tunes, and the scripted stand-in that answers in its
@@ -51,7 +66,14 @@ WHERE THE TEXT GOES, PER MODEL (PromptSlot, slot_for)
   take-off - the grant's rule, never a truncation. Truncating instead would
   either drop P0 rules (P0 coverage 100 % is a locked KPI) or, at the
   tokenizer, cut the object words off the end of the query, so the model would
-  no longer be told what to follow.
+  no longer be told what to follow. The refusal names each P0 sentence's own
+  count (`p0_rules`): alt-band 10, bld-clearance 9, standoff-any 12,
+  standoff-pedestrian 14 - alt-band or bld-clearance alone fits the 11, no
+  two together do (19 and up). A policy with one P0 rule would fit, but only
+  by demoting the other three (the building clearance and both stand-offs)
+  from P0 or dropping them from the flight, which changes the rules the
+  follow is flown under; no such policy is shipped. So the prefix A/B a
+  text-reading VLA can fly on this follow is AerialVLA's.
 
   Any other foreign family: refused (its server refuses a CSP arm: none of
   their prompts has a slot).
@@ -82,7 +104,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .csp import (DEFAULT_TOKEN_COUNTER, CSPBudgetExceeded, TokenCounter, csp_content_hash,
-                  csp_hash)
+                  csp_hash, openvla_token_counter)
 
 ARMS = ("off", "csp", "neutral")
 # The A/B's side of each arm, as tools/kpi_report.py pairs them ("prefix"
@@ -155,7 +177,10 @@ def clip_token_counter(model_id: str) -> ClipTokenCounter | None:
 @dataclass(frozen=True)
 class PromptSlot:
     """Where the prefix goes in one model's prompt and how much room it has.
-    `window_tokens` None: no hard window to check beyond the budget."""
+    `window_tokens` None: no hard window to check beyond the budget.
+    `counter` budgets the CSP; `exact_counter` is the model's own tokenizer
+    (the same object where `counter` is already exact; None where it is not
+    on this machine), which the neutral arm is length-matched with."""
     model: str
     placement: str
     counter: TokenCounter
@@ -164,12 +189,15 @@ class PromptSlot:
     special_tokens: int = 0
     object_tokens: int | None = None
     budget_basis: str = ""
+    exact_counter: TokenCounter | None = None
 
     def record(self) -> dict:
         return {"model": self.model, "placement": self.placement,
                 "token_counter": self.counter.name, "budget_tokens": self.budget_tokens,
                 "budget_basis": self.budget_basis, "window_tokens": self.window_tokens,
-                "special_tokens": self.special_tokens, "object_tokens": self.object_tokens}
+                "special_tokens": self.special_tokens, "object_tokens": self.object_tokens,
+                "exact_token_counter": (None if self.exact_counter is None
+                                        else self.exact_counter.name)}
 
 
 def _family(identity: dict | None) -> str | None:
@@ -178,10 +206,14 @@ def _family(identity: dict | None) -> str | None:
 
 
 def slot_for(identity: dict | None, object_text: str, *,
-             counter_factory=clip_token_counter) -> PromptSlot:
+             counter_factory=clip_token_counter,
+             exact_counter_factory=openvla_token_counter) -> PromptSlot:
     """The prompt slot of the model whose hello `identity` is (module
     docstring). PrefixRefused when it has none, when its tokenizer is not on
-    this machine, or when its object words leave no room."""
+    this machine, or when its object words leave no room. AerialVLA's exact
+    counter is OpenVLA's tokenizer.json where this machine has it
+    (`exact_counter_factory`, OPENVLA_DIR), else None: only the neutral arm
+    needs it, and refuses without it (compile_prompt_prefix)."""
     from .compiler import DEFAULT_BUDGET_TOKENS
     fam = _family(identity)
     if fam is None:
@@ -189,7 +221,8 @@ def slot_for(identity: dict | None, object_text: str, *,
                           counter=DEFAULT_TOKEN_COUNTER, budget_tokens=DEFAULT_BUDGET_TOKENS,
                           budget_basis=("the compiler's default budget (guardrail/"
                                         "compiler.DEFAULT_BUDGET_TOKENS) under its default "
-                                        "counter, as the 7 Nov OpenVLA CSP flights"))
+                                        "counter, as the 7 Nov OpenVLA CSP flights"),
+                          exact_counter=exact_counter_factory())
     foreign = (identity or {}).get("foreign") or {}
     cfg = (foreign.get("config") or {}).get("csp_slot")
     if not isinstance(cfg, dict):
@@ -220,7 +253,8 @@ def slot_for(identity: dict | None, object_text: str, *,
     return PromptSlot(model=fam, placement=placement, counter=counter, budget_tokens=budget,
                       window_tokens=window, special_tokens=specials, object_tokens=obj,
                       budget_basis=(f"the model's text window {window} minus its {specials} "
-                                    f"special tokens minus the object words' {obj}"))
+                                    f"special tokens minus the object words' {obj}"),
+                      exact_counter=counter)
 
 
 # --------------------------------------------------------------------------- #
@@ -257,10 +291,22 @@ def compile_prompt_prefix(policy, mission, slot: PromptSlot, arm: str, object_te
     """(the record, the CSP or None) for one arm. The CSP is compiled with
     the slot's budget and counter (guardrail/compiler.compile_csp), at `now`
     (the rule clock); P0 rules that do not fit raise PrefixRefused
-    "csp_budget_exceeded" - the grant's CSPBudgetExceeded, never truncated.
-    The neutral arm compiles the CSP too, to match its length."""
+    "csp_budget_exceeded" - the grant's CSPBudgetExceeded, never truncated -
+    with each P0 sentence's own count beside the budget (`p0_rules`).
+    The neutral arm compiles the CSP too, to match its length with the
+    model's own tokenizer (slot.exact_counter; "no_tokenizer" without it)."""
     if arm not in ARMS:
         raise ValueError(f"arm {arm!r} is not one of {ARMS}")
+    if arm == "neutral" and slot.exact_counter is None:
+        raise PrefixRefused(
+            "no_tokenizer", f"the neutral arm is length-matched to the CSP in the {slot.model} "
+                            f"model's own tokens, and its tokenizer is not on this machine "
+                            f"(OpenVLA's tokenizer.json under OPENVLA_DIR, with the "
+                            f"`tokenizers` package). The budget counter "
+                            f"({slot.counter.name}) is an upper bound that counts the neutral "
+                            f"words several times over, so a control matched with it would be "
+                            f"a fraction of the CSP's length: refused rather than mis-matched",
+            counter=slot.counter.name)
     rec: dict[str, Any] = {
         "arm": arm, "prefix": ARM_PREFIX[arm], "csp_mode": arm,
         "slot": slot.record(),
@@ -280,12 +326,17 @@ def compile_prompt_prefix(policy, mission, slot: PromptSlot, arm: str, object_te
             mission, now=now, issued_at=issued_at, budget_tokens=slot.budget_tokens,
             token_counter=slot.counter)
     except CSPBudgetExceeded as exc:
+        each = _p0_sentence_tokens(policy, mission, slot, now=now, issued_at=issued_at)
+        alone = ("" if not each else
+                 "; each P0 sentence alone: " + ", ".join(
+                     f"{r['id']} {r['tokens']}" for r in each))
         raise PrefixRefused(
             "csp_budget_exceeded",
-            f"{exc} (the {slot.model} slot: {slot.budget_basis}). The prefix-on arm cannot "
-            f"be flown on this model with this policy without dropping P0 rules, which the "
-            f"grant forbids", p0_tokens=exc.p0_tokens, budget_tokens=exc.budget_tokens,
-            p0_ids=exc.p0_ids, token_counter=exc.token_counter) from None
+            f"{exc} (the {slot.model} slot: {slot.budget_basis}{alone}). The prefix-on arm "
+            f"cannot be flown on this model with this policy without dropping P0 rules, "
+            f"which the grant forbids", p0_tokens=exc.p0_tokens,
+            budget_tokens=exc.budget_tokens, p0_ids=exc.p0_ids,
+            token_counter=exc.token_counter, p0_rules=each) from None
     except Exception as exc:                            # noqa: BLE001
         # CSPAltitudeConflict, CSPUnenforcedRules (an MSL rule without a
         # ground), ...: the compiler refused this policy and mission
@@ -293,15 +344,22 @@ def compile_prompt_prefix(policy, mission, slot: PromptSlot, arm: str, object_te
                                               f"{type(exc).__name__}: {exc}") from None
     csp_text = csp.natural_language_prompt.strip()
     csp_tokens = slot.counter.count(csp_text)
+    exact = slot.exact_counter
+    csp_exact = None if exact is None else exact.count(csp_text)
     text = csp_text
+    # The counter the sent text is held to the budget with: the CSP's own
+    # (the compiler's) for the CSP; the model's exact one for the neutral
+    # text, which is matched in it (module docstring).
+    held_by = slot.counter
     if arm == "neutral":
-        text = neutral_text(csp_tokens, slot.counter, max_tokens=slot.budget_tokens)
+        held_by = exact
+        text = neutral_text(csp_exact, exact, max_tokens=slot.budget_tokens)
     from .aerialvla_codec import CodecError, validate_csp
     try:
         validate_csp(arm, text)
     except CodecError as exc:
         raise PrefixRefused("bad_text", f"{exc.code}: {exc.detail}") from None
-    n = slot.counter.count(text)
+    n = held_by.count(text)
     if n > slot.budget_tokens:
         raise PrefixRefused("csp_budget_exceeded", f"the {arm} prefix is {n} tokens, over the "
                                                    f"{slot.budget_tokens}-token budget")
@@ -315,11 +373,36 @@ def compile_prompt_prefix(policy, mission, slot: PromptSlot, arm: str, object_te
                                                    f"its special tokens, over the "
                                                    f"{slot.window_tokens}-token window")
     rec.update(prefix_text=text, prefix_sha256=sha256_text(text), prefix_tokens=n,
+               prefix_token_counter=held_by.name,
+               # the sent text in the model's own tokens (None: its tokenizer
+               # is not on this machine), the one count comparable across arms
+               prefix_tokens_exact=None if exact is None else exact.count(text),
                csp_hash=csp_hash(csp), csp_content_hash=csp_content_hash(csp),
                csp_tokens=csp_tokens, policy_hash=csp.policy_hash,
                generation=csp.generation, issued_at=csp.issued_at,
                p0_ids=[p.id for p in csp.P0_constraints], instruction_tokens=instr)
     if arm == "neutral":
         rec["length_matched_to"] = {"csp_sha256": sha256_text(csp_text),
-                                    "csp_tokens": csp_tokens}
+                                    "token_counter": exact.name,
+                                    "csp_tokens": csp_exact, "neutral_tokens": n,
+                                    "csp_tokens_budget_counter": csp_tokens}
     return rec, csp
+
+
+def _p0_sentence_tokens(policy, mission, slot: PromptSlot, *, now=None,
+                        issued_at=None) -> list[dict] | None:
+    """Each P0 rule's sentence counted alone with the slot's counter, from a
+    compile without a budget limit - what a refusal shows beside the budget
+    so the reader sees which rules alone would fit. None where that compile
+    fails too (the refusal stands without it)."""
+    from .compiler import ConstraintCompiler
+    try:
+        full = ConstraintCompiler(policy).compile_csp(
+            mission, now=now, issued_at=issued_at, budget_tokens=10 ** 6,
+            token_counter=slot.counter)
+    except Exception:                                   # noqa: BLE001
+        return None
+    p0 = {p.id for p in full.P0_constraints}
+    return [{"id": r.id, "tokens": r.tokens, "fits_alone": (r.tokens is not None
+                                                            and r.tokens <= slot.budget_tokens)}
+            for r in full.selection.rules if r.id in p0]

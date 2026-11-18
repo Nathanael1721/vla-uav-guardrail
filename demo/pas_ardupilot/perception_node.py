@@ -293,6 +293,9 @@ THE PREFIX A/B (--vla-prefix off|csp|neutral, --ab-pair ID; 2026-11-18, WP4-15)
   * Neither model was trained with rule text: the A/B measures what the
     prompt change does. The default (off, no pair) is the flight it always
     was, and nothing is compiled for it.
+  * The neutral arm is length-matched to the CSP in the model's own tokens:
+    on AerialVLA with OpenVLA's tokenizer.json under OPENVLA_DIR, and refused
+    before take-off (no_tokenizer) where it is not on the machine.
   * Recorded: metrics.json `vla_prefix` (arm, pair, the text and its
     SHA-256, the CSP's hashes, budget, counter, window, P0 ids), events.jsonl
     `vla_prefix`, vla_prompt_csp.json, and the csp_mode and text SHA-256 of
@@ -5901,7 +5904,8 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
         print(f"[vla]    prefix A/B pair {prefix['ab_pair']!r}, arm {prefix['arm']}"
               + ("" if prefix["prefix_text"] is None else
                  f": {prefix['prefix_tokens']} tokens of {prefix['slot']['budget_tokens']} "
-                 f"({prefix['slot']['token_counter']}), sha256 "
+                 f"({prefix['prefix_token_counter']}; the model's own tokens: "
+                 f"{prefix['prefix_tokens_exact']}), sha256 "
                  f"{prefix['prefix_sha256'][:12]}, P0 {prefix['p0_ids']}")
               + f"; slot: {prefix['slot']['placement']}")
     # The GPU's memory with the model loaded (review of 4a0da6d, P2-7).
@@ -6773,7 +6777,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # bundle) beside metrics.json's vla_prefix
                 rec.event("vla_prefix", **{k: vp.get(k) for k in (
                     "ab_pair", "arm", "prefix", "csp_mode", "prefix_sha256", "prefix_text",
-                    "prefix_tokens", "csp_hash", "csp_content_hash", "p0_ids", "object",
+                    "prefix_tokens", "prefix_token_counter", "prefix_tokens_exact",
+                    "length_matched_to", "csp_hash", "csp_content_hash", "p0_ids", "object",
                     "seed", "slot")})
         if args.start_sitl and plan is not None:
             cmd = rail.wsl_start_command(args.wsl_distro, plan,

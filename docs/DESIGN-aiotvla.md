@@ -592,7 +592,14 @@ window is refused, never cut. Its hello declares the window
 compiles the CSP with the budget left over: 16 - 2 - 3 = 11 CLIP tokens
 beside "a red car". The follow policy's four P0 sentences need 45, so the
 compiler raises CSPBudgetExceeded and the prefix-on arm is refused before
-take-off, as the grant's rule says (P0 is never truncated). The model was
+take-off, as the grant's rule says (P0 is never truncated). One at a time
+they are alt-band 10, bld-clearance 9, standoff-any 12 and
+standoff-pedestrian 14 CLIP tokens (the refusal records each, `p0_rules`):
+a policy with only one of the first two as P0 would fit, but only by
+demoting the building clearance and the stand-offs out of P0, which is a
+different set of rules for the follow, so no such policy is offered. The
+prefix A/B a text-reading VLA can fly on the follow is therefore
+AerialVLA's (deploy/orin/run_pas_prefix_ab.sh FAMILY=aerialvla). The model was
 not trained with any prefix, so a policy whose P0 rules did fit would
 measure only what the extra words do to the grounding. A CSP this model can
 read would need a text path that is not CLIP's 16 tokens, which means

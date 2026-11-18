@@ -2120,8 +2120,84 @@ def test_aiotvlas_csp_arm_is_refused_before_take_off_and_says_why():
     assert doc["code"] == want and doc["ab_pair"] == "pab_a_p1", doc
     if want == "csp_budget_exceeded":
         assert (doc["facts"]["p0_tokens"], doc["facts"]["budget_tokens"]) == (45, 11), doc
+        # each P0 sentence's own count, so the refusal shows what would fit
+        assert {p["id"]: p["tokens"] for p in doc["facts"]["p0_rules"]} == {
+            "alt-band": 10, "bld-clearance": 9, "standoff-any": 12,
+            "standoff-pedestrian": 14}, doc["facts"]
     assert r.srv.requests == [] and r.link.requests_at_arm is None
     assert not (r.run / "flight_log.jsonl").exists()
+
+
+FOLLOW_POLICY_TEXT = (ROOT / "policies" / "follow_car_citylife.yaml").read_text(encoding="utf-8")
+# AerialVLA's hil follow options (deploy/orin/run_pas_perception.sh FAMILY=aerialvla)
+AERIAL_FOLLOW_FLAGS = ("--vla-front-source", "vla", "--cadence", "pipelined",
+                       "--allow-unstamped-pipelined")
+
+
+def _aerial_follow(arm: str, pair: str, **kw):
+    return _vfly(_real(lambda req: F.step_reply(req, 2.0, 0.0, 0.05)), REAL_MODEL,
+                 mission="follow", policy=FOLLOW_POLICY_TEXT,
+                 grounder=lambda clk: T.FakeDetections(clk),
+                 extra=AERIAL_FOLLOW_FLAGS + ("--vla-prefix", arm, "--ab-pair", pair,
+                                              "--seed", "9"), **kw)
+
+
+def test_aerialvlas_follow_reads_the_follow_policys_csp_on_every_request():
+    """The flight the A/B flies (review of 94a7d7b: only a GOTO covered the
+    flown csp arm): AerialVLA on the follow mission with --vla-prefix csp.
+    The CSP compiled from the follow policy before take-off - its four P0
+    rules - goes in front of EVERY request, the three warm-up ones first,
+    and metrics.json, the episode's event and vla_steps.jsonl record it."""
+    r = _aerial_follow("csp", "pab_f_p1", max_s="12")
+    assert r.rc == 0, r.rc
+    m = _json(r.run, "metrics.json")
+    assert m["params"]["mission"] == "follow"
+    vp = m["vla_prefix"]
+    assert (vp["in_ab"], vp["arm"], vp["prefix"], vp["ab_pair"], vp["seed"]) == \
+        (True, "csp", "on", "pab_f_p1", 9), vp
+    assert vp["slot"]["model"] == "aerialvla" and vp["model"] == REAL_MODEL["id"]
+    assert sorted(vp["p0_ids"]) == ["alt-band", "bld-clearance", "standoff-any",
+                                    "standoff-pedestrian"], vp["p0_ids"]
+    text = vp["prefix_text"]
+    assert text.startswith("Stay between") and "pedestrian" in text, text
+    assert vp["prefix_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    csp = _json(r.run, "vla_prompt_csp.json")
+    assert csp["natural_language_prompt"].strip() == text
+    assert vp["policy_hash"] == csp["policy_hash"] == _json(r.run, "manifest.json")["policy_hash"]
+    # every request - the three warm-up ones and every flown one - carries it
+    assert len(r.srv.requests) > 10
+    assert all((q["csp_mode"], q["csp_text"]) == ("csp", text) for q in r.srv.requests[:3])
+    assert all((q["csp_mode"], q["csp_text"]) == ("csp", text) for q in r.srv.requests)
+    assert all(q["object"] == "a red car" for q in r.srv.requests[3:])
+    ev = [e for e in _events(r.run) if e["kind"] == "vla_prefix"]
+    assert len(ev) == 1 and (ev[0]["prefix_sha256"], ev[0]["arm"]) == \
+        (vp["prefix_sha256"], "csp"), ev
+    steps = [s for s in _steps(r.run) if "csp_mode" in s]
+    assert steps and all((s["csp_mode"], s["csp_sha256"]) == ("csp", vp["prefix_sha256"])
+                         for s in steps), steps[:2]
+
+
+def test_aerialvlas_follow_neutral_arm_is_length_matched_or_refused():
+    """The neutral arm of the same follow: matched in OpenVLA's own tokens
+    where its tokenizer.json is on this machine (the CSP's 85), refused
+    before take-off where it is not - never mis-matched."""
+    from guardrail.csp import openvla_token_counter
+    exact = openvla_token_counter()
+    if exact is None:
+        r = _aerial_follow("neutral", "pab_f_p1", max_s="12", raises=SystemExit)
+        assert "refused before take-off" in str(r.exc), r.exc
+        assert _json(r.run, "vla_prefix_refused.json")["code"] == "no_tokenizer"
+        assert r.srv.requests == []
+    else:
+        r = _aerial_follow("neutral", "pab_f_p1", max_s="12")
+        assert r.rc == 0, r.rc
+        vp = _json(r.run, "metrics.json")["vla_prefix"]
+        lm = vp["length_matched_to"]
+        assert vp["arm"] == "neutral" and lm["token_counter"] == exact.name
+        assert lm["csp_tokens"] == 85 and 85 <= lm["neutral_tokens"] == \
+            exact.count(vp["prefix_text"]) < 90, lm
+        assert all((q["csp_mode"], q["csp_text"]) == ("neutral", vp["prefix_text"])
+                   for q in r.srv.requests)
 
 
 if __name__ == "__main__":
