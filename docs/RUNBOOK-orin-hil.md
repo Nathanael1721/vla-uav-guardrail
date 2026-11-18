@@ -563,6 +563,112 @@ says anything else, `metrics.json` has a `topology_refused` entry naming what
 was missing: usually the device tree (step 10), an ArduPilot SITL running on
 the Orin itself, or an `FCU_URL` without the desktop's address.
 
+## 11a. MSL over a DEM (X-11): the SITL profile, not flown yet
+
+One MSL rule flown over a declared ground (2026-11-18). Nothing here has
+been flown on SITL or on the rig; the commands are ready for the rig's
+next session.
+
+| Piece | File |
+|---|---|
+| Policy: `msl-ceiling` 590-624 m MSL (the one MSL rule), `agl-band` 8-60 m above the ground under the aircraft, kinematic caps | `experiments/policies/msl_dem_sitl.yaml` (frame origin CMAC, the SITL home) |
+| Ground: a WGS84 elevation grid about CMAC, 91 x 111 nodes every 0.0001 deg, 584 m MSL at home, a 20 m ridge 100 m east of home (synthetic, declared: SITL's own ground stays flat) | `experiments/worlds/dem_cmac_wgs84.json` (`python tools/msl_dem_rail.py --write-dem`) |
+| Headless run of the same policy and ground | `python tools/msl_dem_rail.py` -> `docs/data/msl_dem_rail.json` |
+
+The Shield node reads the grid with `--ground` (guardrail/terrain.py
+`load_ground`: resampled into the policy's frame, its sha256 and the
+resampling's error bound recorded) and tells the Shield the height above
+the grid: the pose's height above home + `--ground-home-msl` (the
+autopilot's home altitude, 584 m for every SITL rail here) - the grid's
+elevation under the aircraft. It refuses a `--ground-home-msl` more than
+2 m from the grid's own elevation at home (`terrain.GROUND_HOME_TOL_M`),
+and it refuses the MSL policy outright without `--ground`. The VLA stub
+and the AerialVLA bridge (`VLA=bridge`) take the same `--ground` (they load
+the policy too).
+
+On SITL the node raises `FENCE_ALT_MAX` to the policy's ceiling plus 5 m
+when it sits below it. With `--ground` that ceiling is a height above home,
+the reference ArduPilot measures `FENCE_ALT_MAX` in: `msl-ceiling` gives
+624 - 584 = 40 m, `agl-band` gives 60 m over the grid's highest ground
+(605.26 m MSL after resampling), 81.26 m. The node takes the higher figure,
+so the raise is to about 86.3 m, which is still above the MSL rule. The
+autopilot's backstop is therefore looser than the MSL rule on this profile.
+Before the 2026-11-18 review fix, the 624 m MSL ceiling was read as metres
+above home and the raise would have gone to 629 m.
+
+**1. The signed bundle** (the desktop, which holds the lab key; on the Orin
+the same command after the trust store is synced, as in step 7):
+
+```bash
+python tools/build_flight_bundles.py experiments/policies/msl_dem_sitl.yaml \
+    --ground experiments/worlds/dem_cmac_wgs84.json
+# -> bundles/msl-dem-sitl-v0.1.0.tar.gz (check: same command with --check)
+```
+
+**2a. Desktop dev rail (WSL, one desktop).** `SITL_HOME` is given by hand:
+`sitl/bundle_origin.py` reads a bundle through the flight gate without a
+ground and would refuse this one. CMAC is the policy's own origin, so the
+value is the default home spelled out:
+
+```bash
+SITL_HOME=-35.363261,149.165230,584,0 bash sitl/run_ros2_demo.sh on - \
+    --bundle bundles/msl-dem-sitl-v0.1.0.tar.gz \
+    --ground experiments/worlds/dem_cmac_wgs84.json --ground-home-msl 584 \
+    --start 0,0,15 --target 0,200,15 --pilot goto --speed 3 --max-s 120 \
+    --tag msl_dem_sitl_01
+```
+
+**2b. The hil rig.** SITL on the desktop at its default home (CMAC; no
+`--home`), from WSL:
+
+```bash
+bash sitl/hil_desktop.sh start --mavros-host 10.42.0.3
+```
+
+then on the Orin:
+
+```bash
+docker compose --env-file deploy/topologies/hil.env \
+    -f deploy/compose/docker-compose.orin.yml run --rm mission \
+    mission --shield on --tag msl_dem_hil_01 \
+    --bundle bundles/msl-dem-sitl-v0.1.0.tar.gz \
+    --ground experiments/worlds/dem_cmac_wgs84.json --ground-home-msl 584 \
+    --start 0,0,15 --target 0,200,15 --pilot goto --speed 3 --max-s 120
+```
+
+The goto stub flies east at 15 m above home (599 m MSL), across the ridge
+(crest 604 m MSL): the AGL floor (8 m above the grid) makes the Shield
+climb over it, the MSL ceiling holds the climb below 624 m MSL.
+
+**What to check in `demo/out/<tag>/`:** `metrics.json` `ground`
+(`home_msl_m` 584, `up_ref` `terrain`, `ground.wgs84_dem.sha256`
+`44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0`, the
+same on both hosts); every row's `up` is the height above the grid (what
+the Shield judged), beside `up_home` (the pose) and `msl_m`; the policy
+source record names the ground; `alt_violation_s` judges `msl-ceiling`
+against `msl_m` and `agl-band` against `up` (a clean flight reads 0);
+`autopilot_fence.policy_ceiling_m` is about 81.3 (above home), not 624;
+the replay packs as usual.
+
+**Not supported with this profile (yet):** `GCS_BACKSTOP=1` loads the
+bundle without a ground and refuses it, and `BAG_MANIFEST=1` /
+`VLAGUARD_BAG_MANIFEST=1` then leaves the policy hash out of the bag's
+custom data with a note (both load through the flight gate with no ground;
+leave them at their default 0); the stress harness's
+`--backend sitl|hil` refuses a scenario with a `ground` (its post-flight
+scoring has none), so this profile is flown by the commands above, not by
+a campaign. The AGL band over the grid has a known gap (the Shield's
+forecast holds the ground flat over its lookahead; `docs/data/
+msl_dem_rail.json` `finding_agl_over_dem`): headless, the independent
+oracle counts 189 P0 ticks a few centimetres (at most 0.081 m) under the
+AGL floor on level flight into the ridge, while the harness's own true-P0
+count is 0 (its judge Shield has the same flat-ground forecast); the MSL
+rule has no such gap (0 oracle ticks). On the node, the RTL watch
+(`rtl_path.check_leg`, its climb to `RTL_ALT` measured above home) is fed
+the height above the grid, the reference the Shield's bands are in, so over
+the ridge the leg's climb is judged against the wrong reference. The
+home-reached test uses the pose's height above home.
+
 ## 12. Profile the Shield on the Orin
 
 This is the measurement the grant asks for by name ("Orin profiling") against

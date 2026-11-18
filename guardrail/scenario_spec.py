@@ -213,6 +213,22 @@ policy with a distance_envelope over buildings or roads can be flown at all
 mission, so a rotated mission with a world is refused. A scenario without
 `world` - every one before that date - builds its Shields as before.
 
+SINCE 2026-11-18: A DECLARED GROUND (X-11)
+
+`ground` names a ground file (guardrail/terrain.py load_ground: a WGS84
+elevation grid, resampled into the policy's frame, a metre grid, or a flat
+ground). The scenario's policy is loaded with it wherever it is loaded
+(PolicyRef._ground), so an MSL rule passes the flight gate; the headless
+harness gives every Shield of the episode the ground with up_ref="terrain"
+and flies the vehicle at a height above that ground (the vehicle holds its
+MSL height: a level command over rising ground brings the ground closer).
+The ground does not turn with the mission, so a rotated mission with a
+ground is refused. The SITL / hil rails do not take a scenario's ground
+(their post-flight scoring has no ground yet; rail_node_args refuses one):
+the Shield node flies one from its own --ground flag (docs/RUNBOOK-orin-
+hil.md, "MSL over a DEM"). A scenario without `ground` - every one before
+that date - is loaded, flown and recorded exactly as before.
+
 SINCE 2026-11-16: A PILOT THAT CONSUMES THE PREFIX (WP4-15)
 
 A profile may set `prefix_consumer: action_set` (PREFIX_CONSUMERS). Every
@@ -240,7 +256,7 @@ from pathlib import Path
 from typing import Any, Literal, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 # The grant's outcome vocabulary lives in guardrail.kpi; one copy, not two.
 from .kpi import OUTCOMES
@@ -577,6 +593,12 @@ class PolicyRef(_Strict):
     path: str | None = None
     bundle_path: str | None = None
     expected_hash: str | None = None
+    # The scenario's declared ground (ScenarioSpec.ground, X-11), set by the
+    # spec that holds this reference: the flight gate refuses an MSL rule
+    # without one, so every load of a scenario's policy - the flying Shield's
+    # and every judge's - reads it with the same ground. None (every scenario
+    # without `ground`): loaded exactly as before.
+    _ground: str | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _one_source(self) -> "PolicyRef":
@@ -597,10 +619,18 @@ class PolicyRef(_Strict):
         from .bundle import load_for_flight        # pure-Python Ed25519 fallback
         p = Path(self.source)
         p = p if p.is_absolute() else Path(root) / p
+        kw = {}
+        if self._ground is not None:
+            # The ground in this policy's frame (X-11): its origin read
+            # first, without the gate the ground is for.
+            from .terrain import ground_for_flight
+            kw["ground"] = ground_for_flight(
+                self._ground, **({"yaml_path": p} if self.path is not None
+                                 else {"bundle": p}), root=root)
         if self.path is not None:
-            pol, rec = load_for_flight(yaml_path=p)
+            pol, rec = load_for_flight(yaml_path=p, **kw)
         else:
-            pol, rec = load_for_flight(bundle=p, allow_unverified=True)
+            pol, rec = load_for_flight(bundle=p, allow_unverified=True, **kw)
         if self.expected_hash and not pol.matches_hash(self.expected_hash):
             raise ValueError(
                 f"policy {self.source} hashes to {pol.policy_hash}, but the "
@@ -1151,9 +1181,24 @@ class ScenarioSpec(_Strict):
     # every Shield of the episode measures a distance_envelope on. None: no
     # map, as every scenario before that date flew.
     world: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_./-]+\.ya?ml$")
+    # The declared ground (module docstring, "SINCE 2026-11-18: A DECLARED
+    # GROUND"): a ground file's repo-relative path (guardrail/terrain.py
+    # load_ground: a WGS84 grid, a metre grid or a flat ground). None: no
+    # ground, every height above the start's ground, as every scenario
+    # before that date flew.
+    ground: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_./-]+\.(json|npz)$")
 
     @model_validator(mode="after")
     def _coherent(self) -> "ScenarioSpec":
+        if self.ground is not None:
+            if self.mission.rotate_deg or self.mission.rotate_about is not None:
+                raise ValueError(f"{self.scenario_id}: a ground and a rotated mission - the "
+                                 f"ground's relief would not turn with it")
+            # Its own copy of the reference, so a PolicyRef shared with
+            # another spec never carries this one's ground.
+            ref = self.policy.model_copy()
+            ref._ground = self.ground
+            self.policy = ref
         if not self.expected_kpis:
             raise ValueError(f"{self.scenario_id}: no expected_kpis - a scenario "
                              f"with no gate is a demonstration, not a test")
