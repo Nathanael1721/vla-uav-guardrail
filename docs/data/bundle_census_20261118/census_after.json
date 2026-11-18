@@ -14,6 +14,7 @@
     },
     {
       "file": "corridor-survey-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -29,6 +30,7 @@
     },
     {
       "file": "corridor-survey-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -44,6 +46,7 @@
     },
     {
       "file": "corridor-survey-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -62,6 +65,7 @@
     },
     {
       "file": "corridor-survey-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -80,6 +84,7 @@
     },
     {
       "file": "fase3-sim-demo-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -95,6 +100,7 @@
     },
     {
       "file": "fase3-sim-demo-v0.1.2.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -110,6 +116,7 @@
     },
     {
       "file": "fase3-sim-demo-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -128,6 +135,7 @@
     },
     {
       "file": "fase3-sim-demo-v0.1.4.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -146,6 +154,7 @@
     },
     {
       "file": "follow-car-citylife-nfz-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -161,6 +170,7 @@
     },
     {
       "file": "follow-car-citylife-nfz-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -176,6 +186,7 @@
     },
     {
       "file": "follow-car-citylife-nfz-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -194,6 +205,7 @@
     },
     {
       "file": "follow-car-citylife-nfz-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -212,6 +224,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -227,6 +240,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -242,6 +256,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -260,6 +275,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -278,6 +294,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3b-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -293,6 +310,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3b-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -308,6 +326,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3b-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -326,6 +345,7 @@
     },
     {
       "file": "follow-car-citylife-nfz3b-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -344,6 +364,7 @@
     },
     {
       "file": "follow-car-citylife-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -359,6 +380,7 @@
     },
     {
       "file": "follow-car-citylife-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -374,6 +396,7 @@
     },
     {
       "file": "follow-car-citylife-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -392,6 +415,7 @@
     },
     {
       "file": "follow-car-citylife-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -410,6 +434,7 @@
     },
     {
       "file": "follow-car-nfz-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -425,6 +450,7 @@
     },
     {
       "file": "follow-car-nfz-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -443,6 +469,7 @@
     },
     {
       "file": "follow-car-nfz-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -461,6 +488,7 @@
     },
     {
       "file": "follow-car-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -476,6 +504,7 @@
     },
     {
       "file": "follow-car-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -494,6 +523,7 @@
     },
     {
       "file": "follow-car-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -512,6 +542,7 @@
     },
     {
       "file": "follow-pedestrian-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -527,6 +558,7 @@
     },
     {
       "file": "follow-pedestrian-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -545,6 +577,7 @@
     },
     {
       "file": "follow-pedestrian-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -567,6 +600,7 @@
     },
     {
       "file": "msl-dem-sitl-v0.1.0.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -585,6 +619,7 @@
     },
     {
       "file": "poly-test-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -619,6 +654,7 @@
     },
     {
       "file": "sitl-pedestrian-standoff-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -637,6 +673,7 @@
     },
     {
       "file": "sitl-pedestrian-standoff-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         -35.363261,
@@ -655,6 +692,7 @@
     },
     {
       "file": "vla-goto-citylife-v0.1.0.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3/ir-2.x",
@@ -670,6 +708,7 @@
     },
     {
       "file": "vla-goto-citylife-v0.1.1.tar.gz",
+      "flight_ready": false,
       "frame": "none",
       "frame_origin": null,
       "hash_form": "sha256-canonical-v3",
@@ -685,6 +724,7 @@
     },
     {
       "file": "vla-goto-citylife-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -703,6 +743,7 @@
     },
     {
       "file": "vla-goto-citylife-v0.1.3.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         35.6895,
@@ -721,6 +762,7 @@
     },
     {
       "file": "wgs84-taipei-demo-v0.1.0.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         25.04245,
@@ -739,6 +781,7 @@
     },
     {
       "file": "wgs84-taipei-demo-v0.1.1.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         25.04245,
@@ -757,6 +800,7 @@
     },
     {
       "file": "wgs84-taipei-demo-v0.1.2.tar.gz",
+      "flight_ready": true,
       "frame": "stated",
       "frame_origin": [
         25.04245,
@@ -786,6 +830,10 @@
         "corridor-survey-v0.1.0.tar.gz",
         "corridor-survey-v0.1.1.tar.gz"
       ],
+      "not_flight_ready": [
+        "corridor-survey-v0.1.0.tar.gz",
+        "corridor-survey-v0.1.1.tar.gz"
+      ],
       "policy_id": "corridor-survey",
       "refly_from": "corridor-survey-v0.1.3.tar.gz",
       "successor": "corridor-survey-v0.1.3.tar.gz"
@@ -800,9 +848,42 @@
         "fase3-sim-demo-v0.1.1.tar.gz",
         "fase3-sim-demo-v0.1.2.tar.gz"
       ],
+      "not_flight_ready": [
+        "fase3-sim-demo-v0.1.1.tar.gz",
+        "fase3-sim-demo-v0.1.2.tar.gz"
+      ],
       "policy_id": "fase3-sim-demo",
       "refly_from": "fase3-sim-demo-v0.1.4.tar.gz",
       "successor": "fase3-sim-demo-v0.1.4.tar.gz"
+    },
+    {
+      "current_bundle": "follow-car-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/follow_car.yaml",
+      "current_point_form": "no-points",
+      "current_version": "0.1.3",
+      "legacy_bundles": [],
+      "not_flight_ready": [
+        "follow-car-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car",
+      "refly_from": "follow-car-v0.1.3.tar.gz",
+      "successor": "follow-car-v0.1.3.tar.gz"
+    },
+    {
+      "current_bundle": "follow-car-citylife-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/follow_car_citylife.yaml",
+      "current_point_form": "no-points",
+      "current_version": "0.1.3",
+      "legacy_bundles": [],
+      "not_flight_ready": [
+        "follow-car-citylife-v0.1.0.tar.gz",
+        "follow-car-citylife-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-car-citylife",
+      "refly_from": "follow-car-citylife-v0.1.3.tar.gz",
+      "successor": "follow-car-citylife-v0.1.3.tar.gz"
     },
     {
       "current_bundle": "follow-car-citylife-nfz-v0.1.3.tar.gz",
@@ -811,6 +892,10 @@
       "current_point_form": "wgs84",
       "current_version": "0.1.3",
       "legacy_bundles": [
+        "follow-car-citylife-nfz-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      ],
+      "not_flight_ready": [
         "follow-car-citylife-nfz-v0.1.0.tar.gz",
         "follow-car-citylife-nfz-v0.1.1.tar.gz"
       ],
@@ -828,6 +913,10 @@
         "follow-car-citylife-nfz3-v0.1.0.tar.gz",
         "follow-car-citylife-nfz3-v0.1.1.tar.gz"
       ],
+      "not_flight_ready": [
+        "follow-car-citylife-nfz3-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz3-v0.1.1.tar.gz"
+      ],
       "policy_id": "follow-car-citylife-nfz3",
       "refly_from": "follow-car-citylife-nfz3-v0.1.3.tar.gz",
       "successor": "follow-car-citylife-nfz3-v0.1.3.tar.gz"
@@ -839,6 +928,10 @@
       "current_point_form": "wgs84",
       "current_version": "0.1.3",
       "legacy_bundles": [
+        "follow-car-citylife-nfz3b-v0.1.0.tar.gz",
+        "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
+      ],
+      "not_flight_ready": [
         "follow-car-citylife-nfz3b-v0.1.0.tar.gz",
         "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
       ],
@@ -855,9 +948,26 @@
       "legacy_bundles": [
         "follow-car-nfz-v0.1.1.tar.gz"
       ],
+      "not_flight_ready": [
+        "follow-car-nfz-v0.1.1.tar.gz"
+      ],
       "policy_id": "follow-car-nfz",
       "refly_from": "follow-car-nfz-v0.1.3.tar.gz",
       "successor": "follow-car-nfz-v0.1.3.tar.gz"
+    },
+    {
+      "current_bundle": "follow-pedestrian-v0.1.3.tar.gz",
+      "current_bundle_on_disk": true,
+      "current_file": "policies/follow_pedestrian.yaml",
+      "current_point_form": "no-points",
+      "current_version": "0.1.3",
+      "legacy_bundles": [],
+      "not_flight_ready": [
+        "follow-pedestrian-v0.1.1.tar.gz"
+      ],
+      "policy_id": "follow-pedestrian",
+      "refly_from": "follow-pedestrian-v0.1.3.tar.gz",
+      "successor": "follow-pedestrian-v0.1.3.tar.gz"
     },
     {
       "current_bundle": "vla-goto-citylife-v0.1.3.tar.gz",
@@ -866,6 +976,10 @@
       "current_point_form": "wgs84",
       "current_version": "0.1.3",
       "legacy_bundles": [
+        "vla-goto-citylife-v0.1.0.tar.gz",
+        "vla-goto-citylife-v0.1.1.tar.gz"
+      ],
+      "not_flight_ready": [
         "vla-goto-citylife-v0.1.0.tar.gz",
         "vla-goto-citylife-v0.1.1.tar.gz"
       ],
@@ -879,7 +993,8 @@
     "bundles": 52,
     "frameless_bundles": 17,
     "legacy_metre_bundles": 13,
-    "legacy_tasks": 7,
+    "legacy_tasks": 10,
+    "not_flight_ready_bundles": 17,
     "point_forms": {
       "local-metres (legacy read form)": 13,
       "no-points": 13,

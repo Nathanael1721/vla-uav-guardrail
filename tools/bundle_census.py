@@ -1,5 +1,7 @@
 """List every bundle under bundles/ with the form its policy's points are stored
-in, and name the WGS84 bundle each legacy metre-only task is to be flown from.
+in, and name the WGS84 bundle each task is to be flown from whose bundle the
+flight loader refuses (legacy metre-only) or that can take no zone in flight
+(point-free with no frame origin).
 
     python tools/bundle_census.py                      # bundles/ of this checkout
     python tools/bundle_census.py D:/lab/bundles --json docs/data/census.json
@@ -13,7 +15,11 @@ WGS84 since 2026-11-03 and every writer converts metre input at ingest (or
 refuses it where the policy has no frame origin; models.NoFrameOrigin), but
 the signed bundles built before that date are still on disk: a policy whose
 points are local metres (Policy.point_form, the legacy READ form) still loads,
-for the runs flown under it and their replays. Which bundles are which was
+for the runs flown under it and their replays, but since 2026-11-18 the
+flight loader refuses it unless the load is a declared read
+(bundle.load_for_flight legacy_read). A point-free policy with no frame
+origin still flies, but every zone event on it is refused.
+Which bundles are which was
 known only from a one-off listing (13 of the 41 lab bundles on 18 Nov). This
 tool makes it a check anyone can run on any bundles/ folder.
 
@@ -23,19 +29,26 @@ WHAT IT REPORTS, PER BUNDLE
   not a policy bundle and is listed, not judged), policy_id, version,
   policy_hash, point_form (models.POINTS_*), frame ("stated" origin,
   "derived" from the geometry, or "none"), legacy (point_form is one of the
-  legacy metre forms), signature status and signer, hash_form, issued_at;
-  or `error` for a bundle check_bundle refuses.
+  legacy metre forms), flight_ready (bundle.flight_ready: not legacy and a
+  WGS84 frame origin, so it flies with every grant event available),
+  signature status and signer, hash_form, issued_at; or
+  `error` for a bundle check_bundle refuses.
 
-PER LEGACY TASK (a policy_id with at least one legacy bundle)
+PER TASK (`legacy_tasks`: a policy_id with at least one bundle that is not
+flight_ready)
 
-  the legacy versions on disk, the newest WGS84 bundle of the same id on disk
-  (`successor`), the version policies/ (or experiments/policies/) holds now
-  (`current_version`) and whether that version's bundle is on disk and in
-  WGS84 (`current_bundle`). `refly_from` is the bundle a re-flight of the
-  task takes: the current version's when it is on disk, else the newest
-  WGS84 successor.
+  the legacy metre versions on disk (`legacy_bundles`), every version that is
+  not flight_ready (`not_flight_ready`: the legacy ones, refused for flight,
+  and the point-free ones with no frame origin, on which every spawned zone
+  is refused), the
+  newest flight_ready bundle of the same id above them (`successor`), the
+  version policies/ (or experiments/policies/) holds now (`current_version`)
+  and whether that version's bundle is on disk and flight_ready
+  (`current_bundle`). `refly_from` is the bundle a re-flight of the task
+  takes: the current version's when it is on disk, else the newest
+  successor.
 
---check exits 1 when a bundle cannot be read, or a legacy task has no WGS84
+--check exits 1 when a bundle cannot be read, or a task has no flight_ready
 bundle at its current version on disk (build it with
 tools/build_flight_bundles.py <policy name>). It never writes a bundle.
 """
@@ -50,7 +63,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from guardrail.bundle import check_bundle                              # noqa: E402
+from guardrail.bundle import check_bundle, flight_ready               # noqa: E402
 from guardrail.models import (LEGACY_POINT_FORMS, load_policy)         # noqa: E402
 
 REPLAY_SUFFIX = ".replay.tar.gz"
@@ -91,6 +104,7 @@ def bundle_row(path: Path) -> dict:
         "frame": _frame(pol),
         "frame_origin": None if fo is None else [fo[0], fo[1]],
         "legacy": form in LEGACY_POINT_FORMS,
+        "flight_ready": flight_ready(pol),
         "signature": chk.signature, "signed_by": chk.signed_by,
         "hash_form": chk.hash_form,
         "issued_at": chk.manifest.get("issued_at"),
@@ -136,21 +150,23 @@ def census(bundles_dir: Path, current: dict[str, dict] | None = None) -> dict:
     for pid in sorted(by_id):
         mine = sorted(by_id[pid], key=lambda r: _version_key(r["version"]))
         legacy = [r for r in mine if r["legacy"]]
-        if not legacy:
+        unready = [r for r in mine if not r["flight_ready"]]
+        if not unready:
             continue
-        newest_legacy = _version_key(legacy[-1]["version"])
-        wgs = [r for r in mine if not r["legacy"]
-               and _version_key(r["version"]) > newest_legacy]
+        newest_unready = _version_key(unready[-1]["version"])
+        wgs = [r for r in mine if r["flight_ready"]
+               and _version_key(r["version"]) > newest_unready]
         cur = current.get(pid)
         cur_row = None
         if cur is not None:
             cur_row = next((r for r in mine if r["version"] == cur["version"]), None)
-        cur_ok = cur_row is not None and not cur_row["legacy"]
+        cur_ok = cur_row is not None and cur_row["flight_ready"]
         succ = wgs[-1] if wgs else None
         refly = cur_row if cur_ok else succ
         task = {
             "policy_id": pid,
             "legacy_bundles": [r["file"] for r in legacy],
+            "not_flight_ready": [r["file"] for r in unready],
             "successor": None if succ is None else succ["file"],
             "current_version": None if cur is None else cur["version"],
             "current_file": None if cur is None else cur["file"],
@@ -161,14 +177,15 @@ def census(bundles_dir: Path, current: dict[str, dict] | None = None) -> dict:
         }
         tasks.append(task)
         if cur is None:
-            problems.append(f"{pid}: legacy bundle(s) {task['legacy_bundles']} and no "
-                            f"policy file holds the id any more")
+            problems.append(f"{pid}: bundle(s) not flight-ready "
+                            f"{task['not_flight_ready']} and no policy file holds the "
+                            f"id any more")
         elif not cur_ok:
             problems.append(
-                f"{pid}: legacy bundle(s) {task['legacy_bundles']}; the current "
-                f"version {cur['version']} ({cur['file']}) has no WGS84 bundle in "
-                f"{bundles_dir}: build it (python tools/build_flight_bundles.py "
-                f"{Path(cur['file']).stem})")
+                f"{pid}: bundle(s) not flight-ready "
+                f"{task['not_flight_ready']}; the current version {cur['version']} "
+                f"({cur['file']}) has no WGS84 bundle in {bundles_dir}: build it "
+                f"(python tools/build_flight_bundles.py {Path(cur['file']).stem})")
     n_policy = len([r for r in rows if r["kind"] == "policy"])
     forms: dict[str, int] = {}
     for r in policy_rows:
@@ -180,6 +197,7 @@ def census(bundles_dir: Path, current: dict[str, dict] | None = None) -> dict:
         "legacy_metre_bundles": len([r for r in policy_rows if r["legacy"]]),
         "point_forms": dict(sorted(forms.items())),
         "frameless_bundles": len([r for r in policy_rows if r["frame"] == "none"]),
+        "not_flight_ready_bundles": len([r for r in policy_rows if not r["flight_ready"]]),
         "legacy_tasks": len(tasks),
     }
     return {"dir": str(bundles_dir), "bundles": rows, "legacy_tasks": tasks,
@@ -193,7 +211,8 @@ def _print(c: dict) -> None:
         elif "error" in r:
             print(f"  ERROR   {r['file']}: {r['error']}")
         else:
-            tag = "LEGACY" if r["legacy"] else "ok    "
+            tag = ("LEGACY" if r["legacy"] else
+                   "NOFRAM" if not r["flight_ready"] else "ok    ")
             print(f"  {tag}  {r['file']:44s} {r['point_form']:38s} frame={r['frame']:7s} "
                   f"{r['signature']}")
     s = c["summary"]
@@ -202,7 +221,7 @@ def _print(c: dict) -> None:
           f"{s['replay_bundles']} replay packs, {s['unreadable']} unreadable")
     for t in c["legacy_tasks"]:
         print(f"  re-fly {t['policy_id']}: from {t['refly_from']} "
-              f"(legacy: {', '.join(t['legacy_bundles'])})")
+              f"(not flight-ready: {', '.join(t['not_flight_ready'])})")
     for p in c["problems"]:
         print(f"PROBLEM  {p}")
 
@@ -216,8 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="what the JSON records as `dir` (default: the folder's path), "
                          "for evidence that must not carry a machine's path")
     ap.add_argument("--check", action="store_true",
-                    help="exit 1 on an unreadable bundle or a legacy task with no "
-                         "WGS84 bundle at its current version")
+                    help="exit 1 on an unreadable bundle or a task with no "
+                         "flight-ready WGS84 bundle at its current version")
     args = ap.parse_args(argv)
     c = census(Path(args.dir))
     if args.label:
