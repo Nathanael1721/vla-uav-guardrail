@@ -343,6 +343,29 @@ def test_the_family_tool_meets_the_kpis_on_its_scenarios():
         "experiments/worlds/dem_ridge.json is the tool's ridge"
 
 
+def test_the_kpi_tool_runs_its_dsl_kpis_in_a_stated_frame():
+    """tools/msl_dem_kpi.py dsl_kpis, end to end with tiny n (no timing
+    asserted beyond the budgets' shape). Every policy it builds states a
+    WGS84 origin (FRAME) and stores its points in lat/lon, and the ridge
+    (a metre grid with no origin on disk) is read in that frame (WP1-14,
+    review 2026-11-18): with no origin, the hot-apply phase - an MSL
+    dynamic_nfz written into the 50-rule MSL policy - was refused
+    (models.NoFrameOrigin) and the tool crashed."""
+    import msl_dem_kpi as T
+    from guardrail.models import policy_from_raw
+    dem = T.load_dem()
+    assert dem.origin == T.FRAME and terrain.GridGround.load(T.DEM_PATH).origin is None
+    for raw in (T.fifty_rule_msl_raw(), T.family_policy()):
+        pol = policy_from_raw(raw, ground=dem)
+        assert pol.point_form == "wgs84" and pol.frame_origin == T.FRAME, raw["policy_id"]
+    with tempfile.TemporaryDirectory() as td:
+        kp = T.dsl_kpis(dem, 0, 1, 4, 2, Path(td))
+    assert kp["frame_origin"] == list(T.FRAME)
+    assert kp["hot_apply_msl_dynamic_nfz"]["n"] == 2, kp["hot_apply_msl_dynamic_nfz"]
+    assert kp["query_check_msl_corridor_local_runtime_cold"]["n"] == 4
+    assert kp["msl_corridor_tubes_buffered"] == 1, kp
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items())
