@@ -326,7 +326,11 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
 
 def test_routes_switch_swap_and_the_legacy_body():
     from guardrail.models import Policy
-    pol = Policy.model_validate({"policy_id": "lanes", "constraints": [
+    # A frame origin stated: since 2026-11-18 (WP1-14) a swap's metres are
+    # written as WGS84 about it, and a policy with no frame refuses them (422).
+    pol = Policy.model_validate({"policy_id": "lanes",
+                                 "origin": {"lat": 35.6895, "lon": 139.6917},
+                                 "constraints": [
         {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}]}]})
     sh = Shield(pol)
