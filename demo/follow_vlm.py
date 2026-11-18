@@ -6783,9 +6783,11 @@ async def fly(args) -> int:
             # Handed to the Shield in the BODY frame (2026-11-18, WP3-04 /
             # ARCH-04: frames.filter_as_body, the arc off), at the heading the
             # Shield turns it back with: `state`'s, 0 - this rail gives the
-            # Shield no heading - so both turns are the identity and the
-            # decision equals filter()'s exactly (only a zero's sign can
-            # change; tests/test_rail_body_frame.py).
+            # Shield no heading - so both turns are the identity: the body
+            # action is the world action relabelled, not the aircraft's body
+            # frame. A tick whose round trip would change a bit (a zero's
+            # sign) goes to filter() as before; the decision is filter()'s
+            # to the bit (tests/test_rail_body_frame.py).
             d = filter_as_body(shield, state, flown_in)
             audit.log(tick, d)
             _ms_shield = (time.time() - _ta) * 1000

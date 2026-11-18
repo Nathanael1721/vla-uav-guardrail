@@ -727,9 +727,11 @@ def main() -> int:
         # (2026-11-18, WP3-04 / ARCH-04: frames.filter_as_body, the arc off),
         # turned at the heading the Shield turns it back with - st_sh's, 0 on
         # this rail, which gives the Shield no heading, so both turns are the
-        # identity and the decision equals filter()'s exactly (only a zero's
-        # sign can change; tests/test_rail_body_frame.py). The link flies the
-        # emitted world action, as before.
+        # identity: the body action is the world action relabelled, not the
+        # aircraft's body frame. A tick whose round trip would change a bit
+        # (a zero's sign) goes to filter() as before; the decision is
+        # filter()'s to the bit (tests/test_rail_body_frame.py). The link
+        # flies the emitted world action, as before.
         decision = filter_as_body(shield, st_sh, raw)
         emitted = decision.emitted if shield_on else raw
         extra = episode_row_fields(shield, state, policy, rec.episode_id)

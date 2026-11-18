@@ -1411,9 +1411,10 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     (the default, every episode before it) flies the Shield's emitted
     world-frame action; since 2026-11-18 the Shield is handed the pilot's
     action in the BODY frame on this arm too (frames.filter_as_body, at the
-    heading the Shield is given, the arc off), and its own body -> world turn
-    gives the same emitted action as Shield.filter on the world action did,
-    to the rotations' rounding (tests/test_rail_body_frame.py). "body" hands it the BODY-frame
+    heading the Shield is given, the arc off) on each tick whose round trip
+    is exact, else to Shield.filter as before, so every row is what
+    Shield.filter on the world action gave, to the bit
+    (tests/test_rail_body_frame.py). "body" hands it the BODY-frame
     action (frames.to_body at the heading the Shield is given), through
     Shield.filter_body with the arc forecast, and the Shield's emitted body
     action is turned back into the world frame the integrator flies only
@@ -2043,9 +2044,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # The default arm (2026-11-18, WP3-04 / ARCH-04): the pilot's
             # world action turned into the BODY frame here, at the heading
             # the Shield is given, and handed to the Shield in that frame
-            # (frames.filter_as_body: filter_body, the arc off). The Shield's
-            # one body -> world turn does the rest, and the integrator flies
-            # its emitted world action as before (tests/test_rail_body_frame.py).
+            # (frames.filter_as_body: filter_body, the arc off) where the
+            # round trip is exact, else filter() as before: rows to the bit.
+            # The integrator flies the emitted world action as before
+            # (tests/test_rail_body_frame.py).
             d = filter_as_body(shield, seen, raw, t=t_now, **flags)
         a_rec = auditor.record(i, d)
         if a_rec is not None:
