@@ -439,6 +439,25 @@ def test_the_replay_bundle_carries_the_dem_and_re_derives_from_it():
         raise AssertionError("a bundle was written without its ground")
 
 
+def test_the_bag_replay_converts_the_bag_height_over_the_runs_dem():
+    """tools/replay_from_bag.py on a run over the DEM: the bundle's carried
+    DEM (and the run folder's named file) is taken, and the bag's height
+    above home converts to exactly what the node logged above the DEM."""
+    import replay_from_bag as R
+    node, out = _flown_run()
+    for ep in (R.load_bundle(out / f"{out.name}.replay.tar.gz", _tmp()), R.load_run(out)):
+        assert ep.terrain is not None and ep.terrain[1] == 584.0, (ep.terrain_why, ep.limits)
+        assert _sha() in ep.terrain_source, ep.terrain_source
+        rows = [r for r in ep.rows if r.get("up_ref") == "terrain"]
+        assert rows and all(
+            abs(R._over_ground(r["x"], r["y"], r["up_home"], ep.terrain) - r["up"]) <= 2e-3
+            for r in rows), rows[:2]
+    # trajectory.json's own doubles: the pose flew 20.0 m above home at (0, 0).
+    traj = json.loads((out / "trajectory.json").read_text(encoding="utf-8"))
+    assert traj and all(R._over_ground(p["x"], p["y"], 20.0, ep.terrain) == p["up"]
+                        for p in traj), traj[:2]
+
+
 def test_a_run_without_a_ground_packs_as_before():
     from guardrail.replay import _ground_member, run_ground_ref
     assert run_ground_ref({}) is None and run_ground_ref(None) is None
