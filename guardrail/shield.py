@@ -800,8 +800,9 @@ def altitude_outside(env, up: float) -> tuple[bool, bool]:
     rule_clearances), the cost map's band and the compiler's relevance facts
     call it, and so do the end-of-flight altitude counts of every rail
     (follow_vlm, vla_fly, run_sitl_demo, ros2_shield_node, the PAS
-    perception node): until 2026-11-18 each of those compared the altitude
-    with the band itself, without the slack (WP3-22 / X-13)."""
+    perception node). Until 2026-11-18 each of those compared the altitude
+    with the band itself: the counts and the relevance facts without the
+    slack, the cost map with the same slack written out (WP3-22 / X-13)."""
     return up < env.alt_min_m - _ALT_SLACK_M, up > env.alt_max_m + _ALT_SLACK_M
 
 
