@@ -1041,6 +1041,130 @@ class ClearanceField:
     def distance(self, x: float, y: float) -> float:
         return field_distance(self.d, self.res, self.ox, self.oy, x, y)
 
+    def off_map(self, x: float, y: float) -> bool:
+        """Shield.off_map over this field: more than half a cell past the
+        map's edge, where the clearance rule cannot see anything."""
+        return field_off_map(self.d, self.res, self.ox, self.oy, x, y)
+
+
+def field_off_map(d, res: float, ox: float, oy: float, x: float, y: float) -> bool:
+    """True where world point (x, y) lies more than half a cell outside the
+    grid of distance field `d` (cell size `res`, origin (ox, oy)); False
+    when `d` is None. The one off-map test: Shield.off_map and
+    ClearanceField.off_map both call it."""
+    if d is None:
+        return False
+    n, m = d.shape
+    fi = (x - ox) / res
+    fj = (y - oy) / res
+    return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
+
+
+def min_clearance_on_map(points, obstacle_map: dict | None = None,
+                         shield: "Shield | None" = None) -> tuple[float | None, int]:
+    """(the least clearance over `points` that lie on the map, how many lie
+    off it), measured as the clearance rule measures it: `shield`'s own
+    field (Shield.clearance_at, Shield.off_map) when that Shield holds an
+    obstacle map, else the same field built over `obstacle_map` and read by
+    the same functions (ClearanceField). `points` are (x, y) pairs or dicts
+    with "x" and "y". (None, n) with no point on the map; (None, 0) with no
+    map at all.
+
+    The post-flight "minimum building distance" of the semantic demo and
+    semantic seek (WP3-22 / X-13, 2026-11-18). Until then each read
+    city_planner.distance_field (a 5x5 chamfer transform, rounded to the
+    nearest cell, 0 inside a building) - a second measure of the
+    obstacle_clearance rule. This one is signed (negative inside a
+    footprint) and bilinear, as the Shield reads it."""
+    if shield is not None and shield.has_obstacle_map:
+        dist, off = shield.clearance_at, shield.off_map
+    elif obstacle_map is not None:
+        field = ClearanceField(obstacle_map)
+        dist, off = field.distance, field.off_map
+    else:
+        return None, 0
+    best, n_off = None, 0
+    for p in points:
+        x, y = (p["x"], p["y"]) if isinstance(p, dict) else (p[0], p[1])
+        if off(x, y):
+            n_off += 1
+            continue
+        d = dist(x, y)
+        if best is None or d < best:
+            best = d
+    return best, n_off
+
+
+def altitude_band_report(shield: "Shield", points, tol_m: float = 0.5) -> dict | None:
+    """The post-flight altitude-band report of the semantic demo and semantic
+    seek, read off the Shield's own rows (Shield.rule_status, the policy's
+    first altitude_envelope - the band those reports always judged), or None
+    when the policy has none or there are no points. `points` are dicts with
+    "x", "y" and "up".
+
+      breach_ticks  points the Shield's altitude verdict breaches (its own
+                    comparison, Shield._alt_outside: 1e-9 m of slack, and
+                    only while the rule is in force)
+      worst_excursion_m  the most metres past either bound, from the row's
+                    distance_m (0.0 when never outside)
+      held          worst_excursion_m <= tol_m: a REPORTING tolerance on the
+                    Shield's measure, not a rule. tol_m = 0.5 m is the slack
+                    the reports' "altitude band held" has carried since they
+                    were written (the airframe's altitude hold oscillates
+                    round the band's edges); it decides nothing in flight.
+
+    Until 2026-11-18 each report compared the altitude with the band itself
+    (`alt_min_m - 0.5 <= up <= alt_max_m + 0.5`) - a second altitude
+    evaluator (WP3-22 / X-13). `held` gives that test's answer
+    (tests/test_shieldcore_onepath.py holds the old line as the null)."""
+    pts = list(points)
+    if not pts:
+        return None
+    breach, worst = 0, 0.0
+    for p in pts:
+        row = next((r for r in shield.rule_status(State(x=p["x"], y=p["y"], up=p["up"]))
+                    if r["type"] == "altitude_envelope"), None)
+        if row is None:
+            return None
+        breach += bool(row["breach"])
+        worst = max(worst, -row["distance_m"])
+    return {"breach_ticks": breach, "worst_excursion_m": worst, "held": worst <= tol_m,
+            "tol_m": tol_m}
+
+
+def nearest_cell_clearance(obstacle_map: dict, px: float, py: float, cap_m: float) -> float:
+    """Metres from (px, py) to the nearest BLOCKED cell centre of
+    `obstacle_map` within `cap_m`, `cap_m` when none: an exact Euclidean scan
+    of the cells round the point (rounded to the nearest cell) rather than
+    a distance transform, because the city controller calls it inside its
+    control loop.
+
+    The city controller's FenceGuard brakes and sidesteps for buildings on
+    this measure by default (demo/follow_vlm.py, guard_field="grid": every
+    stored follow flight flew it). It lived in follow_vlm.py as
+    grid_scan_clearance until 2026-11-18 and moved here unchanged (WP3-22 /
+    X-13; tests/test_shieldcore_onepath.py holds the old copy as the null and
+    shows the answers bit-identical). It is NOT the field the Shield's
+    obstacle_clearance verdict reads (`field_distance`: chamfer-scaled,
+    bilinear, so up to 1.4 m nearer beside a face); guard_field="shield"
+    makes FenceGuard read that one instead, opt-in until flown. Moving it
+    here did not merge it: it is still a SECOND measure of the rule, and
+    tests/test_shieldcore_onepath.py names it so (_LIBRARY_CLEARANCE_MEASURES)."""
+    occ, res = obstacle_map["occ"], obstacle_map["res"]
+    ox, oy = obstacle_map["ox"], obstacle_map["oy"]
+    n, m = occ.shape
+    r = int(math.ceil(cap_m / res))
+    i0 = int(round((px - ox) / res))
+    j0 = int(round((py - oy) / res))
+    best = cap_m
+    for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
+        for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
+            if occ[i, j]:
+                d = math.hypot(ox + i * res - px, oy + j * res - py)
+                if d < best:
+                    best = d
+    return best
+
 
 def _field_lipschitz(d, res: float) -> float:
     """How many metres `Shield._distance_at` can change per metre the point
@@ -2578,17 +2702,22 @@ class Shield:
         off-map ticks must say so rather than report 0."""
         return self._dist is not None
 
+    def blind_clearance_rules(self) -> list[str]:
+        """The clearance rules this Shield holds but cannot judge, "id: why":
+        an obstacle_clearance with no obstacle map, a distance_envelope over
+        roads with no road map. Empty for every Shield built with
+        require_maps=True and its maps; a reader that builds one with
+        require_maps=False (an offline counter) reports these rather than
+        count zero seconds for a rule that never ran."""
+        return [f"{c.id}: no {'road_map' if _field_name(c) == 'roads' else 'obstacle_map'}"
+                f" - the rule is inert here"
+                for c in self._rt.clear if self._field_for(c) is None]
+
     def off_map(self, x: float, y: float) -> bool:
         """True where (x, y) lies outside the obstacle map (more than half a
         cell past its edge). The clearance rule cannot see anything there, so
         a caller should report it rather than let it pass as clear."""
-        d = self._dist
-        if d is None:
-            return False
-        n, m = d.shape
-        fi = (x - self._ox) / self._res
-        fj = (y - self._oy) / self._res
-        return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
+        return field_off_map(self._dist, self._res, self._ox, self._oy, x, y)
 
     def _away_dir(self, x: float, y: float, probe_r: float,
                   f=None) -> tuple[float, float]:

@@ -82,7 +82,8 @@ from guardrail.manifest import (                                    # noqa: E402
     is_kpi_grade, model_hash, pilot_record,
 )
 from guardrail.replay import EpisodeRecord, verify_replay, write_replay  # noqa: E402
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,           # noqa: E402
+                              nearest_cell_clearance)
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, DistanceEnvelope, ObstacleClearance, SubjectStandoff,
 )
@@ -2273,29 +2274,6 @@ class TargetLock:
                 "size_rejected": self.n_size_rejected}
 
 
-def grid_scan_clearance(occ_map: dict, px: float, py: float, cap_m: float) -> float:
-    """FenceGuard's own clearance measure (guard_field="grid", the default):
-    the nearest blocked cell centre within `cap_m` of (px, py), `cap_m` when
-    none. A local scan rather than a distance transform because it runs
-    inside the control loop. NOT the Shield's measure (its chamfer field,
-    read bilinearly): one of the clearance evaluators outside the library
-    that tests/test_shieldcore_onepath.py lists by name (WP3-22 / X-13)."""
-    occ, res = occ_map["occ"], occ_map["res"]
-    ox, oy = occ_map["ox"], occ_map["oy"]
-    n, m = occ.shape
-    r = int(math.ceil(cap_m / res))
-    i0 = int(round((px - ox) / res))
-    j0 = int(round((py - oy) / res))
-    best = cap_m
-    for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
-        for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
-            if occ[i, j]:
-                d = math.hypot(ox + i * res - px, oy + j * res - py)
-                if d < best:
-                    best = d
-    return best
-
-
 class FenceGuard:
     """Lets the controller see the no-fly zones, so it can stop before them.
 
@@ -2487,11 +2465,13 @@ class FenceGuard:
         as "far enough to be uninteresting" without a special case.
 
         TWO MEASURES, ONE OPT-IN (2026-11-17, WP3-22 / X-13).
-        guard_field="grid" (the default) is the guard's own scan of the
-        occupancy grid (`grid_scan_clearance`: the nearest blocked cell
-        centre within the cap, rounded to the nearest cell) - a second
-        measure of the clearance rule beside the Shield's distance field,
-        which reads the field bilinearly and chamfer-scaled and so up to
+        guard_field="grid" (the default) is a scan of the occupancy grid
+        (guardrail/shield.py `nearest_cell_clearance`: the nearest blocked
+        cell centre within the cap, rounded to the nearest cell; this file's
+        own `grid_scan_clearance` until 2026-11-18, moved into the library
+        unchanged and shown bit-identical by tests/test_shieldcore_onepath.py),
+        a second measure of the clearance rule beside the Shield's distance
+        field, which reads the field bilinearly and chamfer-scaled and so up to
         1.4 m nearer beside a building face. guard_field="shield" reads the
         Shield's own field (`_clearance_fn`): the controller stops at the
         line the Shield defends, measured the same way. That changes the
@@ -2508,7 +2488,7 @@ class FenceGuard:
         if not self.occ:
             return cap_m
         if self.guard_field == "grid":
-            return grid_scan_clearance(self.occ, px, py, cap_m)
+            return nearest_cell_clearance(self.occ, px, py, cap_m)
         return min(cap_m, self._clearance_fn()(px, py))
 
     def _obstacle_gate(self, x: float, y: float, vx: float, vy: float):
