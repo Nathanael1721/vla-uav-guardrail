@@ -210,6 +210,11 @@ def _replayed() -> dict | str:
     _edit_jsonl(root / "rail_ts_fsm" / "shield_audit.jsonl", i,
                 lambda a: a.update(ts="1999-01-01T00:00:00.000+00:00",
                                    fsm_reason="another FSM", fsm_state_after="Brake"))
+    # the replay bundle alone: a folder holding nothing but <run>.replay.tar.gz
+    from guardrail.replay import last_generation_policy, write_replay
+    (root / "tar_only").mkdir()
+    write_replay(root / "rail_ok", last_generation_policy(root / "rail_ok"),
+                 root / "tar_only" / "tar_only.replay.tar.gz", signer=None)
     _headless_bundle(root / "headless_ok", rev)
     shutil.copytree(root / "headless_ok", root / "headless_audit_edit")
     _edit_jsonl(root / "headless_audit_edit" / "shield_audit.jsonl", 0,
@@ -272,6 +277,84 @@ def test_a_rail_run_flown_at_head_replays_identical_open_loop_record_by_record()
     assert r["generations"] == [0, 1] and r["ticks"] == 80, r
     assert r["state_source"].startswith("trajectory.json"), r
     assert r["code_revision_flown"] == _CACHE["head"][:12] and r["sha"] == _CACHE["head"]
+
+
+def test_the_replay_bundle_alone_is_enough_and_carries_the_positions_doubles():
+    """The tarball is self-contained for the open-loop replay: manifest,
+    metrics, every generation, the audit and, since 2026-11-18,
+    trajectory.json (guardrail.replay EPISODE_FILES) - without it the
+    replay would get the log's 1 mm positions."""
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    t = out["tar_only"]
+    assert t["verdict"] == "identical", t
+    assert t["state_source"].startswith("trajectory.json"), t
+    assert t["audit"]["n_stored"] == out["rail_ok"]["audit"]["n_stored"], t["audit"]
+    assert "replay.tar.gz" in t["audit"]["source"] and "replay.tar.gz" in t["log"]["source"]
+    assert sorted(p.name for p in (_CACHE["root"] / "tar_only").iterdir()) == [
+        "tar_only.replay.tar.gz"]
+
+
+def test_the_replay_bundle_packs_trajectory_json():
+    from guardrail.replay import (EPISODE_FILES, STALE_PATTERNS, last_generation_policy,
+                                  read_replay, verify_replay, write_replay)
+    assert EPISODE_FILES["trajectory.json"] is False and "trajectory.json" in STALE_PATTERNS
+    run = _tmp("rar_pack_") / "r"
+    _rail_run(run, "test")
+    p = write_replay(run, last_generation_policy(run), run.parent / "r.replay.tar.gz",
+                     signer=None)
+    got = read_replay(p)
+    want = json.loads((run / "trajectory.json").read_text(encoding="utf-8"))
+    assert got["trajectory"] == want and len(want) == 80
+    verify_replay(p)
+    (run / "trajectory.json").unlink()
+    p2 = write_replay(run, last_generation_policy(run), run.parent / "r2.replay.tar.gz",
+                      signer=None)
+    assert read_replay(p2)["trajectory"] is None        # optional, as before
+
+
+def test_a_sweep_bundle_carries_the_grants_policy_bundle_with_every_generation():
+    """experiments/sweep_scenarios.py's headless bundles: policy_bundle.tar.gz
+    (the policy file and each generation's IR), and kpi.json `bundle_files`
+    naming all six of the grant's members and why episode.bag2/ is not one."""
+    import tarfile
+    import yaml
+    import sweep_scenarios as S
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    raw = yaml.safe_load((ROOT / "experiments" / "scenarios.yaml").read_text(encoding="utf-8"))
+    fam = lib.raw("dyn-nfz-spawn-on-top")
+    d = _tmp("rar_sweep_")
+    (d / "lib.yaml").write_text(yaml.safe_dump({"defaults": raw["defaults"],
+                                                "scenarios": [fam]}), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        S.main(["--library", str(d / "lib.yaml"), "--out", str(d / "s.json"),
+                "--runs", str(d / "runs")])
+    eps = sorted(p for p in (d / "runs").iterdir() if p.is_dir())
+    assert eps, "the sweep wrote no bundle"
+    for ep in eps:
+        names = {p.name for p in ep.iterdir()}
+        assert {"manifest.json", "policy_bundle.tar.gz", "shield_audit.jsonl",
+                "harness_events.jsonl", "kpi.json"} <= names, (ep.name, names)
+        doc = json.loads((ep / "kpi.json").read_text(encoding="utf-8"))
+        files = doc["bundle_files"]
+        assert set(files) == {"manifest.json", "policy_bundle.tar.gz", "episode.bag2/",
+                              "shield_audit.jsonl", "harness_events.jsonl", "kpi.json"}
+        assert files["policy_bundle.tar.gz"] == "written, complete", files
+        assert files["episode.bag2/"].startswith("not written: the headless backend")
+        with tarfile.open(ep / "policy_bundle.tar.gz") as tf:
+            members = set(tf.getnames())
+            index = json.loads(tf.extractfile("policy_bundle.json").read())
+        gens = [g["generation"] for g in index["generations"]]
+        assert index["complete"] and all(f"generations/policy_g{n}.json" in members
+                                         for n in gens), (members, index)
+        assert any(m.startswith("injected/") for m in members), members
+        man = json.loads((ep / "manifest.json").read_text(encoding="utf-8"))
+        assert index["generations"][0]["policy_hash"] == man["policy_hash"], index
+    assert any(len(json.loads(tarfile.open(ep / "policy_bundle.tar.gz").extractfile(
+        "policy_bundle.json").read())["generations"]) >= 2 for ep in eps), \
+        "no hot-applied generation: the 'all generations' half is untested"
 
 
 def test_the_open_loop_replay_can_fail_and_says_where():

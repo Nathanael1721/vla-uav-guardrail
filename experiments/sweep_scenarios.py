@@ -8465,6 +8465,38 @@ def write_bundle(ep_dir: Path, manifest: dict, kpi_doc: dict, events: list[dict]
             "".join(json.dumps(_json_safe(a)) + "\n" for a in audit), encoding="utf-8")
 
 
+def write_episode_policy_bundle(ep_dir: Path, spec: ScenarioSpec, run: EpisodeRun) -> dict:
+    """`policy_bundle.tar.gz` in a headless episode's bundle: the grant's
+    "exact bundle that was active (incl. all hot-apply generations)" (Stress
+    Testing, "Episode bundle"), written by the harness service's own
+    `write_policy_bundle` (the policy file the scenario names, byte for byte,
+    and the canonical IR of every generation the run held, each checked
+    against the hash the episode recorded; its index says which, if any, it
+    does not hold). Until 2026-11-18 only the gRPC harness's bundles carried
+    it; a sweep bundle had the policy only inside manifest_extras.json.
+
+    Returns kpi.json's `bundle_files`: each of the grant's six names and
+    whether it was written, or why not (no episode.bag2/: the headless
+    backend runs no ROS 2 graph, so nothing records a rosbag2)."""
+    from guardrail.harness_service import (NO_EPISODE_BAG, POLICY_BUNDLE_FILE,
+                                           write_policy_bundle)
+    src = Path(spec.policy.source)
+    try:
+        start_pol, _ = spec.policy.load_with_source(ROOT)
+    except Exception:                                            # noqa: BLE001
+        start_pol = None            # said in the index: generation 0's IR is missing
+    pb = write_policy_bundle(ep_dir, src if src.is_absolute() else ROOT / src, start_pol,
+                             run.policy, policy_generations(run.events),
+                             held=getattr(run, "generations", None))
+    return {"manifest.json": "written",
+            POLICY_BUNDLE_FILE: ("written, complete" if pb["complete"]
+                                 else f"written, incomplete: {pb['missing']}"),
+            "episode.bag2/": NO_EPISODE_BAG,
+            "shield_audit.jsonl": "written",
+            "harness_events.jsonl": "written",
+            "kpi.json": "written"}
+
+
 def runner_facts() -> dict:
     """The interpreter this sweep ran under (WP1-25 / X-06: the grant's non-VLA
     stack is Python 3.11+). On a hil campaign the Shield node records the
@@ -9637,6 +9669,9 @@ def main(argv: list[str] | None = None) -> int:
                                             autopilot_hold=args.autopilot_hold,
                                             response=ep.response,
                                             recovery=args.recovery_law)}
+            # The grant's policy_bundle.tar.gz beside it: the policy file
+            # and every generation's IR (write_episode_policy_bundle).
+            files = write_episode_policy_bundle(ep_dir, spec, run)
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
@@ -9645,7 +9680,8 @@ def main(argv: list[str] | None = None) -> int:
                             "breaches": extra.get("breaches"),
                             "shield": "on" if spec.shield else "off",
                             "fsm": extra.get("fsm")},
-                "kpi": res}), events, rows if args.keep_logs else None,
+                "kpi": res, "bundle_files": files}), events,
+                rows if args.keep_logs else None,
                 _json_safe(full_extras), audit=run.audit)
             bundle = _show(ep_dir)
 
