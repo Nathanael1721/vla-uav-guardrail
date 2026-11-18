@@ -186,7 +186,16 @@ def _survey_src(north=None, corridor_end=None):
     import yaml
     src = yaml.safe_load(SURVEY.read_text(encoding="utf-8"))
     if north is not None:
-        src["constraints"].append(_north(north))
+        rule = _north(north)
+        if src.get("origin"):
+            # Written in lat/lon about the policy's origin, as every writer
+            # stores a zone since 2026-11-17: a metre zone beside lat/lon
+            # points is the legacy mixed form, which the flight loader (and
+            # so the headless runner) refuses since 2026-11-18 (WP1-14). The
+            # metres are on the micrometre grid: the same view.
+            from guardrail.projection import raw_points_in_wgs84
+            rule = raw_points_in_wgs84(rule, (src["origin"]["lat"], src["origin"]["lon"]))
+        src["constraints"].append(rule)
     if corridor_end is not None:
         for c in src["constraints"]:
             if c["id"] == "corridor-survey-route":
@@ -840,8 +849,7 @@ def test_a_second_zone_past_the_exit_does_not_keep_the_aircraft_inside():
              for y0 in (42.0, 45.0, 47.0) for arm in ("grant", "3s")}
     with tempfile.TemporaryDirectory() as tmp:
         for y0 in (42.0, 45.0, 47.0):
-            src = yaml.safe_load(SURVEY.read_text(encoding="utf-8"))
-            src["constraints"].append(_north(y0))
+            src = _survey_src(north=y0)            # the zone in lat/lon (WP1-14)
             path = Path(tmp) / f"survey_north_{int(y0)}.yaml"
             path.write_text(yaml.safe_dump(src), encoding="utf-8")
             for arm in SW.FORECAST_ARMS:
