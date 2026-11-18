@@ -1162,6 +1162,23 @@ def test_the_ring_is_strict_and_coverage_decides_what_scores():
     assert s["frac_within_30m_of_read"] == 1.0 and "not measured" in s["standoff_basis"]
     s = pn.truth_summary(rows([9.0] * 9 + [3.0] * 9, 20), truth, 5.0, 0.1)
     assert not s["scored"] and s["standoff_s"] == 0.9 and "LOWER BOUND" in s["standoff_basis"]
+    # Inside is the Shield's stand-off test (guardrail/shield.py
+    # standoff_breached, 1e-9 m of slack), not a `<` of its own: within the
+    # slack of the ring is not inside, as the Shield's rule_status says
+    # (until 2026-11-18 both counts here compared `d < ring_m`).
+    s = pn.truth_summary(rows([5.0 - 5e-10] * 20, 20), truth, 5.0, 0.1)
+    assert s["ticks_in_ring"] == 0 and s["standoff_s"] == 0.0, s
+    s = pn.truth_summary(rows([5.0 - 2e-9] * 20, 20), truth, 5.0, 0.1)
+    assert s["ticks_in_ring"] == 20 and s["standoff_s"] == 2.0, s
+    import guardrail.shield as SH
+    orig = pn.standoff_breached
+    pn.standoff_breached = lambda d, r: False
+    try:
+        s = pn.truth_summary(rows([3.0] * 20, 20), truth, 5.0, 0.1)
+        assert s["ticks_in_ring"] == 0, "truth_summary compares the ring itself"
+    finally:
+        pn.standoff_breached = orig
+    assert pn.standoff_breached is SH.standoff_breached
 
 
 def test_the_standoff_dwell_is_the_time_the_rows_span_not_ticks_times_a_tenth():

@@ -84,7 +84,7 @@ from guardrail.manifest import (                                    # noqa: E402
 )
 from guardrail.replay import EpisodeRecord, verify_replay, write_replay  # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,           # noqa: E402
-                              nearest_cell_clearance)
+                              altitude_outside)
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, DistanceEnvelope, ObstacleClearance, SubjectStandoff,
 )
@@ -2307,18 +2307,38 @@ class FenceGuard:
     the controller's own question - where to brake, which way round - built
     on those answers (`clear_aim`'s keep-out band is the rings grown by the
     stand-off, a planning shape, not a rule).
+
+    AND THE BUILDINGS' MEASURE AND VERDICT (2026-11-18, WP3-22 / X-13). The
+    building half measured clearance on a grid scan of its own and compared
+    it with min_clearance_m itself (`<=` in the brake's ring and in
+    guard_urgent, `>=` in slide). It now asks the Shield's ClearanceRuler
+    (`Shield.clearance_ruler`): the Shield's clearance field for the
+    distance and the Shield's obstacle_clearance threshold test
+    (clearance_breached) for "inside the ring" (`building_breached`),
+    against the limits of the clearance rules the Shield holds in force at
+    that instant (`clearance_limits`). This changed the flown default
+    (module note at `clearance`). The fence stand-off and brake distances
+    are the controller's own planning distances (--fence-standoff,
+    --fence-brake), not rule thresholds.
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
                  obstacle_map: dict | None = None, min_clearance_m: float = 5.0,
                  street_mask: dict | None = None, shield=None,
-                 guard_field: str = "grid"):
-        # What the building half measures clearance on (`clearance`): "grid"
-        # (the default, what every stored follow flight flew) or "shield"
-        # (the Shield's own distance field, WP3-22 / X-13; opt-in with
-        # --guard-field shield until it has been flown on the AGX).
-        if guard_field not in ("grid", "shield"):
-            raise ValueError(f"guard_field must be 'grid' or 'shield', not {guard_field!r}")
+                 guard_field: str = "shield"):
+        # What the building half measures clearance on (`clearance`) and
+        # judges it with: the Shield's own distance field and threshold test
+        # (Shield.clearance_ruler; WP3-22 / X-13). "shield" is the only
+        # value, and the default since 2026-11-18 - a FLOWN-DEFAULT CHANGE:
+        # every follow flight stored before then flew "grid", FenceGuard's
+        # own scan of the occupancy grid judged with its own `<=`. That scan
+        # is diagnostic only now (tools/onepath_guard_replay.py
+        # GridScanGuard replays stored flights on it); it never flies.
+        if guard_field != "shield":
+            raise ValueError(
+                f"guard_field must be 'shield', not {guard_field!r}: the building half "
+                f"measures and judges clearance with the Shield's ruler only (the grid "
+                f"scan is diagnostic: tools/onepath_guard_replay.py GridScanGuard)")
         self.guard_field = guard_field
         if shield is None:
             from guardrail.shield import Shield
@@ -2343,7 +2363,7 @@ class FenceGuard:
         # The Shield caught every one of those, which is the system working. But
         # the controller should not be proposing them.
         self.occ = obstacle_map
-        self._clear_fn = None
+        self._clr = None
         self.min_clearance_m = min_clearance_m
         # ...and "on the road" has to be ASKED, not inferred from the absence of
         # obstacles. That inference held only while the obstacle map was built
@@ -2439,25 +2459,36 @@ class FenceGuard:
             return None
         return dx / n, dy / n
 
-    def _clearance_fn(self):
-        """What the building half measures with: the Shield's clearance
-        field (Shield.clearance_at), when the guard's Shield holds this
-        obstacle map; else the same field built over the guard's map and
-        read by the same function (guardrail/shield.py ClearanceField,
-        field_distance)."""
-        fn = self._clear_fn
-        if fn is None:
-            sh, occ = self.shield, self.occ
-            same = (sh.has_obstacle_map and sh._dist.shape == np.asarray(occ["occ"]).shape
-                    and sh._res == float(occ["res"]) and sh._ox == float(occ["ox"])
-                    and sh._oy == float(occ["oy"]))
-            if same:
-                fn = sh.clearance_at
-            else:
-                from guardrail.shield import ClearanceField
-                fn = ClearanceField(occ).distance
-            self._clear_fn = fn
-        return fn
+    def _ruler_clr(self):
+        """What the building half measures and judges with: the Shield's
+        ClearanceRuler over the guard's obstacle map (Shield.clearance_ruler:
+        Shield.clearance_at when the guard's Shield holds this map, else the
+        same field built over it and read by the same function,
+        guardrail/shield.py ClearanceField / field_distance), judged against
+        `clearance_limits` at the moment of asking."""
+        r = self._clr
+        if r is None:
+            r = self._clr = self.shield.clearance_ruler(self.occ, self.clearance_limits)
+        return r
+
+    def clearance_limits(self) -> tuple:
+        """The limits the building half judges a clearance against NOW: the
+        Shield's own - the min_clearance_m of every obstacle_clearance rule
+        over the buildings in force at this instant, from the rule set the
+        Shield enforces now (Shield.clearance_limits_now: a time window, a
+        hot-applied rule and a second clearance rule all count, as they do
+        in rule_status) - whenever that rule set declares one; only on a
+        rule set that declares none, the guard's own planning ring
+        `min_clearance_m` (the controller still keeps off buildings the
+        policy does not protect). Until 2026-11-18 the ring was always
+        `min_clearance_m`, the FIRST obstacle_clearance rule's limit as
+        fly() read it at start-up (review of d8fd243). Identical on every
+        stored follow policy: each declares exactly one such rule, with no
+        time window."""
+        sh = self.shield
+        if sh.declares_clearance():
+            return sh.clearance_limits_now()
+        return (self.min_clearance_m,)
 
     def clearance(self, px: float, py: float, cap_m: float) -> float:
         """Distance to the nearest mapped obstacle, no more than `cap_m`.
@@ -2465,32 +2496,38 @@ class FenceGuard:
         Returns `cap_m` when nothing is within it, so callers can treat the cap
         as "far enough to be uninteresting" without a special case.
 
-        TWO MEASURES, ONE OPT-IN (2026-11-17, WP3-22 / X-13).
-        guard_field="grid" (the default) is a scan of the occupancy grid
-        (guardrail/shield.py `nearest_cell_clearance`: the nearest blocked
-        cell centre within the cap, rounded to the nearest cell; this file's
-        own `grid_scan_clearance` until 2026-11-18, moved into the library
-        unchanged and shown bit-identical by tests/test_shieldcore_onepath.py),
-        a second measure of the clearance rule beside the Shield's distance
-        field, which reads the field bilinearly and chamfer-scaled and so up to
-        1.4 m nearer beside a building face. guard_field="shield" reads the
-        Shield's own field (`_clearance_fn`): the controller stops at the
-        line the Shield defends, measured the same way. That changes the
-        follow controller, so it stays opt-in until flown. Replayed open-loop
-        on 10 stored AGX follow flights (tools/onepath_guard_replay.py,
-        41959 ticks, gate() and slide() both replayed) the shield field
-        changes the guard's decision - its mode or its sidestep side - on
-        469 ticks (1.12 %; 15 % of logged holds, 4.6 % of near ticks), the
-        guard's scale on 3.96 %, the building brake's on/off on 0.26 %, and
-        skirts on 8948 ticks against 8730. On follow_car_gap.yaml the detour
-        it finds grows from 15 m (reach 20) to 26 m (reach 30). Every stored
-        follow result flew the grid scan.
+        ONE MEASURE (2026-11-18, WP3-22 / X-13): the Shield's own clearance
+        field, read as its obstacle_clearance verdict reads it (`_ruler_clr`).
+        Until 2026-11-18 the default was a scan of the occupancy grid (the
+        nearest blocked cell centre within the cap; guardrail/shield.py
+        `nearest_cell_clearance`, diagnostic only now), a second measure of
+        the rule beside the Shield's field, which reads bilinearly and
+        chamfer-scaled and so up to 1.4 m nearer beside a building face, and
+        the field was opt-in (--guard-field shield). Replayed open-loop on 10
+        stored AGX follow flights (tools/onepath_guard_replay.py, 41959
+        ticks, gate() and slide() both replayed) the switch changes the
+        guard's decision - its mode or its sidestep side - on 469 ticks
+        (1.12 %; 15 % of logged holds, 4.6 % of near ticks), the guard's
+        scale on 3.96 %, the building brake's on/off on 0.26 %, and skirts
+        on 8948 ticks against 8730. On follow_car_gap.yaml the detour it
+        finds grows from 15 m (reach 20) to 26 m (reach 30). Every follow
+        result stored before the switch flew the grid scan.
         """
         if not self.occ:
             return cap_m
-        if self.guard_field == "grid":
-            return nearest_cell_clearance(self.occ, px, py, cap_m)
-        return min(cap_m, self._clearance_fn()(px, py))
+        return self._ruler_clr().clearance(px, py, cap_m)
+
+    def building_breached(self, d: float) -> bool:
+        """Is a building clearance `d` (one `clearance` measured) inside the
+        ring: the Shield's obstacle_clearance threshold test on it
+        (guardrail/shield.py clearance_breached, through the ruler: strictly
+        nearer than a limit in force now, `clearance_limits`; AT the limit
+        is clear). The guard's
+        ONLY comparison with the limit: the building brake's ring, slide()'s
+        clear-of-buildings test and guard_urgent() all ask it. Until
+        2026-11-18 the brake's ring and guard_urgent compared with `<=` and
+        slide() with `>=`, each itself."""
+        return self._ruler_clr().breached_at(d)
 
     def _obstacle_gate(self, x: float, y: float, vx: float, vy: float):
         """The building half of `gate`, shaped exactly like the fence half.
@@ -2500,16 +2537,17 @@ class FenceGuard:
         The urgency then comes from how close the obstacle is right now.
 
         The ring is the policy's own `min_clearance_m`, the same number the
-        Shield enforces. The controller stopping at the same line the Shield
-        would defend is the point: the Shield becomes a backstop instead of the
-        only thing steering.
+        Shield enforces, judged by the Shield's own test (`building_breached`:
+        a forecast point is in the ring when the Shield would call it a
+        breach). The controller stopping at the same line the Shield would
+        defend is the point: the Shield becomes a backstop instead of the only
+        thing steering.
         """
         if not self.occ:
             return 1.0, None, False
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
             return 1.0, None, False
-        ring = self.min_clearance_m
         ux, uy = vx / speed, vy / speed
         horizon = max(self.brake_m, speed * 3.0)
 
@@ -2537,7 +2575,7 @@ class FenceGuard:
             # OUT of it brakes hardest exactly when it is escaping - measured
             # at scale 0.09 while retreating south from the canopy, which would
             # pin it against the obstacle it was leaving.
-            if c <= ring and c < d_now - 1e-6:
+            if self.building_breached(c) and c < d_now - 1e-6:
                 a_hit = float(a)
                 break
         if a_hit is None:
@@ -2696,14 +2734,17 @@ class FenceGuard:
             return bool(st[i, j])
 
         def _clear_of_obstacles(px: float, py: float) -> bool:
-            """Far enough from every MAPPED obstacle: `clearance` (the grid
-            scan by default, the Shield's field with guard_field="shield") at
-            least min_clearance_m here. The same answer as the Chebyshev scan
-            this held inline until 2026-11-17: the scan with the cap at
-            min_clearance_m falls below it exactly when a blocked cell does."""
-            if not self.occ:
+            """Far enough from every MAPPED obstacle: the Shield's threshold test on
+            `clearance` here is no breach (`building_breached`), capped at
+            the widest limit in force (`clearance_limits`), which changes no
+            verdict: the capped value is below a limit exactly when the
+            distance is. With no limit in force nothing can be breached.
+            (Until 2026-11-18 capped at min_clearance_m, the one limit then
+            read.)"""
+            lims = self.clearance_limits()
+            if not self.occ or not lims:
                 return True
-            return self.clearance(px, py, self.min_clearance_m) >= self.min_clearance_m
+            return not self.building_breached(self.clearance(px, py, max(lims)))
 
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)
@@ -2933,11 +2974,16 @@ def guard_urgent(fence: "FenceGuard", fblocked: bool) -> bool:
     keep 4-5 m clearance for whole flights, so a ring test on every tick would
     make every fence brake bite at once. gate() already reports blocked inside
     a zone's stand-off; the stand-off test is kept so this function says what
-    it promises whatever gate()'s blocked flag later becomes."""
+    it promises whatever gate()'s blocked flag later becomes.
+
+    "Inside the clearance ring" is the Shield's threshold test on that distance
+    (FenceGuard.building_breached: strictly nearer than the limit), since
+    2026-11-18 (WP3-22 / X-13); it was `<=` here, so AT the limit the brake
+    bit at once where the Shield reported no breach."""
     if fblocked:
         return True
     od = fence.last_obstacle_d
-    if od is not None and od <= fence.min_clearance_m:
+    if od is not None and fence.building_breached(od):
         return True
     fd = fence.last_fence_d
     return fd is not None and fd <= fence.stand_off_m
@@ -4721,9 +4767,15 @@ async def fly(args) -> int:
                        stand_off_m=args.fence_standoff, obstacle_map=smap,
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
                        street_mask=street, shield=shield,
-                       guard_field=getattr(args, "guard_field", "grid"))
-    print(f"[fence] building clearance measured on the "
-          f"{'Shield field (opt-in, not yet flown)' if fence.guard_field == 'shield' else 'guard grid scan'}")
+                       guard_field=getattr(args, "guard_field", "shield"))
+    _lims = fence.clearance_limits()
+    print(f"[fence] building clearance measured and judged by the Shield "
+          f"(guard_field={fence.guard_field}: its clearance field and its "
+          f"obstacle_clearance test against "
+          + (f"the rules in force, now {', '.join(f'{v:g}' for v in _lims) or 'none'} m)"
+             if shield.declares_clearance() else
+             f"the guard's own {fence.min_clearance_m:g} m ring: the policy "
+             f"declares no obstacle_clearance rule)"))
 
     audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 
@@ -7150,8 +7202,10 @@ async def fly(args) -> int:
         print(f"[nfz] moving zone(s) {moving_zones} are NOT in nfz_s: the end-of-"
               f"flight count has no per-tick position for them")
     band = policy.by_type(AltitudeEnvelope)
-    alt_bad = (sum(1 for pt in traj
-                   if pt["up"] < band[0].alt_min_m or pt["up"] > band[0].alt_max_m)
+    # The altitude check's own comparison (guardrail/shield.py
+    # altitude_outside, 1e-9 m of slack; this compared the band itself until
+    # 2026-11-18, WP3-22 / X-13).
+    alt_bad = (sum(1 for pt in traj if any(altitude_outside(band[0], pt["up"])))
                if band else 0)
     # Separation to the SUBJECT, not to the car. `tgt_x/tgt_y` is the scripted
     # vehicle for the whole flight, so on a retarget flight every one of these
@@ -7281,6 +7335,10 @@ async def fly(args) -> int:
         **loop_timing(stage_ms, cmd_times),
         # The forecast the Shield really used (flight_shield).
         "shield_lookahead": shield_lookahead_record(shield),
+        # What FenceGuard's building half measured and judged with: "shield"
+        # (the Shield's field and obstacle_clearance test) since 2026-11-18;
+        # a metrics.json without this key flew "grid" (WP3-22 / X-13).
+        "guard_field": fence.guard_field,
         # Estimator measurements by the pose they were placed at: "capture"
         # (the box's own frame) or "tick" (--legacy-tick-pose, or no capture
         # pose to be had). See estimator_measurement.
@@ -8208,12 +8266,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="start slowing this far from a no-fly zone")
     ap.add_argument("--fence-standoff", type=float, default=3.0,
                     help="hold this far outside a no-fly zone")
-    ap.add_argument("--guard-field", choices=("grid", "shield"), default="grid",
-                    help="what FenceGuard's building half measures clearance on: "
-                         "'grid' (default; its own scan of the occupancy grid, what "
-                         "every stored follow flight flew) or 'shield' (the Shield's "
-                         "distance field, one measure with the rule it defends; "
-                         "WP3-22 / X-13, opt-in until flown on the AGX)")
+    ap.add_argument("--guard-field", choices=("shield",), default="shield",
+                    help="what FenceGuard's building half measures and judges "
+                         "clearance with: 'shield', the Shield's distance field and "
+                         "its obstacle_clearance test (WP3-22 / X-13; the default "
+                         "since 2026-11-18, and the only value). Every follow flight "
+                         "stored before then flew 'grid', the guard's own scan of the "
+                         "occupancy grid; that scan is diagnostic only now "
+                         "(tools/onepath_guard_replay.py) and cannot be flown")
     ap.add_argument("--dv-h", type=float, default=0.4,
                     help="the legacy limiter's step, m/s per axis per tick. "
                          "With the default motion shaping it is the FLOOR on "

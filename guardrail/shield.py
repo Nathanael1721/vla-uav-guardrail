@@ -783,6 +783,152 @@ def corridor_breached(corridor, x: float, y: float, up: float) -> bool:
         not corridor_in_band(corridor, up)
 
 
+def zone_band_outside(zone, up: float) -> tuple[bool, bool]:
+    """(below keep-out zone `zone`'s floor, above its ceiling) at altitude
+    `up`: the two sides of `in_zone_band` (ends included in the band), for a
+    reader that has to say WHICH side (the policy HUD's "above zone")."""
+    return up < zone.altitude_floor_m, up > zone.altitude_ceiling_m
+
+
+_ALT_SLACK_M = 1e-9
+
+
+def altitude_outside(env, up: float) -> tuple[bool, bool]:
+    """(below the floor, above the ceiling) of altitude_envelope `env` at
+    altitude `up`, with 1e-9 m of slack: THE altitude check's comparison.
+    The Shield's verdicts (Shield._alt_outside, rule_status,
+    rule_clearances), the cost map's band and the compiler's relevance facts
+    call it, and so do the end-of-flight altitude counts of every rail
+    (follow_vlm, vla_fly, run_sitl_demo, ros2_shield_node, the PAS
+    perception node). Until 2026-11-18 each of those compared the altitude
+    with the band itself: the counts and the relevance facts without the
+    slack, the cost map with the same slack written out (WP3-22 / X-13)."""
+    return up < env.alt_min_m - _ALT_SLACK_M, up > env.alt_max_m + _ALT_SLACK_M
+
+
+def altitude_out_of_band(env, up: float) -> bool:
+    """Is a LOGGED altitude `up` outside altitude_envelope `env`'s band: the
+    end-of-flight altitude counts' question, answered by `altitude_outside`
+    (a NaN altitude cannot be shown inside the band and counts as outside,
+    as each count's own `not (lo <= up <= hi)` did). Time windows are not
+    read: the counts never have."""
+    below, above = altitude_outside(env, up)
+    return below or above or math.isnan(up)
+
+
+def clearance_breached(d: float, min_clearance_m: float) -> bool:
+    """Does a clearance of `d` metres break an obstacle_clearance limit of
+    `min_clearance_m`: strictly nearer (AT the limit is legal). THE
+    threshold test of the rule: the Shield's verdict (_clearance_verdict,
+    rule_status, rule_clearances) and the city controller's building half
+    (demo/follow_vlm.py FenceGuard, through `ClearanceRuler`, against the
+    limits of the rules in force: `Shield.clearance_limits_now`) call it.
+
+    Until 2026-11-18 FenceGuard compared its clearance with the limit itself,
+    twice with `<=` (the building brake's ring and guard_urgent): AT the
+    limit it braked where the Shield reported no breach (WP3-22 / X-13).
+    tests/test_shieldcore_onepath.py fails on any comparison with a rule
+    threshold outside this library."""
+    return d < min_clearance_m
+
+
+_STANDOFF_SLACK_M = 1e-9
+
+
+def standoff_breached(d: float, min_range_m: float) -> bool:
+    """Is a horizontal range of `d` metres inside a subject_standoff ring of
+    `min_range_m`: strictly nearer than the ring less 1e-9 m. THE threshold
+    test of the stand-off rule: the Shield's check, its recovery and
+    rule_status (`standoff_inside`, Shield._standoff_inside) and the
+    end-of-flight stand-off counts of every rail (run_sitl_demo,
+    ros2_shield_node, the PAS perception node's truth_summary) call it. A
+    NaN range is not inside (the comparison fails, as it always did).
+
+    Until 2026-11-18 those three counts compared the range with the ring
+    themselves (`v < ring`, without the 1e-9 m slack): a range within 1e-9 m
+    inside the ring counted where the Shield reported no breach
+    (WP3-22 / X-13)."""
+    return d < min_range_m - _STANDOFF_SLACK_M
+
+
+def standoff_inside(so, d: float) -> bool:
+    """Is range `d` inside subject_standoff rule `so`'s ring
+    (`standoff_breached` against its min_range_m)?"""
+    return standoff_breached(d, so.min_range_m)
+
+
+def standoff_rules(constraints, subject_class: str | None) -> list:
+    """The stand-off rules among `constraints` that bind `subject_class`, as
+    the Shield enforces them: every subject_standoff, and a distance_envelope
+    over people as its runtime rule (models.PeopleStandoff; _runtime_rule).
+    Time windows are not read: the end-of-flight counts never have."""
+    out = []
+    for c in constraints:
+        if isinstance(c, DistanceEnvelope):
+            c = c.runtime_rule()
+        if isinstance(c, SubjectStandoff) and c.binds(subject_class):
+            out.append(c)
+    return out
+
+
+def standoff_ring_m(constraints, subject_class: str | None) -> float | None:
+    """The outermost stand-off ring that binds `subject_class` (metres), or
+    None when no rule binds it: the ring an end-of-flight count of "seconds
+    inside the stand-off" reads. A range is inside SOME binding ring exactly
+    when `standoff_breached(d, standoff_ring_m(...))`, the outermost one
+    holding the others."""
+    rings = [c.min_range_m for c in standoff_rules(constraints, subject_class)]
+    return max(rings) if rings else None
+
+
+class ClearanceRuler:
+    """The obstacle_clearance rule's measure and threshold test over one
+    obstacle map, read once and asked for as many points as the caller needs
+    (FenceGuard's building half asks a dozen per control tick):
+    `Shield.clearance_ruler()`.
+
+      distance(x, y)   the Shield's signed clearance field read by
+                       `field_distance` (Shield.clearance_at when the Shield
+                       holds this map, else `ClearanceField` over it): the
+                       number the Shield's verdict reads
+      clearance(x, y, cap_m)   that distance, no more than `cap_m`
+      limits_m()       the limits that distance is judged against now
+      breached_at(d)   `clearance_breached(d, L)` for some L in limits_m():
+                       the rule's verdict on a distance this ruler measured
+      breached(x, y)   the verdict at a point
+
+    `limits` is either a callable answering the limits in force at the
+    moment of asking - `Shield.clearance_limits_now`, the min_clearance_m of
+    every obstacle_clearance rule over the buildings in force now, as
+    rule_status's `breach` reads them (a window, a hot-applied rule, a second
+    clearance rule all count) - or one number the caller names (a reader
+    with no rule to read: FenceGuard's own planning ring on a policy that
+    declares no obstacle_clearance rule, the diagnostic replay). `limit_m`
+    is that number, None for a ruler that reads the rules."""
+    __slots__ = ("distance", "limit_m", "_limits")
+
+    def __init__(self, distance, limits):
+        self.distance = distance
+        if callable(limits):
+            self.limit_m, self._limits = None, limits
+        else:
+            self.limit_m = float(limits)
+            self._limits = (self.limit_m,)
+
+    def limits_m(self) -> tuple:
+        lim = self._limits
+        return lim() if callable(lim) else lim
+
+    def clearance(self, x: float, y: float, cap_m: float) -> float:
+        return min(cap_m, self.distance(x, y))
+
+    def breached_at(self, d: float) -> bool:
+        return any(clearance_breached(d, lim) for lim in self.limits_m())
+
+    def breached(self, x: float, y: float) -> bool:
+        return self.breached_at(self.distance(x, y))
+
+
 class ZoneRuler:
     """Distances from points to the margin rings of a set of compiled zones:
     `Shield.zone_ruler()`, the zones in force at one tick, read once and
@@ -1198,17 +1344,19 @@ def nearest_cell_clearance(obstacle_map: dict, px: float, py: float, cap_m: floa
     a distance transform, because the city controller calls it inside its
     control loop.
 
-    The city controller's FenceGuard brakes and sidesteps for buildings on
-    this measure by default (demo/follow_vlm.py, guard_field="grid": every
-    stored follow flight flew it). It lived in follow_vlm.py as
-    grid_scan_clearance until 2026-11-18 and moved here unchanged (WP3-22 /
-    X-13; tests/test_shieldcore_onepath.py holds the old copy as the null and
-    shows the answers bit-identical). It is NOT the field the Shield's
-    obstacle_clearance verdict reads (`field_distance`: chamfer-scaled,
-    bilinear, so up to 1.4 m nearer beside a face); guard_field="shield"
-    makes FenceGuard read that one instead, opt-in until flown. Moving it
-    here did not merge it: it is still a SECOND measure of the rule, and
-    tests/test_shieldcore_onepath.py names it so (_LIBRARY_CLEARANCE_MEASURES)."""
+    DIAGNOSTIC ONLY (since 2026-11-18, WP3-22 / X-13). Every follow flight
+    stored before that date braked and sidestepped for buildings on this
+    measure (demo/follow_vlm.py FenceGuard, guard_field="grid", the default
+    until then). It is NOT the field the Shield's obstacle_clearance verdict
+    reads (`field_distance`: chamfer-scaled, bilinear, so up to 1.4 m nearer
+    beside a face), and FenceGuard no longer flies it: its building half
+    reads the Shield's field through `ClearanceRuler`. It is kept for one
+    reader, tools/onepath_guard_replay.py (GridScanGuard), which replays the
+    stored flights' decisions as they were flown to count what the switch
+    changes; nothing in a flight loop calls it, and
+    tests/test_shieldcore_onepath.py fails if anything else does. It lived
+    in follow_vlm.py as grid_scan_clearance until 2026-11-18 and moved here
+    unchanged (bit-identical to the old copy, that test's null)."""
     occ, res = obstacle_map["occ"], obstacle_map["res"]
     ox, oy = obstacle_map["ox"], obstacle_map["oy"]
     n, m = occ.shape
@@ -3639,8 +3787,7 @@ class Shield:
         for t, p in self._predict(state, action, **kw):
             if alive is not True and not alive(t):
                 continue
-            below = p.up < env.alt_min_m - 1e-9
-            above = p.up > env.alt_max_m + 1e-9
+            below, above = altitude_outside(env, p.up)
             if dem and t > 1e-12:
                 # The rate away from the ground between now and the pose: the
                 # commanded vz itself on flat ground (up to rounding).
@@ -4479,10 +4626,10 @@ class Shield:
         # one 0.5 s step, so a drone anywhere inside the ring got a free pass on
         # every obstacle on the map - including forecasts that ended up inside a
         # building.
-        forgiving = d_now < c.min_clearance_m and receding
+        forgiving = clearance_breached(d_now, c.min_clearance_m) and receding
         prev = None
         for (t, p), d in zip(steps, dists):
-            if d >= c.min_clearance_m:
+            if not clearance_breached(d, c.min_clearance_m):
                 forgiving = False         # out of the ring: normal rules again
                 prev = d
                 continue
@@ -4526,8 +4673,8 @@ class Shield:
     @staticmethod
     def _standoff_inside(so, d: float) -> bool:
         """Is range `d` inside `so`'s ring? The one comparison the stand-off
-        check, its recovery and rule_status share."""
-        return d < so.min_range_m - 1e-9
+        check, its recovery and rule_status share (`standoff_inside`)."""
+        return standoff_inside(so, d)
 
     def _check_in(self, state: State, action: Action4D) -> list[Violation]:
         found: list[Violation] = []
@@ -5461,6 +5608,66 @@ class Shield:
         inf without a map."""
         return self._distance_at(x, y)
 
+    def holds_map(self, obstacle_map: dict | None) -> bool:
+        """Is `obstacle_map` the grid this Shield's clearance field was built
+        over (same shape, cell size and origin)?"""
+        if obstacle_map is None or not self.has_obstacle_map:
+            return False
+        return (self._dist.shape == np.asarray(obstacle_map["occ"]).shape
+                and self._res == float(obstacle_map["res"])
+                and self._ox == float(obstacle_map["ox"])
+                and self._oy == float(obstacle_map["oy"]))
+
+    def clearance_ruler(self, obstacle_map: dict | None,
+                        limit_m: float | None = None) -> ClearanceRuler:
+        """The obstacle_clearance rule's measure and threshold test over
+        `obstacle_map` (`ClearanceRuler`): this Shield's own field
+        (`clearance_at`) when it holds that map, else the same field built
+        over it and read by the same function (`ClearanceField`); the
+        verdict `clearance_breached` against the limits of this Shield's
+        obstacle_clearance rules over the buildings in force at the moment
+        of asking (`clearance_limits_now`), or against `limit_m` when the
+        caller names one (a reader with no rule to read). With no map the
+        distance is inf everywhere (nothing to breach)."""
+        limits = self.clearance_limits_now if limit_m is None else limit_m
+        if self.holds_map(obstacle_map):
+            return ClearanceRuler(self.clearance_at, limits)
+        if obstacle_map is None:
+            return ClearanceRuler(lambda x, y: math.inf, limits)
+        return ClearanceRuler(ClearanceField(obstacle_map).distance, limits)
+
+    def declares_clearance(self) -> bool:
+        """Does the rule set this Shield enforces now (a hot-applied one
+        included) hold an obstacle_clearance rule measured on the obstacle
+        map (the buildings), in force now or not?"""
+        return any(_field_name(c) == "buildings" for c in self._rt.clear)
+
+    def clearance_limits_now(self) -> tuple:
+        """The min_clearance_m of every obstacle_clearance rule measured on
+        the obstacle map (the buildings) that is in force now, in policy
+        order: the rules and the instant rule_status's `breach` reads, for a
+        reader that judges clearance at many points (FenceGuard's building
+        half, through `clearance_ruler`). Empty when none is in force."""
+        tick = self._tick_ctx()
+        if tick is None:
+            if not self._needs_tick():
+                return tuple(c.min_clearance_m for c in self._rt.clear
+                             if _field_name(c) == "buildings")
+            with self._scope(self._new_tick(None)) as tick:
+                return self._clearance_limits_in(tick)
+        return self._clearance_limits_in(tick)
+
+    @staticmethod
+    def _clearance_limits_in(tick) -> tuple:
+        out = []
+        for c in tick.rt.clear:
+            if _field_name(c) != "buildings":
+                continue
+            m = tick.sched.mask(c)
+            if m is True or (m is not False and m(0.0)):
+                out.append(c.min_clearance_m)
+        return tuple(out)
+
     @staticmethod
     def _cap_sparing_radial(a: Action4D, ux: float, uy: float,
                             keep: float, cap: float) -> Action4D:
@@ -6184,7 +6391,7 @@ class Shield:
                 if not math.isfinite(d):
                     continue
                 out[c.id] = RuleClearance(False, d - c.min_clearance_m, inf, inf, in_force,
-                                          in_force and d < c.min_clearance_m, f[4])
+                                          in_force and clearance_breached(d, c.min_clearance_m), f[4])
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, x, y)
                 out[c.id] = RuleClearance(
@@ -6848,14 +7055,14 @@ class Shield:
                 d = self._distance_at(state.x, state.y, f) if f is not None else None
                 if d is not None and math.isfinite(d):
                     row.update(bound=in_force, value=d, distance_m=d - c.min_clearance_m,
-                               breach=in_force and d < c.min_clearance_m)
+                               breach=in_force and clearance_breached(d, c.min_clearance_m))
             elif c.type == "obstacle_clearance":
                 d = clearance_m if clearance_m is not None else (
                     self._distance_at(state.x, state.y) if self._dist is not None else None)
                 row["off_map"] = self.off_map(state.x, state.y)
                 if d is not None and math.isfinite(d):
                     row.update(bound=in_force, value=d, distance_m=d - c.min_clearance_m,
-                               breach=in_force and d < c.min_clearance_m)
+                               breach=in_force and clearance_breached(d, c.min_clearance_m))
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, state.x, state.y)
                 in_band = corridor_in_band(c, state.up)
@@ -6870,9 +7077,9 @@ class Shield:
 
     @staticmethod
     def _alt_outside(env, up: float) -> tuple[bool, bool]:
-        """(below the floor, above the ceiling): the altitude check's own
-        comparison at a pose."""
-        return up < env.alt_min_m - 1e-9, up > env.alt_max_m + 1e-9
+        """(below the floor, above the ceiling): the altitude check's
+        comparison at a pose (`altitude_outside`)."""
+        return altitude_outside(env, up)
 
     def zones_now(self, up: float | None = None) -> list[FenceRecord]:
         """The keep-out zones in force now, at their current position (moving

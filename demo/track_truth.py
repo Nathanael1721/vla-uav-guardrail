@@ -393,6 +393,11 @@ def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
             if rid:
                 fired.setdefault(rid, set()).add(a.get("tick"))
 
+    # "Truly inside" is the Shield's own stand-off test (guardrail/shield.py
+    # standoff_breached, 1e-9 m of slack) on the true range; until 2026-11-18
+    # this compared `near < rng` itself (WP3-22 / X-13).
+    from guardrail.shield import standoff_breached
+
     out = {"scored_ticks": 0}
     scored = 0
     for so in standoffs:
@@ -414,7 +419,7 @@ def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
                 continue          # no truth logged: unscorable, not a miss
             bound += 1
             near = min(math.hypot(r["x"] - px, r["y"] - py) for px, py in pts)
-            truly_inside = near < rng
+            truly_inside = standoff_breached(near, rng)
             did_fire = r.get("tick") in hits
             if did_fire and truly_inside:
                 tp += 1

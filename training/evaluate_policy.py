@@ -88,8 +88,9 @@ def _run_episode(model, rng, use_shield: bool):
         # student's safety allowance, the real polygon is the hard fail.)
         if shield is None:
             from guardrail.geometry import ring_contains
+            from guardrail.shield import in_zone_band
             for f in [c for c in policy.constraints if c.type == "polygon_fence"]:
-                if (f.altitude_floor_m <= state.up <= f.altitude_ceiling_m
+                if (in_zone_band(f, state.up)
                         and ring_contains(fence_polygon(f), state.x, state.y)):
                     entered_nfz = True
                     break

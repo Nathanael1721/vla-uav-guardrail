@@ -1,18 +1,22 @@
-"""How much FenceGuard's decisions would move if its building half read the
-Shield's distance field (--guard-field shield; cards WP3-22 / X-13).
+"""How much FenceGuard's decisions move now that its building half reads the
+Shield's distance field and threshold test (cards WP3-22 / X-13).
 
 Run:  python tools/onepath_guard_replay.py [RUN ...] [--root DIR] [--json OUT]
 
-The city controller's FenceGuard (demo/follow_vlm.py) measures building
-clearance with a grid scan by default (guard_field="grid",
-guardrail/shield.py nearest_cell_clearance: the nearest blocked cell centre). The Shield
-measures the same rule (obstacle_clearance, min_clearance_m) on its signed
-chamfer distance field, read bilinearly (guardrail/shield.py field_distance).
-guard_field="shield" makes the guard read the Shield's field; it is opt-in
-until flown. This replays stored CityLife follow flights' logged ticks
-through the WHOLE guard decision - gate() (fence and building brake) and,
-where the flight loop calls it, slide() (the sidestep) - once per measure,
-and counts the ticks whose decision differs.
+Until 2026-11-18 the city controller's FenceGuard (demo/follow_vlm.py)
+measured building clearance with a grid scan (guard_field="grid",
+guardrail/shield.py nearest_cell_clearance: the nearest blocked cell
+centre) and compared it with min_clearance_m itself; every follow flight
+stored before that date flew it. The Shield measures the same rule
+(obstacle_clearance) on its signed chamfer distance field, read bilinearly
+(guardrail/shield.py field_distance), and judges it with
+clearance_breached. Since 2026-11-18 FenceGuard asks the Shield for both
+(Shield.clearance_ruler; guard_field="shield", the only value). This
+replays stored CityLife follow flights' logged ticks through the WHOLE
+guard decision - gate() (fence and building brake) and, where the flight
+loop calls it, slide() (the sidestep) - once as flown (GridScanGuard below:
+DIAGNOSTIC ONLY, the one reader of nearest_cell_clearance) and once as
+fly() builds the guard now, and counts the ticks whose decision differs.
 
 What is replayed, honestly:
   * the logged position and the commanded velocity before the guard, which
@@ -21,20 +25,26 @@ What is replayed, honestly:
     to the log's rounding (scale >= 0.05 only). Where it skirted, guard_in is
     `cv * scale + slide_speed * urgency * side` with side perpendicular to
     cv; the replay solves that for cv with the default --slide-speed 2.5 (two
-    mirror solutions) and keeps the one whose grid-scan replay gives back the
-    logged decision (skirt). A skirt tick neither solution reproduces is
+    mirror solutions) and keeps the one whose replay on the guard the run
+    flew gives back the logged decision (skirt). A skirt tick neither
+    solution reproduces is
     counted as not reconstructed and left out;
   * the decision compared per tick is the flight loop's: the mode it would
     log (clear / near / hold / skirt), the sidestep's side, and the building
     brake (gate's building half scale < 1);
-  * the grid replay of the reconstructed ticks is also checked against the
-    logged fence_mode: the share that agree is printed (the null);
+  * the replay of the guard the run FLEW (metrics.json "guard_field",
+    "grid" when absent) is checked against the logged fence_mode: the share
+    that agree is printed (the null); a skirt tick is solved with that guard;
   * the policy is the repository's policies/follow_car_citylife_nfz.yaml
     (the flights flew that file or a signed bundle of it) and the map
     demo/out/citymap_citylife/occ_day.npz banded as follow_vlm selects it,
     with the street mask beside it as fly() loads it;
   * it is an open-loop replay: a changed decision would have changed the
-    flight from that tick on, which no replay of a stored log can show.
+    flight from that tick on, which no replay of a stored log can show;
+  * GridScanGuard reproduces the as-flown MEASURE. Its "inside the ring"
+    test is FenceGuard's, now the Shield's (`d < min`), where the flown
+    building brake had `<=`: the two differ only on a grid distance exactly
+    equal to the limit (a cell-centre hypot of 5.0 m to the last bit).
 
 Nothing here flies, and nothing it prints is a flight result.
 """
@@ -60,16 +70,41 @@ DEFAULT_RUNS = ("agx_follow_01", "agx_manual_20261103", "agx_hier_r1_20261103",
 
 SLIDE_SPEED = 2.5            # follow_vlm --slide-speed default
 
+from follow_vlm import FenceGuard                                  # noqa: E402
+from guardrail.shield import nearest_cell_clearance                # noqa: E402
 
-def flight_setup(lab: Path, policy_path: Path):
-    """(policy, map, guard on the grid scan, guard on the Shield field) as
-    follow_vlm.fly() builds them for this policy over the CityLife day map."""
+
+class GridScanGuard(FenceGuard):
+    """DIAGNOSTIC ONLY: FenceGuard measuring building clearance as every
+    follow flight stored before 2026-11-18 flew it (guard_field="grid": the
+    nearest blocked cell centre, guardrail/shield.py nearest_cell_clearance).
+    It exists to replay those flights' guard decisions; nothing in a flight
+    loop builds it (FenceGuard itself refuses guard_field="grid", and
+    tests/test_shieldcore_onepath.py fails if anything but this module calls
+    nearest_cell_clearance). Its threshold test is FenceGuard's - the
+    Shield's (module doc)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.guard_field = "grid (diagnostic replay)"
+
+    def clearance(self, px: float, py: float, cap_m: float) -> float:
+        if not self.occ:
+            return cap_m
+        return nearest_cell_clearance(self.occ, px, py, cap_m)
+
+
+def flight_setup(lab: Path, policy_path: Path, citymap: str = "citymap_citylife"):
+    """(policy, map, the guard as flown before 2026-11-18 (GridScanGuard),
+    the guard as follow_vlm.fly() builds it now) for this policy over the
+    day map of demo/out/`citymap` (the CityLife map by default), banded and
+    with the street mask as fly() loads them."""
     import city_planner
     import occ_bands
-    from follow_vlm import FenceGuard, flight_shield
+    from follow_vlm import flight_shield
     from guardrail.models import AltitudeEnvelope, ObstacleClearance, load_policy
     pol = load_policy(policy_path)
-    cdir = lab / "demo" / "out" / "citymap_citylife"
+    cdir = lab / "demo" / "out" / citymap
     cmap = city_planner.load_occ(cdir / "occ_day.npz")
     if cmap is None:
         raise SystemExit(f"no map at {cdir / 'occ_day.npz'}")
@@ -86,11 +121,67 @@ def flight_setup(lab: Path, policy_path: Path):
     shield = flight_shield(pol, smap)
     clr = pol.by_type(ObstacleClearance)
     mc = clr[0].min_clearance_m if clr else 5.0
-    grid = FenceGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
-                      shield=shield, guard_field="grid")
+    grid = GridScanGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
+                         shield=shield)
     field = FenceGuard(pol, obstacle_map=smap, min_clearance_m=mc, street_mask=street,
-                       shield=shield, guard_field="shield")
+                       shield=shield)
     return pol, smap, grid, field
+
+
+def seeded_ticks(grid, n: int, seed: int):
+    """`n` SYNTHETIC ticks (x, y, cvx, cvy) for a policy with no stored flight:
+    a position on a street cell of the guard's street mask (else on a free
+    cell of its obstacle map), jittered within the cell, a heading uniform
+    in [0, 2 pi) and a commanded speed uniform in [0.5, 5] m/s (the follow
+    controller's --speed-max default is 5).
+
+    What the figure over them is: a SENSITIVITY figure - how often the two
+    guards decide differently at random street positions and headings over
+    the map given (--citymap), under that policy's rules - not "the
+    decisions that change on that policy's flights". FenceGuard exists only
+    in the follow controller (demo/follow_vlm.py); a policy flown on another
+    rail, such as semantic_conflict.yaml on the semantic demo, has no
+    FenceGuard decision to change, and its seeded ticks are drawn over
+    whatever map --citymap names (the CityLife day map by default), not a
+    map that policy flies over (review of 350d0b0)."""
+    import random
+    import numpy as np
+    rng = random.Random(seed)
+    if grid.street:
+        m = grid.street
+        cells = np.argwhere(np.asarray(m["street"]) > 0)
+    else:
+        m = grid.occ
+        cells = np.argwhere(np.asarray(m["occ"]) == 0)
+    res, ox, oy = float(m["res"]), float(m["ox"]), float(m["oy"])
+    out = []
+    for _ in range(n):
+        i, j = cells[rng.randrange(len(cells))]
+        x = ox + float(i) * res + rng.uniform(-0.5, 0.5) * res
+        y = oy + float(j) * res + rng.uniform(-0.5, 0.5) * res
+        h, v = rng.uniform(0.0, 2.0 * math.pi), rng.uniform(0.5, 5.0)
+        out.append((x, y, v * math.cos(h), v * math.sin(h)))
+    return out
+
+
+def compare_seeded(grid, field, ticks) -> dict:
+    """The decision counts of replay_run over seeded ticks (no log, so no
+    null against a logged mode)."""
+    n = mode_d = side_d = ms_d = brake_d = scale_d = skirt_old = skirt_now = 0
+    for x, y, cvx, cvy in ticks:
+        o = decide(grid, x, y, cvx, cvy)
+        w = decide(field, x, y, cvx, cvy)
+        n += 1
+        brake_d += int(o[2] != w[2])
+        scale_d += int(abs(o[3] - w[3]) > 1e-6)
+        mode_d += int(o[0] != w[0])
+        side_d += int(o[1] != w[1])
+        ms_d += int(o[0] != w[0] or o[1] != w[1])
+        skirt_old += int(o[0] == "skirt")
+        skirt_now += int(w[0] == "skirt")
+    return {"ticks": n, "scale_changed": scale_d, "building_brake_on_off_changed": brake_d,
+            "mode_changed": mode_d, "side_changed": side_d, "mode_or_side_changed": ms_d,
+            "skirt_ticks_grid": skirt_old, "skirt_ticks_shield": skirt_now}
 
 
 def decide(guard, x: float, y: float, cvx: float, cvy: float):
@@ -123,9 +214,56 @@ def skirt_candidates(gi, sc):
             for sgn in (1.0, -1.0)]
 
 
-def replay_run(run_dir: Path, grid, field) -> dict:
+# The commit that made FenceGuard's Shield field an opt-in flag
+# (--guard-field shield, 17 Nov 2026). A checkout from it up to the one-path
+# change flew "grid" by default, or that opt-in field (its own `<=` tests)
+# when the flag was passed - and recorded neither in metrics.json.
+OPT_IN_SINCE = "497f016"
+
+
+def _is_ancestor(repo: Path, older: str, rev: str) -> bool | None:
+    """Is `older` an ancestor of `rev` in `repo` (None: git cannot say)?"""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", older, rev],
+                           capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+
+def flown_guard_field(run_dir: Path, repo: Path = ROOT) -> str:
+    """What the run's FenceGuard flew: metrics.json "guard_field" ("shield"
+    since 2026-11-18). Without the key: "grid" when the run's code_revision
+    (manifest.json) predates OPT_IN_SINCE, when only the grid scan could
+    fly; "unknown" when it does not, or git cannot place it - such a run may
+    have flown the opt-in field, and its replay cannot be told which
+    (review of 350d0b0)."""
+    try:
+        gf = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8")).get("guard_field")
+    except (OSError, ValueError):
+        gf = None
+    if gf:
+        return gf
+    try:
+        rev = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["code_revision"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown"
+    rev = str(rev).removesuffix("-dirty")
+    # False only when git resolved both commits and the run's is older.
+    return "grid" if _is_ancestor(repo, OPT_IN_SINCE, rev) is False else "unknown"
+
+
+def replay_run(run_dir: Path, grid, field, repo: Path = ROOT) -> dict:
+    """The decision counts over one stored run. Its commanded velocity on a
+    skirt tick is solved with the guard the run FLEW (flown_guard_field),
+    and the null is that guard's mode against the logged one."""
     rows = [json.loads(line) for line in (run_dir / "flight_log.jsonl").open(encoding="utf-8")]
-    n = n_skirt = unrec = agree = 0
+    flown_name = flown_guard_field(run_dir, repo)
+    if flown_name not in ("grid", "shield"):
+        raise ValueError(f"{run_dir.name}: which guard flew is {flown_name!r}")
+    flown = field if flown_name == "shield" else grid
+    n = n_skirt = unrec = agree = agree_flown = 0
     mode_d = side_d = ms_d = brake_d = scale_d = 0
     skirt_now = skirt_old = 0
     by_logged = {}
@@ -137,21 +275,21 @@ def replay_run(run_dir: Path, grid, field) -> dict:
         if fm == "skirt":
             got = None
             for cvx, cvy, _ in skirt_candidates(gi, sc):
-                o = decide(grid, x, y, cvx, cvy)
-                if o[0] == "skirt":
-                    got = (cvx, cvy, o)
+                if decide(flown, x, y, cvx, cvy)[0] == "skirt":
+                    got = (cvx, cvy)
                     break
             if got is None:
                 unrec += 1
                 continue
-            cvx, cvy, o = got
+            cvx, cvy = got
             n_skirt += 1
         else:
             cvx, cvy = gi[0] / sc, gi[1] / sc
-            o = decide(grid, x, y, cvx, cvy)
+        o = decide(grid, x, y, cvx, cvy)
         w = decide(field, x, y, cvx, cvy)
         n += 1
         agree += int(o[0] == fm)
+        agree_flown += int((w if flown is field else o)[0] == fm)
         ob, wb = o[2], w[2]
         brake_d += int(ob != wb)
         scale_d += int(abs(o[3] - w[3]) > 1e-6)
@@ -165,7 +303,8 @@ def replay_run(run_dir: Path, grid, field) -> dict:
         k[1] += int(o[0] != w[0] or o[1] != w[1])
     return {"run": run_dir.name, "ticks_logged": len(rows), "ticks_replayed": n,
             "skirt_reconstructed": n_skirt, "skirt_not_reconstructed": unrec,
-            "grid_replay_agrees_with_log": agree,
+            "grid_replay_agrees_with_log": agree, "flown_guard": flown_name,
+            "flown_replay_agrees_with_log": agree_flown,
             "scale_changed": scale_d, "building_brake_on_off_changed": brake_d,
             "mode_changed": mode_d, "side_changed": side_d, "mode_or_side_changed": ms_d,
             "skirt_ticks_grid": skirt_old, "skirt_ticks_shield": skirt_now,
@@ -181,26 +320,60 @@ def main(argv=None) -> int:
                          "(the lab checkout: demo/out is gitignored)")
     ap.add_argument("--policy", default=str(ROOT / "policies" / "follow_car_citylife_nfz.yaml"))
     ap.add_argument("--json", default=None, help="write the per-run table here")
+    ap.add_argument("--citymap", default="citymap_citylife",
+                    help="the map directory under demo/out (default the CityLife map)")
+    ap.add_argument("--seeded", type=int, default=0,
+                    help="instead of stored runs, compare the two guards on this many "
+                         "SYNTHETIC seeded ticks (seeded_ticks) over --citymap under "
+                         "--policy's rules: a sensitivity figure, not flight decisions")
+    ap.add_argument("--seed", type=int, default=1118)
     a = ap.parse_args(argv)
     lab = Path(a.root)
-    _, _, grid, field = flight_setup(lab, Path(a.policy))
+    _, _, grid, field = flight_setup(lab, Path(a.policy), a.citymap)
+    if a.seeded:
+        res = compare_seeded(grid, field, seeded_ticks(grid, a.seeded, a.seed))
+        n = res["ticks"]
+        print(f"SYNTHETIC sensitivity figure, not flight decisions: seeded {n} ticks "
+              f"({Path(a.policy).name}'s rules over demo/out/{a.citymap}, seed "
+              f"{a.seed}): building brake on/off differs on "
+              f"{res['building_brake_on_off_changed']} ({res['building_brake_on_off_changed'] / n:.2%}), "
+              f"guard scale on {res['scale_changed']} ({res['scale_changed'] / n:.2%}), "
+              f"decision (mode or sidestep side) on {res['mode_or_side_changed']} "
+              f"({res['mode_or_side_changed'] / n:.2%}); skirt ticks {res['skirt_ticks_grid']} "
+              f"-> {res['skirt_ticks_shield']}")
+        if a.json:
+            Path(a.json).write_text(json.dumps({"seeded": res, "policy": Path(a.policy).name,
+                                                "citymap": a.citymap, "seed": a.seed,
+                                                "what": "synthetic ticks seeded over the "
+                                                        "map under the policy's rules: a "
+                                                        "sensitivity figure, not decisions "
+                                                        "on that policy's flights"},
+                                               indent=1), encoding="utf-8")
+        return 0
     out = []
     for name in a.runs:
         rd = lab / "demo" / "out" / name
         if not (rd / "flight_log.jsonl").is_file():
             print(f"{name}: no flight_log.jsonl, skipped")
             continue
-        res = replay_run(rd, grid, field)
+        if flown_guard_field(rd, lab) == "unknown":
+            print(f"{name}: no guard_field in metrics.json and its code_revision does not "
+                  f"predate {OPT_IN_SINCE} (it may have flown --guard-field shield's "
+                  f"opt-in field): skipped")
+            continue
+        res = replay_run(rd, grid, field, lab)
         out.append(res)
         print(f"{name}: replayed {res['ticks_replayed']}/{res['ticks_logged']} ticks "
               f"({res['skirt_reconstructed']} skirt reconstructed, "
-              f"{res['skirt_not_reconstructed']} not); grid replay = logged mode on "
-              f"{res['grid_replay_agrees_with_log']}; decision (mode or side) changed "
+              f"{res['skirt_not_reconstructed']} not); flew {res['flown_guard']}, its "
+              f"replay = logged mode on {res['flown_replay_agrees_with_log']}; "
+              f"decision (mode or side) changed "
               f"{res['mode_or_side_changed']}, building brake on/off changed "
               f"{res['building_brake_on_off_changed']}, skirt ticks grid "
               f"{res['skirt_ticks_grid']} -> shield {res['skirt_ticks_shield']}")
     keys = ("ticks_replayed", "skirt_reconstructed", "skirt_not_reconstructed",
-            "grid_replay_agrees_with_log", "scale_changed", "building_brake_on_off_changed",
+            "grid_replay_agrees_with_log", "flown_replay_agrees_with_log",
+            "scale_changed", "building_brake_on_off_changed",
             "mode_changed", "side_changed", "mode_or_side_changed", "skirt_ticks_grid", "skirt_ticks_shield")
     tot = {k: sum(r[k] for r in out) for k in keys}
     bym = {}
@@ -213,8 +386,9 @@ def main(argv=None) -> int:
     n = tot["ticks_replayed"]
     if n:
         print(f"ALL {len(out)} runs: replayed {n} ticks ({tot['skirt_not_reconstructed']} skirt "
-              f"ticks not reconstructed); grid replay = logged mode on "
-              f"{tot['grid_replay_agrees_with_log'] / n:.2%}")
+              f"ticks not reconstructed); the flown guard's replay = logged mode on "
+              f"{tot['flown_replay_agrees_with_log'] / n:.2%} (flew: "
+              f"{sorted({r['flown_guard'] for r in out})})")
         print(f"  shield field vs grid scan: building brake on/off differs on "
               f"{tot['building_brake_on_off_changed']} ({tot['building_brake_on_off_changed'] / n:.2%}), "
               f"guard scale on {tot['scale_changed']} ({tot['scale_changed'] / n:.2%}), "

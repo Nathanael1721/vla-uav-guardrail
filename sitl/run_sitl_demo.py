@@ -104,13 +104,14 @@ from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa:
                                 build_manifest, flight_bundle_path,
                                 flight_policy_choice, is_kpi_grade,
                                 sim_speedup_from_mavlink)
-from guardrail.models import (AltitudeEnvelope, PolygonFence,
-                              SubjectStandoff, XY)        # noqa: E402
+from guardrail.models import AltitudeEnvelope, PolygonFence, XY      # noqa: E402
 from guardrail.models import Action4D                                  # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
+from guardrail.shield import (altitude_out_of_band, standoff_breached,  # noqa: E402
+                              standoff_ring_m, standoff_rules)
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
                                   ModeRequests, XYArgumentParser,
@@ -593,8 +594,8 @@ def main() -> int:
         sx, sy = (float(v) for v in args.subject.split(","))
         subject = (sx, sy)
         shield.set_subject(sx, sy, args.subject_class)
-        rings = [(c.id, c.min_range_m) for c in policy.by_type(SubjectStandoff)
-                 if c.binds(args.subject_class)]
+        rings = [(c.id, c.min_range_m)
+                 for c in standoff_rules(policy.constraints, args.subject_class)]
         print(f"[subject]  {args.subject_class} DECLARED at ({sx:.1f}, {sy:.1f}) "
               f"- position is ground truth, not perception")
         if rings:
@@ -978,23 +979,25 @@ def main() -> int:
     # both rails report the same quantities under the same names.
     envelopes = policy.by_type(AltitudeEnvelope)
     alt_bad = sum(1 for p in traj for e in envelopes
-                  if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+                  if altitude_out_of_band(e, p["up"]))
     alt_seconds = alt_bad * TICK
 
     # Seconds spent inside a declared subject's stand-off ring, reported the
     # same way as NFZ time so the A/B reads identically. Horizontal range, which
     # is the rule's own definition - and the reason this demonstrates "must not
     # fly OVER a person": at 15 m altitude a straight run passes 0 m away.
+    # Inside means the Shield's stand-off test (guardrail/shield.py
+    # standoff_breached, 1e-9 m of slack) against the outermost binding ring;
+    # until 2026-11-18 this compared `v < ring` itself (WP3-22 / X-13).
     standoff_seconds = 0.0
     standoff_min_m = None
     if subject is not None:
-        rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)
-                 if c.binds(args.subject_class)]
-        ring = max(rings) if rings else 0.0
+        ring = standoff_ring_m(policy.constraints, args.subject_class)
         d = [math.hypot(p["x"] - subject[0], p["y"] - subject[1]) for p in traj]
         if d:
             standoff_min_m = round(min(d), 2)
-        standoff_seconds = sum(1 for v in d if v < ring) * TICK
+        standoff_seconds = (0 if ring is None else
+                            sum(1 for v in d if standoff_breached(v, ring))) * TICK
 
     # metrics.json first, because compute_from_dir() reads it to decide the
     # mission outcome.

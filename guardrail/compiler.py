@@ -136,8 +136,8 @@ from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corrido
                      CorridorSwap, DistanceEnvelope, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
                      TimeWindowSwitch)
-from .shield import (RuleClock, corridor_breached, corridor_in_band, corridor_offset,
-                     corridor_wide, in_zone_band, zone_breached)
+from .shield import (RuleClock, altitude_outside, corridor_breached, corridor_in_band,
+                     corridor_offset, corridor_wide, in_zone_band, zone_breached)
 
 # Keep-OUT zones and keep-IN tubes. CircleFence is a PolygonFence (its vertices
 # are the derived 32-gon); DynamicNFZ and CorridorSwap are not subclasses of
@@ -872,13 +872,21 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
                  "target_kind": (tgt.type if tgt is not None else "rule"),
                  "target_state": state}
     elif isinstance(rule, AltitudeEnvelope):
+        # The altitude check's own comparison (shield.altitude_outside) and
+        # the kinematic cap's (fsm.cap_exceeded), not one of the facts' own
+        # (WP3-22 / X-13, 2026-11-18). The bands differ: 1e-9 m for the
+        # altitude, but the cap's RELATIVE slack, max(1e-9, 1e-6 * cap) -
+        # 1e-5 m/s at a 10 m/s cap - for the speed fact, the slack the
+        # Shield's own speed check (_check_kinematic) applies; until then the
+        # fact compared with a plain `<=`.
         a = m.cruise_alt_m
-        where = ("inside" if rule.alt_min_m <= a <= rule.alt_max_m
-                 else "below" if a < rule.alt_min_m else "above")
+        below, above = altitude_outside(rule, a)
+        where = ("below" if below else "above" if above or math.isnan(a)
+                 else "inside")
         facts = {"alt": a, "lo": rule.alt_min_m, "hi": rule.alt_max_m, "where": where}
     elif isinstance(rule, KinematicEnvelope):
         facts = {"v": m.speed_pref_mps, "cap": rule.speed_max_mps,
-                 "ok": m.speed_pref_mps <= rule.speed_max_mps}
+                 "ok": not cap_exceeded(m.speed_pref_mps, rule.speed_max_mps)}
     elif isinstance(rule, ObstacleClearance):
         facts = {"length": math.hypot(tx - sx, ty - sy)}
     elif isinstance(rule, DistanceEnvelope):
@@ -1591,8 +1599,11 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
                 continue
             clear.append(c)
         elif isinstance(c, AltitudeEnvelope):
-            if altitude_m is not None and not (c.alt_min_m - 1e-9 <= altitude_m
-                                               <= c.alt_max_m + 1e-9):
+            # The altitude check's comparison (shield.altitude_outside, the
+            # same 1e-9 m slack this wrote out until 2026-11-18); a
+            # non-finite altitude is outside, as it was.
+            if altitude_m is not None and (any(altitude_outside(c, altitude_m))
+                                           or not math.isfinite(altitude_m)):
                 whole.append(("altitude_hard" if hard else "altitude_soft", c.id,
                               COST_HARD if hard else COST_SOFT))
             else:
@@ -1809,7 +1820,7 @@ def cost_map_agreement(cm: CostMap, policy: Policy, *, n_points: int = 2000,
             elif isinstance(c, _ZONES):
                 hit = bool(r["inside"] or r["in_margin"])
             elif isinstance(c, _TUBES):
-                hit = r["value"] > c.half_width_m + 1e-9
+                hit = corridor_wide(c, r["value"])     # the corridor test, laterally
             elif isinstance(c, AltitudeEnvelope):
                 hit = False
             else:
