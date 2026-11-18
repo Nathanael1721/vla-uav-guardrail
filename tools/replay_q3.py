@@ -50,10 +50,10 @@ on the state the tick logged, in the tick order of the log:
                  Shield's own FSM (`escalation_fsm: true`) gets it;
                  filter() is called as the flight rails called it before
                  2026-11-18, without a time (the Shield counts its ticks at
-                 10 Hz); since then the default rails go through
-                 frames.filter_as_body, which hands over the body frame only
-                 where that gives filter()'s decision to the bit, so the same
-                 call replays both (tests/test_rail_body_frame.py);
+                 10 Hz); since wf21 every rail hands the Shield the body
+                 frame (Shield.filter_body), which is filter() on the
+                 Shield's own world reading of the body action - logged as
+                 the row's `raw` - so the same call replays both;
   the state      x, y, up, yaw_deg of the row; the position's own doubles
                  from trajectory.json when it has one point per row (the ROS 2
                  rail writes the pose message's doubles there; the flight log

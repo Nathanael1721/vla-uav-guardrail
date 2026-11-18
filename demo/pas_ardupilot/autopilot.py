@@ -8,12 +8,16 @@ FRAMES, CONVERTED IN ONE PLACE
   * The Shield works in the scene's local frame, x = North, y = East, up
     positive (guardrail/models.py), because every policy and obstacle map in
     this repository is authored there.
-  * The body action is rotated into that frame ONCE, at the Shield's input
-    (`body_to_world`), with the autopilot's own heading.
-  * Out of the Shield, the action goes to ArduPilot as
-    SET_POSITION_TARGET_LOCAL_NED velocities (`ned_setpoint`): North and East
-    unchanged, up negated to NED down, yaw rate passed through in rad/s
-    (MAVLink's unit, and clockwise-positive like NED).
+  * The Shield takes the body action itself (`Shield.filter_body`, WP3-04 /
+    ARCH-04) at the autopilot's own heading, and hands back its emitted
+    action in the body frame.
+  * Out of the Shield, the BODY action goes to ArduPilot as
+    SET_POSITION_TARGET_LOCAL_NED velocities (`ned_setpoint`), turned into
+    local NED there, after the projection, by guardrail.frames.
+    body_to_local_ned - the one body -> NED function every rail's adapter
+    calls - at the heading the link last read: North and East, up negated to
+    NED down, yaw rate passed through in rad/s (MAVLink's unit, and
+    clockwise-positive like NED).
 
 POSITION comes from ArduPilot's EKF (GLOBAL_POSITION_INT), not from the
 simulator: on the real drone there is no simulator, and the node must not
@@ -75,7 +79,7 @@ if str(ROOT) not in sys.path:
 from guardrail.manifest import (collect_host_evidence,               # noqa: E402
                                 decode_custom_version,
                                 describe_autopilot_version)
-from guardrail.frames import from_body, to_local_ned                 # noqa: E402
+from guardrail.frames import body_to_local_ned                       # noqa: E402
 from guardrail.models import Action4D, State                       # noqa: E402
 from guardrail.projection import LocalProjection                     # noqa: E402
 
@@ -184,29 +188,22 @@ def ekf_ready(flags: int | None) -> bool:
 # Conversions
 # --------------------------------------------------------------------------- #
 
-def body_to_world(fwd: float, right: float, vz_up: float, yaw_rate: float,
-                  heading_rad: float) -> Action4D:
-    """Body (forward, right, up, yaw rate CW) -> scene frame (N, E, up, yaw rate).
-
-    heading_rad is the NED heading: 0 = North, +pi/2 = East. The rotation is
-    guardrail.frames.from_body, the one place the project crosses from a
-    body-frame producer into the Shield's world frame (its docstring asks for
-    exactly that), so this rail and tests/test_frame_contract.py share it.
-    The yaw RATE passes through in rad/s, unconverted, as that module requires.
-    """
-    return from_body(fwd, right, vz_up, yaw_rate, math.degrees(heading_rad))
-
-
-def ned_setpoint(a: Action4D) -> dict:
-    """SET_POSITION_TARGET_LOCAL_NED fields for one emitted action, through
-    guardrail.frames.to_local_ned (North, East, down, yaw rate in rad/s)."""
-    vn, ve, vd, yr = to_local_ned(a)
+def ned_setpoint(body, heading_rad: float) -> dict:
+    """SET_POSITION_TARGET_LOCAL_NED fields for one emitted BODY action
+    (forward, right, up, yaw rate in rad/s: an Action4D with vx forward, or a
+    4-sequence) at the NED heading `heading_rad` (0 = North, +pi/2 = East):
+    guardrail.frames.body_to_local_ned, the one body -> NED crossing (North,
+    East, down, yaw rate in rad/s, unconverted)."""
+    vn, ve, vd, yr = body_to_local_ned(body, math.degrees(heading_rad))
     return {"coordinate_frame": MAV_FRAME_LOCAL_NED, "type_mask": VEL_YAWRATE_MASK,
             "vx": float(vn), "vy": float(ve), "vz": float(vd), "yaw_rate": float(yr)}
 
 
-def enu_position_target(a: Action4D) -> dict:
-    """mavros_msgs/PositionTarget fields for /mavros/setpoint_raw/local.
+def enu_position_target(body, heading_rad: float) -> dict:
+    """mavros_msgs/PositionTarget fields for /mavros/setpoint_raw/local, for
+    one emitted BODY action at the NED heading `heading_rad`: local NED by
+    guardrail.frames.body_to_local_ned (the one body -> NED crossing), then
+    packed as MAVROS wants it.
 
     MAVROS takes ENU there and converts to NED itself: velocity.x = East,
     velocity.y = North, velocity.z = up, and yaw_rate counter-clockwise
@@ -214,9 +211,10 @@ def enu_position_target(a: Action4D) -> dict:
     (FRAME_LOCAL_NED) is the MAVLink frame MAVROS sends; the ENU->NED swap is
     MAVROS's (setpoint_raw plugin), not ours.
     """
+    vn, ve, vd, yr = body_to_local_ned(body, math.degrees(heading_rad))
     return {"coordinate_frame": MAV_FRAME_LOCAL_NED, "type_mask": VEL_YAWRATE_MASK,
-            "velocity": (float(a.vy), float(a.vx), float(a.vz_up)),
-            "yaw_rate": float(-a.yaw_rate)}
+            "velocity": (float(ve), float(vn), float(-vd)),
+            "yaw_rate": float(-yr)}
 
 
 class FrameAnchor:
@@ -579,25 +577,22 @@ class PymavlinkLink:
             raise RuntimeError(f"take-off did not reach {alt_m} m "
                                f"(rel_alt {self.snap.rel_alt})")
 
-    def send(self, a: Action4D, raw_body: tuple | None = None,
-             body: tuple | None = None) -> dict:
-        """Send the Shield's emitted action. `raw_body` is accepted for parity
-        with MavrosLink (which publishes a record copy on /pas/raw_action_4d);
-        MAVLink has no place for it, and the flight log records it instead.
-
-        `body` (--action-frame body, 2026-11-17, WP3-04 / ARCH-04): the
-        emitted action in the BODY frame (forward, right, up, yaw rate rad/s),
-        the Shield's projection's output. The link then turns the body
-        action into local NED here, AFTER the projection, at the heading it
-        last read (`body_to_world`, then `ned_setpoint`); `a` is the record
-        copy only. This is one more body -> NED crossing beside the Shield's
-        own from_body / to_body round trip (whose repairs still act in the
-        world frame), not the grant's single adapter boundary
-        (guardrail/frames.py lists every crossing). None: `a` is sent as it
-        always was."""
-        if body is not None:
-            a = body_to_world(*body, self.snap.yaw or 0.0)
-        f = ned_setpoint(a)
+    def send(self, a: Action4D | None = None, raw_body: tuple | None = None,
+             body=None) -> dict:
+        """Send one setpoint. `body` is what is sent: the action this rail
+        streams, in the BODY frame (forward, right, up, yaw rate rad/s) - the
+        Shield's emitted body action, a stop, or the pilot's own with the
+        Shield off (WP3-04 / ARCH-04). The link is the rail's MAVLink
+        adapter: it turns the body action into local NED here, AFTER the
+        projection, at the heading it last read (`ned_setpoint`, i.e.
+        guardrail.frames.body_to_local_ned). `a` (the scene-frame copy) and
+        `raw_body` are accepted for parity with MavrosLink, which publishes
+        record copies of them; MAVLink has no place for either, and the
+        flight log records them instead. Since wf21 a world-frame action is
+        not sent: `body` is required."""
+        if body is None:
+            raise ValueError("PymavlinkLink.send streams the BODY frame: pass body=")
+        f = ned_setpoint(body, self.snap.yaw or 0.0)
         self.m.mav.set_position_target_local_ned_send(
             int((self.clock() * 1000) % 4294967295), self.target_system,
             self.target_component, f["coordinate_frame"], f["type_mask"],

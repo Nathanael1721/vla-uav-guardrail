@@ -91,12 +91,13 @@ from guardrail import AuditLogger, State                               # noqa: E
 from guardrail.audit import AUDIT_FILE                                 # noqa: E402
 from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
-from guardrail.frames import filter_as_body                            # noqa: E402
+from guardrail.frames import (BODY_STOP, body_to_local_ned,           # noqa: E402
+                              filter_world_as_body)
 from guardrail import holdpoint                                        # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig, FSMState,
                            tick_input_from_decision)
-from guardrail.hold_flight import HoldFlight                           # noqa: E402
+from guardrail.hold_flight import HoldFlight, body_command            # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa: E402
@@ -201,8 +202,12 @@ def theta_basis(horizon_s: float | None) -> dict:
 
 
 class MavlinkAdapter:
-    """The single body/up-positive <-> NED boundary (grant rule: conversion
-    lives in the adapter, never in the Shield)."""
+    """This rail's MAVLink adapter: the body -> local-NED boundary (grant
+    rule: the conversion lives in the adapter, after the projection, never in
+    the Shield). `send_body` turns the BODY action the rail streams into
+    SET_POSITION_TARGET_LOCAL_NED with guardrail.frames.body_to_local_ned,
+    the one body -> NED function every rail's adapter calls, at the heading
+    `state()` read with the pose (ATTITUDE.yaw)."""
 
     def __init__(self, url: str):
         print(f"[mavlink]  connecting {url} ...")
@@ -355,6 +360,7 @@ class MavlinkAdapter:
             if newest is None:
                 return None
         self._last_pose_ms = newest.time_boot_ms
+        heading = self.heading_deg()
         # The same message's velocity (NED -> North, East, up), for the
         # own-velocity forecast and the record (state_v). Kept beside the
         # State, not in it: the loop gives it to the Shield only with
@@ -363,11 +369,41 @@ class MavlinkAdapter:
             self.last_velocity = (float(newest.vx), float(newest.vy), -float(newest.vz))
         except (AttributeError, TypeError, ValueError):
             self.last_velocity = None           # a message without the fields
-        return State(x=newest.x, y=newest.y, up=-newest.z)  # NED z-down -> up-positive
+        # NED z-down -> up-positive; the aircraft's heading (WP3-04 /
+        # ARCH-04: the Shield takes the body frame at the real heading - until
+        # wf21 this rail gave it none, State.yaw_deg 0).
+        return State(x=newest.x, y=newest.y, up=-newest.z,
+                     yaw_deg=0.0 if heading is None else heading)
 
-    def send_velocity(self, vx: float, vy: float, vz_up: float,
-                      yaw_rate_rad_s: float) -> None:
-        """Emit one velocity setpoint. `yaw_rate_rad_s` is the Action4D field.
+    def heading_deg(self) -> float | None:
+        """The aircraft's heading in degrees (0 = North, clockwise positive),
+        from the newest ATTITUDE pymavlink has seen (its yaw is the NED
+        heading in radians; MAV_DATA_STREAM_ALL streams it beside the pose,
+        and recv_match records every message it reads past). None before the
+        first one: `state()` then gives the Shield heading 0, and the loop
+        counts the tick (heading_missing_ticks)."""
+        att = getattr(self.m, "messages", {}).get("ATTITUDE")
+        yaw = getattr(att, "yaw", None)
+        try:
+            yaw = float(yaw)
+        except (TypeError, ValueError):
+            return None
+        return math.degrees(yaw) if math.isfinite(yaw) else None
+
+    def send_body(self, body, yaw_deg: float) -> tuple:
+        """Emit one setpoint from the BODY action the rail streams (forward,
+        right, up, yaw rate rad/s), turned into local NED here, after the
+        projection, by guardrail.frames.body_to_local_ned at `yaw_deg` (the
+        heading the tick's pose was read with). Returns the NED tuple sent.
+        The yaw rate passes through in rad/s (see `send_velocity`'s history
+        below)."""
+        ned = body_to_local_ned(body, yaw_deg)
+        self.send_velocity(ned)
+        return ned
+
+    def send_velocity(self, ned: tuple) -> None:
+        """Emit one velocity setpoint: `ned` is body_to_local_ned's
+        (v_north, v_east, v_down, yaw_rate_rad_s), as it is.
 
         It was named `yaw_rate_dps` and converted with math.radians() until
         2026-09-07, on the strength of a comment in models.py that said the
@@ -383,11 +419,12 @@ class MavlinkAdapter:
         MAVLink's SET_POSITION_TARGET_LOCAL_NED yaw_rate field is rad/s, which
         is what makes pass-through correct here rather than merely simpler.
         """
+        v_n, v_e, v_d, yaw_rate_rad_s = ned
         self.m.mav.set_position_target_local_ned_send(
             0, self.m.target_system, self.m.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED, VEL_YAWRATE_MASK,
             0, 0, 0,                       # position (ignored)
-            vx, vy, -vz_up,                # velocity, NED
+            v_n, v_e, v_d,                 # velocity, NED
             0, 0, 0,                       # accel (ignored)
             0, yaw_rate_rad_s)
 
@@ -567,6 +604,8 @@ def main() -> int:
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
     n_vel_used = 0
+    # Ticks whose Shield was given no measured heading (no ATTITUDE yet).
+    heading_missing_ticks = 0
     # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
@@ -723,17 +762,16 @@ def main() -> int:
         if (own_v and vel is not None and all(math.isfinite(c) for c in vel)):
             st_sh = state.model_copy(update={"velocity": vel})
             n_vel_used += 1
-        # The stub's world action handed to the Shield in the BODY frame
-        # (2026-11-18, WP3-04 / ARCH-04: frames.filter_as_body, the arc off),
-        # turned at the heading the Shield turns it back with - st_sh's, 0 on
-        # this rail, which gives the Shield no heading, so both turns are the
-        # identity: the body action is the world action relabelled, not the
-        # aircraft's body frame. A tick whose round trip would change a bit
-        # (a zero's sign) goes to filter() as before; the decision is
-        # filter()'s to the bit (tests/test_rail_body_frame.py). The link
-        # flies the emitted world action, as before.
-        decision = filter_as_body(shield, st_sh, raw)
-        emitted = decision.emitted if shield_on else raw
+        # The stub's world action handed to the Shield in the BODY frame on
+        # every tick (WP3-04 / ARCH-04: frames.filter_world_as_body, the arc
+        # off), at the aircraft's heading (ATTITUDE, read with the pose); the
+        # Shield hands back the emitted body action, and the link turns what
+        # the rail streams into local NED after the projection (send_body).
+        if link.heading_deg() is None:
+            heading_missing_ticks += 1
+        decision, body_in, emitted_body = filter_world_as_body(shield, st_sh, raw)
+        # The record copy (world frame): the Shield's reading of what flies.
+        emitted = decision.emitted if shield_on else decision.raw
         extra = episode_row_fields(shield, state, policy, rec.episode_id)
 
         # Escalation FSM (Shield on only); modes through pymavlink.
@@ -866,7 +904,17 @@ def main() -> int:
             # Shield flew on it (--own-velocity-forecast).
             "state_v": None if vel is None else [round(c, 3) for c in vel],
             "shield_velocity": st_sh is not state,
-            "raw": raw.model_dump(),
+            # The heading the Shield took the body frame at (ATTITUDE), and
+            # `raw`: the Shield's own world-frame reading of the body action
+            # it was handed (what it judged; Shield.filter on it reproduces
+            # the decision, tools/replay_q3.py), beside the stub's own world
+            # action (`pilot_raw`) and the body actions in and out.
+            "yaw_deg": round(state.yaw_deg, 3),
+            "frame": "body",
+            "raw": decision.raw.model_dump(),
+            "pilot_raw": raw.model_dump(),
+            "raw_body": body_in.model_dump(),
+            "emitted_body": emitted_body.model_dump(),
             "emitted": emitted.model_dump(),
             "violations": [v.model_dump() for v in decision.violations],
             # `flown` and `emitted_violations`: what was FLOWN and the check
@@ -907,10 +955,18 @@ def main() -> int:
                if transit is not None else {}),
         })
         flown = {"pass": emitted, "brake": Action4D(), "none": None}[setpoint]
+        # What the rail streams, in the BODY frame: the Shield's emitted body
+        # action (the stub's own with the Shield off), a stop on the FSM's
+        # brake, nothing when the autopilot holds the aircraft.
+        sent = {"pass": emitted_body if shield_on else body_in,
+                "brake": BODY_STOP, "none": None}[setpoint]
         if flown is None and transit is not None:
+            # A moved hold's GUIDED transit, the hold's own world-frame leg in
+            # the body frame (hold_flight.body_command), as on the ROS 2 rail.
             flown = Action4D(vx=transit[0], vy=transit[1], vz_up=transit[2])
-        if flown is not None:
-            link.send_velocity(flown.vx, flown.vy, flown.vz_up, flown.yaw_rate)
+            sent = body_command(transit, state.yaw_deg)
+        if sent is not None:
+            link.send_body(sent, state.yaw_deg)
         # What was sent (world frame), for the own-velocity forecast's pipe.
         shield.note_flown(flown)
         if fsm is not None and (fsm.terminal or (
@@ -1025,6 +1081,11 @@ def main() -> int:
             "velocity_ticks": n_vel_used,
             "shield_velocity_ticks": shield.n_velocity_ticks,
             "velocity_nonfinite": shield.n_velocity_nonfinite},
+        # The action frame at the Shield's boundary (WP3-04 / ARCH-04):
+        # body, at the heading ATTITUDE gave (0 on the ticks counted here).
+        "action_frame": {"shield_input": "body", "heading_source": "ATTITUDE.yaw",
+                         "heading_missing_ticks": heading_missing_ticks,
+                         "adapter": "guardrail.frames.body_to_local_ned"},
         "autopilot_fence": ap_fence,
         "sim_stressors": sim_stressors,
         "shield": args.shield,

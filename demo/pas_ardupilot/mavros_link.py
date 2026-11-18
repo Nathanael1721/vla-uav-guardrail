@@ -87,7 +87,6 @@ from guardrail.manifest import (collect_host_evidence,               # noqa: E40
                                 describe_autopilot_version,
                                 mavros_location, network_link_evidence,
                                 scan_local_processes)
-from guardrail.frames import from_body, to_body                      # noqa: E402
 from guardrail.models import Action4D, State                         # noqa: E402
 
 from autopilot import (COPTER_MODES, FENCE_PARAMS, RC_OVERRIDE_IGNORE,  # noqa: E402
@@ -553,27 +552,32 @@ class MavrosLink:
                     f"-> {TOPIC_SETPOINT}")
         return f"{TOPIC_SETPOINT} (PositionTarget, this node)"
 
-    def send(self, a: Action4D, raw_body: tuple | None = None,
-             body: tuple | None = None) -> dict:
-        """Send the Shield's emitted action `a` (world frame). `body`
-        (--action-frame body, 2026-11-17, WP3-04 / ARCH-04): the emitted
-        action in the BODY frame, the Shield's projection's output; it is
-        then what is sent - as it is on the adapter route, for
-        sitl/mavlink_adapter_node.py to turn into local NED after the
-        projection, or turned into the PositionTarget here at the heading
-        this link last read on the default route - and `a` is the record
-        copy on /pas/safe_action_4d. None: `a` is sent as it always was."""
-        if body is not None and self.pub_body is None:
-            f = enu_position_target(from_body(*body, math.degrees(self.snap.yaw or 0.0)))
-        else:
-            f = enu_position_target(a)
+    def send(self, a: Action4D | None = None, raw_body: tuple | None = None,
+             body=None) -> dict:
+        """Send one setpoint. `body` is what is sent: the action this rail
+        streams in the BODY frame (forward, right, up, yaw rate rad/s) - the
+        Shield's emitted body action, a stop, or the pilot's own with the
+        Shield off (WP3-04 / ARCH-04). On the adapter route it is published
+        as it is on /shield/setpoint, for sitl/mavlink_adapter_node.py to
+        turn into local NED; on the default route this link is the adapter
+        and turns it into the PositionTarget itself, at the heading it last
+        read (autopilot.enu_position_target, i.e. guardrail.frames.
+        body_to_local_ned) - either way after the projection, by the one
+        body -> NED function. `a` (scene frame) is the record copy on
+        /pas/safe_action_4d (None: the body action's local-NED reading).
+        Since wf21 a world-frame action is not sent: `body` is required."""
+        if body is None:
+            raise ValueError("MavrosLink.send streams the BODY frame: pass body=")
+        if isinstance(body, Action4D):
+            body = (body.vx, body.vy, body.vz_up, body.yaw_rate)
+        body = tuple(float(v) for v in body)
+        f = enu_position_target(body, self.snap.yaw or 0.0)
+        if a is None:
+            a = Action4D(vx=f["velocity"][1], vy=f["velocity"][0],
+                         vz_up=f["velocity"][2], yaw_rate=-f["yaw_rate"])
         if self.pub_body is not None:
-            # SETPOINT_VIA "adapter": the world action back to the body frame
-            # at the heading this tick rotated the pilot's action with (the
-            # snapshot state() read it from), for the adapter to rotate to NED
-            # - or, given, the Shield's body-frame output as it is.
-            if body is None:
-                body = to_body(a, math.degrees(self.snap.yaw or 0.0))
+            # SETPOINT_VIA "adapter": the body action as it is, for the
+            # adapter to turn into NED with its own heading.
             out = self.msgs.Float32MultiArray()
             out.data = [float(v) for v in body]
             self.pub_body.publish(out)

@@ -17,25 +17,20 @@ PER 10 Hz TICK
                the same altitude hold; follow_vlm.search_sweep_rate() while the
                box is stale, its first swing toward the side the box was last
                seen on. The 4-D action leaves the pilot in the BODY frame.
-  5. Shield    body -> scene frame once (autopilot.body_to_world, which is
-               guardrail.frames.from_body) for the row and the Shield-off
-               arm; the Shield is handed the action in the BODY frame at its
-               own heading (guardrail.frames.filter_as_body, since 2026-11-18:
-               Shield.filter_body, the arc off, on each tick whose round
-               trip is exact, else Shield.filter as before: the same
-               decision as Shield.filter on the scene-frame action, to the
-               bit), with the
-               grant's 5 s / 10 Hz lookahead and no FSM of its own
-               (guardrail.replay.rail_shield). Stand-off rules get the
-               subject's position from depth range (or apparent width) and
-               bearing - never ground truth. With --action-frame body
-               (2026-11-17, WP3-04 / ARCH-04; off by default) the Shield
-               takes the BODY action itself (Shield.filter_body, a yaw-rate
-               command forecast along its arc beside the straight line), and
-               step 7 sends the emitted
-               BODY action, turned into local NED by the link after the
-               projection (or by sitl/mavlink_adapter_node.py, --setpoint-via
-               adapter).
+  5. Shield    takes the pilot's BODY action itself, on every tick, at the
+               aircraft's measured heading (Shield.filter_body, WP3-04 /
+               ARCH-04): it reads it in the scene frame its rules are
+               written in (the row's `raw`) and hands back the emitted BODY
+               action, with the grant's 5 s / 10 Hz lookahead and no FSM of
+               its own (guardrail.replay.rail_shield). Step 7 sends that BODY
+               action, turned into local NED by the link after the
+               projection (guardrail.frames.body_to_local_ned; or by
+               sitl/mavlink_adapter_node.py, --setpoint-via adapter).
+               Stand-off rules get the subject's position from depth range
+               (or apparent width) and bearing - never ground truth. With
+               --action-frame body (2026-11-17; off by default) the Shield
+               also forecasts a yaw-rate command along its arc beside the
+               straight line.
   6. FSM       with the Shield on, guardrail.fsm.EscalationFSM (the grant's
                Brake -> Loiter -> RTL -> Land) steps on the Shield's decision,
                as sitl/run_sitl_demo.py and sitl/ros2_shield_node.py do. Its
@@ -438,7 +433,7 @@ from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E4
 from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
                                     policy_zones, zone_clearance_m, zones_near)
 from guardrail.gc_pacing import GcPacer                               # noqa: E402
-from guardrail.frames import filter_as_body, to_body                  # noqa: E402
+from guardrail.frames import BODY_STOP                                # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
@@ -466,7 +461,7 @@ import perception_stress as pstress                                   # noqa: E4
 import rail                                                           # noqa: E402
 import rail_hotapply                                                  # noqa: E402
 import topology as topo                                               # noqa: E402
-from autopilot import FrameAnchor, PymavlinkLink, body_to_world       # noqa: E402
+from autopilot import FrameAnchor, PymavlinkLink                      # noqa: E402
 
 TICK = 0.1
 # The loop-rate gate the project's evaluation holds every camera flight to
@@ -1256,10 +1251,10 @@ class VLAPilot:
     `monitor` the mission's stop rules (vla_mission.MissionMonitor);
     `detections` the Grounder for the approach (None for a GOTO).
 
-    step(now, st) -> (raw, body, info): the tracker's action IS the raw
-      action the Shield judges - nothing stands between them - with its
-      body-frame copy (guardrail.frames.to_body: the row's `body` and
-      MAVROS's record copy) and FollowPilot's info shape. The detector's box,
+    step(now, st) -> (raw, body, info): the tracker's world-frame action and
+      its body-frame copy at the aircraft's heading (guardrail.frames.to_body),
+      which is what the Shield is handed (Shield.filter_body; the row's
+      `body` and MAVROS's record copy), with FollowPilot's info shape. The detector's box,
       its capture and its freshness pass through as FollowPilot passes them,
       so the Shield's subject stays the perception's estimate, independent of
       the VLA (the integration report's rule).
@@ -4668,18 +4663,13 @@ def build_parser() -> argparse.ArgumentParser:
                          "forecast.md). 'off' flies the commanded forecast and "
                          "BRAKE as before; the velocity is logged (state_v) either way")
     ap.add_argument("--action-frame", choices=["world", "body"], default="world",
-                    help="world (default; every flight before 2026-11-17): the link "
-                         "flies the Shield's emitted scene-frame action; the Shield is "
-                         "handed the action in the body frame at its own heading "
-                         "(frames.filter_as_body since 2026-11-18, the arc off, where "
-                         "the round trip is exact: the Shield.filter decision to the "
-                         "bit). body (WP3-04 / "
-                         "ARCH-04): the Shield takes the pilot's BODY action itself "
-                         "(Shield.filter_body), forecasts a command with a yaw rate "
-                         "along its arc, and the link turns the emitted BODY action "
-                         "into local NED after the projection (PymavlinkLink.send / "
-                         "MavrosLink.send `body`; with --setpoint-via adapter, "
-                         "sitl/mavlink_adapter_node.py does)")
+                    help="Either way (WP3-04 / ARCH-04, since wf21) the Shield takes "
+                         "the pilot's BODY action (Shield.filter_body) and the link "
+                         "turns the emitted BODY action into local NED after the "
+                         "projection (frames.body_to_local_ned; with --setpoint-via "
+                         "adapter, sitl/mavlink_adapter_node.py does). world "
+                         "(default): the Shield's straight-line forecast. body: it "
+                         "also forecasts a command with a yaw rate along its arc")
     ap.add_argument("--seed", type=int, default=20261006)
     ap.add_argument("--max-s", type=float, default=120.0)
     ap.add_argument("--gc-pacing", choices=["on", "off"], default="on",
@@ -6412,13 +6402,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # the commanded forecast, comparable with every stored off run.
     own_v = (getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on"
              and shield_on)
-    # The action frame at the Shield's boundary (--action-frame, WP3-04 /
-    # ARCH-04): "body" hands the Shield the pilot's body action (filter_body,
-    # its forecast along the arc of the yaw rate) and the link the emitted
-    # body action, turned into local NED after the projection. "world" (the
-    # default) flies exactly as before: the link is sent the Shield's emitted
-    # scene-frame action; the Shield itself is handed the body frame on it
-    # too since 2026-11-18 (frames.filter_as_body, the arc off).
+    # The arc forecast (--action-frame body, WP3-04 / ARCH-04). Either way
+    # the Shield is handed the pilot's body action (filter_body) and the link
+    # the emitted body action, turned into local NED after the projection
+    # (frames.body_to_local_ned); "body" adds the forecast along the arc of
+    # the yaw rate, "world" (the default) keeps the straight line.
     body_frame = getattr(args, "action_frame", "world") == "body"
     vel_sources: dict = {}
     n_vel_used = n_hold_guided = n_stop_advised = 0
@@ -7219,7 +7207,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         hold_sent = None
                         if streaming and takeover is None and fsm_fault is None:
                             try:
-                                link.send(Action4D())
+                                link.send(Action4D(), body=BODY_STOP)
                                 hold_sent = True
                             except Exception as exc:              # noqa: BLE001
                                 hold_sent = False
@@ -7305,14 +7293,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     vel_p = (link.velocity()[0] if callable(getattr(link, "velocity", None))
                              else None)
                     body, info = pilot.step(t_tick, st.up, pose=(st.x, st.y, yaw), vel=vel_p)
-                    raw = body_to_world(*body, yaw)
                 elif vla is None:
                     body, info = pilot.step(t_tick, st.up)
-                    raw = body_to_world(*body, yaw)
                 else:
-                    # THE VLA PILOT: the step tracker's world-frame action IS
-                    # the raw action; from here the detector pilot's path.
-                    raw, body, info = vla.step(t_tick, st)
+                    # THE VLA PILOT: the step tracker's world-frame action in
+                    # the body frame at the aircraft's heading (VLAPilot.step,
+                    # frames.to_body); from here the detector pilot's path.
+                    _, body, info = vla.step(t_tick, st)
                 subj = subj_depth = pairing = None
                 if info["fresh"]:
                     # Placed from the box's own capture: its pose and its
@@ -7352,23 +7339,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 if own_v and vel is not None:
                     st_sh = st.model_copy(update={"velocity": vel})
                     n_vel_used += 1
-                if body_frame:
-                    # The pilot's BODY action, at the heading `raw` was turned
-                    # with (st's): the Shield turns it itself, forecasts it
-                    # along its arc, and hands back the emitted body action.
-                    d, emitted_body = shield.filter_body(
-                        st_sh, Action4D(vx=body[0], vy=body[1], vz_up=body[2],
-                                        yaw_rate=body[3]), arc=True)
-                else:
-                    # The default (2026-11-18, WP3-04 / ARCH-04): the scene-
-                    # frame action turned into the BODY frame at the heading
-                    # the Shield turns it back with (st_sh's) and handed over
-                    # in that frame (frames.filter_as_body: filter_body, the
-                    # arc off) where the round trip is exact, else as before;
-                    # the decision is Shield.filter's to the bit and the link
-                    # flies its emitted scene-frame action as before
-                    # (tests/test_rail_body_frame.py).
-                    d, emitted_body = filter_as_body(shield, st_sh, raw), None
+                # THE SHIELD'S INPUT IS THE PILOT'S BODY ACTION (WP3-04 /
+                # ARCH-04), on every tick and with every pilot, at the
+                # aircraft's heading (st_sh's, as st's): the Shield turns it
+                # into the scene frame its rules are written in itself and
+                # hands back the emitted body action, which goes to the link
+                # (whose adapter turns it into local NED, after the
+                # projection). `raw` is the Shield's own scene-frame reading
+                # of the body action, for the row, the audit and the KPI
+                # re-check. --action-frame body adds the arc forecast.
+                d, emitted_body = shield.filter_body(
+                    st_sh, Action4D(vx=body[0], vy=body[1], vz_up=body[2],
+                                    yaw_rate=body[3]), arc=bool(body_frame))
+                raw = d.raw
                 # The rule clock's reading for this tick, taken with the
                 # Shield's: the trajectory point and the row carry this one,
                 # not a later reading after a send or a fence upload.
@@ -7549,12 +7532,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # ENDS that the Shield judged, not where it starts. Where the
                 # stop ends legal the answer is the zero itself.
                 fsm_setpoint, flown_d, stop_advised = setpoint, d, False
+                stop_body = None
                 if shield_on and fsm_fault is None and takeover is None and st_sh is not st:
                     if hold_deferred and fsm is not None and fsm.state == FSMState.LOITER:
-                        flown_d, setpoint, stop_advised = shield.advise(st_sh, Action4D()), "pass", True
+                        flown_d, stop_body = shield.advise_body(st_sh, BODY_STOP)
+                        setpoint, stop_advised = "pass", True
                         n_hold_guided += 1
                     elif setpoint == "brake":
-                        flown_d, setpoint, stop_advised = shield.advise(st_sh, Action4D()), "pass", True
+                        flown_d, stop_body = shield.advise_body(st_sh, BODY_STOP)
+                        setpoint, stop_advised = "pass", True
                         n_stop_advised += 1
                 # The literal LOITER hold centres the throttle while the FSM
                 # (or a fault) holds the aircraft AND the autopilot is in the
@@ -7593,22 +7579,22 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # camera frame behind the flown action.
                 t_pub_abs = None
                 if flown is not None:
-                    if body_frame:
-                        # The emitted BODY action to the link, which turns it
-                        # into local NED after the projection: the Shield's
-                        # own on a pass, else (a stop's answer, the brake,
-                        # the raw action with the Shield off) the flown
-                        # action at the heading the tick turned with.
-                        if flown is d.emitted and shield_on:
-                            fb = (emitted_body.vx, emitted_body.vy,
-                                  emitted_body.vz_up, emitted_body.yaw_rate)
-                        elif flown is raw:
-                            fb = tuple(body)
-                        else:
-                            fb = to_body(flown, st.yaw_deg)
-                        link.send(flown, raw_body=body, body=fb)
+                    # THE BODY ACTION TO THE LINK (WP3-04 / ARCH-04, every
+                    # tick), the one `flown` records: the Shield's emitted
+                    # body action on a pass, its body answer to a stop
+                    # (advise_body), a stop on the FSM's brake, the pilot's
+                    # own body action with the Shield off. The link's adapter
+                    # turns it into local NED after the projection
+                    # (frames.body_to_local_ned).
+                    if setpoint != "pass":
+                        fb = BODY_STOP
+                    elif stop_advised:
+                        fb = stop_body
+                    elif shield_on:
+                        fb = emitted_body
                     else:
-                        link.send(flown, raw_body=body)
+                        fb = Action4D(vx=body[0], vy=body[1], vz_up=body[2], yaw_rate=body[3])
+                    link.send(flown, raw_body=body, body=fb)
                     t_last_sent = t_pub_abs = clock()
                 streaming = flown is not None
                 # What was sent, for the own-velocity forecast's pipe (a
@@ -8306,10 +8292,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # compare with kpi.json p0_escapes (the rail's re-check,
                 # with the velocity when the Shield had one).
                 "p0_escape_ticks_commanded_basis": n_p0_cmd_basis,
-                # The action frame at the Shield's boundary (--action-frame):
-                # "body" - Shield.filter_body with the arc forecast, the
-                # link turning the emitted body action into local NED.
-                "action_frame": "body" if body_frame else "world"},
+                # The --action-frame flag ("body": the arc forecast on).
+                # Since wf21 the Shield's input is the body frame either way
+                # (shield_input) and the link turns the emitted body action
+                # into local NED (adapter).
+                "action_frame": "body" if body_frame else "world",
+                "arc": bool(body_frame), "shield_input": "body",
+                "adapter": "guardrail.frames.body_to_local_ned"},
             # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
             # what ArduCopter was asked for (the FSM's LOITER as BRAKE).
             "mode_requests": list(asks.fsm),

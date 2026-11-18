@@ -384,7 +384,9 @@ from guardrail import prefix_consumer as PC                        # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
-from guardrail.frames import filter_as_body, from_body, to_body   # noqa: E402
+from guardrail.frames import (body_to_local_ned,                  # noqa: E402
+                              filter_world_as_body, local_ned_to_world,
+                              streamed_body)
 from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
@@ -901,10 +903,11 @@ RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points",
 # (docs/RUBRIC-failsafe.md, section 8, "2026-11-12").
 GPS_DROPOUT_MODELS = ("frozen", "dead_reckoned")
 DEFAULT_GPS_DROPOUT = "frozen"
-# The action frame at the Shield's boundary (run_episode `action_frame`,
-# 2026-11-17, WP3-04 / ARCH-04): "world" (every episode before it) or "body"
-# (Shield.filter_body with the arc forecast, the conversion back to the
-# integrator's world frame after the projection).
+# The pilot's frame and the arc forecast (run_episode `action_frame`,
+# 2026-11-17, WP3-04 / ARCH-04). Since wf21 the Shield's input is the body
+# frame on both arms and the integrator flies frames.body_to_local_ned of what
+# the Shield streams: "world" (the default) keeps the arc forecast off,
+# "body" turns it on.
 ACTION_FRAMES = ("world", "body")
 # EKF3's dead-reckoning drift on the hil rig, m/s: the upper envelope of
 # |EKF3 - truth| / time since the loss (>= 2 s) over every GPS denial the rig
@@ -1437,22 +1440,20 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     the Shield) DO change the flight. Flown by EpisodeRunner without a
     pause, so a stepped episode and this one share one integrator.
 
-    `action_frame` (ACTION_FRAMES, 2026-11-17, WP3-04 / ARCH-04): "world"
-    (the default, every episode before it) flies the Shield's emitted
-    world-frame action; since 2026-11-18 the Shield is handed the pilot's
-    action in the BODY frame on this arm too (frames.filter_as_body, at the
-    heading the Shield is given, the arc off) on each tick whose round trip
-    is exact, else to Shield.filter as before, so every row is what
-    Shield.filter on the world action gave, to the bit
-    (tests/test_rail_body_frame.py). "body" hands it the BODY-frame
-    action (frames.to_body at the heading the Shield is given), through
-    Shield.filter_body with the arc forecast, and the Shield's emitted body
-    action is turned back into the world frame the integrator flies only
-    AFTER the projection, as the rails' MAVLink adapter does (from_body at
-    the aircraft's heading). The headless vehicle does not model yaw, so
-    the heading stays the start's and every pilot here commands no yaw
-    rate: the arm differs from "world" by the rotations' rounding only, and
-    is recorded in the episode_start event."""
+    `action_frame` (ACTION_FRAMES, 2026-11-17, WP3-04 / ARCH-04). On both
+    arms (since wf21) the Shield is handed the pilot's action in the BODY
+    frame at the heading it is given (frames.filter_world_as_body) and hands
+    back the emitted BODY action; what the rail streams (frames.
+    streamed_body: that action, a stop on the FSM's brake, the pilot's own
+    with the Shield off) is turned into local NED only after the projection,
+    as the rails' MAVLink adapter does (frames.body_to_local_ned at the
+    aircraft's heading), and the integrator flies that. "world" (the
+    default) keeps the Shield's arc forecast off; "body" turns it on and is
+    recorded in the episode_start event. The headless vehicle does not model
+    yaw, so the heading stays the start's and every pilot here commands no
+    yaw rate. Against the world-frame hand-over flown before wf21 the
+    episodes differ by the rotations' rounding only, at headings that are
+    not a whole number of quarter turns (tests/test_frame_boundary.py)."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
                          response=response, recovery=recovery, entry=entry,
@@ -2087,24 +2088,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 None if ground_v is None else math.hypot(ground_v[0], ground_v[1]))
             if off is not None:
                 flags["hold_off_m"], flags["hold_reach_m"] = off, reach
-        emitted_body = None
-        if body_frame:
-            # The pilot's action in the BODY frame at the heading the Shield
-            # is given; the Shield turns it, forecasts it along its arc and
-            # hands back the emitted body action (run_episode `action_frame`).
-            fwd, right, up_b, yr_b = to_body(raw, seen.yaw_deg)
-            d, emitted_body = shield.filter_body(
-                seen, Action4D(vx=fwd, vy=right, vz_up=up_b, yaw_rate=yr_b),
-                t=t_now, arc=True, **flags)
-        else:
-            # The default arm (2026-11-18, WP3-04 / ARCH-04): the pilot's
-            # world action turned into the BODY frame here, at the heading
-            # the Shield is given, and handed to the Shield in that frame
-            # (frames.filter_as_body: filter_body, the arc off) where the
-            # round trip is exact, else filter() as before: rows to the bit.
-            # The integrator flies the emitted world action as before
-            # (tests/test_rail_body_frame.py).
-            d = filter_as_body(shield, seen, raw, t=t_now, **flags)
+        # The Shield's input is the BODY frame on every tick (WP3-04 /
+        # ARCH-04): the pilot's world action turned into the body frame here,
+        # at the heading the Shield is given (frames.filter_world_as_body).
+        # The default arm ("world": the pilot speaks the world frame) keeps
+        # the arc forecast off; "body" turns it on (run_episode
+        # `action_frame`). What the Shield streams is turned back into the
+        # integrator's frame only by the adapter below, after the projection.
+        d, body_in, emitted_body = filter_world_as_body(
+            shield, seen, raw, t=t_now, arc=bool(body_frame), **flags)
         a_rec = auditor.record(i, d)
         if a_rec is not None:
             audit.append(auditor.line(a_rec))
@@ -2192,17 +2184,18 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                    hold=None if hold_done else hold,
                                    up_home=up_above_home(st))
             flown_vios = checker.filter(seen, flown, t=t_now).violations
-        if body_frame and owner == "shield":
-            # THE ADAPTER (action_frame "body"): what the Shield streams is a
-            # BODY action - its own emitted one, or the FSM's command / stop
-            # at the heading it judged - turned into the world frame the
-            # vehicle flies only here, after the projection, at the
-            # aircraft's own heading (frames.from_body, as
-            # sitl/mavlink_adapter_node.py turns /shield/setpoint into NED).
-            fb = ((emitted_body.vx, emitted_body.vy, emitted_body.vz_up,
-                   emitted_body.yaw_rate) if flown is d.emitted
-                  else to_body(flown, seen.yaw_deg))
-            flown = from_body(*fb, st.yaw_deg)
+        if owner in ("shield", "pilot"):
+            # THE ADAPTER (WP3-04 / ARCH-04, every arm): what the rail streams
+            # is a BODY action - the Shield's emitted one, a stop on the FSM's
+            # "brake", or with the Shield off the pilot's body action as it
+            # was handed in (frames.streamed_body) - turned into local NED
+            # only here, after the projection, at the aircraft's own heading,
+            # by the one body -> NED function every rail's adapter calls
+            # (frames.body_to_local_ned, as sitl/mavlink_adapter_node.py turns
+            # /shield/setpoint into SET_POSITION_TARGET_LOCAL_NED); the
+            # integrator flies that NED velocity in its North / East / up axes.
+            sent = streamed_body(d, emitted_body, shield_on=on, body_in=body_in)
+            flown = local_ned_to_world(body_to_local_ned(sent, st.yaw_deg))
         owner_ticks[owner] += 1
         if owner == "autopilot":
             ap_mode_ticks[ap_mode or "none"] = ap_mode_ticks.get(ap_mode or "none", 0) + 1
