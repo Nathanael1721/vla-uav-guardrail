@@ -1041,6 +1041,91 @@ class ClearanceField:
     def distance(self, x: float, y: float) -> float:
         return field_distance(self.d, self.res, self.ox, self.oy, x, y)
 
+    def off_map(self, x: float, y: float) -> bool:
+        """Shield.off_map over this field: more than half a cell past the
+        map's edge, where the clearance rule cannot see anything."""
+        return field_off_map(self.d, self.res, self.ox, self.oy, x, y)
+
+
+def field_off_map(d, res: float, ox: float, oy: float, x: float, y: float) -> bool:
+    """True where world point (x, y) lies more than half a cell outside the
+    grid of distance field `d` (cell size `res`, origin (ox, oy)); False
+    when `d` is None. The one off-map test: Shield.off_map and
+    ClearanceField.off_map both call it."""
+    if d is None:
+        return False
+    n, m = d.shape
+    fi = (x - ox) / res
+    fj = (y - oy) / res
+    return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
+
+
+def min_clearance_on_map(points, obstacle_map: dict | None = None,
+                         shield: "Shield | None" = None) -> tuple[float | None, int]:
+    """(the least clearance over `points` that lie on the map, how many lie
+    off it), measured as the clearance rule measures it: `shield`'s own
+    field (Shield.clearance_at, Shield.off_map) when that Shield holds an
+    obstacle map, else the same field built over `obstacle_map` and read by
+    the same functions (ClearanceField). `points` are (x, y) pairs or dicts
+    with "x" and "y". (None, n) with no point on the map; (None, 0) with no
+    map at all.
+
+    The post-flight "minimum building distance" of the semantic demo and
+    semantic seek (WP3-22 / X-13, 2026-11-18). Until then each read
+    city_planner.distance_field (a 5x5 chamfer transform, rounded to the
+    nearest cell, 0 inside a building) - a second measure of the
+    obstacle_clearance rule. This one is signed (negative inside a
+    footprint) and bilinear, as the Shield reads it."""
+    if shield is not None and shield.has_obstacle_map:
+        dist, off = shield.clearance_at, shield.off_map
+    elif obstacle_map is not None:
+        field = ClearanceField(obstacle_map)
+        dist, off = field.distance, field.off_map
+    else:
+        return None, 0
+    best, n_off = None, 0
+    for p in points:
+        x, y = (p["x"], p["y"]) if isinstance(p, dict) else (p[0], p[1])
+        if off(x, y):
+            n_off += 1
+            continue
+        d = dist(x, y)
+        if best is None or d < best:
+            best = d
+    return best, n_off
+
+
+def nearest_cell_clearance(obstacle_map: dict, px: float, py: float, cap_m: float) -> float:
+    """Metres from (px, py) to the nearest BLOCKED cell centre of
+    `obstacle_map` within `cap_m`, `cap_m` when none: an exact Euclidean scan
+    of the cells round the point (rounded to the nearest cell) rather than
+    a distance transform, because the city controller calls it inside its
+    control loop.
+
+    The city controller's FenceGuard brakes and sidesteps for buildings on
+    this measure by default (demo/follow_vlm.py, guard_field="grid": every
+    stored follow flight flew it). It lived in follow_vlm.py as
+    grid_scan_clearance until 2026-11-18 and moved here unchanged (WP3-22 /
+    X-13; tests/test_shieldcore_onepath.py holds the old copy as the null and
+    shows the answers bit-identical). It is NOT the field the Shield's
+    obstacle_clearance verdict reads (`field_distance`: chamfer-scaled,
+    bilinear, so up to 1.4 m nearer beside a face); guard_field="shield"
+    makes FenceGuard read that one instead, opt-in until flown."""
+    occ, res = obstacle_map["occ"], obstacle_map["res"]
+    ox, oy = obstacle_map["ox"], obstacle_map["oy"]
+    n, m = occ.shape
+    r = int(math.ceil(cap_m / res))
+    i0 = int(round((px - ox) / res))
+    j0 = int(round((py - oy) / res))
+    best = cap_m
+    for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
+        for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
+            if occ[i, j]:
+                d = math.hypot(ox + i * res - px, oy + j * res - py)
+                if d < best:
+                    best = d
+    return best
+
 
 def _field_lipschitz(d, res: float) -> float:
     """How many metres `Shield._distance_at` can change per metre the point
@@ -2582,13 +2667,7 @@ class Shield:
         """True where (x, y) lies outside the obstacle map (more than half a
         cell past its edge). The clearance rule cannot see anything there, so
         a caller should report it rather than let it pass as clear."""
-        d = self._dist
-        if d is None:
-            return False
-        n, m = d.shape
-        fi = (x - self._ox) / self._res
-        fj = (y - self._oy) / self._res
-        return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
+        return field_off_map(self._dist, self._res, self._ox, self._oy, x, y)
 
     def _away_dir(self, x: float, y: float, probe_r: float,
                   f=None) -> tuple[float, float]:

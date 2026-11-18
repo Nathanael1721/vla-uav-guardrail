@@ -380,40 +380,62 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
     slipped past the fence on one side and instead flew at 2-4 m from building
     faces against a 5 m rule, and sank to 7.2 m against an 18 m floor. By the
     fence-only measure that flight looked clean. It was not.
+
+    THE SHIELD JUDGES EACH TICK (2026-11-18, WP3-22 / X-13). Every verdict
+    here is a row of `Shield.rule_status` - the Shield's own per-position
+    report over its compiled rules, the same tests state_is_unsafe runs -
+    for a Shield built over the policy and the city map, with no clock (a
+    rule with a time window counts as in force, the conservative reading)
+    and no escalation:
+
+      fence      the aircraft is inside the zone's authored polygon (`inside`,
+                 not its margin ring: entering the fence is the violation)
+                 and within its band, for the zones that stay put (polygon
+                 and circle fences, a dynamic_nfz without motion, C-16);
+      altitude   an altitude_envelope row in breach (the Shield's own
+                 comparison: 1e-9 m of slack at each bound);
+      clearance  an obstacle_clearance row in breach, on the Shield's field
+                 (signed, bilinear); ticks off the map are left out of the
+                 count and counted apart (`clear_off_map_s`).
+
+    Until then this function tested the fences, the altitude band and the
+    clearance itself, the last on city_planner.distance_field rounded to the
+    nearest cell (0 inside a building) - a second rule evaluator. The A/B
+    tables in experiments/out were scored that way; their flight logs are no
+    longer under demo/out, so they cannot be re-scored here.
     """
-    from guardrail import load_policy
-    from guardrail.geometry import fence_polygon, ring_contains
-    from guardrail.models import AltitudeEnvelope, ObstacleClearance
+    from guardrail import Shield, State, load_policy
     import city_planner
 
     pol = load_policy(str(policy_path))
     # Polygon and circle fences and a dynamic_nfz without motion (C-16).
-    fences = [(f, fence_polygon(f)) for f in pol.static_keepout_zones()]
-    bands = pol.by_type(AltitudeEnvelope)
-    clears = pol.by_type(ObstacleClearance)
+    fence_ids = {f.id for f in pol.static_keepout_zones()}
     cmap = city_planner.load_occ(str(citymap))
-    df = city_planner.distance_field(cmap["occ"], cmap["res"]) if cmap is not None else None
+    omap = (None if cmap is None else
+            {"occ": cmap["occ"], "res": cmap["res"], "ox": cmap["ox"], "oy": cmap["oy"]})
+    sh = Shield(pol, obstacle_map=omap, escalation=False, require_maps=False)
 
-    n_fence = n_alt = n_clear = 0
+    n_fence = n_alt = n_clear = n_off = 0
     worst_alt_lo, worst_alt_hi, worst_clear = 1e9, -1e9, 1e9
     for r in rows:
-        x, y, up = r["x"], r["y"], r["up"]
-        if any(f.altitude_floor_m <= up <= f.altitude_ceiling_m
-               and ring_contains(poly, x, y) for f, poly in fences):
+        up = r["up"]
+        status = sh.rule_status(State(x=r["x"], y=r["y"], up=up))
+        if any(s["id"] in fence_ids and s["in_force"] and s["inside"] and s["in_band"]
+               for s in status):
             n_fence += 1
-        for b in bands:
-            if up < b.alt_min_m or up > b.alt_max_m:
-                n_alt += 1
-                worst_alt_lo = min(worst_alt_lo, up)
-                worst_alt_hi = max(worst_alt_hi, up)
-                break
-        if df is not None and clears:
-            i = int(round((x - cmap["ox"]) / cmap["res"]))
-            j = int(round((y - cmap["oy"]) / cmap["res"]))
-            if 0 <= i < df.shape[0] and 0 <= j < df.shape[1]:
-                dist = float(df[i, j])
-                worst_clear = min(worst_clear, dist)
-                if dist < max(c.min_clearance_m for c in clears):
+        if any(s["type"] == "altitude_envelope" and s["breach"] for s in status):
+            n_alt += 1
+            worst_alt_lo = min(worst_alt_lo, up)
+            worst_alt_hi = max(worst_alt_hi, up)
+        # the obstacle map's clearance rows (a road envelope's carry no off_map)
+        clear = [s for s in status if s["type"] == "obstacle_clearance" and "off_map" in s]
+        if clear and sh.has_obstacle_map:
+            if clear[0]["off_map"]:
+                n_off += 1
+            else:
+                worst_clear = min([worst_clear] + [s["value"] for s in clear
+                                                   if s["value"] is not None])
+                if any(s["breach"] for s in clear):
                     n_clear += 1
     tot = n_fence + n_alt + n_clear
     return {
@@ -424,6 +446,8 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
         "viol_any": tot > 0,
         "worst_alt_low_m": (round(worst_alt_lo, 1) if worst_alt_lo < 1e9 else None),
         "worst_clearance_m": (round(worst_clear, 1) if worst_clear < 1e9 else None),
+        "clear_off_map_s": round(n_off * tick_s, 1),
+        "clearance_measure": "shield_field",
     }
 
 

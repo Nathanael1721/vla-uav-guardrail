@@ -22,7 +22,12 @@ file no longer tests that copies agree; it tests that there is one:
     line;
   * the readers that ask a different question (the fence export, the RTL
     leg, FenceGuard, the dwell count, the CSP's action check) are seen to
-    call the Shield's evaluator - a patched evaluator changes their answer.
+    call the Shield's evaluator - a patched evaluator changes their answer;
+  * since 2026-11-18 no clearance measure outside the library evaluates a
+    rule: the follow controller's default grid scan is the library's
+    nearest_cell_clearance (bit-identical to the copy it replaced), and the
+    semantic demo's, semantic seek's and the semantic A/B counter's
+    clearance (and the counter's fence and altitude tests) ask the Shield.
 
 The Shield node's architecture (card WP3-23) is tested at the end: the
 sliding-window buffer holds the last 50 actions and their predicted
@@ -843,12 +848,14 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
     field read by the same function (ClearanceField) - not on a grid scan of
     its own. A Shield whose field is patched moves the guard's answer; the
     guard's clearance is min(cap, the Shield's). The default stays the grid
-    scan every stored follow flight flew (follow_vlm.grid_scan_clearance)."""
+    scan every stored follow flight flew, now the library's
+    (guardrail/shield.py nearest_cell_clearance; follow_vlm's own
+    grid_scan_clearance until 2026-11-18, bit-identical: test below)."""
     import numpy as np
     sys.path.insert(0, str(ROOT / "demo"))
     import follow_vlm as F
     from guardrail import load_policy
-    from guardrail.shield import ClearanceField
+    from guardrail.shield import ClearanceField, nearest_cell_clearance
     res, ox, oy = 0.5, -20.0, -20.0
     occ = np.zeros((80, 80), dtype=np.uint8)
     occ[50:60, 30:50] = 1                                  # a block at x 5..9.5
@@ -863,7 +870,7 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
     rng = __import__("random").Random(3)
     for _ in range(100):
         x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
-        assert dflt.clearance(x, y, 12.0) == F.grid_scan_clearance(omap, x, y, 12.0)
+        assert dflt.clearance(x, y, 12.0) == nearest_cell_clearance(omap, x, y, 12.0)
     for _ in range(200):
         x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
         assert g.clearance(x, y, 12.0) == min(12.0, sh.clearance_at(x, y))
@@ -897,11 +904,15 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
 # projections; it cannot see a clearance measured on a distance transform or
 # a grid scan. These do that: every function outside the library that calls
 # city_planner.distance_field (a 5x5 chamfer, read by nearest-cell rounding)
-# or scans occupancy cells with hypot. Each is listed with what it is; the
-# ones marked RULE evaluate the obstacle_clearance rule on a measure that is
-# NOT the Shield's (guardrail/shield.py field_distance) and are the rows'
-# remaining work, stated here rather than hidden. A new one fails, and so
-# does a stale entry.
+# or scans occupancy cells with hypot. Each is listed with what it is. None
+# evaluates a rule: since 2026-11-18 (WP3-22 / X-13) the four that did - the
+# follow controller's default grid scan (follow_vlm.grid_scan_clearance), the
+# semantic demo's and semantic seek's minimum building distance and the
+# semantic A/B P0 counter (analyze_semantic_ab.actual_violations) - call the
+# library instead (guardrail/shield.py nearest_cell_clearance,
+# min_clearance_on_map, Shield.rule_status; tests below). What is left is
+# planning cost and target identity, which no rule reads. An entry marked
+# RULE fails, a new measure fails, and so does a stale entry.
 _CLEARANCE_OUTSIDE = {
     ("demo/city_planner.py", "inflate"):
         "planning: inflates the planner's grid by a clearance (route cost, no verdict)",
@@ -909,17 +920,6 @@ _CLEARANCE_OUTSIDE = {
         "planning: the route planner's clearance cost",
     ("demo/identity.py", "__init__"):
         "target identity: distance to the street cells, not a rule",
-    ("demo/follow_vlm.py", "grid_scan_clearance"):
-        "RULE (controller side): FenceGuard's building half by default; the "
-        "Shield-field read is opt-in (--guard-field shield) until flown on the AGX",
-    ("demo/semantic_demo.py", "fly"):
-        "RULE (analysis side): min_building_dist_m reported by the semantic demo",
-    ("demo/semantic_seek.py", "fly"):
-        "RULE (analysis side): min_building_dist_m reported by semantic seek",
-    ("experiments/analyze_semantic_ab.py", "actual_violations"):
-        "RULE (analysis side): the semantic A/B P0 counter's obstacle_clearance "
-        "check (and its inline fence band and altitude envelope tests); not "
-        "folded: re-scoring would change stored A/B results",
 }
 
 
@@ -964,9 +964,12 @@ def clearance_of_their_own(tree_list=None) -> dict:
 
 
 def test_every_clearance_measure_outside_the_library_is_named():
-    """No clearance measure outside the library but the listed ones; the
-    RULE ones are the known remaining evaluators of WP3-22 / X-13. The null:
-    a planted grid scan and a planted distance_field reader are found."""
+    """No clearance measure outside the library but the listed ones, and none
+    of those evaluates a rule (no entry is marked RULE: WP3-22 / X-13 names
+    no exception). The null: a planted grid scan and a planted
+    distance_field reader are found."""
+    rule = sorted(k for k, why in _CLEARANCE_OUTSIDE.items() if why.startswith("RULE"))
+    assert not rule, f"a rule evaluator outside the library is still listed: {rule}"
     found = clearance_of_their_own()
     new = sorted(f"{rel}:{line} {name}() {', '.join(w)}"
                  for (rel, name), (line, w) in found.items()
@@ -986,6 +989,247 @@ def test_every_clearance_measure_outside_the_library_is_named():
            "def fine(sh, x, y):\n    return sh.clearance_at(x, y)\n")
     got = clearance_of_their_own([("tools/mine.py", ast.parse(src))])
     assert set(got) == {("tools/mine.py", "scan"), ("tools/mine.py", "df")}, got
+
+
+# ------------------------- the four former evaluators call the library now
+
+def _old_grid_scan_clearance(occ_map, px, py, cap_m):
+    """demo/follow_vlm.py grid_scan_clearance as it stood at 7b0f50c, verbatim:
+    the null the library's nearest_cell_clearance is held bit-identical to."""
+    occ, res = occ_map["occ"], occ_map["res"]
+    ox, oy = occ_map["ox"], occ_map["oy"]
+    n, m = occ.shape
+    r = int(math.ceil(cap_m / res))
+    i0 = int(round((px - ox) / res))
+    j0 = int(round((py - oy) / res))
+    best = cap_m
+    for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
+        for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
+            if occ[i, j]:
+                d = math.hypot(ox + i * res - px, oy + j * res - py)
+                if d < best:
+                    best = d
+    return best
+
+
+def _stored_maps():
+    """The occupancy maps the repository tracks: the city maps under
+    demo/out/citymap and the CityLife flight-band fixture."""
+    sys.path.insert(0, str(ROOT / "demo"))
+    import city_planner
+    import numpy as np
+    out = []
+    for p in sorted((ROOT / "demo" / "out" / "citymap").glob("occ*.npz")):
+        cm = city_planner.load_occ(p)
+        out.append((p.name, {k: cm[k] for k in ("occ", "res", "ox", "oy")}))
+    fix = ROOT / "tests" / "fixtures" / "citylife_occ_flightband_6to14.npz"
+    with np.load(fix) as z:                               # keys occ, res, ox, oy
+        out.append((fix.name, {"occ": np.asarray(z["occ"]).astype(np.uint8),
+                               "res": float(z["res"]), "ox": float(z["ox"]),
+                               "oy": float(z["oy"])}))
+    return out
+
+
+def test_the_follow_controllers_default_grid_scan_is_the_library_bit_for_bit():
+    """The flown default (FenceGuard, guard_field="grid") measures with the
+    library's nearest_cell_clearance - follow_vlm keeps no scan of its own -
+    and every answer is bit-identical to the copy it replaced: on every
+    occupancy map the repository stores, 400 seeded points round each (on
+    and off the map) x 5 caps, through the function and through the guard.
+    Where this checkout holds the stored AGX follow flights (the lab
+    checkout's demo/out), every 50th logged tick's whole guard decision
+    (mode, side, building brake, scale) is replayed through both as well.
+    The null: a patched measure moves the guard's answer."""
+    import random
+    sys.path.insert(0, str(ROOT / "demo"))
+    import follow_vlm as F
+    from guardrail import load_policy
+    assert F.nearest_cell_clearance is SH.nearest_cell_clearance
+    assert not hasattr(F, "grid_scan_clearance"), "follow_vlm keeps a grid scan of its own"
+    pol = load_policy(ROOT / "policies" / "follow_car.yaml")
+    maps = _stored_maps()
+    assert len(maps) >= 6, [m[0] for m in maps]
+    rng = random.Random(1118)
+    n = 0
+    for name, om in maps:
+        g = F.FenceGuard(pol, obstacle_map=om, min_clearance_m=5.0)
+        assert g.guard_field == "grid"
+        nn, mm = om["occ"].shape
+        lo_x, hi_x = om["ox"] - 15.0, om["ox"] + nn * om["res"] + 15.0
+        lo_y, hi_y = om["oy"] - 15.0, om["oy"] + mm * om["res"] + 15.0
+        for _ in range(400):
+            x, y = rng.uniform(lo_x, hi_x), rng.uniform(lo_y, hi_y)
+            for cap in (3.0, 5.0, 7.3, 12.0, 20.0):
+                want = _old_grid_scan_clearance(om, x, y, cap)
+                got = SH.nearest_cell_clearance(om, x, y, cap)
+                assert got == want and type(got) is type(want), (name, x, y, cap, got, want)
+                assert g.clearance(x, y, cap) == want, (name, x, y, cap)
+                n += 1
+    assert n == len(maps) * 400 * 5
+
+    # stored follow flights, when this checkout has them (demo/out is gitignored)
+    sys.path.insert(0, str(ROOT / "tools"))
+    import onepath_guard_replay as R
+    runs = [ROOT / "demo" / "out" / r for r in R.DEFAULT_RUNS]
+    runs = [r for r in runs if (r / "flight_log.jsonl").is_file()]
+    if runs and (ROOT / "demo" / "out" / "citymap_citylife" / "occ_day.npz").is_file():
+        _, smap, grid, _ = R.flight_setup(ROOT, ROOT / "policies" / "follow_car_citylife_nfz.yaml")
+        k = 0
+        for rd in runs:
+            rows = [__import__("json").loads(line)
+                    for line in (rd / "flight_log.jsonl").open(encoding="utf-8") if line.strip()]
+            for r in rows[::50]:
+                gi, sc = r.get("guard_in"), r.get("fence_scale")
+                if gi is None or sc is None or sc < 0.05 or r.get("fence_mode") == "skirt":
+                    continue
+                x, y, cvx, cvy = float(r["x"]), float(r["y"]), gi[0] / sc, gi[1] / sc
+                now = R.decide(grid, x, y, cvx, cvy)
+                F.nearest_cell_clearance = _old_grid_scan_clearance
+                try:
+                    old = R.decide(grid, x, y, cvx, cvy)
+                finally:
+                    F.nearest_cell_clearance = SH.nearest_cell_clearance
+                assert now == old, (rd.name, r.get("tick"), now, old)
+                k += 1
+        print(f"      stored follow flights: {len(runs)} runs, {k} guard decisions identical")
+    else:
+        print("      stored follow flights: not in this checkout (demo/out is gitignored)")
+
+    # the null: the guard's default answer is the library function's
+    occ = __import__("numpy").zeros((40, 40), dtype="uint8")
+    occ[20:24, 20:24] = 1
+    om = {"occ": occ, "res": 1.0, "ox": 0.0, "oy": 0.0}
+    g = F.FenceGuard(pol, obstacle_map=om, min_clearance_m=5.0)
+    near = g.clearance(17.0, 21.0, 12.0)
+    assert near == 3.0, near
+    F.nearest_cell_clearance = lambda om_, x, y, cap: cap
+    try:
+        assert g.clearance(17.0, 21.0, 12.0) == 12.0, "the guard scans the grid itself"
+    finally:
+        F.nearest_cell_clearance = SH.nearest_cell_clearance
+
+
+def _calls_in(rel: str, fn_name: str) -> set:
+    tree = dict(trees())[rel]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
+            return {_called_name(n) for n in ast.walk(node) if isinstance(n, ast.Call)}
+    raise AssertionError(f"{rel} has no {fn_name}()")
+
+
+def test_the_semantic_reports_read_the_shields_clearance():
+    """The semantic demo's and semantic seek's minimum building distance is
+    the library's min_clearance_on_map - the flight Shield's own field
+    (Shield.clearance_at, Shield.off_map), else the same field over the map
+    (ClearanceField) - not city_planner.distance_field read cell by cell.
+    On the stored A/B map, over 2000 seeded points on and off it, it is the
+    least Shield.clearance_at over the points the Shield calls on the map,
+    with the rest counted; with and without the Shield the same answer; and
+    the off-map test both share (field_off_map) answers as Shield.off_map's
+    own expression did before it moved."""
+    import random
+    for rel in ("demo/semantic_demo.py", "demo/semantic_seek.py"):
+        called = _calls_in(rel, "fly")
+        assert "min_clearance_on_map" in called and "band_holds" in called, (rel, called)
+        assert "distance_field" not in called, rel
+    sys.path.insert(0, str(ROOT / "demo"))
+    import city_planner
+    from guardrail import load_policy
+    cm = city_planner.load_occ(ROOT / "demo" / "out" / "citymap" / "occ_day.npz")
+    om = {k: cm[k] for k in ("occ", "res", "ox", "oy")}
+    sh = Shield(load_policy(ROOT / "policies" / "semantic_conflict.yaml"), obstacle_map=om,
+                escalation=False)
+    assert sh.has_obstacle_map
+    n, m = om["occ"].shape
+    rng = random.Random(29)
+    pts = [(rng.uniform(om["ox"] - 20, om["ox"] + n * om["res"] + 20),
+            rng.uniform(om["oy"] - 20, om["oy"] + m * om["res"] + 20)) for _ in range(2000)]
+
+    def old_off_map(d, res, ox, oy, x, y):        # Shield.off_map's body at 7b0f50c
+        n_, m_ = d.shape
+        fi = (x - ox) / res
+        fj = (y - oy) / res
+        return not (-0.5 <= fi <= n_ - 0.5 and -0.5 <= fj <= m_ - 0.5)
+
+    on = [(x, y) for x, y in pts if not sh.off_map(x, y)]
+    for x, y in pts:
+        assert sh.off_map(x, y) == old_off_map(sh._dist, sh._res, sh._ox, sh._oy, x, y)
+    assert 200 < len(on) < len(pts), len(on)
+    want = (min(sh.clearance_at(x, y) for x, y in on), len(pts) - len(on))
+    assert SH.min_clearance_on_map(pts, om, sh) == want
+    assert SH.min_clearance_on_map(pts, om) == want
+    assert SH.min_clearance_on_map([{"x": x, "y": y} for x, y in pts], om) == want
+    assert SH.min_clearance_on_map(pts) == (None, 0)
+    assert SH.min_clearance_on_map(pts[:0], om) == (None, 0)
+
+
+def test_the_ab_p0_counter_asks_the_shield():
+    """experiments/analyze_semantic_ab.actual_violations judges every tick by
+    Shield.rule_status (the Shield's own per-position report), not by tests
+    of its own. Over 8 seeded tracks (1600 ticks) on the stored A/B policy
+    and map, its fence and altitude seconds are exactly the inline counter's
+    it replaced (the authored polygon within the band; the envelope); its
+    clearance seconds are the ticks the Shield's field puts under the rule's
+    5 m, on the map. The null: a Shield whose report is patched to no breach
+    zeroes the counter - it reads nothing else."""
+    import random
+    sys.path.insert(0, str(ROOT / "experiments"))
+    sys.path.insert(0, str(ROOT / "demo"))
+    import analyze_semantic_ab as AB
+    import city_planner
+    from guardrail import load_policy
+    from guardrail.geometry import fence_polygon, ring_contains
+    called = _calls_in("experiments/analyze_semantic_ab.py", "actual_violations")
+    assert "rule_status" in called and "distance_field" not in called, called
+    pol_p = ROOT / "policies" / "semantic_conflict.yaml"
+    map_p = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
+    pol = load_policy(pol_p)
+    cm = city_planner.load_occ(map_p)
+    om = {k: cm[k] for k in ("occ", "res", "ox", "oy")}
+    sh = Shield(pol, obstacle_map=om, escalation=False)
+    fences = [(f, fence_polygon(f)) for f in pol.static_keepout_zones()]
+    band = [c for c in pol.constraints if c.type == "altitude_envelope"][0]
+    lim = max(c.min_clearance_m for c in pol.constraints if c.type == "obstacle_clearance")
+    assert fences and lim == 5.0
+    rng = random.Random(1118)
+    tot = {"f": 0, "a": 0, "c": 0}
+    for _ in range(8):
+        f0, p0 = fences[0]
+        c0 = p0.centroid
+        x, y = c0.x + rng.uniform(-20, 20), c0.y + rng.uniform(-20, 20)   # by the fence
+        up, h = rng.uniform(14, 34), rng.uniform(0, 2 * math.pi)
+        rows = []
+        for _ in range(200):
+            h += rng.gauss(0, 0.25)
+            x, y, up = x + math.cos(h), y + math.sin(h), up + rng.gauss(0, 0.5)
+            rows.append({"x": x, "y": y, "up": up})
+        got = AB.actual_violations(rows, pol_p, map_p)
+        nf = sum(any(f.altitude_floor_m <= r["up"] <= f.altitude_ceiling_m
+                     and ring_contains(p, r["x"], r["y"]) for f, p in fences) for r in rows)
+        bad = [r["up"] for r in rows if r["up"] < band.alt_min_m or r["up"] > band.alt_max_m]
+        on = [r for r in rows if not sh.off_map(r["x"], r["y"])]
+        nc = sum(sh.clearance_at(r["x"], r["y"]) < lim for r in on)
+        assert got["viol_fence_s"] == round(nf * 0.1, 1), (got, nf)
+        assert got["viol_alt_s"] == round(len(bad) * 0.1, 1), (got, len(bad))
+        assert got["worst_alt_low_m"] == (round(min(bad), 1) if bad else None)
+        assert got["viol_clear_s"] == round(nc * 0.1, 1), (got, nc)
+        assert got["clear_off_map_s"] == round((len(rows) - len(on)) * 0.1, 1)
+        assert got["worst_clearance_m"] == (
+            round(min(sh.clearance_at(r["x"], r["y"]) for r in on), 1) if on else None)
+        tot["f"] += nf
+        tot["a"] += len(bad)
+        tot["c"] += nc
+    assert all(v > 0 for v in tot.values()), tot          # each rule was exercised
+    orig = Shield.rule_status
+
+    def clean(self, *a, **k):
+        return [dict(s, breach=False, inside=False) for s in orig(self, *a, **k)]
+    Shield.rule_status = clean
+    try:
+        got = AB.actual_violations(rows, pol_p, map_p)
+    finally:
+        Shield.rule_status = orig
+    assert got["viol_any_s"] == 0.0, "the counter judges ticks itself"
 
 
 if __name__ == "__main__":

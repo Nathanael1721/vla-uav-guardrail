@@ -54,7 +54,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E402
+                              band_holds, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.models import (                                      # noqa: E402
@@ -591,18 +592,18 @@ async def fly(args) -> int:
         print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
               f"nfz_s: the end-of-flight count has no per-tick position")
     band = policy.by_type(AltitudeEnvelope)
-    alt_ok = all(band[0].alt_min_m - 0.5 <= pt["up"] <= band[0].alt_max_m + 0.5
+    alt_ok = all(band_holds(band[0].alt_min_m - 0.5, band[0].alt_max_m + 0.5, pt["up"])
                  for pt in traj) if band and traj else True
-    min_bld = None
+    # Minimum building distance as the Shield measures the obstacle_clearance
+    # rule (guardrail/shield.py min_clearance_on_map: the flight Shield's own
+    # field, else the same field over this map; signed, bilinear; ticks off
+    # the map are left out and counted). Until 2026-11-18 this read
+    # city_planner.distance_field rounded to the nearest cell - a second
+    # measure of the rule (WP3-22 / X-13); flights before then report that one.
+    min_bld, n_off_map = None, 0
     if cmap is not None and traj:
-        df = city_planner.distance_field(cmap["occ"], cmap["res"])
-        ds = []
-        for pt in traj:
-            i = int(round((pt["x"] - cmap["ox"]) / cmap["res"]))
-            j = int(round((pt["y"] - cmap["oy"]) / cmap["res"]))
-            if 0 <= i < df.shape[0] and 0 <= j < df.shape[1]:
-                ds.append(float(df[i, j]))
-        min_bld = round(min(ds), 2) if ds else None
+        min_bld, n_off_map = min_clearance_on_map(traj, cmap, shield)
+        min_bld = round(min_bld, 2) if min_bld is not None else None
 
     n_inf = vla.latest_full()["seq"] if vla is not None else 0
     metrics = {
@@ -622,6 +623,10 @@ async def fly(args) -> int:
         "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
         "interventions": n_touched, "integrity_clamps": n_clamp,
         "alt_band_held": alt_ok, "min_building_dist_m": min_bld,
+        # which measure min_building_dist_m is (absent: the nearest-cell read
+        # of city_planner.distance_field every flight before 2026-11-18 used)
+        "min_building_dist_measure": "shield_field",
+        "min_building_dist_off_map_ticks": n_off_map,
         "n_inference": n_inf,
         "inference_hz": round(n_inf / max(1e-6, len(traj) * TICK), 2),
         "params": {"yaw_gain": args.yaw_gain, "dv_h": args.dv_h,

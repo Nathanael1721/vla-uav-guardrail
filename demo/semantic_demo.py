@@ -43,7 +43,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E402
+                              band_holds, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
@@ -485,18 +486,20 @@ async def fly(args) -> int:
                           traj[i]["y"] - traj[i - 1]["y"])
                for i in range(1, len(traj)))
     band = [c for c in policy.constraints if c.type == "altitude_envelope"]
-    alt_ok = all(band[0].alt_min_m - 0.5 <= pt["up"] <= band[0].alt_max_m + 0.5
+    alt_ok = all(band_holds(band[0].alt_min_m - 0.5, band[0].alt_max_m + 0.5, pt["up"])
                  for pt in traj) if band and traj else True
+    # Minimum building distance as the Shield measures the obstacle_clearance
+    # rule (guardrail/shield.py min_clearance_on_map: the flight Shield's own
+    # field, else the same field over this map; signed, bilinear; ticks off
+    # the map are left out and counted). Until 2026-11-18 this read
+    # city_planner.distance_field rounded to the nearest cell - a second
+    # measure of the rule (WP3-22 / X-13); flights before then report that one.
     min_bld = None
     if cmap is not None and traj:
-        df = city_planner.distance_field(cmap["occ"], cmap["res"])
-        ds = []
-        for pt in traj:
-            i = int(round((pt["x"] - cmap["ox"]) / cmap["res"]))
-            j = int(round((pt["y"] - cmap["oy"]) / cmap["res"]))
-            if 0 <= i < df.shape[0] and 0 <= j < df.shape[1]:
-                ds.append(float(df[i, j]))
-        min_bld = min(ds) if ds else None
+        min_bld, n_off_map = min_clearance_on_map(traj, cmap, shield)
+        if n_off_map:
+            print(f"[clearance] {n_off_map} tick(s) off the obstacle map: not in the "
+                  f"minimum building distance")
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     try:

@@ -4,8 +4,8 @@ Shield's distance field (--guard-field shield; cards WP3-22 / X-13).
 Run:  python tools/onepath_guard_replay.py [RUN ...] [--root DIR] [--json OUT]
 
 The city controller's FenceGuard (demo/follow_vlm.py) measures building
-clearance with a grid scan of its own by default (guard_field="grid",
-follow_vlm.grid_scan_clearance: the nearest blocked cell centre). The Shield
+clearance with a grid scan by default (guard_field="grid",
+guardrail/shield.py nearest_cell_clearance: the nearest blocked cell centre). The Shield
 measures the same rule (obstacle_clearance, min_clearance_m) on its signed
 chamfer distance field, read bilinearly (guardrail/shield.py field_distance).
 guard_field="shield" makes the guard read the Shield's field; it is opt-in
