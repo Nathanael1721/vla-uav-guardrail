@@ -29,7 +29,9 @@
 #          test_people_envelope (2026-11-18: the people class binds every
 #          known person - the people field and its staleness, synthetic
 #          detections through the perception rail's placement, the sim
-#          rails' pedestrian list, the declared subject on SITL),
+#          rails' pedestrian list, the declared subject on SITL, the cull
+#          range sized per policy, the offline readers' logged people, one
+#          headless episode past a declared pedestrian),
 #          test_msl_rail (2026-11-18, X-11: a WGS84 DEM, the headless
 #          harness's opt-in ground and the ROS 2 Shield node's --ground),
 #          test_terrain_forecast (2026-11-18, X-11: the Shield's forecast
@@ -769,7 +771,8 @@ jobs:
               tests/test_policy_dsl_grant_form.py \
               tests/test_distance_envelope_msl.py \
               tests/test_msl_dem.py \
-              tests/test_world_map.py               tests/test_people_envelope.py \
+              tests/test_world_map.py \
+              tests/test_people_envelope.py \
               tests/test_msl_rail.py \
               tests/test_terrain_forecast.py \
               tests/test_replay_identity.py \
