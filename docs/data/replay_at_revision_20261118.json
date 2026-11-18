@@ -1,14 +1,14 @@
 {
  "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
  "command": "python tools/replay_at_revision.py --root D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out --window 2026-08-01:2026-10-31 --topology hil --jobs 12 --scratch <scratch> --out <out>",
- "seconds": 811.4,
+ "seconds": 601.3,
  "replayed_on": {
   "python": "3.10.20",
   "machine": "AMD64",
   "system": "Windows",
   "platform": "Windows-10"
  },
- "tool_revision": "1e19156d5d73",
+ "tool_revision": "a910bcad07f3",
  "compared": {
   "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
   "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
@@ -13998,278 +13998,258 @@
  "worktrees": [
   {
    "sha": "116214f3e6ee89e4d67ea201fd419eefde930da8",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\116214f3e6ee",
-   "created_s": 1.15,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\116214f3e6ee",
+   "created_s": 0.84,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 785,
-   "seconds": 186.6
+   "seconds": 120.2
   },
   {
    "sha": "22d434bf04cf83708d396176d9dc07b8ead5e778",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\22d434bf04cf",
-   "created_s": 2.36,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\22d434bf04cf",
+   "created_s": 0.94,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 652,
-   "seconds": 168.3
+   "seconds": 91.7
   },
   {
    "sha": "fb8f87c8ce18bb5b6da21ffcce931ef049fad2eb",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\fb8f87c8ce18",
-   "created_s": 1.99,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\fb8f87c8ce18",
+   "created_s": 1.26,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 360,
-   "seconds": 77.7
+   "seconds": 39.5
   },
   {
    "sha": "d9ba81045c95da31e179b01b9b8d0683ac672d82",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\d9ba81045c95",
-   "created_s": 1.74,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\d9ba81045c95",
+   "created_s": 0.84,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 360,
-   "seconds": 73.2
+   "seconds": 38.7
   },
   {
    "sha": "9eed35ba09ecb6fb69ae8c8270c0ac8007cabdb8",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\9eed35ba09ec",
-   "created_s": 2.67,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\9eed35ba09ec",
+   "created_s": 0.77,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 98,
-   "seconds": 43.5
+   "seconds": 25.2
   },
   {
    "sha": "2f221168625c34d3a92af10bae75bbf6a55f90ae",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\2f221168625c",
-   "created_s": 1.58,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\2f221168625c",
+   "created_s": 0.79,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 53,
-   "seconds": 50.0
+   "seconds": 30.7
   },
   {
    "sha": "fb96fe5201229a18ee5a890dd9f561a5ae906e5c",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\fb96fe520122",
-   "created_s": 1.38,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\fb96fe520122",
+   "created_s": 0.83,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 44,
-   "seconds": 16.5
+   "seconds": 10.8
   },
   {
    "sha": "c309f0c8e37592b78099d1393b7f6a8b492de96c",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\c309f0c8e375",
-   "created_s": 1.08,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\c309f0c8e375",
+   "created_s": 0.95,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 38,
-   "seconds": 13.6
+   "seconds": 9.3
   },
   {
    "sha": "c7257f130a17162ff1f257e30df7b2487eade9c0",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\c7257f130a17",
-   "created_s": 1.45,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\c7257f130a17",
+   "created_s": 1.4,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 37,
-   "seconds": 10.9
+   "seconds": 8.3
   },
   {
    "sha": "47b3fdec6f3eefc06a093df886e084411d56d828",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\47b3fdec6f3e",
-   "created_s": 1.32,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\47b3fdec6f3e",
+   "created_s": 1.33,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 36,
-   "seconds": 12.0
+   "seconds": 9.9
   },
   {
    "sha": "dc8cd9cb197d1b03f625c272383a95c878627121",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\dc8cd9cb197d",
-   "created_s": 1.1,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\dc8cd9cb197d",
+   "created_s": 0.88,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 30,
-   "seconds": 9.7
+   "seconds": 6.7
   },
   {
    "sha": "bc04e4a7d93de28f97acf1204b14adb873ed36fc",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\bc04e4a7d93d",
-   "created_s": 1.13,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\bc04e4a7d93d",
+   "created_s": 0.94,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 28,
-   "seconds": 16.6
+   "seconds": 11.1
   },
   {
    "sha": "de7e7489dfaf5a95ea3abafce6e07e3d02e8e259",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\de7e7489dfaf",
-   "created_s": 1.37,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\de7e7489dfaf",
+   "created_s": 1.26,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 12,
-   "seconds": 4.8
+   "seconds": 3.0
   },
   {
    "sha": "199cfdfd72a8d7ae5d8bc690e10c54f27540b87f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\199cfdfd72a8",
-   "created_s": 1.43,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\199cfdfd72a8",
+   "created_s": 0.71,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 11,
-   "seconds": 10.6
+   "seconds": 6.6
   },
   {
    "sha": "d186077fc931496a8bed96de2b52599171adbbf3",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\d186077fc931",
-   "created_s": 0.96,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\d186077fc931",
+   "created_s": 0.67,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 9,
-   "seconds": 7.9
+   "seconds": 5.5
   },
   {
    "sha": "ee356c604a4866b04c7bac97e47d45c0f297ffed",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\ee356c604a48",
-   "created_s": 0.9,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\ee356c604a48",
+   "created_s": 0.88,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 9,
-   "seconds": 9.8
+   "seconds": 6.3
   },
   {
    "sha": "526914391be6a4f774ebd9485fab53a84ca027fe",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\526914391be6",
-   "created_s": 1.21,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\526914391be6",
+   "created_s": 0.77,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 7,
-   "seconds": 3.3
+   "seconds": 2.1
   },
   {
    "sha": "f77efaee4c56333cc97cee0182e2bb1d99a08581",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\f77efaee4c56",
-   "created_s": 1.1,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\f77efaee4c56",
+   "created_s": 0.67,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 7,
-   "seconds": 4.0
+   "seconds": 2.2
   },
   {
    "sha": "d9cdf43fd858dac50bcb1e3e5e5c08cd02135292",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\d9cdf43fd858",
-   "created_s": 0.87,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\d9cdf43fd858",
+   "created_s": 0.95,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 6,
-   "seconds": 3.1
-  },
-  {
-   "sha": "c9dc0a17651ff9b677ee7200ce8a3668a1d98bef",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\c9dc0a17651f",
-   "created_s": 0.97,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 5,
-   "seconds": 3.3
-  },
-  {
-   "sha": "8a473fa0172e01bc96fb61eb4789efe12a245796",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\8a473fa0172e",
-   "created_s": 1.07,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 5,
-   "seconds": 4.5
-  },
-  {
-   "sha": "a92f338290ad09149bac2747cad592b7f07fc5aa",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\a92f338290ad",
-   "created_s": 0.86,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 3,
    "seconds": 2.6
   },
   {
-   "sha": "c6fbb850319da883aecc409eac84b3cc70b57b50",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\c6fbb850319d",
-   "created_s": 0.82,
+   "sha": "c9dc0a17651ff9b677ee7200ce8a3668a1d98bef",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\c9dc0a17651f",
+   "created_s": 0.6,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 5,
+   "seconds": 2.0
+  },
+  {
+   "sha": "8a473fa0172e01bc96fb61eb4789efe12a245796",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\8a473fa0172e",
+   "created_s": 0.72,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 5,
+   "seconds": 3.2
+  },
+  {
+   "sha": "a92f338290ad09149bac2747cad592b7f07fc5aa",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\a92f338290ad",
+   "created_s": 0.95,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 3,
-   "seconds": 2.7
-  },
-  {
-   "sha": "4bafc63fab216b73623645b7aa3a7e7042f43ff6",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\4bafc63fab21",
-   "created_s": 0.41,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 3,
-   "seconds": 1.4
-  },
-  {
-   "sha": "3c31886ceb02a99760045dd12712dd1b9aa321c3",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\3c31886ceb02",
-   "created_s": 0.31,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 3,
-   "seconds": 1.4
-  },
-  {
-   "sha": "08cd0be9a9afb052544c4708d33e66636d92fd02",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\08cd0be9a9af",
-   "created_s": 0.91,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 2,
    "seconds": 2.4
   },
   {
-   "sha": "8c9448e2118c28d5c2feb68b2d7505ed9f0cea4f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\8c9448e2118c",
-   "created_s": 0.9,
+   "sha": "c6fbb850319da883aecc409eac84b3cc70b57b50",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\c6fbb850319d",
+   "created_s": 0.56,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
-   "episodes": 2,
-   "seconds": 2.7
+   "episodes": 3,
+   "seconds": 1.7
   },
   {
-   "sha": "97b96517fa57b740130ff454b0783d9ec007c471",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\97b96517fa57",
-   "created_s": 0.59,
+   "sha": "4bafc63fab216b73623645b7aa3a7e7042f43ff6",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\4bafc63fab21",
+   "created_s": 0.32,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 3,
+   "seconds": 1.1
+  },
+  {
+   "sha": "3c31886ceb02a99760045dd12712dd1b9aa321c3",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\3c31886ceb02",
+   "created_s": 0.23,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 3,
+   "seconds": 1.0
+  },
+  {
+   "sha": "08cd0be9a9afb052544c4708d33e66636d92fd02",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\08cd0be9a9af",
+   "created_s": 0.6,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
@@ -14277,9 +14257,29 @@
    "seconds": 1.6
   },
   {
+   "sha": "8c9448e2118c28d5c2feb68b2d7505ed9f0cea4f",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\8c9448e2118c",
+   "created_s": 0.66,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 2,
+   "seconds": 2.0
+  },
+  {
+   "sha": "97b96517fa57b740130ff454b0783d9ec007c471",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\97b96517fa57",
+   "created_s": 0.21,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 2,
+   "seconds": 0.9
+  },
+  {
    "sha": "c77c77d0ad04d5aba5561c82a9df0a607ea2962a",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\c77c77d0ad04",
-   "created_s": 1.22,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\c77c77d0ad04",
+   "created_s": 1.47,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
@@ -14288,148 +14288,28 @@
   },
   {
    "sha": "ece38c1d947341f90f1ddb7514ac61dcf0420c82",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\ece38c1d9473",
-   "created_s": 0.74,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\ece38c1d9473",
+   "created_s": 0.5,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 2.2
+   "seconds": 1.6
   },
   {
    "sha": "e8088377042f7248feabdbe358746e896814cc9f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\e8088377042f",
-   "created_s": 0.29,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\e8088377042f",
+   "created_s": 0.2,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 1.3
+   "seconds": 0.9
   },
   {
    "sha": "e1d3a543ce817c2ec68c79c2f9c132b0090acc30",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\e1d3a543ce81",
-   "created_s": 1.23,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.7
-  },
-  {
-   "sha": "cbeaa79a40e5654702d1c593043c7d720b44fc93",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\cbeaa79a40e5",
-   "created_s": 1.03,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.6
-  },
-  {
-   "sha": "478dcc756d0b389c82422c9631aace42cdc57c48",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\478dcc756d0b",
-   "created_s": 1.0,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.0
-  },
-  {
-   "sha": "62a47131d21d0202f72d1b11d6b0027b78265dba",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\62a47131d21d",
-   "created_s": 1.0,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.3
-  },
-  {
-   "sha": "8bfe08f793f6df13f6618b333ea2607a24ffb66f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\8bfe08f793f6",
-   "created_s": 0.95,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.2
-  },
-  {
-   "sha": "890b723bacdee421c709cba36bf07f19261f7cb9",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\890b723bacde",
-   "created_s": 1.24,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.7
-  },
-  {
-   "sha": "d0e91bbae085b392bd4ce3ce4a5c61b1f02e8715",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\d0e91bbae085",
-   "created_s": 0.8,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.2
-  },
-  {
-   "sha": "8f83f9391adbba2bef8fcc8b63143bb06375558f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\8f83f9391adb",
-   "created_s": 0.87,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.3
-  },
-  {
-   "sha": "5b3db869f40bfc0f73c5b6a1f446e797b375cfdd",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\5b3db869f40b",
-   "created_s": 0.89,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.5
-  },
-  {
-   "sha": "3918965a4108a394940848888031e02f90ac5d01",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\3918965a4108",
-   "created_s": 1.31,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.9
-  },
-  {
-   "sha": "deac4b3a5b16256b3d146158ea2ca78d2bd89b6c",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\deac4b3a5b16",
-   "created_s": 1.01,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.6
-  },
-  {
-   "sha": "6c9698d00b0f2694207e6147d2dd718b4c81c625",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\6c9698d00b0f",
-   "created_s": 1.35,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 3.0
-  },
-  {
-   "sha": "00264ef2d4579175018f97014d96fdf3da5b31a3",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\00264ef2d457",
-   "created_s": 1.0,
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\e1d3a543ce81",
+   "created_s": 0.68,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
@@ -14437,19 +14317,69 @@
    "seconds": 2.7
   },
   {
-   "sha": "29d0a03d4c321b9140dec6d5fdc926339e7e884f",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\29d0a03d4c32",
-   "created_s": 0.25,
+   "sha": "cbeaa79a40e5654702d1c593043c7d720b44fc93",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\cbeaa79a40e5",
+   "created_s": 0.85,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 1.2
+   "seconds": 2.8
   },
   {
-   "sha": "896b50d8b03bb83301b5bc5fb95fd41b42d50df9",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\896b50d8b03b",
-   "created_s": 0.77,
+   "sha": "478dcc756d0b389c82422c9631aace42cdc57c48",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\478dcc756d0b",
+   "created_s": 1.14,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.8
+  },
+  {
+   "sha": "62a47131d21d0202f72d1b11d6b0027b78265dba",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\62a47131d21d",
+   "created_s": 0.94,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.7
+  },
+  {
+   "sha": "8bfe08f793f6df13f6618b333ea2607a24ffb66f",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\8bfe08f793f6",
+   "created_s": 0.93,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.7
+  },
+  {
+   "sha": "890b723bacdee421c709cba36bf07f19261f7cb9",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\890b723bacde",
+   "created_s": 0.81,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.7
+  },
+  {
+   "sha": "d0e91bbae085b392bd4ce3ce4a5c61b1f02e8715",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\d0e91bbae085",
+   "created_s": 0.61,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.5
+  },
+  {
+   "sha": "8f83f9391adbba2bef8fcc8b63143bb06375558f",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\8f83f9391adb",
+   "created_s": 0.85,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
@@ -14457,54 +14387,124 @@
    "seconds": 2.1
   },
   {
-   "sha": "ee4762d80c17e20bc83fefcd12e9e9c2ac435808",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\ee4762d80c17",
-   "created_s": 0.92,
+   "sha": "5b3db869f40bfc0f73c5b6a1f446e797b375cfdd",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\5b3db869f40b",
+   "created_s": 0.68,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 2.2
+   "seconds": 2.0
   },
   {
-   "sha": "0a352b5c01df4f638c45381ac93738c4bee1e5dc",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\0a352b5c01df",
-   "created_s": 0.75,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.2
-  },
-  {
-   "sha": "834288b03838914d379a51b27525783c98e3ca16",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\834288b03838",
-   "created_s": 1.15,
-   "removed": true,
-   "git_remove_rc": 0,
-   "reparse_points_unlinked": 0,
-   "episodes": 1,
-   "seconds": 2.6
-  },
-  {
-   "sha": "6d374570851aceb3729041f5f1df27e0274f1797",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\6d374570851a",
+   "sha": "3918965a4108a394940848888031e02f90ac5d01",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\3918965a4108",
    "created_s": 0.91,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 2.3
+   "seconds": 2.2
   },
   {
-   "sha": "d9dbbd8a27201c38a44ad10417a62268a88b455e",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21rr\\s2\\replay_at_rev__huzqmh_\\d9dbbd8a2720",
-   "created_s": 0.75,
+   "sha": "deac4b3a5b16256b3d146158ea2ca78d2bd89b6c",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\deac4b3a5b16",
+   "created_s": 0.78,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 1,
-   "seconds": 2.1
+   "seconds": 2.0
+  },
+  {
+   "sha": "6c9698d00b0f2694207e6147d2dd718b4c81c625",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\6c9698d00b0f",
+   "created_s": 1.2,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.5
+  },
+  {
+   "sha": "00264ef2d4579175018f97014d96fdf3da5b31a3",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\00264ef2d457",
+   "created_s": 0.7,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 2.0
+  },
+  {
+   "sha": "29d0a03d4c321b9140dec6d5fdc926339e7e884f",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\29d0a03d4c32",
+   "created_s": 0.26,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.0
+  },
+  {
+   "sha": "896b50d8b03bb83301b5bc5fb95fd41b42d50df9",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\896b50d8b03b",
+   "created_s": 0.59,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.7
+  },
+  {
+   "sha": "ee4762d80c17e20bc83fefcd12e9e9c2ac435808",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\ee4762d80c17",
+   "created_s": 0.55,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.6
+  },
+  {
+   "sha": "0a352b5c01df4f638c45381ac93738c4bee1e5dc",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\0a352b5c01df",
+   "created_s": 0.55,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.7
+  },
+  {
+   "sha": "834288b03838914d379a51b27525783c98e3ca16",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\834288b03838",
+   "created_s": 0.57,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.7
+  },
+  {
+   "sha": "6d374570851aceb3729041f5f1df27e0274f1797",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\6d374570851a",
+   "created_s": 0.55,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.7
+  },
+  {
+   "sha": "d9dbbd8a27201c38a44ad10417a62268a88b455e",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\wf21r\\wt\\replay_at_rev_s6nwi7et\\d9dbbd8a2720",
+   "created_s": 0.57,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 1.7
   }
  ],
  "worktrees_left_behind": [],
