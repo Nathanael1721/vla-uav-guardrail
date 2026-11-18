@@ -149,7 +149,9 @@ def main():
     ap.add_argument("--band-hi", type=float, default=55.0)
     ap.add_argument("--nfz", type=float, default=12.0, help="NFZ side length (m)")
     ap.add_argument("--metres", action="store_true",
-                    help="write the legacy local-metre form instead of WGS84")
+                    help="DEPRECATED (WP1-14): write the legacy local-metre form "
+                         "(no origin) instead of WGS84; the grant's DSL never "
+                         "carries projected coordinates")
     args = ap.parse_args()
     policy_id = args.policy_id or default_policy_id(args.out)
     clash = id_claimed_elsewhere(policy_id, args.out)
@@ -206,6 +208,10 @@ def main():
 
     # write the policy YAML (WGS84 since 2026-11-03; --metres for the legacy form)
     write = policy_yaml if args.metres else wgs84_policy_yaml
+    if args.metres:
+        print("WARNING: --metres is deprecated (WP1-14): it writes the legacy "
+              "local-metre form, which loads but is not the canonical WGS84 form",
+              file=sys.stderr)
     Path(args.out).write_text(write(policy_id, nfzs, args.band_lo, args.band_hi),
                               encoding="utf-8")
 

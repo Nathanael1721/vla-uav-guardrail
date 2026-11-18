@@ -667,9 +667,16 @@ class MissionControl:
         policy is stored in. Until then this wrote {x, y} metres with no
         origin, turning the converted policies/gui_policy.yaml back into
         the legacy metre form."""
-        import yaml
-        doc, notes = gui_policy_doc(self.nfzs, self.polys,
-                                    self.alt_var.get().startswith("High"), BASE_POLICY)
+        try:
+            import yaml
+            doc, notes = gui_policy_doc(self.nfzs, self.polys,
+                                        self.alt_var.get().startswith("High"), BASE_POLICY)
+        except Exception as e:
+            # fly() returns quietly on an exception from here, so say why
+            # (a non-finite coordinate refused by the projection, a failed
+            # import) before the Fly click ends.
+            self._log(f"[policy] build failed: {e}")
+            raise
         for n in notes:
             self._log(f"[policy] {n}")
         path = ROOT / POLICY_REL

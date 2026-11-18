@@ -30,8 +30,8 @@ a reload of the snapshot reads (models.rule_in_wgs84). Since 2026-11-18 the
 Mission Control GUI's policy writer (demo/gui_policy.py) converts the zones
 drawn on its map the same way, about the base policy's origin; until then it
 rewrote policies/gui_policy.yaml in metres with no origin. The legacy form is
-labelled where it is read: models.Policy.frame_form, and the flight loader's
-record (bundle.load_for_flight `frame_form` / `frame_note`);
+labelled where it is read: models.Policy.point_form, and the flight loader's
+record (bundle.load_for_flight `point_form` / `point_note`);
 tests/test_wgs84_ingest_writers.py checks every writer.
 
 THE LOCAL VIEW IS ROUNDED TO THE MICROMETRE

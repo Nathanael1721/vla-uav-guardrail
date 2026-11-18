@@ -75,9 +75,10 @@ and cached per origin (XY; guardrail/projection.py) - since IR schema 3.1.0
 its points in lat/lon since that date (tools/convert_policies_wgs84.py). A policy
 written in metres is the legacy form and keeps loading, and hashing, exactly as
 before; it is the READ form of old bundles, runs and lock recipes, and
-`Policy.frame_form` labels it (FRAME_LEGACY_METRES / FRAME_LEGACY_MIXED). Every
-writer converts metre input at ingest about the policy's frame origin
-(rule_in_wgs84; projection.raw_points_in_wgs84; demo/gui_policy.py). Altitude is metres above ground by default; `altitude_ref: MSL` is
+`Policy.point_form` labels it (POINTS_LEGACY_METRES / POINTS_LEGACY_MIXED). Every
+writer into a policy with a frame converts metre input at ingest about its
+frame origin (rule_in_wgs84; projection.raw_points_in_wgs84; demo/gui_policy.py);
+Policy.point_form lists what can still write the legacy form. Altitude is metres above ground by default; `altitude_ref: MSL` is
 declarable and refused for flight (the Shield has no ground-elevation source).
 
 docs/DESIGN-policy-dsl-grant-form.md records the decisions and what still
@@ -599,16 +600,18 @@ class ConstraintBase(BaseModel):
 _STORED = {"points": "stored"}
 _ERA = {"points": "era"}
 
-# How a policy's points are stored (Policy.frame_form, WP1-14). The grant:
+# How a policy's points are stored (Policy.point_form, WP1-14). The grant:
 # "WGS84 latitude / longitude is canonical ... the DSL itself never carries
 # projected coordinates". The two legacy forms are READ (old bundles, runs,
-# lock recipes) and written by nothing in this repository for a policy with
-# a frame.
-FRAME_WGS84 = "wgs84"
-FRAME_NO_POINTS = "no-points"
-FRAME_LEGACY_METRES = "local-metres (legacy read form)"
-FRAME_LEGACY_MIXED = "wgs84+local-metres (legacy read form)"
-LEGACY_FRAME_FORMS = (FRAME_LEGACY_METRES, FRAME_LEGACY_MIXED)
+# lock recipes); see Policy.point_form for what can still write them.
+# Not to be confused with bundle.FRAME_FORM ("sha256-canonical-v3/local-
+# metres"), which names a HASH form in a lock entry's migration record, not
+# how a policy's points are stored.
+POINTS_WGS84 = "wgs84"
+POINTS_NONE = "no-points"
+POINTS_LEGACY_METRES = "local-metres (legacy read form)"
+POINTS_LEGACY_MIXED = "wgs84+local-metres (legacy read form)"
+LEGACY_POINT_FORMS = (POINTS_LEGACY_METRES, POINTS_LEGACY_MIXED)
 
 
 class XY(BaseModel):
@@ -1630,32 +1633,37 @@ class Policy(BaseModel):
         return any(p for p in _rule_points(self))
 
     @property
-    def frame_form(self) -> str:
+    def point_form(self) -> str:
         """How this policy's points are STORED (WP1-14, 2026-11-18):
 
-          FRAME_WGS84         every point lat/lon - the canonical form; every
-                              shipped policy since 2026-11-03;
-          FRAME_NO_POINTS     no point at all (envelopes, stand-off, ...);
-          FRAME_LEGACY_METRES no point in lat/lon: the legacy metre READ form;
-          FRAME_LEGACY_MIXED  lat/lon points beside metre points (a snapshot
-                              of a generation hot-applied in metres before
-                              2026-11-17): the legacy read form as well.
+          POINTS_WGS84          every point lat/lon - the canonical form; every
+                                policies/*.yaml since 2026-11-03;
+          POINTS_NONE           no point at all (envelopes, stand-off, ...);
+          POINTS_LEGACY_METRES  no point in lat/lon: the legacy metre READ form;
+          POINTS_LEGACY_MIXED   lat/lon points beside metre points (a snapshot
+                                of a generation hot-applied in metres before
+                                2026-11-17): the legacy read form as well.
 
         The two legacy forms keep loading and hashing exactly as before, for
         the pre-3-Nov bundles, the runs flown under them and the lock recipes
-        that rebuild them (bundle.derive `wgs84_writes: false`); no writer in
-        this repository produces them any more for a policy with a frame
-        (models.rule_in_wgs84, projection.raw_points_in_wgs84, demo/
-        gui_policy.py). A policy written only in metres has no WGS84 position
-        for its frame's (0, 0), so an event applied to it still writes metres
-        (rule_in_wgs84 with no origin). The flight loader records the legacy
-        forms (bundle.load_for_flight: `frame_form`, `frame_note`)."""
+        that rebuild them. What can still WRITE them: an event applied to a
+        policy written only in metres (it has no WGS84 position for its
+        frame's (0, 0), so rule_in_wgs84 with no origin keeps metres; this is
+        how bundle.derive rebuilds a recipe on a metre base), a lock recipe
+        recording `wgs84_writes: false`, and demo/gen_random_scenario.py
+        --metres (deprecated, opt-in). Every writer into a policy with a frame
+        converts (models.rule_in_wgs84, projection.raw_points_in_wgs84,
+        demo/gui_policy.py). The flight loader records the legacy forms
+        (bundle.load_for_flight: `point_form`, `point_note`).
+
+        This labels how POINTS are stored; it is not bundle.FRAME_FORM, the
+        name of a hash form in a lock entry's migration record."""
         flags = list(_rule_points(self))
         if not flags:
-            return FRAME_NO_POINTS
+            return POINTS_NONE
         if all(flags):
-            return FRAME_WGS84
-        return FRAME_LEGACY_MIXED if any(flags) else FRAME_LEGACY_METRES
+            return POINTS_WGS84
+        return POINTS_LEGACY_MIXED if any(flags) else POINTS_LEGACY_METRES
 
     @property
     def frame_origin(self) -> tuple[float, float] | None:

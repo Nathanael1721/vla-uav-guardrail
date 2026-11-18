@@ -737,7 +737,8 @@ jobs:
               tests/test_replay_q3.py \
               tests/test_stack_revisions.py \
               tests/test_sweep_resume.py \
-              tests/test_wgs84_writes.py               tests/test_wgs84_ingest_writers.py \
+              tests/test_wgs84_writes.py \
+              tests/test_wgs84_ingest_writers.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \

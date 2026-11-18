@@ -13,25 +13,32 @@ This file checks the WRITERS as an inventory, over every shipped policy, and
 closes the one writer that still produced the metre form:
 
   * REST: POST /dynamic_nfz, POST /hot_apply (dynamic_nfz), the deprecated
-    POST /nfz, PATCH move / translate, POST /corridor_swap - metre bodies at
-    off-grid values, on every shipped policy the Shield can fly - store
-    lat/lon only, and the stored point's local view is within 1 mm of the
-    metres sent (it is within a micrometre);
+    POST /nfz, PATCH move / translate - metre bodies at off-grid values, on
+    every shipped policy the Shield can fly - store lat/lon only, and the
+    stored point's local view is within 1 mm of the metres sent (it is
+    within a micrometre); POST /corridor_swap on every shipped corridor (one
+    policy has one); PATCH rotate / scale are in tests/test_wgs84_writes.py
+    (two policies);
   * the harness: spawn_polygon_fence (a zone computed ahead of an off-grid
     vehicle position, and given vertices) on every shipped policy; and the
     gRPC harness's forward path (a REST body validated on a dry-run Shield,
-    turned into the runner's ScenarioEvent, applied to another Shield)
-    stores the same zone within 1 mm;
+    turned into the runner's ScenarioEvent, applied to another Shield) on
+    three policies (sim_demo, wgs84_taipei, gui_policy) stores the same zone
+    within 1 mm;
   * the Mission Control GUI (demo/gui_mission_control.py, via
     demo/gui_policy.py): the zones drawn in metres are written as WGS84
-    about the base policy's origin. Redrawing the zones of the shipped
+    about the base policy's frame origin. Redrawing the zones of the shipped
     policies/gui_policy.yaml reproduces its policy_hash exactly (the
     gui-mission@0.1.3 lock entry); the metre writer of before produced a
-    document with no origin and another hash. The Shield enforces the same
-    rings and takes the same decisions from either document;
-  * the legacy metre READ form is labelled: Policy.frame_form, and
-    bundle.load_for_flight records `frame_form` / `frame_note` for it; a
-    WGS84 policy's flight record is unchanged (no key added);
+    document with no origin and another hash. On seeded synthetic drawings
+    the Shield enforces the same rings and takes the same decisions from
+    either document. A base with lat/lon points and no stated origin gives
+    its derived frame origin, not PAS_HOME;
+  * the legacy metre READ form is labelled: Policy.point_form, and
+    bundle.load_for_flight records `point_form` / `point_note` for it; a
+    WGS84 policy's flight record is unchanged (no key added); what can still
+    write the legacy form is listed (derived recipes on a metre base,
+    gen_random_scenario --metres, deprecated);
   * no stored policy hash moves: every policies/*.yaml hashes to its lock
     entry and check_lock() is clean.
 """
@@ -52,11 +59,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import api                                          # noqa: E402
-from guardrail.bundle import (LEGACY_FRAME_NOTE, check_lock,       # noqa: E402
-                              load_for_flight, load_lock)
+from guardrail.bundle import (LEGACY_POINT_NOTE, check_lock,       # noqa: E402
+                              load_for_flight, load_lock, policy_candidates)
 from guardrail.harness_service import scenario_event_from_rule     # noqa: E402
-from guardrail.models import (FRAME_LEGACY_METRES, FRAME_LEGACY_MIXED,  # noqa: E402
-                              FRAME_NO_POINTS, FRAME_WGS84, Action4D, Policy,
+from guardrail.models import (LEGACY_POINT_FORMS,                  # noqa: E402
+                              POINTS_LEGACY_METRES, POINTS_LEGACY_MIXED, POINTS_NONE, POINTS_WGS84, Action4D, Policy,
                               State, _rule_points, load_policy)
 from guardrail.projection import LocalProjection                   # noqa: E402
 from guardrail.scenario_events import EventState, apply_event      # noqa: E402
@@ -85,7 +92,7 @@ def _assert_wgs84(policy: Policy, where: str) -> None:
              if not v.geographic]
     assert not metre, f"{where}: metre points stored: {metre[:3]}"
     assert not _has_xy(policy.canonical_ir()["constraints"]), f"{where}: x/y in the IR"
-    assert policy.frame_form in (FRAME_WGS84, FRAME_NO_POINTS), (where, policy.frame_form)
+    assert policy.point_form in (POINTS_WGS84, POINTS_NONE), (where, policy.point_form)
 
 
 def _true_view(policy: Policy, rule) -> list[tuple[float, float]]:
@@ -291,14 +298,14 @@ def test_gui_writer_reproduces_the_shipped_gui_policy():
         f.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
         back = load_policy(f)
     assert back.policy_hash == st.policy_hash
-    assert back.frame_form == FRAME_WGS84 and back.frame_origin == st.frame_origin
+    assert back.point_form == POINTS_WGS84 and back.frame_origin == st.frame_origin
     lock = load_lock()["policies"]
     assert lock[f"{st.policy_id}@{st.version}"]["policy_hash"] == back.policy_hash
     # the writer of before
     old = Policy.model_validate({"policy_id": "gui-mission", "version": st.version,
                                  "constraints": gui_policy.metre_constraints(
                                      rects, [], gui_policy.read_base()[0], True)})
-    assert old.frame_form == FRAME_LEGACY_METRES and old.origin is None
+    assert old.point_form == POINTS_LEGACY_METRES and old.origin is None
     assert old.policy_hash != st.policy_hash
 
 
@@ -361,6 +368,46 @@ def test_gui_writer_without_a_readable_base():
         [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
 
 
+TAIPEI_CORRIDOR = {"id": "kept-corridor", "type": "corridor", **RULE,
+                   "centerline": [{"lat": 25.0420, "lon": 121.5305},
+                                  {"lat": 25.0430, "lon": 121.5305}],
+                   "width_m": 20.0, "altitude_floor_m": 5.0, "altitude_ceiling_m": 60.0}
+
+
+def test_gui_writer_takes_the_base_frame_origin():
+    """A base that states no `origin` but has lat/lon points has a frame
+    (Policy.frame_origin: the mean of its first polygon fence). The drawn
+    zones are written about THAT origin, not PAS_HOME, so they share one
+    frame with the lat/lon rules the base keeps (here a corridor)."""
+    base = yaml.safe_load((ROOT / "policies" / "wgs84_taipei.yaml").read_text(encoding="utf-8"))
+    base.pop("origin")
+    base["constraints"].append(copy.deepcopy(TAIPEI_CORRIDOR))
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "base.yaml"
+        f.write_text(yaml.safe_dump(base, sort_keys=False), encoding="utf-8")
+        frame = load_policy(f, runtime=False).frame_origin
+        doc, notes = gui_policy.gui_policy_doc([(-20.0, -10.0, 5.0, 15.0)], [], False, f)
+    assert frame is not None and frame != gui_policy.PAS_HOME, frame
+    assert notes == [], notes
+    pol = Policy.model_validate(doc)
+    _assert_wgs84(pol, "taipei base, no stated origin")
+    assert pol.frame_origin == frame
+    zone = _rule(pol, "gui-nfz-1")
+    for got, want in zip(_true_view(pol, zone), [(-20.0, 5.0), (-10.0, 5.0),
+                                                 (-10.0, 15.0), (-20.0, 15.0)]):
+        assert math.dist(got, want) <= MICRO_M, (got, want)
+    # the kept corridor is the base's own lat/lon, untouched
+    kept = [c for c in doc["constraints"] if c["id"] == "kept-corridor"]
+    assert kept and kept[0]["centerline"] == TAIPEI_CORRIDOR["centerline"], kept
+    # a metre-only base has no frame: PAS_HOME, said in a note
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "metre_base.yaml"
+        f.write_text(yaml.safe_dump(METRE_DOC, sort_keys=False), encoding="utf-8")
+        doc, notes = gui_policy.gui_policy_doc([(0.0, 10.0, 0.0, 10.0)], [], False, f)
+    assert notes and "has no frame origin" in notes[0], notes
+    assert Policy.model_validate(doc).frame_origin == gui_policy.PAS_HOME
+
+
 # ------------------------------------------------------ the legacy read form
 
 METRE_DOC = {"policy_id": "legacy-metre", "version": "0.0.1", "constraints": [
@@ -368,13 +415,13 @@ METRE_DOC = {"policy_id": "legacy-metre", "version": "0.0.1", "constraints": [
      "vertices": [{"x": 10, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10}]}]}
 
 
-def test_frame_form_labels_every_form():
-    forms = {p.name: load_policy(p, runtime=False).frame_form for p in POLICIES}
-    assert set(forms.values()) <= {FRAME_WGS84, FRAME_NO_POINTS}, forms
+def test_point_form_labels_every_form():
+    forms = {p.name: load_policy(p, runtime=False).point_form for p in POLICIES}
+    assert set(forms.values()) <= {POINTS_WGS84, POINTS_NONE}, forms
     # 27 with points (all lat/lon), 6 with none (stand-off, envelopes)
-    assert sum(f == FRAME_WGS84 for f in forms.values()) == 27, forms
-    assert sum(f == FRAME_NO_POINTS for f in forms.values()) == 6, forms
-    assert Policy.model_validate(copy.deepcopy(METRE_DOC)).frame_form == FRAME_LEGACY_METRES
+    assert sum(f == POINTS_WGS84 for f in forms.values()) == 27, forms
+    assert sum(f == POINTS_NONE for f in forms.values()) == 6, forms
+    assert Policy.model_validate(copy.deepcopy(METRE_DOC)).point_form == POINTS_LEGACY_METRES
     # a snapshot written by the metre writes of before 2026-11-17
     sh = Shield(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
     sh.wgs84_writes = False
@@ -382,13 +429,31 @@ def test_frame_form_labels_every_form():
                                "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6},
                                             {"x": 31, "y": 14}]})
     snap = Policy.model_validate(json.loads(sh.policy.model_dump_json()))
-    assert snap.frame_form == FRAME_LEGACY_MIXED
+    assert snap.point_form == POINTS_LEGACY_MIXED
     # an event on a metre-only policy keeps writing metres (no WGS84 frame)
     leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)))
     api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
                                 "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
                                              {"x": 60, "y": 9}]})
-    assert leg.policy.frame_form == FRAME_LEGACY_METRES
+    assert leg.policy.point_form == POINTS_LEGACY_METRES
+
+
+def test_writers_still_producing_the_legacy_form():
+    """The inventory's other side: what can still WRITE the metre form.
+    The lock's derived recipes rebuilt on a metre base (no frame) keep
+    metres; no recipe records `wgs84_writes: false` today; and
+    demo/gen_random_scenario.py --metres is the one opt-in file writer,
+    labelled deprecated."""
+    lock = load_lock()
+    derived = lock.get("derived") or []
+    assert not any(d.get("wgs84_writes") is False for d in derived), derived
+    by_name = dict(policy_candidates())
+    forms = {d["name"]: by_name[d["name"]].point_form for d in derived if d["name"] in by_name}
+    assert len(forms) == len(derived), (forms, [d["name"] for d in derived])
+    assert all(f in LEGACY_POINT_FORMS for f in forms.values()), forms
+    print(f"  derived lock recipes: {forms}")
+    src = (ROOT / "demo" / "gen_random_scenario.py").read_text(encoding="utf-8")
+    assert "DEPRECATED (WP1-14)" in src and "--metres is deprecated" in src
 
 
 def test_flight_record_labels_only_the_legacy_form():
@@ -398,15 +463,15 @@ def test_flight_record_labels_only_the_legacy_form():
             pol, rec = load_for_flight(yaml_path=p)
         except ValueError:
             continue
-        assert "frame_form" not in rec and "frame_note" not in rec, (p.name, rec)
+        assert "point_form" not in rec and "point_note" not in rec, (p.name, rec)
         n += 1
     assert n >= 32, n
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "legacy.yaml"
         f.write_text(yaml.safe_dump(METRE_DOC, sort_keys=False), encoding="utf-8")
         pol, rec = load_for_flight(yaml_path=f)
-    assert rec["frame_form"] == FRAME_LEGACY_METRES == pol.frame_form
-    assert rec["frame_note"] == LEGACY_FRAME_NOTE and "legacy read form" in LEGACY_FRAME_NOTE
+    assert rec["point_form"] == POINTS_LEGACY_METRES == pol.point_form
+    assert rec["point_note"] == LEGACY_POINT_NOTE and "legacy read form" in LEGACY_POINT_NOTE
 
 
 # ------------------------------------------------------------- the hashes

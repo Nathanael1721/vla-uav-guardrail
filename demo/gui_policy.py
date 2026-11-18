@@ -9,13 +9,15 @@ WP1-14 (2026-11-18). The grant: "WGS84 latitude / longitude is canonical ...
 the DSL itself never carries projected coordinates". Since 2026-11-03 every
 shipped policy, policies/gui_policy.yaml included, is stored in WGS84 about a
 stated `origin` (tools/convert_policies_wgs84.py), and since 2026-11-17 every
-event the Shield applies writes WGS84 too (models.rule_in_wgs84). The GUI was
-the last writer still producing the metre form: it rewrote gui_policy.yaml
+event the Shield applies to a policy with a frame writes WGS84 too
+(models.rule_in_wgs84). The GUI was the last default writer still producing
+the metre form (models.Policy.point_form lists the opt-in and legacy-base
+ones that remain): it rewrote gui_policy.yaml
 from the zones drawn on its map as `{x, y}` metres with no `origin`, so one
 click on "Fly" turned the converted file back into the legacy form. It now
 converts at ingest: the zones are drawn in the local frame (x North, y East,
-metres) and written as {lat, lon} about the base policy's origin
-(projection.raw_points_in_wgs84, the conversion every other writer uses), and
+metres) and written as {lat, lon} about the base policy's frame origin
+(read_base; projection.raw_points_in_wgs84, the conversion every other writer uses), and
 the document states that origin. The geometry the Shield enforces is the
 lazy local view of the stored lat/lon, which for the GUI's 0.1 m values is
 exactly the metres drawn (projection.metres_to_wgs84: exact on the
@@ -80,22 +82,35 @@ def metre_constraints(rects, polys, keep: list[dict], high: bool) -> list[dict]:
 
 def read_base(base_path: str | Path = BASE_POLICY):
     """(rules kept from the base policy - every one but its polygon fences,
-    which the drawn zones replace -, its version, its origin (lat, lon),
-    a note or None). Falls back to FALLBACK_KEEP, "0.1.0" and PAS_HOME when
-    the base cannot be read, and to PAS_HOME when it states no origin."""
+    which the drawn zones replace -, its version, its frame origin (lat, lon),
+    a note or None).
+
+    The origin is the base's frame origin (models.Policy.frame_origin): its
+    stated `origin`, else the one its geographic rules derive (the mean of
+    its first polygon fence, then its first geographic rule), so the drawn
+    zones and any lat/lon rule the base keeps share one frame. PAS_HOME only
+    when the base has no frame at all (written only in metres, or no point),
+    with a note. Falls back to FALLBACK_KEEP, "0.1.0" and PAS_HOME when the
+    base cannot be read."""
     try:
         import yaml
         base = yaml.safe_load(Path(base_path).read_text(encoding="utf-8"))
         keep = [c for c in base.get("constraints", []) if c.get("type") != "polygon_fence"]
         version = base.get("version", "0.1.0")
-        org = base.get("origin")
-        if isinstance(org, dict) and "lat" in org and "lon" in org:
-            return keep, version, (float(org["lat"]), float(org["lon"])), None
-        return keep, version, PAS_HOME, (f"base policy {Path(base_path).name} states no "
-                                         f"origin; zones written about {PAS_HOME}")
     except Exception as e:                                      # noqa: BLE001
         return (copy.deepcopy(FALLBACK_KEEP), "0.1.0", PAS_HOME,
                 f"base policy read failed ({e}) - using built-in envelope constraints")
+    try:
+        from guardrail.models import load_policy
+        origin = load_policy(base_path, runtime=False).frame_origin
+    except Exception as e:                                      # noqa: BLE001
+        return (keep, version, PAS_HOME,
+                f"base policy {Path(base_path).name} did not validate ({e}); "
+                f"zones written about {PAS_HOME}")
+    if origin is None:
+        return keep, version, PAS_HOME, (f"base policy {Path(base_path).name} has no "
+                                         f"frame origin; zones written about {PAS_HOME}")
+    return keep, version, (float(origin[0]), float(origin[1])), None
 
 
 def gui_policy_doc(rects, polys, high: bool, base_path: str | Path = BASE_POLICY
