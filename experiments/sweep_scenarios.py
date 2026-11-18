@@ -384,9 +384,8 @@ from guardrail import prefix_consumer as PC                        # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
-from guardrail.frames import (body_to_local_ned,                  # noqa: E402
-                              filter_world_as_body, local_ned_to_world,
-                              streamed_body)
+from guardrail.frames import (BODY_STOP, body_to_local_ned,       # noqa: E402
+                              filter_world_as_body, local_ned_to_world)
 from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
@@ -1443,9 +1442,9 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     `action_frame` (ACTION_FRAMES, 2026-11-17, WP3-04 / ARCH-04). On both
     arms (since wf21) the Shield is handed the pilot's action in the BODY
     frame at the heading it is given (frames.filter_world_as_body) and hands
-    back the emitted BODY action; what the rail streams (frames.
-    streamed_body: that action, a stop on the FSM's brake, the pilot's own
-    with the Shield off) is turned into local NED only after the projection,
+    back the emitted BODY action; what the rail streams (that action, a
+    stop on the FSM's brake, the pilot's own body action with the Shield
+    off) is turned into local NED only after the projection,
     as the rails' MAVLink adapter does (frames.body_to_local_ned at the
     aircraft's heading), and the integrator flies that. "world" (the
     default) keeps the Shield's arc forecast off; "body" turns it on and is
@@ -2188,13 +2187,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # THE ADAPTER (WP3-04 / ARCH-04, every arm): what the rail streams
             # is a BODY action - the Shield's emitted one, a stop on the FSM's
             # "brake", or with the Shield off the pilot's body action as it
-            # was handed in (frames.streamed_body) - turned into local NED
+            # was handed in, as the owner above chose - turned into local NED
             # only here, after the projection, at the aircraft's own heading,
             # by the one body -> NED function every rail's adapter calls
             # (frames.body_to_local_ned, as sitl/mavlink_adapter_node.py turns
             # /shield/setpoint into SET_POSITION_TARGET_LOCAL_NED); the
             # integrator flies that NED velocity in its North / East / up axes.
-            sent = streamed_body(d, emitted_body, shield_on=on, body_in=body_in)
+            # (Chosen by this rail's own ownership, not by d.setpoint: a
+            # Shield built with its own FSM on a run without the rail's
+            # escalation - tools/failsafe_rubric.py - flies its emitted action.)
+            sent = (body_in if owner == "pilot" else
+                    BODY_STOP if esc and d.setpoint == "brake" else emitted_body)
             flown = local_ned_to_world(body_to_local_ned(sent, st.yaw_deg))
         owner_ticks[owner] += 1
         if owner == "autopilot":

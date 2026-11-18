@@ -284,8 +284,9 @@ def filter_world_as_body(shield, state, world: Action4D, t: float | None = None,
     action into the body frame here (`to_body`), at the heading the Shield
     is given (`state.yaw_deg`: the aircraft's own heading on every rail),
     and hands the Shield that body action (`Shield.filter_body`). The rail
-    streams `streamed_body(decision, emitted_body, ...)` to its adapter,
-    which turns it into local NED with `body_to_local_ned` - after the
+    streams the emitted body action (a stop on the FSM's brake, its own body
+    action with the Shield off; `streamed_body`) to its adapter, which
+    turns it into local NED with `body_to_local_ned` - after the
     projection, as the grant says.
 
     Until this change (`filter_as_body`, 2026-11-18) a tick was handed over
