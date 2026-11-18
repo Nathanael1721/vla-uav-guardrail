@@ -87,7 +87,15 @@ SINCE 2026-10-12 (the WP4 outputs the final report rests on)
     pilot is another pilot's campaign, and half its flights carry no Prefix:
     its Campaign section says so (`prefix_consumer`), its rows are
     `.../prefix-consumer-on|off`, and its rail flights never share a report
-    with flights of the library's own pilots (mixed_pilots_refusal).
+    with flights of the library's own pilots (mixed_pilots_refusal). Since
+    2026-11-18 also over pairs a LEARNED VLA flew reading the CSP as text on
+    the PAS follow (`vla_reads_prefix`; perception_node.py --vla-prefix
+    --ab-pair, deploy/orin/run_pas_prefix_ab.sh; `--runs` over the run
+    folders): paired by their --ab-pair label (vla_prefix_pairs: one seed,
+    object words, model and prompt slot), the same measures plus the follow's
+    share of ticks within 30 m, the neutral arm where flown; an arm refused
+    before take-off (its P0 rules over the model's prompt slot) is listed
+    with why among the skipped inputs.
   * --baseline <report.json>: new, fixed and gone failures and per-family
     deltas against an earlier report; the JSON now carries `failures` for
     the next comparison.
@@ -645,6 +653,16 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     if not log.is_file():
         if (run / "kpi.json").is_file():
             return load_stored(run, trust_store)
+        refused = run / VLA_PREFIX_REFUSED
+        if refused.is_file():
+            # A prefix-A/B arm refused before take-off (guardrail/vla_prefix.py:
+            # the P0 rules over the model's prompt slot, never truncated): no
+            # flight, and the report says why rather than "no log".
+            doc = _read_json(refused)
+            return {"id": run.name, "source": _rel(run), "prefix_refused": doc,
+                    "skipped": (f"prefix A/B arm {doc.get('arm')!r} of pair "
+                                f"{doc.get('ab_pair')!r} refused before take-off: "
+                                f"{doc.get('why')}")}
         return {"id": run.name, "source": _rel(run),
                 "skipped": "no flight_log.jsonl and no kpi.json"}
     rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()
@@ -861,7 +879,33 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
                                   "id_cell": scenario.get("cell"),
                                   "seed": scenario.get("seed")})
             k["prefix"] = scenario["arm_record"].get("prefix")
+    vp = metrics.get("vla_prefix")
+    if scenario is None and isinstance(vp, dict) and vp.get("in_ab") is True:
+        # A prefix-A/B arm flown by a VLA that reads the prefix as text
+        # (2026-11-18; demo/pas_ardupilot/perception_node.py --vla-prefix,
+        # --ab-pair): paired by arms_sections, never with any other flight.
+        k["arms"] = vla_prefix_arms(vp)
+        k["prefix"] = vp.get("prefix")
+        k["follow_within_30m"] = _val(metrics.get("frac_within_30m"))
     return k
+
+
+# A refused prefix-A/B arm's record (perception_node.VLA_PREFIX_REFUSED_FILE).
+VLA_PREFIX_REFUSED = "vla_prefix_refused.json"
+
+
+def vla_prefix_arms(vp: dict) -> dict:
+    """The A/B arm of a flight whose VLA read the prefix as text (metrics.json
+    `vla_prefix`, guardrail/vla_prefix.py): `vla_reads_prefix`, a key apart
+    from `pilot_reads_text` (the stress harness's) and `pilot_reads_prefix`
+    (the hand-written consumer's), so it pools with neither."""
+    slot = vp.get("slot") if isinstance(vp.get("slot"), dict) else {}
+    return {"arm": vp.get("arm"), "prefix": vp.get("prefix"), "vla_reads_prefix": True,
+            "ab_pair": vp.get("ab_pair"), "model": vp.get("model"),
+            "slot_model": slot.get("model"), "object": vp.get("object"),
+            "seed": vp.get("seed"), "prefix_sha256": vp.get("prefix_sha256"),
+            "csp_content_hash": vp.get("csp_content_hash"),
+            "cell": f"pas-follow/{vp.get('object')}", "paraphrase_id": None}
 
 
 def time_to_safe_basis(sources: dict, pol) -> str:
@@ -2595,6 +2639,100 @@ def prefix_ab_lines(fig: dict | None) -> list[str]:
     return L
 
 
+# Printed with every A/B a VLA flew reading the prefix as text (vla_text):
+# what the delta is a measurement of.
+VLA_PREFIX_NOTE = (
+    "the pilot is a learned VLA reading the Prefix Compiler's CSP as text in front of its "
+    "instruction (guardrail/vla_prefix.py; demo/pas_ardupilot/perception_node.py "
+    "--vla-prefix), on the PAS follow, outside the stress harness. Neither model it can "
+    "fly (AerialVLA, AIoT-VLA) was trained with rule text in its prompt, so the delta is "
+    "what the prompt change does to such a model, not an expected effect. The CSP is "
+    "budgeted to the model's prompt slot and its P0 rules are never truncated: on "
+    "AIoT-VLA's 16-token text window the follow policy's prefix-on arm is refused before "
+    "take-off")
+# The arm record fields both arms of one pair must share (vla_prefix_pairs).
+VLA_PAIR_SAME = ("seed", "object", "model", "slot_model")
+
+
+def vla_prefix_pairs(eps: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(pairs, unpaired) of the flights a VLA flew reading the prefix as
+    text: grouped by rail and --ab-pair label, one side per arm ("on",
+    "off", "neutral"; the first flight by id when an arm was flown twice). A
+    group is a pair when it has both "on" and "off" and its arms share
+    VLA_PAIR_SAME - the same seed, object words, model and prompt slot -
+    else every flight of it is unpaired, with why."""
+    groups: dict[tuple, dict[str, list]] = {}
+    for e in eps:
+        a = e["arms"]
+        groups.setdefault((str(e.get("rail")), str(a.get("ab_pair"))), {}).setdefault(
+            a.get("prefix"), []).append(e)
+    pairs, unpaired = [], []
+    for (rail, label), sides in sorted(groups.items()):
+        sides = {k: sorted(v, key=lambda e: str(e.get("id"))) for k, v in sides.items()}
+        firsts = [v[0] for v in sides.values()]
+        diff = [f for f in VLA_PAIR_SAME
+                if len({json.dumps(e["arms"].get(f), sort_keys=True) for e in firsts}) > 1]
+        why = None
+        if "on" not in sides or "off" not in sides:
+            why = f"pair {label!r} on {rail} has no {'on' if 'on' not in sides else 'off'} arm"
+        elif diff:
+            why = f"pair {label!r} on {rail}: its arms differ in {', '.join(diff)}"
+        if why is not None:
+            unpaired += [{"id": e.get("id"), "ab_pair": label, "rail": rail,
+                          "prefix": e["arms"].get("prefix"), "why": why}
+                         for v in sides.values() for e in v]
+            continue
+        pairs.append({"label": label, "rail": rail,
+                      "repeats": sum(len(v) - 1 for v in sides.values()),
+                      **{k: [v[0]] for k, v in sides.items()}})
+    return pairs, unpaired
+
+
+def _mean_of(eps: list[dict], key: str):
+    v = [e[key] for e in eps if _num(e.get(key))]
+    return round(sum(v) / len(v), 6) if v else None
+
+
+def vla_prefix_section(pairs: list[dict], unpaired: list[dict]) -> dict:
+    """The A/B a VLA flew reading the prefix as text (arms_sections'
+    `vla_text`): prefix_ab_figures on / off over the pairs, the follow's own
+    measure (the share of ticks within 30 m of the car, frac_within_30m) on
+    / off, the neutral arm against off and the CSP against neutral where it
+    was flown, one row per pair, and the flights left unpaired."""
+    on = [p["on"][0] for p in pairs]
+    off = [p["off"][0] for p in pairs]
+    keyed = [((p["rail"], p["label"]), p["on"][0], p["off"][0]) for p in pairs]
+    f_on, f_off = _mean_of(on, "follow_within_30m"), _mean_of(off, "follow_within_30m")
+    out = {"vla_reads_prefix": True, "pairs": len(pairs),
+           "models": sorted({str(e["arms"].get("model")) for e in on + off}),
+           "slots": sorted({str(e["arms"].get("slot_model")) for e in on + off}),
+           "rails": sorted({str(p["rail"]) for p in pairs}),
+           "figures": prefix_ab_figures(on, off, (), pairs=keyed),
+           "follow_within_30m": {"on": f_on, "off": f_off,
+                                 "delta_on_minus_off": (round(f_on - f_off, 6)
+                                                        if f_on is not None and f_off is not None
+                                                        else None)},
+           "per_pair": [{"pair": p["label"], "rail": p["rail"],
+                         "seed": p["on"][0]["arms"].get("seed"),
+                         "model": p["on"][0]["arms"].get("model"),
+                         "prefix_sha256": p["on"][0]["arms"].get("prefix_sha256"),
+                         **{side: {**_ab_episode(p[side][0]),
+                                   "follow_within_30m": p[side][0].get("follow_within_30m")}
+                            for side in ("on", "off", "neutral") if side in p}}
+                        for p in pairs],
+           "repeats_not_counted": sum(p["repeats"] for p in pairs),
+           "unpaired": unpaired, "note": VLA_PREFIX_NOTE}
+    neutral = [p for p in pairs if "neutral" in p]
+    if neutral:
+        out["neutral"] = {
+            "pairs": len(neutral),
+            "neutral_vs_off": prefix_ab_figures([p["neutral"][0] for p in neutral],
+                                                [p["off"][0] for p in neutral]),
+            "csp_vs_neutral": prefix_ab_figures([p["on"][0] for p in neutral],
+                                                [p["neutral"][0] for p in neutral])}
+    return out
+
+
 def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
     """The Prefix Compiler's A/B (prefix on / off, same seed: "the KPI report
     shows the delta", Prefix Compiler p6) and WP4's per-paraphrase robustness.
@@ -2611,6 +2749,12 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
     then also carries `consumer` (prefix_ab_figures: every measure on, off
     and on minus off, and the A/A pairs as the noise floor)."""
     armed = [e for e in episodes if isinstance(e.get("arms"), dict)]
+    # SINCE 2026-11-18 also the pairs a learned VLA flew reading the prefix as
+    # text (`vla_reads_prefix`, vla_prefix_arms: the PAS follow's --ab-pair),
+    # paired by their pair label (vla_prefix_pairs) and kept out of the
+    # other groups.
+    vla_eps = [e for e in armed if e["arms"].get("vla_reads_prefix") is True]
+    armed = [e for e in armed if e["arms"].get("vla_reads_prefix") is not True]
     reads = [e for e in armed if e["arms"].get("pilot_reads_text") is True]
     eats = [e for e in armed if e["arms"].get("pilot_reads_prefix") is True
             and e["arms"].get("pilot_reads_text") is not True]
@@ -2644,7 +2788,8 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
                                                           key=lambda kv: str(kv[0]))
               if "on" in v and "aa" in v]
 
-    flown, headless = pairs(reads) + eat_pairs, pairs(blind)
+    vla_pairs, vla_unpaired = vla_prefix_pairs(vla_eps)
+    flown, headless = pairs(reads) + eat_pairs + vla_pairs, pairs(blind)
     if flown:
         on = [e for p in flown for e in p["on"]]
         off = [e for p in flown for e in p["off"]]
@@ -2678,11 +2823,18 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
                               "on": _ab_episode(p["on"][0]), "off": _ab_episode(p["off"][0])}
                              for p in eat_pairs],
                 "note": PREFIX_CONSUMER_NOTE}
+        if vla_pairs:
+            # Only when a VLA flew pairs reading the prefix as text
+            # (2026-11-18), so every other A/B keeps exactly its keys.
+            ab["vla_text"] = vla_prefix_section(vla_pairs, vla_unpaired)
     else:
         ab = {"status": "n/m", "pairs": 0, "headless_pairs": len(headless),
               "why": "no prefix on/off pair has been flown by a pilot that reads "
                      "the prompt; the headless pilots ignore text, so their pairs "
                      "are plumbing checks, not an A/B"}
+    if vla_unpaired and "vla_text" not in ab:
+        # flights of a VLA prefix A/B with no complete pair (2026-11-18)
+        ab["vla_text_unpaired"] = vla_unpaired
     trials = [{"paraphrase_id": e["arms"]["paraphrase_id"],
                "backend": e["arms"].get("backend"),
                "mission_success": K.mission_success_with_goal(e)}
@@ -2707,12 +2859,21 @@ def mixed_pilots_refusal(episodes: list[dict]) -> str | None:
     one report are also of one profile: campaign_merge). Rail flights of the
     stress library only (`scenario_id`): a report of other runs, or of a
     headless sweep, is the one it always was."""
-    eats, plain = [], []
+    eats, plain, vla = [], [], []
     for e in episodes:
+        arms = e.get("arms") if isinstance(e.get("arms"), dict) else {}
+        if arms.get("vla_reads_prefix") is True:
+            vla.append(str(e.get("id")))
         if e.get("kind") != "flight" or e.get("scenario_id") is None:
             continue
-        arms = e.get("arms") if isinstance(e.get("arms"), dict) else {}
         (eats if arms.get("pilot_reads_prefix") is True else plain).append(str(e.get("id")))
+    if vla and eats:
+        # (2026-11-18) the A/B headline pools every pair it is given: a VLA
+        # reading the prefix as text and the hand-written consumer are two
+        # pilots, reported apart
+        return (f"these runs hold two prefix A/Bs by two pilots: {len(vla)} flights of a VLA "
+                f"reading the prefix as text (e.g. {vla[0]}) and {len(eats)} of the pilot "
+                f"that consumes the CSP (e.g. {eats[0]}); report each on its own")
     if not (eats and plain):
         return None
     return (f"these rail runs were flown by two pilots: {len(eats)} by a pilot that "
@@ -3393,6 +3554,11 @@ def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
               f"delta {_f(ab['delta_on_minus_off'])}; P0 escapes on "
               f"{ab['p0_escapes_prefix_on']}, off {ab['p0_escapes_prefix_off']}.", ""]
         L += _render_consumer_ab(ab.get("consumer"))
+        L += _render_vla_text_ab(ab.get("vla_text"))
+    for u in (ab or {}).get("vla_text_unpaired") or []:
+        L.append(f"- Unpaired VLA prefix-A/B flight `{u['id']}` ({u['prefix']}): {u['why']}.")
+    if (ab or {}).get("vla_text_unpaired"):
+        L.append("")
     L += ["## Per-paraphrase robustness", ""]
     if not para or para["status"] != "measured":
         L += [f"n/m - {(para or {}).get('why', 'not computed')} "
@@ -3404,6 +3570,58 @@ def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
               f"arms, min {_f(para.get('paraphrase_min_success_rate'), pct=True)}, worst "
               f"drop {_f(para.get('worst_drop_vs_canonical'))}.", ""]
     return L
+
+
+def _render_vla_text_ab(v: dict | None) -> list[str]:
+    """The A/B a VLA flew reading the prefix as text (vla_prefix_section):
+    the models and slots, the KPI-grade count, the measures on / off, the
+    follow's own measure, the neutral arm where flown, one row per pair, the
+    unpaired flights. [] when no such pair was flown."""
+    if not v:
+        return []
+    fig = v["figures"]
+    kg = fig.get("kpi_grade_episodes") or {}
+    n_on, n_off = fig.get("pairs_on"), fig.get("pairs_off")
+    graded = (kg.get("on") == n_on and kg.get("off") == n_off)
+    fw = v["follow_within_30m"]
+    L = [f"### Flown by a VLA that reads the prefix ({', '.join(v['models'])})", "",
+         f"- {v['pairs']} pair(s) (one --ab-pair label, seed, object words and model each), "
+         f"prefix on against prefix off, on {', '.join(v['rails'])}; prompt slot "
+         f"{', '.join(v['slots'])}. KPI-grade flights: {kg.get('on')} of {n_on} with the "
+         f"prefix on, {kg.get('off')} of {n_off} off"
+         + ("." if graded else " - FUNCTIONAL EVIDENCE, NOT KPI-GRADE, wherever a flight "
+                               "is not."),
+         f"- {v['note'][0].upper()}{v['note'][1:]}.",
+         f"- The follow's own measure, the share of ticks within 30 m of the car: on "
+         f"{_f(fw['on'])}, off {_f(fw['off'])}, on minus off {_f(fw['delta_on_minus_off'])}."]
+    if v.get("repeats_not_counted"):
+        L.append(f"- {v['repeats_not_counted']} repeat flight(s) of an arm already flown in "
+                 f"its pair are not counted (the first by run id is).")
+    L += [""] + prefix_ab_lines(fig) + [""]
+    nt = v.get("neutral")
+    if nt:
+        L += [f"#### The neutral arm (rule-free text of the CSP's length), {nt['pairs']} "
+              f"pair(s)", "", "Neutral against off:", ""]
+        L += prefix_ab_lines(nt["neutral_vs_off"])[:len(PREFIX_AB_MEASURES) + 2]
+        L += ["", "CSP against neutral (the rules beyond any text of their length):", ""]
+        L += prefix_ab_lines(nt["csp_vs_neutral"])[:len(PREFIX_AB_MEASURES) + 2] + [""]
+    L += ["| Pair | Seed | Rail | Repairs on / off | Repair magnitude on / off (m/s) | "
+          "P0 escapes on / off | Within 30 m on / off | Mission success on / off | "
+          "Outcome on / off | Prefix SHA-256 |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for p in v.get("per_pair") or []:
+        a, b = p["on"], p["off"]
+        L.append(f"| `{p['pair']}` | {p['seed']} | {p['rail']} | "
+                 f"{_f(a['repair_count'])} / {_f(b['repair_count'])} | "
+                 f"{_f(a['mean_repair_magnitude_mps'])} / "
+                 f"{_f(b['mean_repair_magnitude_mps'])} | "
+                 f"{_f(a['p0_escapes'])} / {_f(b['p0_escapes'])} | "
+                 f"{_f(a['follow_within_30m'])} / {_f(b['follow_within_30m'])} | "
+                 f"{_f(a['mission_success'])} / {_f(b['mission_success'])} | "
+                 f"{a['mission_outcome']} / {b['mission_outcome']} | "
+                 f"`{str(p['prefix_sha256'])[:12]}` |")
+    for u in v.get("unpaired") or []:
+        L.append(f"- Unpaired: `{u['id']}` ({u['prefix']}): {u['why']}.")
+    return L + [""]
 
 
 def _render_consumer_ab(c: dict | None) -> list[str]:

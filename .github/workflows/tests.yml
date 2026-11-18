@@ -252,6 +252,14 @@
 #          asked, written by the server, checked by the client, flown as a
 #          body-frame velocity or an offset endpoint; upstream's step as
 #          before).
+#          test_vla_prefix (the prefix A/B on the PAS follow, 2026-11-18:
+#          guardrail/vla_prefix.py's prompt slot per model - AerialVLA's
+#          instruction line at the default budget, AIoT-VLA's object words
+#          in OWL-ViT's 16-token text window - the CSP compiled to that
+#          budget with P0 never truncated, the neutral arm, the AIoT-VLA
+#          server's CSP slot and window refusal, the warm-up's prompt, and
+#          tools/kpi_report.py's pairing by --ab-pair; its check with
+#          OWL-ViT's own tokenizer SKIPs where that is not on the machine).
 #          test_follow_teacher (follow_vlm --teacher-truth, 2026-10-30: the
 #          teacher's box where the camera sees the level car's true position,
 #          its features a perfect measurement for the start gate and the
@@ -835,6 +843,7 @@ jobs:
               tests/test_vla_backends_cd_bitvla.py \
               tests/test_aiotvla.py \
               tests/test_vla_lateral_step.py \
+              tests/test_vla_prefix.py \
               tests/test_follow_teacher.py \
               tests/test_vla_standoff_feed.py \
               tests/test_held_box_gate.py \
