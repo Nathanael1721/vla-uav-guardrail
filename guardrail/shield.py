@@ -200,6 +200,65 @@ def _arc_offset(vx: float, vy: float, w: float, t: float) -> tuple[float, float]
     return vx * s_w - vy * c_w, vx * c_w + vy * s_w
 
 
+# Over a DEM, how far inside an altitude band over the ground (not an MSL
+# one) the altitude repair holds the forecast poses, ramped in over
+# DEM_BAND_MARGIN_RAMP_S (Shield._repair_altitude_over_ground, THE MARGIN;
+# at most the band's re-entry margin). Without it the closed loop rode the AGL floor at 0.000 m of margin
+# (wf20 review, 2026-11-18), so a few cm of baro or EKF noise in SITL would
+# show as agl-band ticks. Used only with a DEM: no other flight moves.
+DEM_BAND_MARGIN_M = 0.25
+# Over how much of the forecast that margin is ramped in from 0 (s): an
+# aircraft already inside the margin is asked for at most (margin - its
+# distance) / ramp of extra rate, not a step at the first pose.
+DEM_BAND_MARGIN_RAMP_S = 1.0
+
+
+def _msl_on_flat_forecast(state_at: int, poses_at: int | None = None):
+    """For a per-rule check (`_check_altitude`, `_check_fence`,
+    `_check_corridor`): over a DEM (Shield._dem), judge an MSL rule on the
+    FLAT forecast and every other rule on the forecast over the ground
+    (2026-11-18, X-11 / wf20).
+
+    Why the MSL rules keep the flat forecast. A pose of it is the predicted
+    MSL height minus the ground under the aircraft NOW (g0), and the runtime
+    converts an MSL band over the ground within reach of the aircraft
+    (lowest, highest; _local_runtime), so its check reads the predicted MSL
+    height against the declared band tightened by g0's distance to the
+    reach's extremes: an MSL rule judged in MSL, as it was until this
+    change (docs/data/msl_dem_rail.json: 0 MSL-band ticks). On the forecast
+    over the ground the same converted band is tightened by the distance of
+    EACH POSE's ground to those extremes instead, which beyond the reach
+    (5 m/s x 5 s = 25 m > 20 m) or downhill refused a level flight 7 m under
+    the MSL ceiling (an RTL leg of the terrain-follow cell, harness true-P0).
+
+    `state_at` / `poses_at`: the positions (after the rule) of the check's
+    `state` and `poses` arguments. Poses a caller already forecast over the
+    ground are taken back to the flat forecast from `state` for an MSL rule.
+    Without a DEM the check is called as it is."""
+    def wrap(check):
+        def judged(self, rule, *args, **kw):
+            if self._dem is None:
+                return check(self, rule, *args, **kw)
+            flat = self._msl_rule(rule)
+            prev = getattr(self._local, "flat_up", False)
+            self._local.flat_up = flat
+            try:
+                if flat and poses_at is not None:
+                    args = list(args)
+                    if len(args) > poses_at and args[poses_at] is not None:
+                        args[poses_at] = self._flat_poses(args[state_at], args[poses_at])
+                    elif kw.get("poses") is not None:
+                        kw["poses"] = self._flat_poses(args[state_at], kw["poses"])
+                return check(self, rule, *args, **kw)
+            finally:
+                self._local.flat_up = prev
+        judged.__name__, judged.__qualname__ = check.__name__, check.__qualname__
+        judged.__doc__ = check.__doc__
+        judged.__wrapped__ = check
+        return judged
+    return wrap
+
+
 def _field_name(c) -> str:
     """Which map a clearance rule is measured on: "buildings" (the obstacle
     map: every obstacle_clearance) or "roads" (a distance_envelope over
@@ -2143,6 +2202,12 @@ class Shield:
                 f"converts first: terrain.terrain_relative_up), got up_ref={up_ref!r}")
         self._ground = ground
         self._up_ref = up_ref
+        # THE FORECAST OVER A DEM (2026-11-18, X-11 / wf20): with a DEM and a
+        # terrain-relative up, every forecast pose's up is the height above
+        # the ground under THAT pose (`_over_ground`), not above the ground
+        # under the aircraft now. None: every pose's up is computed as it
+        # always was (no ground, a flat ground).
+        self._dem = ground if (_terrain.is_dem(ground) and up_ref == "terrain") else None
         why = self.unenforceable(policy, ground)
         if why:
             raise ValueError("the Shield does not enforce every rule of "
@@ -2756,9 +2821,137 @@ class Shield:
 
     # ---------------- violation checking ---------------- #
 
+    def _ground_at(self, x: float, y: float) -> float:
+        """The DEM's elevation (m MSL) at (x, y) (`_dem`), cached per tick:
+        every rule walks the same forecast poses."""
+        return self._ground_lookup()(x, y)
+
+    def _ground_lookup(self):
+        """`_ground_at` as a function bound to this tick's cache (a forecast
+        reads it once per pose)."""
+        dem = self._dem
+        tick = self._tick_ctx()
+        if tick is None:
+            return dem.elevation_at
+        cache = tick.committed
+
+        def at(x: float, y: float) -> float:
+            key = ("dem_ground", x, y)
+            hit = cache.get(key)
+            if hit is None:
+                hit = cache[key] = dem.elevation_at(x, y)
+            return hit
+        return at
+
+    def _over_ground(self, state, poses):
+        """`poses`, a forecast from `state` whose up holds the ground under
+        `state` flat, with each pose's up the height above the DEM under THAT
+        pose (2026-11-18, X-11 / wf20): the predicted MSL height (state.up +
+        g(state) + the forecast climb) minus the ground at the pose,
+        up + g(state.x, state.y) - g(pose.x, pose.y). A level command over
+        rising ground is then forecast to come down onto an AGL floor before
+        it does, as the grant's forecast-based Shield must. An MSL rule is
+        judged on the flat forecast instead (`_msl_on_flat_forecast` says
+        why). A pose or state with a non-finite position keeps its flat up
+        (every rule already treats such a pose as unknown)."""
+        sx, sy = state.x, state.y
+        isfinite = math.isfinite
+        if not (isfinite(sx) and isfinite(sy)):
+            yield from poses
+            return
+        at = self._ground_lookup()
+        g0 = at(sx, sy)
+        for t, p in poses:
+            x, y = p[0], p[1]
+            if isfinite(x) and isfinite(y):
+                p = _Pose(x, y, p[2] + (g0 - at(x, y)), p[3])
+            yield t, p
+
+    def _flat_poses(self, state, poses) -> list:
+        """`poses`, forecast over the ground from `state` (`_over_ground`),
+        taken back to the flat forecast: up + g(pose) - g(state)."""
+        if not (math.isfinite(state.x) and math.isfinite(state.y)):
+            return list(poses)
+        g0 = self._ground_at(state.x, state.y)
+        return [(t, p._replace(up=p.up + (self._ground_at(p.x, p.y) - g0)))
+                if math.isfinite(p.x) and math.isfinite(p.y) else (t, p)
+                for t, p in poses]
+
+    def _msl_rule(self, rule) -> bool:
+        """Is `rule` (a runtime rule) one the policy declares in MSL, over a
+        DEM: judged on the flat forecast (`_msl_on_flat_forecast`)?"""
+        if self._dem is None:
+            return False
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        rid = getattr(rule, "id", None)
+        return any(d.id == rid for _, d in rt.msl)
+
+    def _up_over_ground(self, state, up: float, x: float, y: float) -> float:
+        """One pose's `_over_ground`: `up` (held over the ground under
+        `state`) as the height above the DEM at (x, y); `up` itself without a
+        DEM or at a non-finite position."""
+        if (self._dem is None or getattr(self._local, "flat_up", False)
+                or not all(math.isfinite(v) for v in (state.x, state.y, x, y))):
+            return up
+        return up + (self._ground_at(state.x, state.y) - self._ground_at(x, y))
+
     def _predict(self, state: State, action: Action4D,
                  horizon_s: float | None = None, *, own_only: bool = False,
                  arc_path: str | None = None):
+        """The forecast every rule judges (`_predict_flat`, which documents
+        it), over a DEM (`_dem`) with each pose's up the height above the
+        ground under that pose (`_over_ground`). Without a DEM it is
+        `_predict_flat`'s poses themselves, unchanged. While an MSL rule is
+        judged over a DEM (`_msl_on_flat_forecast`) it is the flat forecast
+        too, computed afresh: the buffer's trajectory (admitted from this
+        very call) is over the ground.
+
+        A plain function that hands back an iterator, not a generator: without
+        a DEM it returns `_predict_flat`'s own generator, so the forecast every
+        flight without a DEM walks has no extra generator layer per pose (the
+        wf20 review measured that layer at +4-9 % of filter() without a
+        ground). Which forecast is chosen is decided at the call, not at the
+        first pose."""
+        if self._dem is None:
+            return self._predict_flat(state, action, horizon_s,
+                                      own_only=own_only, arc_path=arc_path)
+        if getattr(self._local, "flat_up", False):
+            return self._predict_flat(state, action, horizon_s, own_only=own_only,
+                                      arc_path=arc_path, held=False)
+        held = self._predict_held(state, action, horizon_s, own_only, arc_path)
+        if held is not None:
+            return iter(held)
+        # Every rule (and every repair candidate's re-check) walks the same
+        # forecasts: computed once per tick, as the own-velocity poses are.
+        tick = self._tick_ctx()
+        key = None
+        if tick is not None:
+            v = self._velocity_of(state)
+            key = ("dem_poses", state.x, state.y, state.up, state.yaw_deg, v,
+                   None if v is None else id(self._pipe_pre(v)),
+                   action.vx, action.vy, action.vz_up, action.yaw_rate,
+                   horizon_s, bool(own_only), arc_path, self._arc_rate(action))
+            hit = tick.committed.get(key)
+            if hit is not None:
+                return iter(hit)
+        out = list(self._over_ground(state, self._predict_flat(
+            state, action, horizon_s, own_only=own_only, arc_path=arc_path, held=False)))
+        if key is not None:
+            tick.committed[key] = out
+        return iter(out)
+
+    def _predict_held(self, state, action, horizon_s, own_only, arc_path):
+        """The buffer's trajectory when this forecast is the admitted one
+        (`_predict_flat`, THE BUFFER IS THE CHECKER'S INPUT), else None."""
+        if horizon_s is None and not own_only and (arc_path is None
+                                                   or not self._arc_rate(action)):
+            return self._buffer.trajectory_for(self._tick_ctx(), state, action)
+        return None
+
+    def _predict_flat(self, state: State, action: Action4D,
+                      horizon_s: float | None = None, *, own_only: bool = False,
+                      arc_path: str | None = None, held: bool = True):
         """The forecast (the grant Shield's 50-pose forecast at the default
         5 s / 0.1 s; a caller may pass a shorter one): the commanded velocity
         held from t = 0 for a State without a measured velocity, as it always
@@ -2803,7 +2996,7 @@ class Shield:
         # Which paths: the line always unless only the arc is asked for; the
         # arc whenever there is one.
         lines = not w or arc_path != "arc"
-        if horizon_s is None and not own_only and (arc_path is None or not w0):
+        if held and horizon_s is None and not own_only and (arc_path is None or not w0):
             held = self._buffer.trajectory_for(self._tick_ctx(), state, action)
             if held is not None:
                 yield from held
@@ -3132,9 +3325,21 @@ class Shield:
         path = _response.stop_path(self.velocity_response, None, state.x, state.y,
                                    v[0], v[1], pipe=self.pipe(), dt=self.dt)
         _, sx, sy = path[-1]
-        stop = State(x=sx, y=sy, up=state.up, yaw_deg=state.yaw_deg)
+        # Over a DEM the stop point stands over its own ground (_over_ground),
+        # for every rule: the answer is cached per tick, whichever rule asks.
+        up = state.up
+        if self._dem is not None and all(math.isfinite(v) for v in (state.x, state.y, sx, sy)):
+            up = up + (self._ground_at(state.x, state.y) - self._ground_at(sx, sy))
+        stop = State(x=sx, y=sy, up=up, yaw_deg=state.yaw_deg)
         here = self._positional(state)
         self._local.no_commit = True
+        # The answer is cached per tick whichever rule asks first, so it is
+        # computed on the forecast over the ground (flat_up off) even when an
+        # MSL rule's check (_msl_on_flat_forecast) reached it: every other
+        # rule reads the same cache entry (wf20 review). _rule_state hands an
+        # MSL rule the flat stop.
+        prev_flat = getattr(self._local, "flat_up", False)
+        self._local.flat_up = False
         try:
             ids = frozenset(x.rule_id for x in self._check_in(state, BRAKE))
             # Rules the POSITION already breaks are judged exactly as before:
@@ -3149,6 +3354,7 @@ class Shield:
             inside = frozenset(x.rule_id for x in self._check_in(here, BRAKE))
         finally:
             self._local.no_commit = False
+            self._local.flat_up = prev_flat
         out = (stop, ids - inside, here, inside)
         if tick is not None:
             tick.committed[key] = out
@@ -3165,7 +3371,14 @@ class Shield:
         if rule.id in com[3]:
             return com[2]
         if rule.id in com[1]:
-            return com[0]
+            stop = com[0]
+            if self._dem is not None and getattr(self._local, "flat_up", False):
+                # An MSL rule over a DEM is judged on the flat forecast
+                # (_msl_on_flat_forecast): its stop point holds the ground
+                # under the aircraft now, as it did before the forecast over
+                # the ground (`_committed` keeps the stop over its own ground).
+                stop = State(x=stop.x, y=stop.y, up=state.up, yaw_deg=stop.yaw_deg)
+            return stop
         return state
 
     def _clear_steps(self, state: State, action: Action4D) -> list:
@@ -3399,6 +3612,7 @@ class Shield:
                 detail=f"|yaw_rate| {yaw_dps:.1f} dps > max {k.yaw_rate_max_dps}"))
         return out
 
+    @_msl_on_flat_forecast(0)
     def _check_altitude(self, env, state: State, action: Action4D) -> list[Violation]:
         """Trend-aware. Outside the band but moving back in = OK. A pose is
         judged only if the rule is in force at that pose's time (`_mask`)."""
@@ -3409,17 +3623,36 @@ class Shield:
         # every altitude and time (the climb is forecast as commanded in
         # both: _predict), so the own-velocity path alone is walked - the
         # same first breach, at the same time, with the same altitude.
-        kw = {"own_only": True} if self._velocity_of(state) is not None else {}
+        #
+        # OVER A DEM (`_dem`, 2026-11-18) the two paths' poses stand over
+        # different ground, so both are walked, and "climbing" is climbing
+        # AWAY FROM THE GROUND: a pose after t = 0 below the floor passes only
+        # if it is higher above the ground than the aircraft is now (already
+        # below and recovering), whatever the commanded vz - a 1 m/s climb
+        # over ground rising 2 m/s is coming down onto the floor. At t = 0 the
+        # pose is the aircraft itself and the commanded vz decides, as on flat
+        # ground; the next pose sees the ground's rate. Without a DEM nothing
+        # changes.
+        dem = self._dem is not None and not getattr(self._local, "flat_up", False)
+        kw = ({"own_only": True} if not dem and self._velocity_of(state) is not None
+              else {})
         for t, p in self._predict(state, action, **kw):
             if alive is not True and not alive(t):
                 continue
             below = p.up < env.alt_min_m - 1e-9
             above = p.up > env.alt_max_m + 1e-9
-            if below and action.vz_up <= 1e-9:
+            if dem and t > 1e-12:
+                # The rate away from the ground between now and the pose: the
+                # commanded vz itself on flat ground (up to rounding).
+                rate = (p.up - state.up) / t
+                low, high = rate <= 1e-9, rate >= -1e-9
+            else:
+                low, high = action.vz_up <= 1e-9, action.vz_up >= -1e-9
+            if below and low:
                 return [Violation(
                     rule_id=env.id, category="altitude", predicted_at_s=t,
                     detail=f"alt {p.up:.1f}m < floor {env.alt_min_m}m, not climbing")]
-            if above and action.vz_up >= -1e-9:
+            if above and high:
                 return [Violation(
                     rule_id=env.id, category="altitude", predicted_at_s=t,
                     detail=f"alt {p.up:.1f}m > ceiling {env.alt_max_m}m, not descending")]
@@ -3791,7 +4024,8 @@ class Shield:
                 if t_open is None:
                     continue                  # can still leave in time: walked as before
                 px, py = state.x + action.vx * t_open, state.y + action.vy * t_open
-                if not point_in_fence(px, py, state.up + action.vz_up * t_open, f, poly, ring):
+                if not point_in_fence(px, py, self._up_over_ground(
+                        state, state.up + action.vz_up * t_open, px, py), f, poly, ring):
                     return None               # over the cap: walked as before
                 ox, oy = escape_direction(px, py, poly, action.vx, action.vy,
                                           tie_tolerance_m(f))
@@ -3821,6 +4055,8 @@ class Shield:
             out.append((t, _Pose(x=state.x + ux * d, y=state.y + uy * d,
                                  up=state.up + action.vz_up * t,
                                  yaw_deg=state.yaw_deg + yaw_dps * t)))
+        if self._dem is not None and not getattr(self._local, "flat_up", False):
+            out = list(self._over_ground(state, out))      # each pose over its ground
         return out
 
     def _ring_exit_time(self, ring, state: State, action: Action4D,
@@ -3842,6 +4078,7 @@ class Shield:
         s = max((px - state.x) * ux + (py - state.y) * uy for px, py in pts)
         return max(s, 0.0) / h
 
+    @_msl_on_flat_forecast(1, 3)
     def _check_fence(self, f, poly, state: State, action: Action4D,
                      poses=None, buffered=None) -> list[Violation]:
         """Trend-aware for the already-inside case.
@@ -4098,6 +4335,7 @@ class Shield:
             return d, (0.0, 0.0)          # on the line; no defined "back"
         return d, ((nx - x) / d, (ny - y) / d)
 
+    @_msl_on_flat_forecast(0, 2)
     def _check_corridor(self, c, state: State, action: Action4D,
                         poses=None) -> list[Violation]:
         """Keep-IN, trend-aware. The mirror image of _check_fence.
@@ -4479,7 +4717,11 @@ class Shield:
             legal cruise that happens to sit near the edge of its own envelope.
 
         recovery_law="lookahead" runs _repair_altitude_lookahead instead.
+        Over a DEM (`_dem`) _repair_altitude_over_ground runs, whatever the
+        recovery law.
         """
+        if self._dem is not None:
+            return self._repair_altitude_over_ground(state, a, repairs)
         if self.recovery_law == "lookahead":
             return self._repair_altitude_lookahead(state, a, repairs)
         vz = a.vz_up
@@ -4551,6 +4793,117 @@ class Shield:
                                       magnitude_m=tgt - end_up, axis="vertical",
                                       recovery=outside))
                 vz = new
+        return Action4D(vx=a.vx, vy=a.vy, vz_up=vz, yaw_rate=a.yaw_rate)
+
+    def _ground_rise(self, state: State, a: Action4D) -> list[tuple[float, float]]:
+        """(t, rise) for every pose after t = 0 of `a`'s forecast from
+        `state` over the DEM: how far the ground under the pose is above the
+        ground under the aircraft now (m; negative where it falls). The
+        horizontal path does not depend on vz, so one walk sizes every vz
+        the altitude repair tries. [(lookahead, 0.0)] when no pose has a
+        finite position (the flat ground's endpoint)."""
+        out = []
+        if math.isfinite(state.x) and math.isfinite(state.y):
+            g0 = self._ground_at(state.x, state.y)
+            out = [(t, self._ground_at(p.x, p.y) - g0) for t, p in self._predict(state, a)
+                   if t > 1e-12 and math.isfinite(p.x) and math.isfinite(p.y)]
+        return out or [(self.lookahead_s, 0.0)]
+
+    def _repair_altitude_over_ground(self, state: State, a: Action4D,
+                                     repairs: list[Repair]) -> Action4D:
+        """_repair_altitude over a DEM (2026-11-18, X-11 / wf20): vz sized so
+        that EVERY forecast pose, each over its own ground (`_over_ground`),
+        holds the band - not the lookahead endpoint over the ground under
+        the aircraft now, which let a level command over rising ground down
+        onto an AGL floor before the climb started (docs/data/
+        msl_dem_rail.json, finding_agl_over_dem).
+
+        A pose t seconds ahead stands rise(t) metres higher (`_ground_rise`)
+        and is up + vz t - rise(t) above it, so
+
+          * inside the band: vz >= max_t (floor - up + rise(t)) / t keeps every
+            pose on or above the floor, vz <= min_t (ceiling - up + rise(t)) / t
+            on or below the ceiling. A command outside that range is moved to
+            its edge, the ceiling first (as _repair_altitude). On flat ground
+            both are the endpoint's (rise = 0, the bound is at t = L).
+            THE MARGIN (wf20 review): for a rule over the ground (not an MSL
+            one) every pose is held a margin inside the edge, ramped in over
+            the first DEM_BAND_MARGIN_RAMP_S of the forecast (floor +
+            m min(1, t / ramp); the ceiling's mirror), m = DEM_BAND_MARGIN_M
+            and at most the band's re-entry margin. The ramp keeps the bound
+            finite for an aircraft already inside the margin: from d < m
+            above the floor it asks at most (m - d) / ramp more climb. Aimed
+            at the floor itself, the closed loop rode it at exactly 8.000 m
+            (a scratch sim, the level CMAC goto flown with a 2-tick delay and
+            1 m/s^2: 39 of 400 ticks under 8.01 m), so a few cm of baro or
+            EKF noise on a re-flight would put the aircraft under it; with
+            the margin the same sim's lowest is 8.054 m. The check
+            (_check_altitude) still asks for the edge itself: the margin is
+            the repair's aim, not a tighter rule, so where the forecast stays
+            on the floor nothing is repaired (a crest) and the aircraft can
+            still settle towards the floor.
+          * already outside: the recovery rate (_recovery_vz, a rate away
+            from the ground) plus the ground's steepest rate along the
+            forecast in the recovery's direction (max_t rise(t) / t below the
+            floor, min_t above the ceiling), so every pose is further back
+            towards the band than the aircraft is now - what _check_altitude
+            asks of a recovery over a DEM - and never past the far edge at
+            any pose.
+
+        recovery_law="lookahead" is not applied over a DEM: this sizing runs
+        whatever the law (the lookahead law sizes the endpoint over the
+        ground under the aircraft now, the very gap this closes).
+
+        The kinematic caps clamp afterwards as for every repair; a climb the
+        caps cannot fly is refused by the re-check and the FSM brakes."""
+        vz = a.vz_up
+        L = self.lookahead_s
+        up = state.up
+        rises_all = self._ground_rise(state, a)
+        level = [(L, 0.0)]
+        for env in self._alts:
+            lo, hi = env.alt_min_m, env.alt_max_m
+            # An MSL rule is judged on the flat forecast (_msl_on_flat_forecast):
+            # sized on it, which is the endpoint's rule above, with no margin.
+            msl = self._msl_rule(env)
+            rises = level if msl else rises_all
+            m = 0.0 if msl else min(DEM_BAND_MARGIN_M, self._reentry_margin(lo, hi))
+            ramp = DEM_BAND_MARGIN_RAMP_S
+            need_lo = max((lo - up + r + m * min(1.0, t / ramp)) / t for t, r in rises)
+            need_hi = min((hi - up + r - m * min(1.0, t / ramp)) / t for t, r in rises)
+            above, below = up > hi, up < lo
+            if above or below:
+                rec = self._recovery_vz(up, lo, hi, L)
+                if above:
+                    far = need_lo
+                    rec = rec + min(r / t for t, r in rises)
+                    new = max(min(vz, rec), far)
+                else:
+                    far = need_hi
+                    rec = rec + max(r / t for t, r in rises)
+                    new = min(max(vz, rec), far)
+                if abs(new - vz) > 1e-9:
+                    # As _repair_altitude: clamped at the far edge, unless the
+                    # recovery rate itself is that edge.
+                    to_far = new == far and new != rec
+                    edge = (f"ceiling {hi}m" if above != to_far else f"floor {lo}m")
+                    repairs.append(Repair(operator="AltitudeFix",
+                                          detail=f"vz {vz:.2f} -> {new:.2f} ({edge})",
+                                          magnitude_m=abs(new - vz) * L, axis="vertical",
+                                          recovery=not to_far))
+                    vz = new
+            elif vz > need_hi:
+                repairs.append(Repair(operator="AltitudeFix",
+                                      detail=f"vz {vz:.2f} -> {need_hi:.2f} (ceiling {hi}m)",
+                                      magnitude_m=(vz - need_hi) * L, axis="vertical",
+                                      recovery=False))
+                vz = need_hi
+            elif vz < need_lo:
+                repairs.append(Repair(operator="AltitudeFix",
+                                      detail=f"vz {vz:.2f} -> {need_lo:.2f} (floor {lo}m)",
+                                      magnitude_m=(need_lo - vz) * L, axis="vertical",
+                                      recovery=False))
+                vz = need_lo
         return Action4D(vx=a.vx, vy=a.vy, vz_up=vz, yaw_rate=a.yaw_rate)
 
     def _repair_clearance(self, state: State, a: Action4D,
@@ -8144,7 +8497,8 @@ class Shield:
         step = HANDBACK_STEP_S if n == full else self.lookahead_s / n
         for i in range(1, n + 1):
             tau = i * step
-            p = State(x=st.x + a.vx * tau, y=st.y + a.vy * tau, up=st.up + a.vz_up * tau,
+            px, py = st.x + a.vx * tau, st.y + a.vy * tau
+            p = State(x=px, y=py, up=self._up_over_ground(st, st.up + a.vz_up * tau, px, py),
                       yaw_deg=st.yaw_deg)
             with self.looking_ahead(tau):
                 if self.hard_violations(self.state_is_unsafe(p)):

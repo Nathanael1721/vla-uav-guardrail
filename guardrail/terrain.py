@@ -54,11 +54,18 @@ converts first with `terrain_relative_up`. Since 2026-11-18 two rails do,
 opt-in: the headless harness (a scenario's `ground`; its vehicle holds its
 MSL height and its `up` is kept above the DEM) and the ROS 2 Shield node
 (--ground, --ground-home-msl: `TerrainReference`). Neither has flown on
-SITL, hil or PAS. LIMIT: the Shield's forecast holds the ground under the
-aircraft flat over its lookahead, so an AGL band over a DEM lets a level
-command over rising ground through and is restored the tick after
-(docs/data/msl_dem_rail.json, finding_agl_over_dem); an MSL band has no
-such gap (its conversion bounds the ground over the reach both ways).
+SITL, hil or PAS. THE FORECAST OVER A DEM (2026-11-18, wf20): until then
+the Shield's forecast held the ground under the aircraft flat over its
+lookahead, so an AGL band over a DEM let a level command over rising ground
+down onto its floor before the violation was seen (the first SITL flight,
+msl_dem_sitl_01: 2.0 s under agl-band's floor, at most 0.49 m; headless,
+189 oracle ticks). Since then each forecast pose's up is the predicted MSL
+height less the ground under THAT pose (Shield._over_ground) and the
+altitude repair sizes its climb on those poses, so the violation is
+predicted ahead and the climb starts in time (docs/data/msl_dem_rail.json,
+finding_agl_over_dem). An MSL band keeps the flat forecast (the predicted
+MSL height less the ground under the aircraft, against the band converted
+over the reach): it is judged in MSL, as before.
 
 A DEM as published is a WGS84 lat/lon grid: `Wgs84Grid` / `load_ground`
 (below) read one and resample it into the policy's frame.
@@ -198,6 +205,10 @@ class GridGround:
         self.origin = origin
         self._bounds = self._outward(float(z.min()), float(z.max()))
         self._cache: dict = {}
+        # The nodes as Python floats for elevation_at: the same doubles and
+        # the same arithmetic as indexing `z`, without a NumPy scalar per
+        # read (the Shield reads one per forecast pose).
+        self._zl = z.tolist()
 
     # -- reading the grid
     def _fidx(self, x: float, y: float) -> tuple[float, float]:
@@ -212,9 +223,9 @@ class GridGround:
         nj, ni = self.z.shape
         i, j = min(int(fi), ni - 2), min(int(fj), nj - 2)
         u, v = fi - i, fj - j
-        z = self.z
-        return float((1 - u) * (1 - v) * z[j, i] + u * (1 - v) * z[j, i + 1]
-                     + (1 - u) * v * z[j + 1, i] + u * v * z[j + 1, i + 1])
+        r0, r1 = self._zl[j], self._zl[j + 1]
+        return float((1 - u) * (1 - v) * r0[i] + u * (1 - v) * r0[i + 1]
+                     + (1 - u) * v * r1[i] + u * v * r1[i + 1])
 
     def _outward(self, lo: float, hi: float) -> tuple[float, float]:
         q = self.quantum_m
