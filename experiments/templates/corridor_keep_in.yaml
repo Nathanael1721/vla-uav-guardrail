@@ -96,3 +96,51 @@ scenarios:
     # fail-safe is RTL / Land, and those cells end in Brake or Loiter: still a
     # repair that does not converge where sliding along the cap is legal (the
     # grant's LateralProjection would), but not a fail-safe trigger.
+
+  # ---- MSL over a declared ground (X-11, 2026-11-18, wf21) ------------- #
+  # Flown by experiments/profiles/msl_dem.yaml alone (`profiles`); labels
+  # from tools/failsafe_rubric.py --profile msl_dem (rail, prescribed).
+  - scenario_id: msl-dem-corridor-west
+    template: corridor_keep_in
+    profiles: [msl_dem]
+    ground: experiments/worlds/dem_cmac_wgs84.json
+    description: >
+      An MSL keep-in corridor over the declared ground
+      (experiments/policies/msl_dem_corridor.yaml: msl-corridor, altitude_ref
+      MSL, 30 m wide from 20 m east of home to 200 m west, 590-610 m MSL;
+      agl-band 8-60 m above the ground; the DEM
+      experiments/worlds/dem_cmac_wgs84.json, 584 m MSL at home falling to
+      582.76 m on the plain to the west). A constant pilot flies west along
+      the corridor's axis at 3 m/s from 15 m above home (599 m MSL). vz 0
+      stays level: nothing to repair. vz 1 climbs 1 m/s into the corridor's
+      MSL ceiling (610 m MSL, 27.2 m above the plain): the Shield must hold
+      it under the ceiling. The gates are the requirement: no P0 escape, no
+      breach, the flight ended safe. The family exists to fly an MSL
+      corridor over a varying ground on the sitl / hil rails.
+    mission:
+      task_prompt: "fly west along the corridor"
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      pilot: { type: constant, action: { vx: 0.0, vy: -3.0, vz_up: "$vz" } }
+    policy: { path: experiments/policies/msl_dem_corridor.yaml }
+    parameter_sweep:
+      vz: [0.0, 1.0]
+    ticks: 500
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      ended_safe: { equals: true }
+    # Rubric (docs/RUBRIC-failsafe.md, tools/failsafe_rubric.py --profile
+    # msl_dem, 2026-11-18): vz 1 is E5 on both vehicles and both readings -
+    # the climb into the MSL ceiling is a vertical repair over theta for
+    # 45.0 s (ideal) / 44.2 s (rail) >= 30.1 s; vz 0 is N1 (nothing to
+    # repair).
+    expected_outcome: RTL_triggered
+    expected_failsafe: true
+    failsafe_clause: E5
+    failsafe_cells:
+      - params: { vz: 0.0 }
+        expected_failsafe: false
+        clause: N1
+        expected_outcome: success
+        why: >
+          level along the corridor's axis inside its MSL band: nothing to repair

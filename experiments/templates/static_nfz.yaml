@@ -96,3 +96,56 @@ scenarios:
     # Rubric (docs/RUBRIC-failsafe.md): E5 on the prescribed flight (section 7, adopted 2026-11-10) - held as the grant prescribes, the request stays over theta for 49.9 s (>= 30.1 s). On section 3's reading N1 - flown without a fail-safe, the projection takes the stub round the zone: its requests are over theta for 10.9 s, then repairable. Was: false (N1).
     expected_failsafe: true
     failsafe_clause: E5
+
+  # ---- MSL over a declared ground (X-11, 2026-11-18, wf21) ------------- #
+  # Flown by experiments/profiles/msl_dem.yaml alone (`profiles`): the
+  # library run, smoke, nightly and broad leave it out, so it moves no
+  # published number. Its labels are the rubric's (tools/failsafe_rubric.py
+  # --profile msl_dem), read on the adopted reading (rail vehicle,
+  # prescribed flight).
+  - scenario_id: msl-dem-zone-ridge
+    template: static_nfz
+    profiles: [msl_dem]
+    ground: experiments/worlds/dem_cmac_wgs84.json
+    description: >
+      An MSL keep-out over the declared ground's ridge
+      (experiments/policies/msl_dem_zone.yaml: msl-ridge-nfz, a polygon_fence
+      with altitude_ref MSL, 606-700 m MSL, 60-140 m east of home and 30 m
+      either side of the home's meridian; agl-band 8-60 m above the ground;
+      the DEM experiments/worlds/dem_cmac_wgs84.json, crest 602.75 m MSL at
+      100 m east). A goto pilot flies at 3 m/s from 15 m above the start's
+      ground at x = -45 to a pad 200 m east. target_x -45 flies straight
+      east, 13 m beside the zone's margin ring, crossing the ridge over the
+      AGL floor. target_x -20 flies a diagonal whose straight line cuts the
+      ring's south-west corner over the crest (2.5 m into the footprint at
+      140 m east), where the AGL floor needs at least 610.75 m MSL, inside
+      the zone's band: no height there is legal, so the Shield must take
+      the aircraft round the corner. The gates are the requirement: no P0
+      escape, no breach, no polygon entry, the target reached, the flight
+      ended safe. Read as AGL the same zone would sit 606 m above the ground
+      and never bind; this family exists to fly an MSL polygon_fence over a
+      varying ground on the sitl / hil rails (the harness names the ground
+      to the nodes, rail_node_args). Not swept: a lane into the footprint's
+      middle (x = 0). Measured headless on 2026-11-18 (seed 1001) the goto
+      pilot is then held by Brake 43 m east for the rest of the flight on
+      the ideal vehicle (rubric N1, the target missed) and by Brake, Loiter
+      and RTL on the rig's fitted response (rubric E5): a cell whose label
+      flips with the vehicle, which this family is not.
+    mission:
+      task_prompt: "fly east over the ridge to the far pad"
+      start_pose: { x: -45.0, y: 0.0, up: 15.0 }
+      target: { x: "$target_x", y: 200.0, up: 15.0 }
+      pilot: { type: goto, speed: 3.0 }
+    policy: { path: experiments/policies/msl_dem_zone.yaml }
+    parameter_sweep:
+      target_x: [-45.0, -20.0]
+    ticks: 750
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      reached_goal: { equals: true }
+      ended_safe: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    failsafe_clause: N1

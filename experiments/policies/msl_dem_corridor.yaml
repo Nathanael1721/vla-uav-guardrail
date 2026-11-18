@@ -1,0 +1,66 @@
+# An MSL corridor over the DEM (X-11, 2026-11-18, wf21): the stress profile
+# experiments/profiles/msl_dem.yaml flies it over the declared ground
+# experiments/worlds/dem_cmac_wgs84.json (a WGS84 elevation grid about CMAC,
+# the SITL home; tools/msl_dem_rail.py --write-dem).
+#
+# WHY IT IS NOT UNDER policies/
+#
+# As experiments/policies/msl_dem_sitl.yaml: an MSL rule is refused without a
+# ground, and every shipped policy is loaded by the CI's policy tests without
+# one, so this file lives beside the experiment that flies it, unlocked. Its
+# signed bundle is built with the ground:
+#
+#   python tools/build_flight_bundles.py experiments/policies/msl_dem_corridor.yaml \
+#       --ground experiments/worlds/dem_cmac_wgs84.json
+#
+# THE RULES
+#
+#   msl-corridor  a keep-in corridor in MSL (altitude_ref MSL, the grant's
+#                 opt-in on a geometry primitive): 30 m wide, from 20 m east
+#                 of home to 200 m west, 590-610 m MSL - 6-26 m above home,
+#                 7.2-27.2 m above the plain west of home (582.76 m MSL),
+#                 whatever the ground under the aircraft;
+#   agl-band      terrain clearance, 8-60 m above the ground under the
+#                 aircraft (AGL, the default);
+#   kin-caps      speed / climb / yaw-rate caps (P1).
+policy_id: msl-dem-corridor
+version: 0.1.0
+# Frame origin: ArduPilot SITL --home (CMAC, sitl/start_sitl.sh), as
+# msl_dem_sitl.yaml. The DEM is resampled into this frame.
+origin:
+  lat: -35.363261
+  lon: 149.16523
+
+constraints:
+  - id: msl-corridor
+    type: corridor
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    altitude_ref: MSL
+    centerline:
+      - {lat: -35.363261, lon: 149.165450310559}
+      - {lat: -35.363261, lon: 149.163026894407}
+    width_m: 30.0
+    altitude_floor_m: 590
+    altitude_ceiling_m: 610
+
+  - id: agl-band
+    type: altitude_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    alt_min_m: 8
+    alt_max_m: 60
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
