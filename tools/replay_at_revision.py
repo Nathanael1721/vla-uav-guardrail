@@ -186,7 +186,7 @@ SUBJECT_RULES = ("subject_standoff",)
 KNOWN_FORECAST_KEYS = {"mode", "flag", "response", "velocity_source", "velocity_topic",
                        "velocity_max_age_s", "path_repair", "note", "source",
                        "velocity_ticks", "velocity_ticks_seen", "shield_velocity_ticks",
-                       "velocity_nonfinite"}
+                       "velocity_nonfinite", "clear_response"}
 # Counts in metrics.json shield_forecast of ticks the Shield was GIVEN a
 # measured velocity: any above zero and the pipe was read.
 VELOCITY_USED_KEYS = ("velocity_ticks", "shield_velocity_ticks")
@@ -1240,6 +1240,21 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
         elif pr:
             raise Refused("a Shield configuration this replay does not rebuild (path_repair "
                           "recorded on, and this revision's Shield takes no such argument)")
+    # The clearance horizon's vehicle response (Shield clear_response, the
+    # rails record it since 2026-11-19): rebuilt as recorded; a run that
+    # records none flew the instant vehicle, which is this revision's default.
+    cr = (fc or {}).get("clear_response")
+    if cr not in (None, {}):
+        if "clear_response" not in params:
+            raise Refused("a Shield configuration this replay does not rebuild "
+                          "(clear_response recorded, and this revision's Shield takes no "
+                          "such argument)")
+        try:
+            from guardrail.response import VelocityResponse
+            kw["clear_response"] = VelocityResponse(**cr)
+        except (ImportError, TypeError, ValueError) as e:
+            raise Refused(f"a Shield configuration this replay does not rebuild "
+                          f"(metrics.json shield_forecast clear_response {cr!r}: {e})")
     pin: list = [None]
     clock = (lambda: pin[0]) if clocks else None
     if cfg["escalation"] or rail_shield is None:
@@ -1251,6 +1266,7 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
                              clock=clock, **kw)
     cfg["path_repair"] = getattr(shield, "path_repair", None)
     cfg["path_repair_from"] = "metrics.json" if isinstance(pr, bool) else "revision default"
+    cfg["clear_response"] = cr
     if subject is not None:
         if not hasattr(shield, "set_subject"):
             raise Refused("this revision's Shield has no set_subject")

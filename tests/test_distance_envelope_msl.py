@@ -317,14 +317,21 @@ def test_distance_envelope_lanes_on_the_lagging_response_arms():
     road's), the hil de_hil1 failure: the clearance forecast looked 0.77 s
     ahead and took every repair as flown at once. Now the flying Shield of a
     response arm sizes the horizon for a lagging vehicle (clear_response):
-    no arm enters an envelope, and the ideal and ardupilot arms reach the
-    goal with no fail-safe.
+    no arm enters an envelope, every lane reaches the goal, and no arm
+    triggers a fail-safe (the FSM entering RTL or Land, the sweep's
+    failsafe_triggered; the labels expect none).
 
-    OPEN (not asserted): on the rail arm both lanes still end in G3 (the
-    ClearanceFix magnitude, the raw request's forecast depth, passes theta
-    2.0 m while the lagging airframe is still outside), a Loiter whose
-    hold point the raw request keeps breaking, and G5 RTL - the chain
-    master's rail arm already took on lane -11."""
+    On the rail arm the longer horizon first deepened the raw request's
+    forecast, so ClearanceFix's magnitude passed theta 2.0 m with the
+    airframe still short of the ring: G3, a Loiter G8 never handed back,
+    G5 RTL on both lanes. Theta now reads the depth over the instant
+    vehicle's horizon (Shield._clear_theta_depth).
+
+    A Loiter is not a fail-safe here: the ideal vehicle itself goes through
+    G2 Loiter / G8 cycles on both lanes (the goto target lies inside the
+    envelope, so the pilot keeps pressing into it). So a lagging arm may
+    loiter, but never longer than the ideal vehicle does on that lane, and
+    never through G3 or into RTL / Land."""
     sys.path.insert(0, str(ROOT / "experiments"))
     import sweep_scenarios as S
     from guardrail.scenario_spec import Library, expand, load_profile
@@ -333,20 +340,49 @@ def test_distance_envelope_lanes_on_the_lagging_response_arms():
                                       / "distance_envelope.yaml"))
     assert len(eps) == 2, [e.episode_id for e in eps]
     for ep in eps:
+        ideal_loiter = None
         for arm in ("ideal", "ardupilot", "rail"):
             run = S.run_episode(ep.cell.spec, lib.defaults, ep.seed, response=arm)
             x = run.extra
             what = (ep.episode_id, arm)
-            # 0, or None where the arm has nothing of that kind to count.
-            for k in ("breaches", "autopilot_breaches", "polygon_entries",
-                      "true_p0_flown_ticks"):
-                assert not x[k], (what, k, x[k])
-            assert x["breaches"] == 0, (what, x["breaches"])
-            if arm == "rail":
-                continue
+            for k in ("breaches", "autopilot_breaches", "true_p0_flown_ticks"):
+                assert x[k] == 0, (what, k, x[k])
             modes = x["autopilot_mode_ticks"] or {}
+            fsm = x["fsm"]
             assert x["reached_goal"], (what, modes)
+            assert not fsm["failsafe_triggered"], (what, fsm["transitions"])
             assert not ({"RTL", "LAND"} & set(modes)), (what, modes)
+            edges = {t["edge"] for t in fsm["transitions"]}
+            assert not ({"G3", "G4", "G5"} & edges), (what, fsm["transitions"])
+            if arm == "ideal":
+                ideal_loiter = modes.get("LOITER", 0)
+            else:
+                assert modes.get("LOITER", 0) <= ideal_loiter, (what, modes, ideal_loiter)
+
+
+def test_the_arducopter_rails_size_the_clearance_horizon_for_their_vehicle():
+    """Every Shield the ArduPilot rails build (the ROS 2 / hil node's flying
+    Shield and its warm-up Shield, the pymavlink SITL demo's) passes
+    clear_response=ARDUCOPTER_GUIDED and records it in metrics.json
+    shield_forecast. Dropping it from any of them puts the hil rail back on
+    the 0.77 s horizon both de_hil1 flights entered their envelopes on."""
+    import ast
+    from guardrail.response import ARDUCOPTER_GUIDED
+    for rel, n in (("sitl/ros2_shield_node.py", 2), ("sitl/run_sitl_demo.py", 1)):
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                 and getattr(c.func, "id", None) == "rail_shield"]
+        assert len(calls) == n, (rel, len(calls))
+        for c in calls:
+            kw = {k.arg: k.value for k in c.keywords if k.arg}
+            assert isinstance(kw.get("clear_response"), ast.Name) \
+                and kw["clear_response"].id == "ARDUCOPTER_GUIDED", (rel, c.lineno)
+        assert any(isinstance(i, ast.ImportFrom) and i.module == "guardrail.response"
+                   and any(a.name == "ARDUCOPTER_GUIDED" for a in i.names)
+                   for i in ast.walk(tree)), rel
+        assert '"clear_response": (' in src and "clear_response.to_dict()" in src, rel
+    assert (ARDUCOPTER_GUIDED.reaction_s, ARDUCOPTER_GUIDED.accel_mps2) == (0.45, 1.75)
 
 
 if __name__ == "__main__":

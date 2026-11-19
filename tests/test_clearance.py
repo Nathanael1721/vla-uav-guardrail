@@ -451,8 +451,6 @@ def test_no_map_leaves_clearance_rules_inert():
     assert armed.filter(st, Action4D(vx=2.0)).touched     # ...but armed it fires
 
 
-# --------------------------------------------------------------------- runner
-
 # ---- distance_envelope on the hil rail (de_hil1, 2026-11-19) ----
 
 DE_POLICY = ROOT / "policies" / "distance_envelope_sitl.yaml"
@@ -480,8 +478,23 @@ def test_clearance_fix_converges_at_a_field_cell_boundary():
     ClearanceEscape rescued with (0, -4) and the FSM read it as 'no operator
     converged' (G3 Brake -> Loiter, then G5 RTL through the envelope). Now
     the push is sized to clear the shortfall at the offending sample's time
-    and the first pass converges. Tick 175's state still converges too."""
-    for xy in ((39.571, -3.438), (39.171, -3.47)):
+    and the first pass converges (one ClearanceFix). Tick 175's state is a
+    guard only: it already converged on 0f4269a. (38.05, -3.55) pins
+    _CLEAR_PUSH_MARGIN_MPS: with the exact first-order push (margin 0) the
+    pass there falls short on the field's slope and the chain ends in
+    ClearanceEscape; 0.05 m/s clears it (5 of 28,182 grid probes round the
+    corner failed at 0, none at 0.05).
+
+    The same no-op pass on a rule judged from the STOP POINT (_committed,
+    a state with a measured velocity, the own-velocity forecast pas_ardupilot
+    flies by default): the stop point is inside the ring and the action
+    leaves it, so ClearanceFix raised the outward part to 0.50 m/s, which
+    it already flew ('leaving at 0.50 m/s -> raised to 0.50'), while the
+    check also judges the rule from the position on the commanded forecast,
+    which enters the ring at t+0.6 s. Now the repair steers by that
+    forecast, as it already did for the own-velocity one."""
+    for xy, once in (((39.571, -3.438), True), ((39.171, -3.47), False),
+                     ((38.05, -3.55), True)):
         sh = _de_rail_shield()
         st = State(x=xy[0], y=xy[1], up=15.0)
         d = sh.filter(st, Action4D(vx=3.99, vy=0.32))
@@ -489,10 +502,21 @@ def test_clearance_fix_converges_at_a_field_cell_boundary():
         assert "ClearanceEscape" not in ops, (xy, [(r.operator, r.detail) for r in d.repairs])
         assert not any("not converged" in (r.detail or "") for r in d.repairs), d.repairs
         assert "ClearanceFix" in ops, ops
+        if once:
+            assert ops.count("ClearanceFix") == 1, ops      # converged in pass 1
         assert not d.emitted_violations, d.emitted_violations
         assert not sh._check(st, d.emitted), (xy, d.emitted)
         # The pilot's progress is kept: still flying on along the contour.
         assert d.emitted.vx > 3.9, d.emitted
+    from guardrail.response import ARDUCOPTER_GUIDED
+    sh = _de_rail_shield(velocity_response=ARDUCOPTER_GUIDED)
+    st = State(x=33.6, y=-3.6, up=15.0, velocity=(4.0, 0.32, 0.0))
+    d = sh.filter(st, Action4D(vx=3.99, vy=0.32))
+    ops = [r.operator for r in d.repairs]
+    assert "ClearanceEscape" not in ops and ops.count("ClearanceFix") == 1, \
+        [(r.operator, r.detail) for r in d.repairs]
+    assert not d.emitted_violations and not sh._check(st, d.emitted), d.emitted
+    assert d.emitted.vx > 3.9, d.emitted
 
 
 def test_clear_horizon_is_sized_for_a_lagging_vehicle():
@@ -531,6 +555,83 @@ def test_clear_horizon_is_sized_for_a_lagging_vehicle():
     else:
         raise AssertionError("a clear_response that is not a VelocityResponse was accepted")
 
+
+def test_clear_horizon_reads_the_setpoints_still_in_the_pipe():
+    """filter() sizes the clearance horizon (_Tick.clear_v) at the larger of
+    the request and EVERY setpoint the vehicle still flies within its
+    reaction time (pipe_segments over note_flown's record, or over what
+    filter() emitted when the rail notes nothing), never at the Shield's own
+    slowed repair: three 4 m/s ticks, then a 0.5 m/s request at x = 15.1,
+    whose own horizon (0.69 s, 0.35 m) stops short of the buildings
+    envelope. Sized at 4 m/s (1.69 s, 0.85 m at 0.5 m/s) it enters it: the
+    vehicle is still flying 4 m/s. Once the 4 m/s setpoints have left the
+    pipe (one reaction time after the last), and after reset_episode, the
+    request's own horizon again."""
+    from guardrail.response import ARDUCOPTER_GUIDED as R
+    h4 = 0.1 + R.reaction_s + 4.0 / (2.0 * R.accel_mps2)
+    h05 = 0.1 + R.reaction_s + 0.5 / (2.0 * R.accel_mps2)
+    near, slow = State(x=15.1, y=-1.0, up=15.0), Action4D(vx=0.5)
+    fresh = _de_rail_shield(clear_response=R)
+    assert not fresh.filter(near, slow, t=0.3).violations      # its own horizon: clean
+    for noted in (False, True):
+        sh = _de_rail_shield(clear_response=R)
+        seen: list = []
+        own = sh._clear_horizon_s
+        sh._clear_horizon_s = lambda a, _o=own, _s=seen: _s.append(_o(a)) or _s[-1]
+        for t in (0.0, 0.1, 0.2):
+            d = sh.filter(State(x=0.0, y=-1.0, up=15.0), Action4D(vx=4.0), t=t)
+            assert not d.touched, d.repairs
+            if noted:
+                sh.note_flown(d.emitted, t=t)
+        seen.clear()
+        d = sh.filter(near, slow, t=0.3)
+        assert [v.rule_id for v in d.violations] == ["de-buildings"], (noted, d.violations)
+        assert abs(max(seen) - h4) < 1e-9, (noted, max(seen), h4)
+        # The repair slowed it; a later 0.5 m/s request is still sized at
+        # 4 m/s while the 0.2 s setpoint is in the pipe ...
+        if noted:
+            sh.note_flown(d.emitted, t=0.3)
+        seen.clear()
+        sh.filter(State(x=0.0, y=-1.0, up=15.0), slow, t=0.4)
+        assert abs(max(seen) - h4) < 1e-9, (noted, max(seen))
+        if noted:
+            sh.note_flown(slow, t=0.4)
+        # ... and not after it: the 0.2 s setpoint acted until 0.75 s.
+        seen.clear()
+        sh.filter(State(x=0.0, y=-1.0, up=15.0), slow, t=1.0)
+        assert max(seen) < h4 - 0.5, (noted, max(seen))
+        sh.reset_episode()
+        seen.clear()
+        assert not sh.filter(near, slow, t=0.3).violations, noted
+        assert abs(max(seen) - h05) < 1e-9, (noted, max(seen), h05)
+
+
+def test_clearance_theta_reads_the_depth_an_instant_vehicle_reaches():
+    """ClearanceFix's magnitude_m, which the FSM's theta (2.0 m lateral)
+    reads, under a clear_response: the depth over the horizon of a vehicle
+    that obeys at once (_clear_theta_depth), not over the longer one. At
+    (13.3, -1) the 4 m/s goto pilot's forecast over the lagging horizon
+    (1.69 s, 6.8 m) reaches 2.23 m into the buildings envelope, over theta,
+    with the aircraft still about 3 m short of the ring: the headless rail
+    arm took G3 there, a Loiter the same reading never let G8 hand back and
+    G5 RTL on a lane that should pass. Without a clear_response the reading
+    is the one every caller had (here 0.50 m)."""
+    from guardrail.response import ARDUCOPTER_GUIDED
+    st, req = State(x=13.3, y=-1.0, up=15.0), Action4D(vx=4.0)
+    lag = _de_rail_shield(clear_response=ARDUCOPTER_GUIDED)
+    d = lag.filter(st, req)
+    fix = [r for r in d.repairs if r.operator == "ClearanceFix"]
+    assert len(fix) == 1 and not fix[0].recovery, d.repairs
+    f = lag._field_for(lag._clear[0])
+    assert 5.0 - lag._clear_min_dist(st, req, f) > 2.0      # the long horizon's depth
+    assert fix[0].magnitude_m < 0.5, fix[0]
+    plain = _de_rail_shield()
+    pfix = [r for r in plain.filter(st, req).repairs if r.operator == "ClearanceFix"]
+    assert len(pfix) == 1 and abs(pfix[0].magnitude_m - 0.495) < 0.01, pfix
+    assert fix[0].magnitude_m <= pfix[0].magnitude_m + 1e-9, (fix, pfix)
+
+
+# --------------------------------------------------------------------- runner
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

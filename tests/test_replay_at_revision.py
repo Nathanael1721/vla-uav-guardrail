@@ -118,7 +118,7 @@ def _head_holds_this_code() -> str | None:
 
 def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
               subject: tuple | None = None, record_subject: bool = True,
-              two_edits: bool = False) -> None:
+              two_edits: bool = False, clear_response: dict | None = None) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
     inside), its audit written by AuditLogger as the rail writes it.
     `subject` (x, y, class): a DECLARED subject set once before the first
@@ -126,13 +126,19 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     records it unless `record_subject` is false. `two_edits`: the spawned
     zone is moved in the same tick (a spawn and a rotate at one mission
     time, as dyn-nfz-rotate-spin flies), so the rows go from generation 0
-    to 2."""
+    to 2. `clear_response`: the Shield's clearance-horizon response, as the
+    ArduPilot rails pass and record it (shield_forecast) since 2026-11-19."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
     run.mkdir(parents=True)
     pol = load_policy(PEDESTRIAN if subject else DEMO)
-    sh = rail_shield(pol, lookahead_s=5.0, dt=0.1)
+    if clear_response is not None:
+        from guardrail.response import VelocityResponse
+        sh = rail_shield(pol, lookahead_s=5.0, dt=0.1,
+                         clear_response=VelocityResponse(**clear_response))
+    else:
+        sh = rail_shield(pol, lookahead_s=5.0, dt=0.1)
     if subject:
         sh.set_subject(*subject)
     (run / "policy_g0.json").write_bytes(sh.policy.canonical_bytes())
@@ -182,7 +188,9 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     (run / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     (run / "metrics.json").write_text(json.dumps({
         "shield": "on", "shield_lookahead": {"horizon_s": 5.0, "dt_s": 0.1, "poses": 50},
-        "shield_forecast": {"mode": "commanded", "velocity_ticks": 0},
+        "shield_forecast": {"mode": "commanded", "velocity_ticks": 0,
+                            **({"clear_response": clear_response} if clear_response
+                               else {})},
         **({"subject": {"class": subject[2], "x": subject[0], "y": subject[1],
                         "position_source": "declared"}} if subject and record_subject
            else {})}), encoding="utf-8")
@@ -260,6 +268,10 @@ def _replayed() -> dict | str:
     _rail_run(root / "rail_subject", rev, subject=(20.0, 1.0, "pedestrian"))
     _rail_run(root / "rail_subject_unrecorded", rev, subject=(20.0, 1.0, "pedestrian"),
               record_subject=False)
+    # a rail Shield with the ArduPilot clearance response, recorded as the
+    # ROS 2 node and the pymavlink SITL rail record it
+    from guardrail.response import ARDUCOPTER_GUIDED
+    _rail_run(root / "rail_clear_response", rev, clear_response=ARDUCOPTER_GUIDED.to_dict())
     # the replay bundle alone: a folder holding nothing but <run>.replay.tar.gz
     from guardrail.replay import last_generation_policy, write_replay
     (root / "tar_only").mkdir()
@@ -506,6 +518,21 @@ def test_a_declared_subject_is_replayed_and_an_unrecorded_one_is_refused():
         "the subject never bound: the declared-subject replay is untested"
     u = out["rail_subject_unrecorded"]
     assert u["verdict"] == "not_replayable" and "subject_standoff" in u["why"], u
+
+
+def test_a_recorded_clear_response_is_rebuilt_not_refused():
+    """The rails record shield_forecast.clear_response (2026-11-19); a key
+    outside KNOWN_FORECAST_KEYS refuses the episode, so without this every
+    hil / SITL run flown since would be refused for replay at revision."""
+    assert "clear_response" in RA.KNOWN_FORECAST_KEYS
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    from guardrail.response import ARDUCOPTER_GUIDED
+    r = out["rail_clear_response"]
+    assert r["verdict"] == "identical" and r["kind"] == "open_loop", r
+    assert r["shield"]["clear_response"] == ARDUCOPTER_GUIDED.to_dict(), r["shield"]
+    assert out["rail_ok"]["shield"]["clear_response"] is None, out["rail_ok"]["shield"]
 
 
 def test_a_headless_episode_flown_at_head_is_reflown_identical_by_that_revisions_tool():

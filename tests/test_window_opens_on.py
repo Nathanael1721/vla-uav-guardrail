@@ -495,6 +495,34 @@ def test_the_cap_escape_is_judged_out_of_the_ring_then_braked_to_a_stop():
         assert abs(poses[-1][1].x - (71.4 + 16.0 / 6.0)) < 1e-6 and poses[-1][1].y == 21.0
 
 
+def test_the_cap_escape_brakes_as_the_clearance_response_does():
+    """Under a clear_response (the ArduPilot rails since 2026-11-19) the
+    shaped escape brakes with that response, as the clearance horizon
+    does (_clear_horizon_s): one 0.1 s step plus the 0.45 s reaction at the
+    speed after the ring, then 1.75 m/s^2. The same opening as above: out of
+    the ring at 0.125 s, so straight to 70.5 + 4 * 0.675 = 73.2, then a stop
+    at 73.2 + 16 / 3.5 = 77.77 (the instant vehicle's 74.07), still short of
+    the corridor's edge at x = 80, so the cap still flies."""
+    from guardrail.response import ARDUCOPTER_GUIDED as R
+    clock = [MON_0729_58]
+    sh = Shield(load_policy(SURVEY), now=lambda: clock[0], clear_response=R)
+    east = Action4D(vx=2.0)
+    sh.filter(MID, east, t=0.0)
+    clock[0] = MON_0729_58 + timedelta(seconds=0.4)
+    d = sh.filter(State(x=61.6, y=21.0, up=15.0), east, t=0.4)
+    assert d.trace["window_opens_on"] == ["nfz-school"], d.trace
+    clock[0] = MON_0729_58 + timedelta(seconds=2.6)
+    near = State(x=70.5, y=21.0, up=15.0)
+    d = sh.filter(near, east, t=2.6)
+    assert abs(d.emitted.vx - 4.0) < 1e-9 and d.emitted_violations == [], d.emitted
+    stop = 70.5 + 4.0 * (0.125 + 0.1 + R.reaction_s) + 16.0 / (2.0 * R.accel_mps2)
+    with sh._scope(sh._new_tick(None)):
+        poses = sh._shaped_escape(near, Action4D(vx=4.0))
+        assert poses is not None and [t for t, _ in poses] == list(sh._grid()), poses
+        assert abs(max(p.x for _, p in poses) - stop) < 1e-6, (poses[-1], stop)
+        assert abs(poses[-1][1].x - stop) < 1e-6 and poses[-1][1].y == 21.0
+
+
 def test_with_no_floored_escape_left_the_crawl_is_reported_and_the_fsm_escalates():
     """Review of b1d3aca (P1). When not even the in-force floor (2.0 m/s,
     straight or with the tangential kept) re-checks clean, the crawl must not
