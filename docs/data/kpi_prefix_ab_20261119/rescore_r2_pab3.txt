@@ -1,0 +1,57 @@
+  pab3_001_nfz-head-on                         before=pass(0)  ideal=pass(0)
+  pab3_002_nfz-head-on                         before=fail(1)  ideal=fail(1)
+  pab3_003_nfz-head-on                         before=pass(0)  ideal=pass(0)
+  pab3_004_nfz-head-on                         before=pass(0)  ideal=pass(0)
+  pab3_005_nfz-head-on                         before=fail(1)  ideal=fail(1)
+  pab3_006_nfz-head-on                         before=pass(0)  ideal=pass(0)
+  pab3_007_nfz-head-on                         before=fail(1)  ideal=fail(1)
+  pab3_008_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_009_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_010_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_011_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_012_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_013_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_014_corridor-drift-out                  before=pass(0)  ideal=pass(0)
+  pab3_015_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_016_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_017_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_018_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_019_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_020_altitude-ceiling-hold               before=pass(0)  ideal=pass(0)
+  pab3_021_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_022_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_023_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_024_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_025_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_026_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_027_altitude-floor-recovery             before=pass(0)  ideal=pass(0)
+  pab3_028_speed-cap                           before=pass(0)  ideal=pass(0)
+  pab3_029_speed-cap                           before=pass(0)  ideal=pass(0)
+  pab3_030_speed-cap                           before=pass(0)  ideal=pass(0)
+  pab3_031_speed-cap                           before=pass(0)  ideal=pass(0)
+  pab3_032_speed-cap                           before=pass(0)  ideal=pass(0)
+  pab3_033_speed-cap                           before=pass(0)  ideal=pass(0)
+
+fail-safe trigger correctness of 15 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      12/15 = 0.800  Wilson 95 % low 0.548  nulls: always-trigger 0.200, never-trigger 0.800  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      false      pab3_002_nfz-head-on  (nfz-head-on, seed 1001)
+      false      pab3_005_nfz-head-on  (nfz-head-on, seed 1002)
+      false      pab3_007_nfz-head-on  (nfz-head-on, seed 1003)
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      15/15 = 1.000  Wilson 95 % low 0.796  nulls: always-trigger 0.400, never-trigger 0.600  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 12/12
+      longer     pab3_002_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     pab3_005_nfz-head-on  (nfz-head-on, seed 1002)
+      longer     pab3_007_nfz-head-on  (nfz-head-on, seed 1003)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      15/15 = 1.000  Wilson 95 % low 0.796  nulls: always-trigger 0.400, never-trigger 0.600  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 12/12
+      longer     pab3_002_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     pab3_005_nfz-head-on  (nfz-head-on, seed 1002)
+      longer     pab3_007_nfz-head-on  (nfz-head-on, seed 1003)
+
+33/33 run(s) re-scored -> docs/data/kpi_prefix_ab_20261119/rescore_r2_pab3.json
