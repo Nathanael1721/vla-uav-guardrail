@@ -1,0 +1,253 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_001_nfz-head-on D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_002_nfz-head-on-control D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_003_rail-mission-stub-vla D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_004_altitude-floor-recovery D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_005_altitude-ceiling-hold D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_006_altitude-recovery-depth D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_007_speed-cap D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_008_corridor-along D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_009_corridor-drift-out D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_010_corridor-drift-angles D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_011_corridor-drift-angles D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_012_corridor-curfew-in-hours D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_013_corridor-curfew-out-of-hours D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_014_standoff-approach D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_015_standoff-wedge D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_016_standoff-approach-angles D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_017_dyn-nfz-spawn-ahead D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_018_dyn-nfz-spawn-on-top D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_019_dyn-nfz-translate D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_020_dyn-nfz-rotate-step D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_021_dyn-nfz-rotate-spin D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_022_time-window-closes-mid-run D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_023_time-window-opens-on-vehicle D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_024_time-window-opens-on-vehicle D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_025_time-window-opens-on-sideway D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_026_time-window-opens-ahead D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_027_time-window-switch-event D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_028_rule-deactivated-mid-run D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_029_rule-activated-mid-run D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_030_radius-scaling-grow D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_031_radius-scaling-grow-deep D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_032_radius-scaling-shrink D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_033_corridor-swap-shifted D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_034_corridor-swap-narrowed D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_035_failsafe-rtl-zone D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_036_failsafe-land-zone D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_037_failsafe-loiter-timeout D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_038_failsafe-rtl-blocked D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_039_high-speed-near-edge D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_040_high-speed-near-edge D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_041_near-edge-at-12mps D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_042_near-edge-at-12mps D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_043_three-simultaneous-violation D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_044_gps-dropout D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_045_gps-dropout D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_046_wind-within-authority D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_047_wind-within-authority D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_048_wind-beyond-authority D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/rel060_049_wind-beyond-authority --scratch <scratch> --jobs 4 --out <out>",
+ "seconds": 11.8,
+ "replayed_on": {
+  "python": "3.10.20",
+  "machine": "AMD64",
+  "system": "Windows",
+  "platform": "Windows-10"
+ },
+ "tool_revision": "57312e96ecd5",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 49,
+ "verdicts": {
+  "identical": 37,
+  "differs": 10,
+  "not_replayable": 2,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 37,
+   "differs": 10,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "a85dc911a535": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 37,
+   "differs": 10,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {
+  "not_replayable: the pipe the Shield read": 2
+ },
+ "audit_records_compared": 15289,
+ "ticks_compared": 23094,
+ "differs_by_class": {
+  "body_frame_rotation_last_digits": 3,
+  "float_last_digits": 7
+ },
+ "differs": [
+  {
+   "run": "rel060_003_rail-mission-stub-vla",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 258,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "rel060_010_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "rel060_017_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "rel060_018_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 51,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "rel060_019_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 81,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 6.217248937900877e-15,
+    "emitted_action": 5.995204332975845e-15,
+    "emitted_action_world": 4.884981308350689e-15,
+    "repairs": 6.217248937900877e-15,
+    "repair_results": 6.217248937900877e-15,
+    "repair_passes": 6.217248937900877e-15,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.884981308350689e-15
+  },
+  {
+   "run": "rel060_021_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 38,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 4.013456234019941e-14,
+    "repairs": 4.013456234019941e-14,
+    "repair_results": 4.013456234019941e-14,
+    "repair_passes": 4.013456234019941e-14,
+    "emitted_action": 1.0658141036401503e-14,
+    "emitted_action_world": 1.0658141036401503e-14
+   },
+   "log_emitted_max_abs": 1.0658141036401503e-14
+  },
+  {
+   "run": "rel060_035_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "rel060_042_near-edge-at-12mps",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 22,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "rel060_043_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "rel060_049_wind-beyond-authority",
+   "kind": "open_loop",
+   "code_revision_flown": "a85dc911a535",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 133,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.1510571102112408e-16,
+    "repairs": 2.1510571102112408e-16,
+    "repair_results": 2.1510571102112408e-16,
+    "repair_passes": 2.1510571102112408e-16,
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  }
+ ],
+ "worktrees": [
+  {
+   "sha": "a85dc911a53575022d9f633c4302adf2f1b3f90a",
+   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\claude\\5bd7027074b20450\\b55be76a-a840-4098-ad3f-198de66a78a2\\scratchpad\\rr\\replay_at_rev_6s1c8khf\\a85dc911a535",
+   "created_s": 0.72,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 49,
+   "seconds": 11.7
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_rel060.per_run.jsonl.gz"
+}

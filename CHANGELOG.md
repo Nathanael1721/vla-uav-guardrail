@@ -21,6 +21,47 @@ shipped change and recorded as one.
 Release for the final hil smoke (WP4-14): every dated entry below, back to
 0.5.1, ships in it.
 
+### 2026-11-19 (release smoke rel060) — the hil smoke of release 0.6.0: P0 escape 0 over 48 Shield-on flights, fail-safe trigger correctness 48/48 under the adopted reading, slowest tick 70.89 ms; every episode written as a six-name bundle and replayed at its flown revision
+
+#### Flown
+- rel060 (v0.6.0 = a85dc91, hil, smoke profile with `--hil-controls`,
+  launched from the detached worktree flight-a85dc91; 6139 s): 64 episodes
+  planned, 49 missions flown, 15 refused before take-off (stressors the hil
+  rail cannot realise: GPS noise, gusts, as in every hil campaign). All 49
+  KPI-grade (signed bundle bound to the run, clean revision, speed-up 1).
+- `docs/data/kpi_rel060/kpi_report_rel060_2026-11-19.md` / `.json`
+  (`tools/kpi_report.py --campaign demo/out/hil_rel060 --rescore-rail
+  docs/data/kpi_rel060/rescore_r2_rel060.json`, code revision 57312e9,
+  clean): P0 violation escape rate 0.0 (0 escapes on 2220 P0-violation
+  ticks, 48 Shield-on flights; Shield-off control 0.65); fail-safe trigger
+  correctness (r2) 48/48 = 1.000, Wilson 95 % low 0.926 ((a) 42/48,
+  (r) 47/48; the campaign's own ideal labels 43/48); `tick_ms` p99 26.2 /
+  max 70.89 ms and `e2e_ms` p99 26.3 / max 70.98 ms, 0 of 15,208 ticks over
+  100 ms. Tracked: mission success 22/48, mean time to safe 3.73 s, repair
+  success 98.2 % (2309/2351 ticks), 68.1 repairs per Shield-on mission.
+  Against ntFIN2: 0 regressions.
+- WP3-06: every Shield-on episode flew with PathRepair in the ROS 2 rail's
+  default chain (metrics `path_repair: true`), evaluated after the
+  projections on every tick; it acted on 0 ticks (in chain mode it detours
+  round stand-off rings only, and LateralProjection kept every one of these).
+- WP4-11: every flown episode wrote its bundle under the grant's six names
+  (manifest.json, policy_bundle.tar.gz, episode.bag2, shield_audit.jsonl,
+  harness_events.jsonl, kpi.json): 49 under demo/out/hil_rel060/episode-*.
+  `tools/replay_at_revision.py` replayed them at a85dc91
+  (docs/data/kpi_rel060/replay_at_revision_rel060.json): 37 identical, 10
+  differ only in the last float digits (at most 4.0e-14), 2 not replayable
+  (gps-dropout: the pipe the Shield dead-reckons on is not logged per tick);
+  the folders were given as absolute paths (see Fixed).
+- Track videos: `<run>/<run>_track.mp4` for each of the 49 runs.
+
+#### Fixed
+- `tools/replay_at_revision.py` resolves the run folders it is given before
+  the drivers start (d3737f2): they run inside the revision's worktree, so a
+  relative run path named nothing there and all 49 rel060 runs first read
+  "no flight log". tests/test_replay_at_revision.py 17/17 (the new test
+  fails without the fix). Full CI 183/183 in the worktree (d3737f2) and in
+  the lab checkout (8e36998).
+
 ### 2026-11-19 (wf21, code) — the open rows' code side: MSL readers, one evaluation path, WGS84-only flights, one body-frame boundary, replay at the flown revision, people from the feed, a prefix for a text-reading VLA
 
 Seven branches (wf21-msl-readers, wf21-onepath3, wf21-wgs84-writers,
