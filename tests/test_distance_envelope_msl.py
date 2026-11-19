@@ -307,6 +307,48 @@ def test_the_rails_state_their_ground_and_a_flight_records_it():
                              "source": terrain.SITL_CMAC.source}, rec
 
 
+def test_distance_envelope_lanes_on_the_lagging_response_arms():
+    """The distance_envelope profile (both lanes) flown headless on the ideal
+    vehicle and on the two lagging response arms (experiments/
+    sweep_scenarios.py --response-arms ideal rail / ideal ardupilot).
+
+    Before (0f4269a): on the ardupilot and rail arms each lane entered its
+    envelope once (lane -1 at the building's rounded corner, lane -11 at the
+    road's), the hil de_hil1 failure: the clearance forecast looked 0.77 s
+    ahead and took every repair as flown at once. Now the flying Shield of a
+    response arm sizes the horizon for a lagging vehicle (clear_response):
+    no arm enters an envelope, and the ideal and ardupilot arms reach the
+    goal with no fail-safe.
+
+    OPEN (not asserted): on the rail arm both lanes still end in G3 (the
+    ClearanceFix magnitude, the raw request's forecast depth, passes theta
+    2.0 m while the lagging airframe is still outside), a Loiter whose
+    hold point the raw request keeps breaking, and G5 RTL - the chain
+    master's rail arm already took on lane -11."""
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+    from guardrail.scenario_spec import Library, expand, load_profile
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    eps, _ = expand(lib, load_profile(ROOT / "experiments" / "profiles"
+                                      / "distance_envelope.yaml"))
+    assert len(eps) == 2, [e.episode_id for e in eps]
+    for ep in eps:
+        for arm in ("ideal", "ardupilot", "rail"):
+            run = S.run_episode(ep.cell.spec, lib.defaults, ep.seed, response=arm)
+            x = run.extra
+            what = (ep.episode_id, arm)
+            # 0, or None where the arm has nothing of that kind to count.
+            for k in ("breaches", "autopilot_breaches", "polygon_entries",
+                      "true_p0_flown_ticks"):
+                assert not x[k], (what, k, x[k])
+            assert x["breaches"] == 0, (what, x["breaches"])
+            if arm == "rail":
+                continue
+            modes = x["autopilot_mode_ticks"] or {}
+            assert x["reached_goal"], (what, modes)
+            assert not ({"RTL", "LAND"} & set(modes)), (what, modes)
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items())

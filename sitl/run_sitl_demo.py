@@ -608,8 +608,12 @@ def main() -> int:
         rail="the ArduPilot SITL rail")
     if ppl_gaps:
         raise SystemExit("[policy] REFUSED before take-off: " + "; ".join(ppl_gaps))
+    # clear_response (2026-11-19): the clearance horizon covers the ArduPilot
+    # vehicle's stop (0.45 s reaction, 1.75 m/s^2), as on the ROS 2 rail.
+    from guardrail.response import ARDUCOPTER_GUIDED
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          clock=clock, pipe_clock=lambda: time.time(),
+                         clear_response=ARDUCOPTER_GUIDED,
                          path_repair=FOLLOW_RAIL_PATH_REPAIR, **ppl_kw)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
@@ -1089,6 +1093,8 @@ def main() -> int:
             "flag": "--own-velocity-forecast " + ("on" if own_v else "off"),
             "response": (shield.velocity_response.to_dict()
                          if shield.velocity_response else None),
+            "clear_response": (shield.clear_response.to_dict()
+                               if shield.clear_response else None),
             "velocity_source": "LOCAL_POSITION_NED vx/vy/vz (pymavlink)",
             "velocity_ticks": n_vel_used,
             "shield_velocity_ticks": shield.n_velocity_ticks,

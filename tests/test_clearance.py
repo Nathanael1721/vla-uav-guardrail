@@ -453,6 +453,85 @@ def test_no_map_leaves_clearance_rules_inert():
 
 # --------------------------------------------------------------------- runner
 
+# ---- distance_envelope on the hil rail (de_hil1, 2026-11-19) ----
+
+DE_POLICY = ROOT / "policies" / "distance_envelope_sitl.yaml"
+DE_WORLD = ROOT / "experiments" / "worlds" / "de_block.yaml"
+
+
+def _de_rail_shield(**kw):
+    from guardrail.replay import rail_shield
+    from guardrail.world_map import load_world
+    world = load_world(DE_WORLD, ROOT)
+    return rail_shield(load_policy(str(DE_POLICY)), lookahead_s=5.0, dt=0.1,
+                       **world.shield_kwargs(), **kw)
+
+
+def test_clearance_fix_converges_at_a_field_cell_boundary():
+    """de_hil1_001 tick 176: the goto pilot rides the buildings envelope's
+    5.0 contour at the building's NW corner (x = 40, a field cell boundary),
+    where the gradient at the forecast hit is skewed to (+0.19, -0.98). The
+    raw action already leaves along that normal at 0.45 m/s and its t+0.1
+    sample reads 4.994 m.
+
+    Before: ClearanceFix raised the outward part to the 0.5 m/s floor only
+    (push = max(0.5, depth / lookahead_s), 5 s) and kept the tangential
+    part, so the fix fell 0.5 mm short; pass 2 was a no-op ('5.00->5.00');
+    ClearanceEscape rescued with (0, -4) and the FSM read it as 'no operator
+    converged' (G3 Brake -> Loiter, then G5 RTL through the envelope). Now
+    the push is sized to clear the shortfall at the offending sample's time
+    and the first pass converges. Tick 175's state still converges too."""
+    for xy in ((39.571, -3.438), (39.171, -3.47)):
+        sh = _de_rail_shield()
+        st = State(x=xy[0], y=xy[1], up=15.0)
+        d = sh.filter(st, Action4D(vx=3.99, vy=0.32))
+        ops = [r.operator for r in d.repairs]
+        assert "ClearanceEscape" not in ops, (xy, [(r.operator, r.detail) for r in d.repairs])
+        assert not any("not converged" in (r.detail or "") for r in d.repairs), d.repairs
+        assert "ClearanceFix" in ops, ops
+        assert not d.emitted_violations, d.emitted_violations
+        assert not sh._check(st, d.emitted), (xy, d.emitted)
+        # The pilot's progress is kept: still flying on along the contour.
+        assert d.emitted.vx > 3.9, d.emitted
+
+
+def test_clear_horizon_is_sized_for_a_lagging_vehicle():
+    """The commanded clearance forecast's horizon (_clear_horizon_s).
+
+    No clear_response (every headless ideal vehicle, every caller before
+    2026-11-19): unchanged, dt + v / (2 * 3 m/s^2) = 0.767 s at 4 m/s.
+    With the ArduPilot response (0.45 s reaction, 1.75 m/s^2), as the
+    ArduPilot rails now pass: dt + 0.45 + v / (2 * 1.75) = 1.69 s, about
+    6.8 m, which covers the vehicle's 6.4 m stop (before: 0.77 s / 3.1 m,
+    and both de_hil1 lanes entered their envelopes). A slowed repair is
+    sized at the tick's request speed, so it cannot shrink its own horizon."""
+    from guardrail.response import ARDUCOPTER_GUIDED, VelocityResponse
+    plain = _de_rail_shield()
+    assert plain.clear_response is None
+    assert abs(plain._clear_horizon_s(Action4D(vx=4.0, vy=0.0)) - (0.1 + 4.0 / 6.0)) < 1e-9
+    assert plain._clear_horizon_s(Action4D(vx=0.0, vy=0.0)) == 0.0
+    lag = _de_rail_shield(clear_response=VelocityResponse(
+        reaction_s=0.45, accel_mps2=1.75, source="test"))
+    h = lag._clear_horizon_s(Action4D(vx=4.0, vy=0.0))
+    assert h >= 1.6, h
+    assert abs(h - (0.1 + 0.45 + 4.0 / 3.5)) < 1e-9, h
+    assert lag._clear_horizon_s(Action4D(vx=0.0, vy=0.0)) == 0.0
+    # Inside a tick whose request is 4 m/s, a 0.5 m/s repair keeps the
+    # request's horizon.
+    tick = lag._new_tick(None)
+    tick.clear_v = 4.0
+    with lag._scope(tick):
+        assert abs(lag._clear_horizon_s(Action4D(vx=0.5, vy=0.0)) - h) < 1e-9
+    # The rails' value is the Shield's own fitted response.
+    assert (ARDUCOPTER_GUIDED.reaction_s, ARDUCOPTER_GUIDED.accel_mps2) == (0.45, 1.75)
+    try:
+        _de_rail_shield(clear_response=(0.45, 1.75))
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("a clear_response that is not a VelocityResponse was accepted")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

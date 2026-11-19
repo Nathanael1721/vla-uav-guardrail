@@ -491,6 +491,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            FSMState, tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.hold_flight import HoldFlight, HoldWatch, body_command     # noqa: E402
+from guardrail.response import ARDUCOPTER_GUIDED                         # noqa: E402
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
@@ -2789,11 +2790,16 @@ if HAVE_ROS:
             # mode it detours round a --subject's stand-off ring only); off is
             # the chain every run before 2026-11-17 flew.
             self.path_repair = getattr(args, "path_repair", "on") == "on"
+            # clear_response (2026-11-19): the clearance horizon covers the
+            # ArduPilot vehicle's stop (0.45 s reaction, 1.75 m/s^2), not an
+            # instant 3 m/s^2 one; the de_hil1 flights entered both
+            # distance envelopes on the shorter horizon.
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
                                       pipe_clock=time.monotonic, **self.world_kw,
                                       **self.ground_kw,
                                       path_repair=self.path_repair,
+                                      clear_response=ARDUCOPTER_GUIDED,
                                       **({"arc_forecast": True} if self.arc else {}))
             self._ev_state = SE.EventState(shields=[self.shield])
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
@@ -4124,7 +4130,7 @@ if HAVE_ROS:
             if self.state is not None:
                 warm = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                    dt=LOOKAHEAD_DT_S, clock=self.clock, **self.world_kw,
-                                   **self.ground_kw)
+                                   **self.ground_kw, clear_response=ARDUCOPTER_GUIDED)
                 warm.filter_body(self._shield_pose(self.state), self.raw_body)
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
@@ -5330,6 +5336,8 @@ if HAVE_ROS:
                              + ("on" if self.own_v else "off")),
                     "response": (self.shield.velocity_response.to_dict()
                                  if self.shield.velocity_response else None),
+                    "clear_response": (self.shield.clear_response.to_dict()
+                                       if self.shield.clear_response else None),
                     "velocity_source": "/mavros/local_position/velocity_local",
                     "velocity_ticks_seen": self.n_vel_seen,
                     "velocity_ticks": self.n_vel_used,

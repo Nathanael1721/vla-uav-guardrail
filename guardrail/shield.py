@@ -1020,6 +1020,12 @@ _CLEAR_MIN_SCALE = 0.25
 # routes its own planner produced.
 _CLEAR_DECEL_MPS2 = 3.0
 
+# Over the first-order push ClearanceFix sizes to clear a forecast sample's
+# shortfall when the action already leaves along the normal (m/s): the
+# field's slope is below 1 off a face, so the exact first-order speed can
+# fall a fraction of a millimetre short and the pass would not converge.
+_CLEAR_PUSH_MARGIN_MPS = 0.05
+
 # How often the repair chain is re-run before giving up. The operators are
 # COUPLED (the geofence anti-stall tangent can break clearance; the clearance
 # push can aim into a fence), so the chain is iterated to a fixed point instead
@@ -1944,7 +1950,7 @@ class _Tick:
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
                  "_t_first", "given_up", "chain_runs", "ledger", "ahead", "origin",
-                 "committed", "pipe_t", "opened_mps")
+                 "committed", "pipe_t", "opened_mps", "clear_v")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -1982,6 +1988,11 @@ class _Tick:
         # Shield._floor_the_escape, for one run of its retries
         # (`_opened_retries`), and None again after it.
         self.opened_mps: "float | str | None" = None
+        # The speed the clearance horizon is sized at under a clear_response
+        # (Shield._clear_horizon_s): the larger of this tick's request and
+        # the last setpoint sent, so a slowed repair never shrinks its own
+        # horizon. 0.0 on every tick of a Shield without one.
+        self.clear_v = 0.0
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -2135,7 +2146,8 @@ class Shield:
                  pipe_clock=None, recovery_law: str = DEFAULT_RECOVERY_LAW,
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
                  dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False,
-                 up_ref: str | None = None, people_source: str | None = None):
+                 up_ref: str | None = None, people_source: str | None = None,
+                 clear_response: "_response.VelocityResponse | None" = None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -2250,6 +2262,17 @@ class Shield:
         (ARDUCOPTER_GUIDED, tools/fit_velocity_response.py); None ignores a
         measured velocity altogether. docs/DESIGN-own-velocity-forecast.md.
 
+        clear_response: the vehicle response the COMMANDED clearance forecast
+        is sized for (`_clear_horizon_s`, since 2026-11-19). None (the
+        default): a vehicle that obeys at once and stops at 3 m/s^2, the
+        horizon every caller flew before. A VelocityResponse: one that keeps
+        its old velocity for reaction_s and then brakes at accel_mps2, so the
+        horizon covers its real stopping distance, at the larger of the
+        request's speed and the last setpoint sent. The flight rails on an
+        ArduPilot vehicle pass ARDUCOPTER_GUIDED: the hil distance_envelope
+        flights (de_hil1, 2026-11-19) looked 0.77 s / 3.1 m ahead at 4 m/s,
+        and the vehicle needs about 6.4 m to stop.
+
         pipe_clock: a zero-argument callable returning the rail's REAL time in
         seconds (monotonic), the clock the setpoints already sent are aged on
         (`note_flown`, `pipe`). None (the default) ages them on the monitor
@@ -2334,6 +2357,11 @@ class Shield:
             raise TypeError(f"velocity_response must be a guardrail.response."
                             f"VelocityResponse or None, got {velocity_response!r}")
         self.velocity_response = velocity_response
+        if clear_response is not None and not isinstance(
+                clear_response, _response.VelocityResponse):
+            raise TypeError(f"clear_response must be a guardrail.response."
+                            f"VelocityResponse or None, got {clear_response!r}")
+        self.clear_response = clear_response
         if pipe_clock is not None and not callable(pipe_clock):
             raise TypeError(f"pipe_clock must be a zero-argument callable or None, "
                             f"got {pipe_clock!r}")
@@ -2361,6 +2389,9 @@ class Shield:
         # forecast assumes the aircraft keeps its measured velocity until
         # then. Read only for a state with a measured velocity.
         self._flown: deque = deque(maxlen=64)
+        # The last emitted horizontal speed: the "last setpoint sent" of a
+        # caller that never calls note_flown (clear_response, filter()).
+        self._clear_last_v = 0.0
         self._tubes: dict = {}
         # The ground under an MSL rule (X-11, 2026-11-03); None = no MSL rule.
         if _terrain.is_dem(ground) and up_ref != "terrain":
@@ -3630,7 +3661,19 @@ class Shield:
         v = math.hypot(action.vx, action.vy)
         if v <= 1e-9:
             return 0.0
-        return min(self.lookahead_s, self.dt + v / (2.0 * _CLEAR_DECEL_MPS2))
+        resp = self.clear_response
+        if resp is None:
+            return min(self.lookahead_s, self.dt + v / (2.0 * _CLEAR_DECEL_MPS2))
+        # A vehicle that answers late (clear_response, since 2026-11-19): it
+        # flies on for reaction_s, then brakes at accel_mps2, from the larger
+        # of this action's speed and the tick's request / last setpoint
+        # (_Tick.clear_v), so a slowed repair cannot shrink its own horizon.
+        tick = self._tick_ctx()
+        while tick is not None:
+            v = max(v, tick.clear_v)
+            tick = tick.origin
+        return min(self.lookahead_s,
+                   self.dt + resp.reaction_s + v / (2.0 * resp.accel_mps2))
 
     def _clear_min_dist(self, state: State, a: Action4D, f=None) -> float:
         """Smallest mapped-obstacle distance `a`'s FORECAST reaches. This is the
@@ -5198,7 +5241,8 @@ class Shield:
 
             # the FIRST offending pose is the obstacle we have to steer off; at
             # t = 0 that is the current position, which is the old behaviour.
-            hit = steps[next(i for i, d in enumerate(dists) if d < hard_r)][1]
+            i_hit = next(i for i, d in enumerate(dists) if d < hard_r)
+            t_hit, hit = steps[i_hit]
             ox, oy = self._away_dir(hit.x, hit.y, hard_r, f)
             if ox == 0.0 and oy == 0.0:
                 ox, oy = self._away_dir(state.x, state.y, hard_r, f)
@@ -5220,6 +5264,18 @@ class Shield:
             # taper the tangential (mission) motion, floored so we still move
             scale = max(_CLEAR_MIN_SCALE, 1.0 - depth / max(soft_r, 1e-6))
             push = min(cap, max(0.5, depth / max(self.lookahead_s, 1e-6)))
+            if out_c >= 0.0 and t_hit > 1e-9:
+                # Already leaving along this normal, and the forecast still
+                # enters the ring at t_hit: the closing comes from the kept
+                # tangential part (a normal skewed at a field cell boundary).
+                # The floor above can equal the outward speed already flown,
+                # so the pass changed nothing and the chain never converged
+                # (de_hil1_001 tick 176, 2026-11-19: '5.00->5.00', then
+                # ClearanceEscape and G3). Size the push to clear the
+                # shortfall AT THAT SAMPLE'S TIME, over what is flown, on the
+                # field's slope (a face reads _CHAMFER_CORR m per metre).
+                push = min(cap, max(push, out_c + (hard_r - dists[i_hit])
+                                    / (t_hit * _CHAMFER_CORR) + _CLEAR_PUSH_MARGIN_MPS))
             # FLOOR, not assign: never slow an escape that is already faster
             # than the recovery this repair would have sized.
             out_n = min(cap, max(out_c, push))
@@ -7289,6 +7345,14 @@ class Shield:
             # the decision state go into the buffer first, and every rule
             # that judges this action reads that trajectory (_predict).
             admitted, _ = _sanitise(raw)
+            if self.clear_response is not None:
+                # The clearance horizon's speed (_clear_horizon_s): the
+                # request's, or the last setpoint sent when that is faster
+                # (the vehicle still flies it for the reaction time).
+                last = self._flown[-1] if self._flown else None
+                sent = (math.hypot(last[1], last[2]) if last is not None and last[1] is not None
+                        else 0.0 if last is not None else self._clear_last_v)
+                tick.clear_v = max(math.hypot(admitted.vx, admitted.vy), sent)
             self._buffer.admit(tick, dstate, admitted, self._predict(dstate, admitted))
             decision = self._decide(dstate, raw)
             # Zones this tick saw opening on the aircraft: their escape flies
@@ -7299,6 +7363,9 @@ class Shield:
             decision = self._escalate(tick, dstate, decision, rtl_failed=rtl_failed,
                                       home_reached=home_reached, landed=landed,
                                       hold_off_m=hold_off_m, hold_reach_m=hold_reach_m)
+            em = decision.emitted
+            self._clear_last_v = (math.hypot(em.vx, em.vy)
+                                  if math.isfinite(em.vx) and math.isfinite(em.vy) else 0.0)
             # What this tick streams, for the dead reckoning while the
             # position is not a valid fix (State.fix_ok, X8).
             self._note_streamed(tick, decision, dstate)
@@ -7554,6 +7621,7 @@ class Shield:
             self._flown.clear()
             self._opened_on.clear()
             self._pk_good = self._pk = self._pk_cmd = None
+            self._clear_last_v = 0.0
             rt = self._rt
             if rt.moving_ids and self._t_last is not None:
                 # Pin every moving zone to an explicit anchor (a policy-authored

@@ -389,6 +389,7 @@ from guardrail.frames import (BODY_STOP, body_to_local_ned,       # noqa: E402
 from guardrail.fsm import cap_exceeded                           # noqa: E402
 from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.people import declared_subject_source             # noqa: E402
+from guardrail.response import ARDUCOPTER_GUIDED                  # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
@@ -1709,9 +1710,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # The hold model goes in only when it is not the default, so a caller
     # that hands in its own Shield factory (tests patch `Shield` with a
     # functools.partial) keeps its own hold_points.
+    # On a response arm the flying Shield sizes its clearance horizon for a
+    # vehicle that answers late (Shield clear_response, 2026-11-19), with the
+    # response the ArduPilot rails give theirs (ARDUCOPTER_GUIDED); the ideal
+    # vehicle obeys at once and keeps the horizon it always had. The judges
+    # below keep theirs, so what counts as a breach does not move.
+    clr_kw = {} if rsp is None else {"clear_response": ARDUCOPTER_GUIDED}
     shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
                     **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
-                       else {"hold_points": False}), **rec_kw)
+                       else {"hold_points": False}), **rec_kw, **clr_kw)
     from guardrail.audit import AuditLogger
     auditor = AuditLogger.in_memory(shield.policy)
     audit: list[dict] = []
