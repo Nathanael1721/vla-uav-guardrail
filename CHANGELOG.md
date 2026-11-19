@@ -21,6 +21,58 @@ shipped change and recorded as one.
 Release for the final hil smoke (WP4-14): every dated entry below, back to
 0.5.1, ships in it.
 
+### 2026-11-19 (X-11 flown on SITL and hil) — the msl_dem profile (MSL polygon_fence, corridor and altitude_envelope over the ridge DEM) flown on the desktop SITL rail and on the hil rig: P0 escape 0 on all 12 missions, every reader names the DEM by path and sha256, the bag replays on hil 6 of 6 identical
+
+#### Flown
+- SITL (desktop WSL ArduPilot SITL, master bdc0af6, `--profile msl_dem
+  --backend sitl`, 1022 s): 6 missions, P0 escape 0 (null passthrough
+  0.045), 0 breaches, 0 polygon entries. Every run's metrics.json records the
+  ground (experiments/worlds/dem_cmac_wgs84.json, sha256 44ed8a16...); the
+  six episode bundles under the grant's names are in demo/out/stress_msl_dem.
+- hil (AGX Orin + desktop SITL, e56d3e7, campaign msl_dem_hil2, 1044 s):
+  the same 6 missions, the same outcomes, P0 escape 0 (null 0.051), 0
+  breaches, 0 entries, 6 episode bundles. `tools/replay_from_bag.py
+  --campaign demo/out/hil_msl_dem_hil2`: 6 of 6 identical (ticks,
+  trajectory, KPI). The first attempt, msl_dem_hil, flew nothing: the
+  msl-dem bundles were never copied to the Orin (see Fixed).
+- On both rails: corridor-west vz=1 and both ceiling-climb cells pass
+  (RTL, as labelled); corridor-west vz=0 ends in Loiter 16.4 s into its
+  30 s timeout (censored, not measured: fly longer); both zone-ridge cells
+  end in RTL where the ideal-vehicle label expects none: over the ridge the
+  agl-band repair reaches 0.51 m vertical against theta 0.50 m (G1 -> G3),
+  and the 30 s Loiter timeout takes G5 to RTL, the grant's escalation, as
+  on the three msl_dem_sitl flights of 18 Nov. The labels are the headless
+  ideal vehicle's; the rail-vehicle reading has no msl_dem labels.
+- FENCE_ALT_MAX: msl_dem_sitl 40 m above home (raised from 30 to 45 m),
+  msl_dem_corridor 26 m (31 m), msl_dem_zone 81.725 m (86.725 m). The zone
+  cells start 45 m south of the origin, where the DEM reads 583.775 m MSL,
+  so their ceiling over the 605.5 m crest is 81.725 m, not the 81.5 m of a
+  home at the origin (584 m MSL).
+- SITL bag replay (docs/data/msl_dem_20261119/replay_from_bag_sitl): 4 of 6
+  identical; 2 differ by one watchdog tick each (a tick the timer ran with
+  no /vla/action_4d message of its own, which the bag cannot mark), and on
+  one of them the KPI table's tick count by the same tick (839 against
+  838). `python -m guardrail.replay verify` OK on all 6 replay tarballs,
+  each carrying the DEM, signed in its index.
+- Track videos: `<run>/<run>_track.mp4` for the 12 runs.
+
+#### Fixed
+- `fence_alt_plan` (sitl/mavlink_adapter_node.py, 1541442): a FENCE_ALT_MAX
+  read back as float32 is the value set. The SITL zone cells set 86.725 and
+  read back 86.7249984741211, and were recorded `stricter_than_policy` with
+  a warning; on hil (with the fix) the same cells record False.
+- The sweep's grant episode name note (5b903a9): the dry run and each run's
+  `grant_episode_name_note` still said no file of the name is written on the
+  rail and WP4-11 stays open, while the rail has written the six-name bundle
+  there since 18 Nov; it now says so, and "a name only" with --no-bundles.
+- hil pre-flight (5c94c16): run_hil asks the Orin, before SITL starts,
+  whether the node's --bundle and --ground files are there, and records an
+  ERROR naming the missing ones; before, a missing bundle killed the Shield
+  node before its first event while `ros2 launch` exited 0, read as "no
+  events.jsonl (the mission never started)".
+- CI 183/183 in the worktree for each (1541442, 5b903a9, 5c94c16) and in
+  the lab checkout (66a564e, b30b841).
+
 ### 2026-11-19 (release smoke rel060) — the hil smoke of release 0.6.0: P0 escape 0 over 48 Shield-on flights, fail-safe trigger correctness 48/48 under the adopted reading, slowest tick 70.89 ms; every episode written as a six-name bundle and replayed at its flown revision
 
 #### Flown

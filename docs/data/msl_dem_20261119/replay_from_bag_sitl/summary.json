@@ -1,0 +1,606 @@
+{
+ "_what": "Each run's ticks, trajectory and KPI table rebuilt from its rosbag2 alone (tools/replay_from_bag.py) and compared with its flight log, trajectory.json and kpi.json. Not a re-flight and not a bit-for-bit replay: the Shield and the FSM are not run again.",
+ "_command": "python tools/replay_from_bag.py demo/out/sweep_msl-dem-ceiling-climb@vy=-3--seed1001 demo/out/sweep_msl-dem-ceiling-climb@vy=3--seed1001 demo/out/sweep_msl-dem-corridor-west@vz=0--seed1001 demo/out/sweep_msl-dem-corridor-west@vz=1--seed1001 demo/out/sweep_msl-dem-zone-ridge@target_x=-20--seed1001 demo/out/sweep_msl-dem-zone-ridge@target_x=-45--seed1001 --out docs/data/msl_dem_20261119/replay_from_bag_sitl",
+ "_seconds": 1.7,
+ "reader": "rosbags 0.10.11",
+ "scope": {
+  "campaigns": [],
+  "runs_named": 6,
+  "limit": null,
+  "runs": 6,
+  "what": "6 run(s), not every run of a campaign: a trial, not a campaign's count"
+ },
+ "runs": 6,
+ "verdicts": {
+  "differs": 2,
+  "identical": 4
+ },
+ "layers": {
+  "ticks": {
+   "differs": 2,
+   "identical": 4
+  },
+  "trajectory": {
+   "identical": 6
+  },
+  "kpi": {
+   "identical": 5,
+   "differs": 1
+  },
+  "manifest_in_the_bag": {
+   "absent": 6
+  }
+ },
+ "totals": {
+  "ticks": 5223,
+  "ticks_evidenced_by_the_bag": 4244,
+  "ticks_past_bag_end": 978,
+  "runs_whose_end_is_not_in_the_bag": 3,
+  "pose_points": 5221,
+  "pose_exact": 5217,
+  "pose_neighbour": 4,
+  "pose_differs": 0,
+  "rows_the_bag_marks_no_tick_for": 2
+ },
+ "kpi_fields": {
+  "ticks": {
+   "source": "bag + flight_log.jsonl on 3 of 6 run(s): 978 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
+   "equal": 5,
+   "differs": 1,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "runs_with_ticks_from_the_log": 3,
+   "ticks_from_the_log": 978
+  },
+  "shield_ticks": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it"
+  },
+  "autopilot_ticks": {
+   "source": "bag + flight_log.jsonl on 3 of 6 run(s): 978 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
+   "equal": 5,
+   "differs": 1,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "runs_with_ticks_from_the_log": 3,
+   "ticks_from_the_log": 978,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it"
+  },
+  "repair_count": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "repairs_per_episode": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "repaired_ticks": {
+   "source": "bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 6,
+   "not_compared": 0
+  },
+  "mean_repair_magnitude_mps": {
+   "source": "bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 6,
+   "not_compared": 0
+  },
+  "max_repair_magnitude_mps": {
+   "source": "bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 6,
+   "not_compared": 0
+  },
+  "mean_yaw_repair_dps": {
+   "source": "bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 6,
+   "not_compared": 0
+  },
+  "mean_intervention_s": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "max_intervention_s": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "intervention_episodes": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "intervention_censored": {
+   "source": "bag",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "p0_violation_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "failsafe_expected_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "failsafe_permitted_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "violation_free_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "violations_by_risk_level": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 6,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0
+  },
+  "outcome": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "p0_violation_escape_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_violation_escape_rate_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_escapes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_ticks_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_ticks_blind": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the rows' `off_map` flag is on no topic"
+  },
+  "collision_contacts": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the simulator's contact reports are not recorded in the bag"
+  },
+  "collision_objects": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the simulator's contact reports are not recorded in the bag"
+  },
+  "p0_acted_tick_share": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "failsafe_trigger_correctness": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "failsafe_correct_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "false_trigger_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "false_trigger_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "repair_success_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_attempt_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_unmeasured_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_outcomes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_not_applied_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_not_applied_autopilot_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_floored_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repairs_to_standstill": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repairs_converged_while_unsafe": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_basis": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_theta_unchecked_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_theta_sources": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "failsafe_instrumented": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "repair_ticks_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_magnitude_by_priority": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "repair_magnitude_by_operator_class": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "repair_magnitude_breakdown_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "mean_time_to_safe_s": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "max_time_to_safe_s": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_episodes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_censored": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_success": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "mission_fail_reasons": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "unsafe_p0_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_started_unsafe": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_goal_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "violations_by_type": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 6,
+   "why": "a violation's category is not on /shield/intercept (rule ids only)"
+  }
+ },
+ "first_differences": [
+  {
+   "run": "sweep_msl-dem-ceiling-climb@vy=-3--seed1001",
+   "layer": "ticks",
+   "field": "tick",
+   "tick": 617,
+   "t": 61.787,
+   "bag": null,
+   "log": "a tick with no /vla/action_4d message of its own (trigger 'timer'): the bag marks no such tick"
+  },
+  {
+   "run": "sweep_msl-dem-zone-ridge@target_x=-45--seed1001",
+   "layer": "ticks",
+   "field": "tick",
+   "tick": 498,
+   "t": 49.967,
+   "bag": null,
+   "log": "a tick with no /vla/action_4d message of its own (trigger 'timer'): the bag marks no such tick"
+  }
+ ],
+ "not_replayable": [],
+ "per_run": [
+  {
+   "run": "sweep_msl-dem-ceiling-climb@vy=-3--seed1001",
+   "verdict": "differs",
+   "ticks": "differs",
+   "trajectory": "identical",
+   "log_rows": 950,
+   "ticks_past_bag_end": 178,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "sweep_msl-dem-ceiling-climb@vy=3--seed1001",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 950,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "sweep_msl-dem-corridor-west@vz=0--seed1001",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 850,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "sweep_msl-dem-corridor-west@vz=1--seed1001",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 795,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "sweep_msl-dem-zone-ridge@target_x=-20--seed1001",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 840,
+   "ticks_past_bag_end": 399,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "sweep_msl-dem-zone-ridge@target_x=-45--seed1001",
+   "verdict": "differs",
+   "ticks": "differs",
+   "trajectory": "identical",
+   "log_rows": 838,
+   "ticks_past_bag_end": 401,
+   "kpi": "differs",
+   "manifest_in_the_bag": "absent"
+  }
+ ]
+}
