@@ -21,6 +21,69 @@ shipped change and recorded as one.
 Release for the final hil smoke (WP4-14): every dated entry below, back to
 0.5.1, ships in it.
 
+### 2026-11-19 (WP1-07 distance_envelope flown on hil; clearance on a lagging vehicle) — the first hil flight of the distance_envelope entered both envelopes' corners and ended one lane in a false RTL; the clearance horizon is now sized for the ArduPilot vehicle's response and the edge repair converges; re-flown, both lanes pass
+
+#### Flown
+- de_hil1 (hil, 0f4269a, profile distance_envelope, bundle
+  distance-envelope-sitl-v0.1.0 signed with the lab-dev key, world
+  experiments/worlds/de_block.yaml sha256 503f8889...): both lanes FAILED.
+  P0 escape 0 on the Shield-flown ticks, but the aircraft entered the
+  rounded corner of each envelope: lane -1 (buildings, P0) inside for 1.9 s,
+  true distance down to about 4.4 m against 5 m; lane -11 (roads, P1)
+  inside for 2.4 s, down to 1.93 m against 3 m. Lane -1 then took G3
+  (Brake -> Loiter, "no operator converged"), the 30 s Loiter timeout (G5)
+  and RTL, whose straight line home crossed the buildings envelope again
+  (2 breaches, counted while the autopilot flew). The profile defines no
+  Shield-off cell.
+- Diagnosis (three independent diagnoses, each adversarially verified;
+  docs/data/distance_envelope_20261119/diagnosis_de_hil1.json):
+  (A) the clearance look-ahead was dt + v / (2 x 3 m/s^2), 0.77 s / 3.1 m at
+  4 m/s, as if the vehicle obeyed at once; the ArduPilot vehicle flies each
+  setpoint 0.45 s late at most 1.75 m/s^2 and needs about 6.4 m. (B) at a
+  field cell boundary ClearanceFix pushed at the 0.5 m/s floor (the depth
+  divided by the 5 s lookahead) and fell 0.5 mm short; its second pass was
+  a no-op, ClearanceEscape rescued and the FSM read it as not converged.
+  The headless ardupilot and rail response arms reproduced the entries at
+  the same corners; the ideal arm passed. The ideal-vehicle labels
+  (success, no fail-safe) are the requirement and were kept.
+- de_hil2 (hil, 06518b7, the fix below): both lanes PASS: 0 breaches,
+  target reached, no fail-safe (G1/G7 only), P0 escape 0 (null
+  passthrough 0.082), 42 and 86 repairs. `tools/replay_from_bag.py
+  --campaign demo/out/hil_de_hil2`: 2 of 2 identical (ticks, trajectory,
+  KPI). metrics.world.sha256 matches de_block.yaml; shield_forecast records
+  the response (0.45 s, 1.75 m/s^2). Videos `<run>/<run>_track.mp4` for the
+  four runs.
+
+#### Changed
+- `guardrail/shield.py` (17e8047, 6ef5a6d): a Shield given
+  `clear_response` (the ArduPilot rails: sitl/ros2_shield_node.py's flying
+  and warm-up Shields, sitl/run_sitl_demo.py, and the headless flying Shield
+  on the ardupilot and rail response arms) sizes the clearance horizon
+  dt + reaction_s + v / (2 x accel), 1.69 s at 4 m/s, with v the largest of
+  the request and the setpoints still in the vehicle's pipe, so a repair
+  cannot shrink its own horizon; the escape it shapes brakes the same way.
+  The FSM's theta reads the repair's depth over the instant vehicle's
+  horizon, so the longer look-ahead starts the repair earlier without
+  inflating theta's input. Without `clear_response` (every other Shield,
+  the oracle and the judges) nothing changes. ClearanceFix sizes its push
+  to clear the deficit at the offending sample's time (+0.05 m/s), and a
+  content stop point no longer steers a repair the commanded forecast
+  breaks: grid probes around de_block, 48 non-converging repairs on master
+  -> 0, and 87 escapes on the own-velocity forecast -> 0.
+  `tools/replay_at_revision.py` rebuilds a recorded `clear_response`.
+- Headless: smoke, distance_envelope, fsm_edges, grant_example and
+  prefix_ab 141 of 141 episodes identical to master; smoke P0 0 over 63,
+  fail-safe 63/63; library P0 0 over 179, fail-safe 179/179; nightly seed
+  1001 (at 17e8047) P0 0 over 247, fail-safe 247/247; distance_envelope 0 breaches and
+  success on the ideal, ardupilot and rail arms (on master the lagging arms
+  breached both lanes). New tests in tests/test_clearance.py,
+  tests/test_distance_envelope_msl.py, tests/test_window_opens_on.py and
+  tests/test_replay_at_revision.py, each failing without its fix. CI
+  183/183 in the worktree (6ef5a6d) and the lab checkout (804d399).
+- Not changed: the PAS perception rail, the mission node and the AirSim
+  demos keep the old horizon; the hil campaigns flown before 06518b7
+  (rel060, msl_dem_hil2) flew it too.
+
 ### 2026-11-19 (X-11 flown on SITL and hil) — the msl_dem profile (MSL polygon_fence, corridor and altitude_envelope over the ridge DEM) flown on the desktop SITL rail and on the hil rig: P0 escape 0 on all 12 missions, every reader names the DEM by path and sha256, the bag replays on hil 6 of 6 identical
 
 #### Flown
