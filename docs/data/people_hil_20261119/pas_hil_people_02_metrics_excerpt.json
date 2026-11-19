@@ -1,0 +1,274 @@
+{
+ "people_feed": {
+  "source": "perception: every box the detector scores 'a person' >= 0.1 in each frame, ground-projected as the subject is (perception_node.people_estimates)",
+  "phrase": "a person",
+  "range_m": 100.0,
+  "truth": {
+   "source": "World.get_object_poses(40 level tags Ped_00..) (Project AirSim), every >= 1 s, record only - never a Shield input",
+   "tags": 40,
+   "unresolved": [],
+   "period_s": 1.0,
+   "polls": 18,
+   "reads": 17,
+   "late": 17,
+   "late_kept": 17,
+   "busy": 1,
+   "spent": 0,
+   "failures": 0,
+   "nan": 0,
+   "read_ms": {
+    "n": 17,
+    "median": 101.192,
+    "p95": 120.434,
+    "max": 121.459
+   },
+   "rows_with_truth": 178,
+   "rows": 180,
+   "age_s": {
+    "n": 178,
+    "median": 0.7,
+    "p95": 1.315,
+    "max": 2.2
+   },
+   "min_distance_m": 0.765,
+   "envelope_m": 4.0,
+   "below_envelope_ticks": 75,
+   "below_envelope_s": 7.5,
+   "recall": {
+    "range_m": 25.0,
+    "match_m": 3.0,
+    "reads_scored": 16,
+    "in_range": 74,
+    "matched": 14,
+    "in_view": 25,
+    "matched_in_view": 8,
+    "recall_in_range": 0.1892,
+    "recall_in_view": 0.32
+   },
+   "verdict": "the aircraft was closer than 4 m to a level pedestrian on 75 of 178 ticks with truth (true minimum 0.765 m)"
+  },
+  "placement": {
+   "frames": 37,
+   "boxes": 11,
+   "placed": 11,
+   "pose": {
+    "capture:ring-edge": 35,
+    "capture:ring": 2
+   },
+   "src": {
+    "depth": 11
+   }
+  },
+  "stale_s": 3.0,
+  "assoc_m": 2.0,
+  "speed_mps": 1.5,
+  "frames": 37,
+  "fixes": 11,
+  "nonfinite": 0,
+  "tracks": 4,
+  "dropped_stale": 3,
+  "max_live": 2,
+  "people_nonfinite": 0,
+  "detector_frames": 469,
+  "detector_boxes": 51,
+  "detector_unpaired": 0
+ },
+ "fsm": {
+  "ticks": 180,
+  "final_state": "RTL",
+  "terminal": true,
+  "terminal_reason": "home reached",
+  "visited": [
+   "Normal",
+   "Brake",
+   "Loiter",
+   "RTL"
+  ],
+  "max_state": "RTL",
+  "failsafe_triggered": true,
+  "loiter_entered": true,
+  "outcome_label": "RTL_triggered",
+  "transitions": [
+   {
+    "tick": 21,
+    "t_s": 2.275306,
+    "from": "Normal",
+    "to": "Brake",
+    "edge": "G1",
+    "reason": "standoff-any (hard P0 project_fix) repaired, lat 0.61 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+   },
+   {
+    "tick": 22,
+    "t_s": 2.375316,
+    "from": "Brake",
+    "to": "Loiter",
+    "edge": "G3",
+    "reason": "standoff-any (hard P0 project_fix): repair over theta, lat 2.07 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+   },
+   {
+    "tick": 44,
+    "t_s": 4.578543,
+    "from": "Loiter",
+    "to": "Normal",
+    "edge": "G8",
+    "reason": "cleared 2.10 s >= T_recover 2 s: the request is one the Shield would fly (clean or a repair within theta) and the position is legal"
+   },
+   {
+    "tick": 66,
+    "t_s": 6.77618,
+    "from": "Normal",
+    "to": "Brake",
+    "edge": "G1",
+    "reason": "standoff-any (hard P0 project_fix) repaired, lat 0.27 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+   },
+   {
+    "tick": 91,
+    "t_s": 9.275418,
+    "from": "Brake",
+    "to": "RTL",
+    "edge": "X7",
+    "reason": "position illegal for 2.00 s and its illegal depth grew 4.85 m (fitted) in 2.00 s (slope +2.43 +/- 0.41 m/s) while the Shield recovers: the recovery is losing ground; stop withheld: standing still here breaks a rule, so the Shield's own action is flown"
+   },
+   {
+    "tick": 180,
+    "t_s": 18.17531,
+    "from": "RTL",
+    "to": "[*]",
+    "edge": "G9",
+    "reason": "home reached"
+   }
+  ],
+  "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+  "holds": [],
+  "holds_moved": 0,
+  "holds_illegal": 0,
+  "ended_holding": null,
+  "fault": null,
+  "theta_basis": {
+   "source": "per-operator magnitude_m",
+   "horizon_s": null
+  },
+  "hold_mode": {
+   "fsm_mode": "LOITER",
+   "autopilot_mode": "BRAKE"
+  }
+ },
+ "policy_source": {
+  "kind": "bundle",
+  "path": "bundles/follow-car-citylife-people-v0.1.0.tar.gz",
+  "loaded_policy_hash": "sha256:35e3f4ae7983179c55e7853ddbb18a9f20701dc6228e7cb28f3a60f43d3d9eb6",
+  "declared_policy_hash": "sha256:35e3f4ae7983179c55e7853ddbb18a9f20701dc6228e7cb28f3a60f43d3d9eb6",
+  "hash_form": "sha256-canonical-v3",
+  "hashes": {
+   "sha256-canonical-v3": "sha256:35e3f4ae7983179c55e7853ddbb18a9f20701dc6228e7cb28f3a60f43d3d9eb6",
+   "reference-policy-dsl-0.1": null
+  },
+  "issued_at": "2026-11-18T18:38:26Z",
+  "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+  "signature": "verified",
+  "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+  "chain": "none",
+  "signer_retired_on": null,
+  "require_chain": false
+ },
+ "topology": "hil",
+ "kpi_grade": null,
+ "manifest": {
+  "code_revision": "bfb4973d6243",
+  "vla_model_hash": "aiotvla:v10b@sha256:35259bd1b17bc3b3ef0ad385d5d4ed9e316596e72e5a3805865aeb383b0424a2",
+  "policy_hash": "sha256:35e3f4ae7983179c55e7853ddbb18a9f20701dc6228e7cb28f3a60f43d3d9eb6",
+  "random_seed": 20261006,
+  "sim_speedup": 1.0,
+  "topology": "hil"
+ },
+ "escape_ticks": 0,
+ "vla_observation": {
+  "basis": "distinct front-frame sim stamps among the requests actually sent (vla_captures.jsonl stamp_ns; warm-up excluded): how often a NEW observation reached the VLA. Not the decision rate (pilot.summary.decision_hz, answers parsed) and not the request rate",
+  "front_source": "detector",
+  "camera": "FrontCamera",
+  "grant_obs_hz": 10.0,
+  "requests_sent": 61,
+  "requests_with_stamp": 61,
+  "requests_without_stamp": 0,
+  "distinct_frames": 61,
+  "duplicate_requests": 0,
+  "duplicate_share": 0.0,
+  "mission_wall_s": 18.0,
+  "hz_per_wall_s": 3.389,
+  "asking_s": 6.896,
+  "held_s": 11.104,
+  "unrowed_s": 0.0,
+  "hz_while_asking": 8.846,
+  "hint_gated": {
+   "spans": 0,
+   "s": 0.0,
+   "longest_s": null,
+   "why_ticks": {},
+   "first": []
+  },
+  "sim_span_s": 9.025,
+  "wall_span_s": 9.01,
+  "sim_per_wall": 1.0016,
+  "hz_per_sim_s": 6.648,
+  "gap_sim_s": {
+   "n": 60,
+   "p50": 0.098,
+   "p95": 0.26,
+   "max": 2.425
+  },
+  "gap_wall_s": {
+   "n": 60,
+   "p50": 0.099,
+   "p95": 0.21,
+   "max": 2.4793
+  },
+  "below_grant": {
+   "per_wall_s": true,
+   "while_asking": true
+  },
+  "camera_delivery": {
+   "camera": "FrontCamera",
+   "frames": 276,
+   "hz": 15.333,
+   "capture_interval_s": 0.1,
+   "note": "the detector's camera: the VLA's front frame too"
+  },
+  "t0_wall": 1795090193.101
+ },
+ "camera_to_setpoint": {
+  "budget_ms": 100.0,
+  "cam_age_ms": {
+   "n": 64,
+   "p50": 211.32,
+   "p95": 363.171,
+   "p99": 390.354,
+   "max": 390.354,
+   "over_budget": 64
+  },
+  "cam_to_setpoint_ms": {
+   "n": 51,
+   "p50": 188.636,
+   "p95": 311.055,
+   "p99": 327.08,
+   "max": 327.08,
+   "over_budget": 51
+  },
+  "tick_ms": {
+   "n": 86,
+   "p50": 35.739,
+   "p95": 61.611,
+   "p99": 99.622,
+   "max": 99.622,
+   "over_budget": 0
+  },
+  "by_author": {
+   "vla_step": 64
+  },
+  "t_capture_basis": {
+   "arrival": 64
+  },
+  "clock": "one clock, the loop's (time.time unless injected): the frame's arrival stamp (VLAFrames.put_front), the request's t_capture / t_sent / t_received, the tick's start and the publication (read right after link.send returned) all read it",
+  "capture_is": "the frame's ARRIVAL at this node, not its render: this rail's pose ring carries no simulator stamps (t_capture_basis 'arrival'), so render and transport before arrival are not in cam_*: a lower bound of camera to action",
+  "not_in_it": "the autopilot's receipt of the setpoint (link.send returns on the hand-off to MAVROS / pymavlink); the frame's simulator stamp_ns is another clock and is not mixed in"
+ }
+}

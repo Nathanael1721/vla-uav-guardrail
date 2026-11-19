@@ -1,0 +1,54 @@
+==> rclpy, mavros_msgs, torch, transformers and projectairsim import (Python 3.12.3)
+==> Project AirSim 10.42.0.1 (8989, 8990) and the VLA server 127.0.0.1:8791 reachable
+==> ROS_DOMAIN_ID=42 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp peers 10.42.0.1 10.42.0.3; MAVROS fcu_url udp://:14555@10.42.0.1:14555; VLAGUARD_REQUIRE_CHAIN=0
+==> python demo/pas_ardupilot/perception_node.py --link mavros --scene-mode attach --sim-host 10.42.0.1 --g1-verdict /home/nathan-agxiot/g1_verdict.json --tag pas_hil_people_01 --max-s 420 --pilot vla --mission follow --vla-server 127.0.0.1:8791 --vla-front-source detector --vla-step-as-rate 0.5 --vla-rate-yaw rate --cadence pipelined --allow-unstamped-pipelined --vla-feed stream --vla-cruise-mps 4.5 --vla-speed-cap-mps 5 --bundle bundles/follow-car-citylife-people-v0.1.0.tar.gz --level-peds 40 --level-ped-prefix Ped_
+20:02:43:919 [INFO] Connecting to simulation server at 10.42.0.1
+20:02:43:926 [INFO] Connection opened.
+20:02:43:927 [INFO] Started the pub-sub topic receiving thread.
+20:02:43:932 [INFO] Getting the list of available topic info from the sim server...
+20:02:43:945 [INFO] Successfully received topic info list.
+20:02:43:961 [INFO] Initalizing Drone 'Drone1'...
+20:02:43:966 [INFO] -------------------------------------------------
+20:02:43:977 [INFO] The following topics can be subscribed to for robot 'Drone1':
+20:02:43:986 [INFO]     sensors["FrontCamera"]["scene_camera"]
+20:02:43:993 [INFO]     sensors["FrontCamera"]["scene_camera_info"]
+20:02:43:998 [INFO]     sensors["FrontCamera"]["depth_camera"]
+20:02:44:001 [INFO]     sensors["FrontCamera"]["depth_camera_info"]
+20:02:44:001 [INFO]     sensors["VLAFront"]["scene_camera"]
+20:02:44:001 [INFO]     sensors["VLAFront"]["scene_camera_info"]
+20:02:44:001 [INFO]     sensors["VLADown"]["scene_camera"]
+20:02:44:001 [INFO]     sensors["VLADown"]["scene_camera_info"]
+20:02:44:001 [INFO]     sensors["Chase"]["scene_camera"]
+20:02:44:001 [INFO]     sensors["Chase"]["scene_camera_info"]
+20:02:44:001 [INFO]     sensors["IMU1"]["imu_kinematics"]
+20:02:44:001 [INFO]     sensors["GPS"]["gps"]
+20:02:44:001 [INFO]     sensors["Barometer"]["barometer"]
+20:02:44:001 [INFO]     sensors["Magnetometer"]["magnetometer"]
+20:02:44:002 [INFO]     robot_info["actual_pose"]
+20:02:44:002 [INFO]     robot_info["collision_info"]
+20:02:44:002 [INFO]     robot_info["rotor_info"]
+20:02:44:002 [INFO] -------------------------------------------------
+20:02:44:002 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneCityLifeArduPilot'
+20:02:44:006 [INFO] Disconnecting from simulation server...
+20:02:44:008 [INFO] Disconnected.
+[timer]  a 1 ms sleep measures 1.05 ms
+[policy] follow-car-citylife-people sha256:35e3f4ae7983179c55e7853ddbb18a9f20701dc6228e7cb28f3a60f43d3d9eb6 from bundle - signature verified
+[map]    loaded /home/nathan-agxiot/vla-drone/demo/out/citymap_citylife/occ_day.npz
+[map]    policy has no distance_envelope over roads
+[clock]  rules read the wall clock: +08:00 (Asia/Taipei (UTC+08:00, no daylight saving))
+[people] perception: every box the detector scores 'a person' >= 0.1 in each frame, ground-projected as the subject is (perception_node.people_estimates); a person unseen for 3 s is dropped
+[sim]    attaching to scene SceneCityLifeArduPilot on 10.42.0.1
+[vla]    attaching to 127.0.0.1:8791
+Traceback (most recent call last):
+  File "/home/nathan-agxiot/vla-drone/demo/pas_ardupilot/perception_node.py", line 9503, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/nathan-agxiot/vla-drone/demo/pas_ardupilot/perception_node.py", line 9492, in main
+    return run(args, live_status=not (args.dry_run or args.scene_only))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nathan-agxiot/vla-drone/demo/pas_ardupilot/perception_node.py", line 7097, in run
+    camera.start()                     # loads the scene: BEFORE SITL starts
+    ^^^^^^^^^^^^^^
+  File "/home/nathan-agxiot/vla-drone/demo/pas_ardupilot/perception_node.py", line 3001, in start
+    raise RuntimeError(
+RuntimeError: --pilot vla: the scene the desktop loaded serves no ['VLADown']: load it with --vla-cameras (run_pas_ardupilot.ps1 -Step scene -VlaCameras) or from a --pilot vla node
