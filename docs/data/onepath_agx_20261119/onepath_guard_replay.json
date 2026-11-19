@@ -1,0 +1,211 @@
+{
+ "runs": [
+  {
+   "run": "agx_onepath_shield_01",
+   "ticks_logged": 4196,
+   "ticks_replayed": 4196,
+   "skirt_reconstructed": 865,
+   "skirt_not_reconstructed": 0,
+   "grid_replay_agrees_with_log": 4141,
+   "flown_guard": "shield",
+   "flown_replay_agrees_with_log": 4193,
+   "scale_changed": 157,
+   "building_brake_on_off_changed": 8,
+   "mode_changed": 56,
+   "side_changed": 29,
+   "mode_or_side_changed": 56,
+   "skirt_ticks_grid": 840,
+   "skirt_ticks_shield": 865,
+   "by_logged_mode": {
+    "clear": {
+     "replayed": 2775,
+     "decision_changed": 2
+    },
+    "hold": {
+     "replayed": 18,
+     "decision_changed": 4
+    },
+    "near": {
+     "replayed": 538,
+     "decision_changed": 23
+    },
+    "skirt": {
+     "replayed": 865,
+     "decision_changed": 27
+    }
+   }
+  },
+  {
+   "run": "agx_onepath_shield_02",
+   "ticks_logged": 4198,
+   "ticks_replayed": 4198,
+   "skirt_reconstructed": 841,
+   "skirt_not_reconstructed": 0,
+   "grid_replay_agrees_with_log": 4159,
+   "flown_guard": "shield",
+   "flown_replay_agrees_with_log": 4198,
+   "scale_changed": 140,
+   "building_brake_on_off_changed": 7,
+   "mode_changed": 39,
+   "side_changed": 26,
+   "mode_or_side_changed": 39,
+   "skirt_ticks_grid": 821,
+   "skirt_ticks_shield": 841,
+   "by_logged_mode": {
+    "clear": {
+     "replayed": 2844,
+     "decision_changed": 0
+    },
+    "hold": {
+     "replayed": 17,
+     "decision_changed": 4
+    },
+    "near": {
+     "replayed": 496,
+     "decision_changed": 12
+    },
+    "skirt": {
+     "replayed": 841,
+     "decision_changed": 23
+    }
+   }
+  },
+  {
+   "run": "agx_onepath_shield_03",
+   "ticks_logged": 4195,
+   "ticks_replayed": 4195,
+   "skirt_reconstructed": 596,
+   "skirt_not_reconstructed": 0,
+   "grid_replay_agrees_with_log": 4137,
+   "flown_guard": "shield",
+   "flown_replay_agrees_with_log": 4194,
+   "scale_changed": 130,
+   "building_brake_on_off_changed": 28,
+   "mode_changed": 57,
+   "side_changed": 40,
+   "mode_or_side_changed": 59,
+   "skirt_ticks_grid": 570,
+   "skirt_ticks_shield": 596,
+   "by_logged_mode": {
+    "clear": {
+     "replayed": 3209,
+     "decision_changed": 0
+    },
+    "hold": {
+     "replayed": 5,
+     "decision_changed": 0
+    },
+    "near": {
+     "replayed": 385,
+     "decision_changed": 25
+    },
+    "skirt": {
+     "replayed": 596,
+     "decision_changed": 34
+    }
+   }
+  },
+  {
+   "run": "agx_onepath_shield_04",
+   "ticks_logged": 4195,
+   "ticks_replayed": 4195,
+   "skirt_reconstructed": 862,
+   "skirt_not_reconstructed": 0,
+   "grid_replay_agrees_with_log": 4155,
+   "flown_guard": "shield",
+   "flown_replay_agrees_with_log": 4194,
+   "scale_changed": 151,
+   "building_brake_on_off_changed": 10,
+   "mode_changed": 39,
+   "side_changed": 26,
+   "mode_or_side_changed": 39,
+   "skirt_ticks_grid": 838,
+   "skirt_ticks_shield": 862,
+   "by_logged_mode": {
+    "clear": {
+     "replayed": 2794,
+     "decision_changed": 0
+    },
+    "hold": {
+     "replayed": 23,
+     "decision_changed": 4
+    },
+    "near": {
+     "replayed": 516,
+     "decision_changed": 10
+    },
+    "skirt": {
+     "replayed": 862,
+     "decision_changed": 25
+    }
+   }
+  },
+  {
+   "run": "agx_onepath_shield_05",
+   "ticks_logged": 4196,
+   "ticks_replayed": 4187,
+   "skirt_reconstructed": 799,
+   "skirt_not_reconstructed": 9,
+   "grid_replay_agrees_with_log": 4141,
+   "flown_guard": "shield",
+   "flown_replay_agrees_with_log": 4186,
+   "scale_changed": 149,
+   "building_brake_on_off_changed": 9,
+   "mode_changed": 45,
+   "side_changed": 25,
+   "mode_or_side_changed": 45,
+   "skirt_ticks_grid": 778,
+   "skirt_ticks_shield": 799,
+   "by_logged_mode": {
+    "clear": {
+     "replayed": 2898,
+     "decision_changed": 0
+    },
+    "hold": {
+     "replayed": 21,
+     "decision_changed": 4
+    },
+    "near": {
+     "replayed": 469,
+     "decision_changed": 18
+    },
+    "skirt": {
+     "replayed": 799,
+     "decision_changed": 23
+    }
+   }
+  }
+ ],
+ "total": {
+  "ticks_replayed": 20971,
+  "skirt_reconstructed": 3963,
+  "skirt_not_reconstructed": 9,
+  "grid_replay_agrees_with_log": 20733,
+  "flown_replay_agrees_with_log": 20965,
+  "scale_changed": 727,
+  "building_brake_on_off_changed": 62,
+  "mode_changed": 236,
+  "side_changed": 146,
+  "mode_or_side_changed": 238,
+  "skirt_ticks_grid": 3847,
+  "skirt_ticks_shield": 3963,
+  "by_logged_mode": {
+   "clear": {
+    "replayed": 14520,
+    "decision_changed": 2
+   },
+   "hold": {
+    "replayed": 84,
+    "decision_changed": 16
+   },
+   "near": {
+    "replayed": 2404,
+    "decision_changed": 88
+   },
+   "skirt": {
+    "replayed": 3963,
+    "decision_changed": 132
+   }
+  }
+ }
+}

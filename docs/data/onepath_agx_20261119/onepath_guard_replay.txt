@@ -1,0 +1,11 @@
+agx_onepath_shield_01: replayed 4196/4196 ticks (865 skirt reconstructed, 0 not); flew shield, its replay = logged mode on 4193; decision (mode or side) changed 56, building brake on/off changed 8, skirt ticks grid 840 -> shield 865
+agx_onepath_shield_02: replayed 4198/4198 ticks (841 skirt reconstructed, 0 not); flew shield, its replay = logged mode on 4198; decision (mode or side) changed 39, building brake on/off changed 7, skirt ticks grid 821 -> shield 841
+agx_onepath_shield_03: replayed 4195/4195 ticks (596 skirt reconstructed, 0 not); flew shield, its replay = logged mode on 4194; decision (mode or side) changed 59, building brake on/off changed 28, skirt ticks grid 570 -> shield 596
+agx_onepath_shield_04: replayed 4195/4195 ticks (862 skirt reconstructed, 0 not); flew shield, its replay = logged mode on 4194; decision (mode or side) changed 39, building brake on/off changed 10, skirt ticks grid 838 -> shield 862
+agx_onepath_shield_05: replayed 4187/4196 ticks (799 skirt reconstructed, 9 not); flew shield, its replay = logged mode on 4186; decision (mode or side) changed 45, building brake on/off changed 9, skirt ticks grid 778 -> shield 799
+ALL 5 runs: replayed 20971 ticks (9 skirt ticks not reconstructed); the flown guard's replay = logged mode on 99.97% (flew: ['shield'])
+  shield field vs grid scan: building brake on/off differs on 62 (0.30%), guard scale on 727 (3.47%), decision (mode or sidestep side) on 238 (1.13%); skirt ticks 3847 -> 3963
+  logged clear: 2/14520 decisions differ (0.01%)
+  logged hold: 16/84 decisions differ (19.05%)
+  logged near: 88/2404 decisions differ (3.66%)
+  logged skirt: 132/3963 decisions differ (3.33%)
