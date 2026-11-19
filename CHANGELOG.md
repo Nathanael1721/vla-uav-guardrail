@@ -16,10 +16,33 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
-## [0.6.0] — 2026-11-19
+### 2026-11-19 (pab3, prefix A/B on the new clearance horizon) — the prefix A/B re-flown on hil at 1239619: P0 escape 0, fail-safe 15/15 under the adopted reading, slowest tick 18.10 ms; the corridor-drift-out RTL of pab2 did not recur
 
-Release for the final hil smoke (WP4-14): every dated entry below, back to
-0.5.1, ships in it.
+#### Flown
+- pab3 (hil, 1239619, profile `prefix_ab`, 33 missions, 4500 s;
+  docs/data/kpi_prefix_ab_20261119/): the re-fly of the prefix-on arms the
+  2026-11-17 entry owed, on the Shield that sizes the clearance horizon for
+  the ArduPilot vehicle's response. The pilot is the hand-written
+  CSP-consuming adapter (guardrail.prefix_consumer), not a learned VLA.
+  - KPIs, 33 episodes, all KPI-grade: P0 escapes 0 on 2141 P0 ticks
+    (passthrough null 0.312); tick p99 14.7 / max 18.10 ms, action receipt
+    to setpoint p99 14.8 / max 36.92 ms, 0 of 15783 ticks over 100 ms;
+    fail-safe 15/15 under the adopted reading r2 (Wilson 95 % low 0.796),
+    12/15 as flown (the 3 nfz-head-on prefix-off runs end in RTL, as on pab1
+    and pab2).
+  - A/B, on vs off: mission success 0.800 vs 0.600; repairs per episode
+    2.333 vs 130.400 (A/A largest pair 0); mean repair magnitude 0.000 vs
+    9.380 m/s; mean time to safe 4.830 vs 4.833 s (A/A 0.096 s).
+  - Against pab2: corridor-drift-out prefix-on 4/4 success with 0 repairs
+    (pab2 3/4: pab2_011 ended in RTL, "no operator converged"). One campaign
+    does not show which change removed it; it was not reproduced in 4
+    flights.
+  - Track videos `<run>/<run>_track.mp4` for the 33 runs.
+
+#### Changed
+- The three 2026-11-19 sections for rel060, X-11 and WP1-07 moved from
+  [0.6.0] to [Unreleased]: they record flights and changes made after the
+  v0.6.0 tag (a85dc91).
 
 ### 2026-11-19 (WP1-07 distance_envelope flown on hil; clearance on a lagging vehicle) — the first hil flight of the distance_envelope entered both envelopes' corners and ended one lane in a false RTL; the clearance horizon is now sized for the ArduPilot vehicle's response and the edge repair converges; re-flown, both lanes pass
 
@@ -176,6 +199,11 @@ Release for the final hil smoke (WP4-14): every dated entry below, back to
   "no flight log". tests/test_replay_at_revision.py 17/17 (the new test
   fails without the fix). Full CI 183/183 in the worktree (d3737f2) and in
   the lab checkout (8e36998).
+
+## [0.6.0] — 2026-11-19
+
+Release for the final hil smoke (WP4-14): every dated entry below, back to
+0.5.1, ships in it.
 
 ### 2026-11-19 (wf21, code) — the open rows' code side: MSL readers, one evaluation path, WGS84-only flights, one body-frame boundary, replay at the flown revision, people from the feed, a prefix for a text-reading VLA
 
