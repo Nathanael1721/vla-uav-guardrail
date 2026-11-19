@@ -5691,14 +5691,27 @@ GAZEBO_FUNCTIONAL_WHY = (
     "whose 03-simulation/dual-rail.md gives the functional rail KPI runs at "
     "sim_speedup=1")
 # The grant's per-episode bundle name (`episode-<UTC>--<cell>--seed<n>`,
-# Episode.dir_name) is written by the headless backend only (write_bundle).
-# A rail mission's bundle is demo/out/<tag>/<tag>.replay.tar.gz; the sweep
-# records the grant's name beside it as a label, which names no file (WP4-11
-# stays open), and its <UTC> is the sweep's start, not the episode's.
+# Episode.dir_name). Since 2026-11-18 (write_rail_episode_bundle) a flown rail
+# episode is written under it too, in the campaign's folder, with the grant's
+# six file names, unless --no-bundles; the run folder demo/out/<tag> keeps its
+# own files and <tag>.replay.tar.gz. Its <UTC> is the sweep's start, not the
+# episode's. (Until 2026-11-19 this note still said no file of the name was
+# written on the rail.)
 GRANT_EPISODE_NAME_NOTE = (
-    "a name only: no file of this name is written on the rail (its bundle is "
-    "the run folder's <tag>.replay.tar.gz); <UTC> is the sweep's start stamp; "
-    "WP4-11's per-episode bundle naming stays open")
+    "after the flight the episode's bundle is written under this name in the "
+    "campaign's folder, with the grant's six file names (manifest.json, "
+    "policy_bundle.tar.gz, episode.bag2, shield_audit.jsonl, "
+    "harness_events.jsonl, kpi.json); the run folder keeps its own files and "
+    "<tag>.replay.tar.gz; <UTC> is the sweep's start stamp")
+GRANT_EPISODE_NAME_NOTE_NO_BUNDLES = (
+    "a name only (--no-bundles): no file of this name is written; the run "
+    "folder keeps its own files and <tag>.replay.tar.gz; <UTC> is the sweep's "
+    "start stamp")
+
+
+def grant_episode_name_note(no_bundles: bool) -> str:
+    """What the grant's episode name stands for on a rail campaign."""
+    return GRANT_EPISODE_NAME_NOTE_NO_BUNDLES if no_bundles else GRANT_EPISODE_NAME_NOTE
 # Wall seconds a desktop mission spends outside its flight, for the dry run's
 # estimate only: gz sim 6, SITL 8, router 3, MAVROS 10, bag 2 (the sleeps in
 # sitl/run_ros2_demo.sh), plus take-off, the home check, the replay pack and
@@ -5783,8 +5796,9 @@ def sitl_plan(episodes, defaults, physics: str = "sitl", sim_speedup: float = 1.
     episode, the mission it would be - tag, SITL_HOME, the environment and
     command run_sitl would launch and the run folder and replay bundle the
     rail writes - or why it is refused. `grant_episode_name` is the grant's
-    per-episode name (`episode-<UTC>--<cell>--seed<n>`, Episode.dir_name), a
-    label only: the rail writes no file of that name (GRANT_EPISODE_NAME_NOTE).
+    per-episode name (`episode-<UTC>--<cell>--seed<n>`, Episode.dir_name),
+    where the episode's bundle is written after the flight unless
+    --no-bundles (grant_episode_name_note).
     Needs neither WSL nor Gazebo; writes nothing."""
     check_rail_physics("sitl", physics, sim_speedup)
     plan = []
@@ -5827,9 +5841,10 @@ def sitl_plan(episodes, defaults, physics: str = "sitl", sim_speedup: float = 1.
 
 
 def print_sitl_plan(plan: list[dict], physics: str = "sitl",
-                    sim_speedup: float = 1.0) -> None:
+                    sim_speedup: float = 1.0, no_bundles: bool = False) -> None:
     """The dry run's listing: every mission with its environment, command,
-    run folder and the grant's episode name (a label, no file), every
+    run folder and the grant's episode name (its bundle's folder, written
+    after the flight; a label only with --no-bundles), every
     refusal with its reason, the counts and an estimate of the wall time
     (the flights' caps - the Shield node's mission cap is in wall seconds -
     plus RAIL_MISSION_OVERHEAD_S each: an upper estimate, not a
@@ -5849,15 +5864,16 @@ def print_sitl_plan(plan: list[dict], physics: str = "sitl",
                                        or "(none)"))
         print(f"       command    {shlex.join(p['cmd'])}")
         print(f"       run folder {p['run_folder']}  (replay {p['replay_bundle']})")
-        print(f"       grant name {p['grant_episode_name']}  (a name only: no file of "
-              f"this name is written)")
+        print(f"       grant name {p['grant_episode_name']}  "
+              + ("(a name only: --no-bundles)" if no_bundles else
+                 "(the episode bundle, written after the flight)"))
     refused = [p for p in plan if not p["fly"]]
     if refused:
         print("\n  refused:")
         for p in refused:
             print(f"  REF  {p['id']}  seed={p['seed']}\n       {p['refused']}")
     if fly:
-        print(f"\n  grant names: {GRANT_EPISODE_NAME_NOTE}")
+        print(f"\n  grant names: {grant_episode_name_note(no_bundles)}")
     # The cap is wall seconds (the node's time.monotonic), whatever the
     # simulator's speed: never divided by a speedup.
     flight = sum(p["rail_max_s"] for p in fly)
@@ -9650,7 +9666,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.sitl_dry_run:
             print_sitl_plan(sitl_plan(episodes, lib.defaults, rail_physics, rail_speedup,
                                       stamp),
-                            rail_physics, rail_speedup)
+                            rail_physics, rail_speedup, no_bundles=args.no_bundles)
             return 0
 
     # THE HIL RAIL (2026-11-06): one mission per scenario, SITL on this
@@ -9884,14 +9900,15 @@ def main(argv: list[str] | None = None) -> int:
                 rows, extra = got
                 # Where the rail wrote this episode (its manifest, bag, audit,
                 # kpi.json and signed replay bundle, <tag>.replay.tar.gz) and,
-                # as a label only, the grant's per-episode name, which no file
-                # on the rail carries (GRANT_EPISODE_NAME_NOTE; 2026-11-17).
+                # the grant's per-episode name, the folder its six-name bundle
+                # is written to after the flight unless --no-bundles
+                # (grant_episode_name_note; 2026-11-17, bundles 2026-11-18).
                 common["run"] = f"demo/out/{sitl_run_tag}"
                 common["mission_tag"] = sitl_run_tag
                 common["replay_bundle"] = (f"demo/out/{sitl_run_tag}/"
                                            f"{sitl_run_tag}.replay.tar.gz")
                 common["grant_episode_name"] = ep.dir_name(stamp)
-                common["grant_episode_name_note"] = GRANT_EPISODE_NAME_NOTE
+                common["grant_episode_name_note"] = grant_episode_name_note(args.no_bundles)
                 if rail_physics == "gazebo":
                     common["functional_only"] = True
                 policy = spec.policy.load(ROOT)

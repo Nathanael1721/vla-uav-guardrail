@@ -4508,13 +4508,15 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
     for cell in ("nfz-head-on", "nfz-head-on-control", "speed-cap", "altitude-floor-recovery",
                  "corridor-along", "time-window-switch-event"):
         assert f"FLY  gzsweep_{cell}--seed1001  {cell}  seed=1001" in out, cell
-        assert re.search(rf"grant name episode-\S+Z--{re.escape(cell)}--seed1001  \(a name "
-                         rf"only: no file of this name is written\)\n", out), cell
+        assert re.search(rf"grant name episode-\S+Z--{re.escape(cell)}--seed1001  \(the "
+                         rf"episode bundle, written after the flight\)\n", out), cell
         assert (f"run folder demo/out/gzsweep_{cell}--seed1001  (replay demo/out/gzsweep_"
                 f"{cell}--seed1001/gzsweep_{cell}--seed1001.replay.tar.gz)") in out, cell
     assert "wsl bash sitl/run_ros2_demo.sh off '' --tag gzsweep_nfz-head-on-control" in out
     assert "grant names: " + S.GRANT_EPISODE_NAME_NOTE in out
-    assert "WP4-11's per-episode bundle naming stays open" in out
+    # since 2026-11-18 the rail writes the episode's bundle under that name
+    assert "WP4-11's per-episode bundle naming stays open" not in out
+    assert "the grant's six file names" in out
     assert "bundle     " not in out
     # The estimate: the caps are wall seconds (the node's clock), summed
     # as they are, plus the overhead per mission.
@@ -4760,7 +4762,7 @@ def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
     assert ep["run"] == "demo/out/gzsweep_speed-cap--seed1001" and ep["functional_only"]
     assert re.fullmatch(r"episode-\S+Z--speed-cap--seed1001", ep["grant_episode_name"]), ep
     assert ep["grant_episode_name_note"] == S.GRANT_EPISODE_NAME_NOTE
-    assert "no file of this name is written" in ep["grant_episode_name_note"]
+    assert "the grant's six file names" in ep["grant_episode_name_note"]
     assert ep["replay_bundle"] == ("demo/out/gzsweep_speed-cap--seed1001/"
                                    "gzsweep_speed-cap--seed1001.replay.tar.gz")
     assert "episode_bundle_name" not in ep
