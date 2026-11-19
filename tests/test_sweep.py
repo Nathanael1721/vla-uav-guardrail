@@ -3057,6 +3057,59 @@ def _hil_campaign(argv, td: Path, **rig_kw):
     return rc, doc, rigs[0] if rigs else None
 
 
+class _RigMissingBundle(_FakeRig):
+    """A rig whose Orin lacks the policy bundles (msl_dem_hil, 2026-11-19)."""
+
+    def missing_files(self, rels):
+        self.calls.append(("missing_files", list(rels)))
+        return [r for r in rels if r.startswith("bundles/")]
+
+
+def test_a_mission_whose_files_are_not_on_the_orin_is_refused_before_sitl_starts():
+    """run_hil asks the rig which of the node's --bundle / --ground files the
+    Orin lacks before anything starts: six msl_dem_hil missions (2026-11-19)
+    whose bundles were never copied read 'no events.jsonl (the mission never
+    started)' with ros2 launch exiting 0. Now each is an ERROR naming the
+    missing file, and SITL, MAVROS and the mission are never started."""
+    assert S.orin_input_files(["--bundle", "bundles/a.tar.gz", "--x", "1",
+                               "--ground=experiments/worlds/g.json"]) == [
+        "bundles/a.tar.gz", "experiments/worlds/g.json"]
+    assert S.orin_input_files(["--bundle"]) == []
+    saved = _FakeRig
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        cfg = td / "hil.json"
+        cfg.write_text(json.dumps({"store": str(td / "store"),
+                                   "bundles_dir": str(_signed_like_bundles(td))}),
+                       encoding="utf-8")
+        rigs = []
+        mk = S.make_hil_transport
+        S.make_hil_transport = lambda c: rigs.append(_RigMissingBundle(c)) or rigs[-1]
+        try:
+            _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
+                    "--out", str(td / "s.json"), "--no-bundles", "--only", "speed-cap",
+                    "--hil-campaign", "tst9"])
+        finally:
+            S.make_hil_transport = mk
+            for d in (ROOT / S.CAMPAIGN_DIR).glob("tst9*"):
+                shutil.rmtree(d, ignore_errors=True)
+        doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
+    (r,) = [r for r in doc["results"] if r["id"] == "speed-cap"]
+    assert r["status"] == "error" and "not on the Orin" in r["error"], r
+    assert "bundles/" in r["error"] and "never started" not in r["error"], r
+    kinds = [c[0] for c in rigs[0].calls]
+    assert kinds == ["missing_files"], kinds
+    assert _FakeRig is saved
+    # the real transport asks one ssh and reads back the names it echoed
+    tr = S.SubprocessTransport.__new__(S.SubprocessTransport)
+    tr.cfg = S.HilConfig()
+    sent = []
+    tr._ssh = lambda cmd, t: (sent.append(cmd) or (0, "bundles/b.tar.gz\nnoise\n"))
+    assert tr.missing_files(["bundles/a.tar.gz", "bundles/b.tar.gz"]) == ["bundles/b.tar.gz"]
+    assert "[ -f bundles/a.tar.gz ] || echo bundles/a.tar.gz" in sent[0], sent
+    assert tr.missing_files([]) == [] and len(sent) == 1
+
+
 def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
     """--backend hil end to end on a fake rig: per flyable scenario SITL is
     restarted at its SITL_HOME, its files go to the Orin, MAVROS restarts,

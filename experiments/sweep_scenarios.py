@@ -6231,6 +6231,20 @@ class SubprocessTransport:
             raise RuntimeError(f"scp to the Orin failed ({r.returncode}): "
                                f"{(r.stderr or r.stdout)[-300:]}")
 
+    def missing_files(self, rels: list[str]) -> list[str]:
+        """Which of these paths (relative to the Orin's checkout) are not
+        files there. The mission container mounts the checkout: a --bundle
+        or --ground it lacks makes the Shield node die before its first
+        event while `ros2 launch` exits 0 (msl_dem_hil, 2026-11-19: six
+        missions read 'no events.jsonl' for bundles never copied over)."""
+        if not rels:
+            return []
+        tests = "; ".join(f"[ -f {shlex.quote(r)} ] || echo {shlex.quote(r)}" for r in rels)
+        rc, out = self._ssh(f"cd {self.cfg.remote_root} && {{ {tests}; }}", 60)
+        if rc != 0:
+            raise RuntimeError(f"checking files on the Orin failed ({rc}): {out[-300:]}")
+        return [ln.strip() for ln in out.splitlines() if ln.strip() in rels]
+
     def restart_mavros(self) -> None:
         rc, out = self._ssh(f"cd {self.cfg.remote_root} && {self.cfg.compose()} "
                             f"restart mavros", 180)
@@ -6440,6 +6454,19 @@ def record_desktop_revision(run_dir: Path, cfg: HilConfig | None = None, *,
         return None
 
 
+def orin_input_files(args: list[str]) -> list[str]:
+    """The files a hil mission's node arguments name for it to read on the
+    Orin: --bundle and --ground (both `--flag value` and `--flag=value`)."""
+    out: list[str] = []
+    for i, a in enumerate(args):
+        for flag in ("--bundle", "--ground"):
+            if a == flag and i + 1 < len(args):
+                out.append(args[i + 1])
+            elif a.startswith(flag + "="):
+                out.append(a.split("=", 1)[1])
+    return out
+
+
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
             campaign: str, k: int, store: Path, *, extra_args=None,
             max_s_add: float = 0.0, rail_battery: bool = False) -> dict:
@@ -6489,6 +6516,17 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
     stress_paths = write_stress_plan(plan) if plan is not None else None
     timeout = float(meta["rail_max_s"]) + cfg.mission_margin_s
+    # Before SITL starts: the files the node is told to read must be on the
+    # Orin (bundles/ is not in git; a missing one used to read as 'the
+    # mission never started'). A transport without the check skips it.
+    check = getattr(transport, "missing_files", None)
+    if check is not None:
+        missing = check(orin_input_files(args))
+        if missing:
+            raise RuntimeError(
+                f"mission {tag} not flown: not on the Orin under its checkout: "
+                + ", ".join(missing) + " (copy them there, e.g. scp bundles/<name> "
+                "<orin>:<checkout>/bundles/, then fly again)")
     try:
         if stress_paths is None:
             transport.restart_sitl(home)
