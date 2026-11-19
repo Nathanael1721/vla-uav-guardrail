@@ -152,6 +152,7 @@ import argparse
 import json
 import math
 import re
+import struct
 import sys
 import time
 from pathlib import Path
@@ -644,6 +645,11 @@ def policy_ceiling_m(policy, fallback_m: float | None = None, *, ground=None,
     return None, "no altitude_envelope and no mission"
 
 
+def as_float32(x: float) -> float:
+    """`x` as an autopilot parameter holds it (IEEE float32, nearest)."""
+    return struct.unpack("<f", struct.pack("<f", float(x)))[0]
+
+
 def fence_alt_plan(policy_ceiling: float | None, fence_alt_max: float | None,
                    headroom_m: float = FENCE_ALT_HEADROOM_M) -> dict:
     """Is the autopilot's altitude fence above every altitude the policy
@@ -661,7 +667,11 @@ def fence_alt_plan(policy_ceiling: float | None, fence_alt_max: float | None,
     if fence_alt_max is None:
         return {"ok": False, "raise_to": need,
                 "why": "FENCE_ALT_MAX was not read from the autopilot"}
-    if float(fence_alt_max) >= need:
+    # The autopilot holds parameters as IEEE float32 (MAVLink PARAM_VALUE):
+    # a FENCE_ALT_MAX set to `need` reads back as float32(need), up to half
+    # an ulp below it (86.725 -> 86.7249984741211, msl-dem-zone-ridge,
+    # 2026-11-19), which is the value set, not a stricter fence.
+    if float(fence_alt_max) >= min(need, as_float32(need)):
         return {"ok": True, "raise_to": None, "why": None}
     return {"ok": False, "raise_to": need,
             "why": (f"FENCE_ALT_MAX {float(fence_alt_max):g} m is below the "

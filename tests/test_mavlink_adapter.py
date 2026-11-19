@@ -344,6 +344,20 @@ def test_a_zero_fence_alt_max_is_read_as_zero_not_replaced_by_a_default():
     assert A.fence_alt_plan(20.0, None)["ok"] is False
 
 
+def test_a_raised_fence_read_back_as_float32_is_not_stricter_than_the_policy():
+    """msl-dem-zone-ridge (2026-11-19): ceiling 81.725 m, FENCE_ALT_MAX set to
+    86.725 read back 86.7249984741211 (float32) and the run was recorded
+    stricter_than_policy. The value read back is the value set."""
+    need = 81.72500000000002 + A.FENCE_ALT_HEADROOM_M
+    back = A.as_float32(need)
+    assert back < need and back == 86.7249984741211, back
+    assert A.fence_alt_plan(81.72500000000002, back)["ok"] is True
+    # a fence a float32 step lower is still stricter
+    low = A.as_float32(back - 1e-5)
+    assert low < back and A.fence_alt_plan(81.72500000000002, low)["ok"] is False
+    assert A.fence_alt_plan(81.72500000000002, 86.0)["raise_to"] == need
+
+
 def test_only_the_modes_the_fsm_can_ask_for_are_forwarded():
     """The adapter used to forward ANY string on /shield/mode_request."""
     for m in ("GUIDED", "loiter", " RTL ", "LAND"):
