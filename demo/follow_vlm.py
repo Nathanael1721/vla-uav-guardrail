@@ -2384,6 +2384,36 @@ class FenceGuard:
     (module note at `clearance`). The fence stand-off and brake distances
     are the controller's own planning distances (--fence-standoff,
     --fence-brake), not rule thresholds.
+
+    THE STAND-OFF EDGE (2026-11-20). Inside a zone's stand-off gate() used
+    to return scale 0 for EVERY velocity: it seeded its forecast minimum with
+    the current distance, so once that was <= stand_off_m any speed held,
+    moving straight away from the zone and moving along it included. The
+    building half never had this flaw (it brakes only a forecast that comes
+    nearer than now). Flown on nfz3b_agx_hier_aerovla_wgs84_20261119 the
+    drone sat 2.62-3.00 m from nfz-north-street's margin ring for 403
+    consecutive ticks (40 s, t 79.8-120.0, fence_scale 0, cause "fence"),
+    under controller_follow with the car seen on every tick, while the car
+    drove about 100 m on and was lost (follow score 0.345). slide() offered
+    no sidestep: along the commanded aim (-7.7 deg, opening on the zone)
+    its probes 4/8/12 m ahead read 3.19/3.72/4.26 m, so the way ahead was
+    "clear" to slide() and "held" to gate(). An open-loop replay found 7 of
+    16 headings, straight along the street among them, that would have
+    skirted (docs/data/onepath_agx_20261119/diagnosis_20261119.md section 2).
+
+    Now, inside the stand-off only the part of the command that closes on a
+    zone is taken out (`standoff_admit`, called by the flight loop before
+    gate()); backing off and running along the edge are kept, and gate()
+    holds only a velocity that still closes (`_gate_inside`). Where the
+    aircraft is inside more than one zone's stand-off (a corner, overlapping
+    zones) the command must close on none of them, and is zero when no single
+    edge allows that. Outside every stand-off nothing changed. What this does
+    NOT move: the keep-out itself. The rings are the Shield's (zone + 1 m
+    margin), the controller still never moves nearer a zone while inside its
+    3 m stand-off of the ring (4 m from the zone polygon), and from outside
+    still brakes to a stop at that line; the Shield downstream judges every
+    command against its P0 zones exactly as before. This only lets the
+    controller back off from, or move along, the band it was already in.
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
@@ -2654,6 +2684,14 @@ class FenceGuard:
         Returns (scale, distance_to_fence, blocked). `scale` is 1 when clear and
         0 at the stand-off, so along a steady approach it falls with distance.
 
+        Inside a zone's stand-off it is 0 (blocked) only for a velocity that
+        CLOSES on a zone (`_gate_inside`); one that backs off or runs along
+        the edge is not held by that zone (THE STAND-OFF EDGE, 2026-11-20,
+        class docstring). Until then it was 0 for every velocity there,
+        retreat included, and the flight loop's slide() - which judges the
+        way ahead clear - offered no sidestep either, so the aircraft could
+        not leave (nfz3b_agx_hier_aerovla_wgs84_20261119: 403 ticks).
+
         It keeps no memory between calls, so it is NOT smooth in time: beside a
         wall at 5.2 m a heading change of 2-4 deg flips it 1.00 -> 0.55 -> 0.27,
         and on citylife_redcar_nfz_20261013 it jumped by more than 0.5 in one
@@ -2712,8 +2750,11 @@ class FenceGuard:
         # It does close inside the stand-off somewhere ahead; how urgently is
         # still governed by how far away the fence is right now.
         if d <= self.stand_off_m:
-            self.last_cause = "fence"
-            return 0.0, d, True
+            # Already inside a zone's stand-off: hold only a velocity that
+            # CLOSES on a zone (THE STAND-OFF EDGE, class docstring). Until
+            # 2026-11-20 this returned 0 for every velocity, retreat included.
+            return self._gate_inside(ruler, x, y, ux, uy, horizon, d,
+                                     o_scale, o_blocked, o_cause)
         if d >= self.brake_m:
             self.last_cause = o_cause
             return min(1.0, o_scale), d, o_blocked
@@ -2723,6 +2764,136 @@ class FenceGuard:
         # relax the fence behaviour that the fenced policies are tested on.
         self.last_cause = "fence" if f_scale <= o_scale else "obstacle"
         return min(f_scale, o_scale), d, (k < 0.35) or o_blocked
+
+    # How much nearer than now a forecast point may read before a velocity
+    # counts as CLOSING on a zone whose stand-off the aircraft is inside:
+    # shapely's rounding, not a planning allowance. A velocity tangent to a
+    # straight edge keeps its distance to the last bit; one with any inward
+    # component the flight loop has already taken out (standoff_admit).
+    STANDOFF_CLOSING_TOL_M = 1e-3
+
+    def _standoff_normals(self, ruler, x: float, y: float) -> list:
+        """[(d_i, n_i)] for every zone whose stand-off the aircraft is inside
+        (its ring within stand_off_m, the same `<=` gate() holds at), in the
+        ruler's ring order. n_i is the unit direction OUT of that zone from
+        here: away from the ring's nearest point, or, from inside the ring,
+        toward its nearest edge. None where no direction is defined (exactly
+        on the ring's edge); the callers then hold, the conservative answer."""
+        from guardrail.geometry import nearest_boundary_point
+        out = []
+        for g, di in zip(ruler.rings, ruler.distances(x, y)):
+            if di > self.stand_off_m:
+                continue
+            qx, qy = nearest_boundary_point(g, x, y)
+            ex, ey = x - qx, y - qy
+            n = math.hypot(ex, ey)
+            if n < 1e-9:
+                out.append((di, None))
+                continue
+            if di <= 0.0:                 # inside the ring: out is toward the edge
+                ex, ey = -ex, -ey
+            out.append((di, (ex / n, ey / n)))
+        return out
+
+    @staticmethod
+    def _onto_cone(vx: float, vy: float, normals) -> tuple[float, float]:
+        """The velocity nearest (vx, vy) that closes on none of the zones
+        whose outward directions are `normals` (v . n >= 0 for every n).
+        Exact in 2-D: v itself when it already opens or runs along every
+        zone, else its projection onto ONE zone's edge when that closes on
+        no other, else zero - the corner of two zones (or a zone on each
+        side) where every way left closes on one of them. Zero is the most
+        restrictive answer and the one taken whenever no single edge serves."""
+        def ok(ax: float, ay: float) -> bool:
+            return all(ax * nx + ay * ny >= -1e-9 for nx, ny in normals)
+        if ok(vx, vy):
+            return vx, vy
+        best, best_d = (0.0, 0.0), math.hypot(vx, vy)
+        for nx, ny in normals:
+            dot = vx * nx + vy * ny
+            if dot >= 0.0:
+                continue
+            px, py = vx - dot * nx, vy - dot * ny
+            if ok(px, py) and -dot < best_d:
+                best, best_d = (px, py), -dot
+        return best
+
+    def standoff_admit(self, x: float, y: float, vx: float,
+                       vy: float) -> tuple[float, float, float]:
+        """The commanded velocity less its part that closes on a zone whose
+        stand-off the aircraft is inside (THE STAND-OFF EDGE, class
+        docstring). Returns (vx, vy, cut_mps), cut_mps the size of what was
+        taken out (0.0: unchanged).
+
+        Outside every zone's stand-off it returns the command untouched, so
+        the brake law there (gate()) is exactly what it was. Inside one, the
+        component INTO that zone is removed and the rest - backing off, or
+        running along the edge - is kept, so gate() then passes it. Inside
+        two or more at once (a corner, overlapping zones) every one of them
+        must be satisfied (`_onto_cone`): the result closes on none of them,
+        and is zero when no single edge serves. A position with no defined
+        way out (exactly on a ring's edge) holds.
+
+        The flight loop calls it before gate(); gate() stays a scalar brake
+        and still holds any velocity that closes (a caller that skips this
+        gets the old hold, never a lunge)."""
+        ruler = self._ruler()
+        if not ruler or math.hypot(vx, vy) < 1e-3 or not hasattr(ruler, "distances"):
+            return vx, vy, 0.0           # (a stand-in ruler: gate() then holds)
+        act = self._standoff_normals(ruler, x, y)
+        if not act:
+            return vx, vy, 0.0
+        if any(n is None for _, n in act):
+            return 0.0, 0.0, math.hypot(vx, vy)
+        px, py = self._onto_cone(vx, vy, [n for _, n in act])
+        if px == vx and py == vy:
+            return vx, vy, 0.0
+        return px, py, math.hypot(vx - px, vy - py)
+
+    def _gate_inside(self, ruler, x: float, y: float, ux: float, uy: float,
+                     horizon: float, d: float, o_scale: float, o_blocked: bool,
+                     o_cause):
+        """gate() inside a zone's stand-off (d <= stand_off_m): hold (0,
+        blocked, cause "fence") a velocity that CLOSES on any zone whose
+        stand-off the aircraft is inside - its direction has a component into
+        the zone, or a forecast point along it (the same samples gate() takes)
+        reads nearer that zone than now. A velocity that opens or runs along
+        every such zone is not held: the other zones get gate()'s ordinary
+        incursion brake, each by its own distance, and the buildings theirs;
+        the most urgent governs. "Closing, not merely inside", as the
+        building half has always judged (_obstacle_gate).
+
+        A ruler that cannot say which zone is where (no per-zone
+        `distances`: a stand-in, not the Shield's ZoneRuler) holds, the
+        answer before 2026-11-20."""
+        if not hasattr(ruler, "distances"):
+            self.last_cause = "fence"
+            return 0.0, d, True
+        so = self.stand_off_m
+        act = dict(enumerate(ruler.distances(x, y)))
+        normals = [n for _, n in self._standoff_normals(ruler, x, y)]
+        pts = [(x + ux * a, y + uy * a) for a in np.linspace(0.0, horizon, 8)[1:]]
+        ahead = [ruler.distances(px, py) for px, py in pts]
+        closing = any(n is None or ux * n[0] + uy * n[1] < -1e-9 for n in normals)
+        f_scale, f_blocked = 1.0, False
+        for i, di in act.items():
+            nearest_ahead = min(row[i] for row in ahead)
+            if di <= so:
+                closing = closing or nearest_ahead < di - self.STANDOFF_CLOSING_TOL_M
+            elif nearest_ahead <= so and di < self.brake_m:
+                # A zone whose stand-off the aircraft is NOT inside, entered
+                # ahead: gate()'s brake for it, by its own distance.
+                k = (di - so) / (self.brake_m - so)
+                f_scale = min(f_scale, float(np.clip(k, 0.0, 1.0)))
+                f_blocked = f_blocked or k < 0.35
+        if closing:
+            self.last_cause = "fence"
+            return 0.0, d, True
+        if f_scale < 1.0 and f_scale <= o_scale:
+            self.last_cause = "fence"
+        else:
+            self.last_cause = o_cause
+        return min(f_scale, o_scale), d, f_blocked or o_blocked
 
     # reach_m stays 14. The detour around follow_car_gap.yaml's fence is 15.0 m
     # once street furniture is in the obstacle map, so 14 misses it - but raising
@@ -2756,6 +2927,15 @@ class FenceGuard:
         which the forward direction is clear. That is exactly the question — how
         big is the detour — and the side with the shorter answer wins. On the gap
         policy the eastward answer is finite and the westward one is infinite.
+
+        INSIDE A ZONE'S STAND-OFF (2026-11-20) this function is unchanged and
+        conservative: a probe nearer than the stand-off is blocked whichever
+        way the aim runs, and a sidestep must end outside the band. It used to be the
+        aircraft's only way out of a hold there, and on
+        nfz3b_agx_hier_aerovla_wgs84_20261119 it found none for 403 ticks
+        (its probes along the opening aim read clear, so "no detour" while
+        gate() held). The way out is now the command itself, less its part
+        into the zone (FenceGuard.standoff_admit / _gate_inside).
         """
         speed = math.hypot(vx, vy)
         # The Shield's distances to the zones in force now (one ruler for
@@ -4770,7 +4950,8 @@ def final_report(metrics: dict, n_ticks: int, aborted) -> int:
 
 async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
                                pind=None, recorder=None, t0=None, query="",
-                               live=None) -> dict:
+                               live=None, exclude=(), feed_people=None,
+                               sleep_s: float = 0.1) -> dict:
     """Fly at cruise altitude, through the Shield, to a cell demo/landing.py
     calls landable, before the vertical descent.
 
@@ -4778,7 +4959,18 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
     citylife_redcar_trail2, on a parked car on citylife_ped_final. Returns what
     was chosen and whether it was reached, for metrics.json. `live` is the
     flight's Dashboard heartbeat (beat() only, memory only): up to 45 s of
-    this flight used to pass without one (review of 8035d0a, P1)."""
+    this flight used to pass without one (review of 8035d0a, P1).
+    `exclude`: places a descent was already refused at (_land's re-plan);
+    no site near one is chosen (landing.choose_site).
+
+    CLIMB FIRST (2026-11-20, review of f2ea619): below cruise_alt -
+    LAND_CLIMB_TOL_M the transit commands no horizontal motion, only the
+    climb (through the Shield). A re-plan starts wherever a refused descent
+    stopped, as low as the last metre, and the Shield's clearance map is the
+    6-14 m flight band: a horizontal leg at 1-4 m would cross parked cars,
+    kiosks and people no map holds. `climb_ticks` counts those ticks.
+    `feed_people`: the mission's person feed (LandingPeopleFeed), stepped on
+    every tick before the Shield judges it; None without a people rule."""
     live = live if live is not None else _NoBeat()
     info = {"enabled": True}
     try:
@@ -4795,7 +4987,8 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         kin = drone.get_ground_truth_kinematics()
         p = kin["pose"]["position"]
         x0, y0 = float(p["x"]), float(p["y"])
-        r = landing_mod.choose_site(maps, x0, y0, prefer="pavement" if citylife else None)
+        r = landing_mod.choose_site(maps, x0, y0, prefer="pavement" if citylife else None,
+                                    exclude=exclude)
     except Exception as exc:
         info["error"] = f"{type(exc).__name__}: {exc}"
         print(f"[land] *** no landing site chosen ({info['error']}); descending here")
@@ -4805,7 +4998,8 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
                 site=(None if r["site"] is None else [round(v, 2) for v in r["site"]]),
                 path_m=(None if r.get("path_m") is None else round(r["path_m"], 1)),
                 crosses_building=r.get("crosses_building"),
-                lanes_checked=r.get("lanes_checked"))
+                lanes_checked=r.get("lanes_checked"),
+                **({"excluded": r.get("excluded")} if exclude else {}))
     if r["site"] is None:
         print("[land] *** no landable cell within reach; descending here")
         return info
@@ -4813,7 +5007,7 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
     print(f"[land] landing site ({sx:.1f}, {sy:.1f}), {info['path_m']} m away"
           f"{'' if not r['reasons_rejected_here'] else ' - here: ' + '; '.join(r['reasons_rejected_here'][:2])}")
     shield.set_subject(None)
-    t_end, reached, n_touched = time.time() + timeout_s, False, 0
+    t_end, reached, n_touched, n_climb = time.time() + timeout_s, False, 0, 0
     while time.time() < t_end:
         kin = drone.get_ground_truth_kinematics()
         p = kin["pose"]["position"]
@@ -4825,8 +5019,13 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
             break
         live.beat(detail=f"flying to the landing site, {d:.0f} m")         # memory only
         v = min(3.0, 0.6 * d)
+        if up < args.cruise_alt - LAND_CLIMB_TOL_M:
+            v = 0.0                       # CLIMB FIRST: straight up to cruise
+            n_climb += 1
         vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
                            -args.climb_max, args.climb_max))
+        if feed_people is not None:
+            feed_people(float(p["x"]), float(p["y"]))
         # In the BODY frame at the aircraft's heading, as the mission loop
         # hands it (frames.filter_world_as_body, WP3-04 / ARCH-04).
         yaw_deg = math.degrees(quat_yaw(kin["pose"]["orientation"]))
@@ -4857,15 +5056,478 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         vn, ve, vd, yr = body_to_local_ned(e_body, yaw_deg)
         await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
                                            yaw_is_rate=True, yaw=yr)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(sleep_s)
     await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
     kin = drone.get_ground_truth_kinematics()
     p = kin["pose"]["position"]
     ok, why = landing_mod.is_landable(maps, float(p["x"]), float(p["y"]))
-    info.update(reached=reached, shield_touched=n_touched,
+    info.update(reached=reached, shield_touched=n_touched, climb_ticks=n_climb,
                 final=[round(float(p["x"]), 2), round(float(p["y"]), 2)],
                 final_landable=bool(ok), final_reasons=why)
     return info
+
+
+# ---------------------------------------------------------------------------
+# THE DESCENT GOES THROUGH THE SHIELD (2026-11-20).
+#
+# The flight to the landing site was filtered (filter_world_as_body, above),
+# but the vertical descent to 1.2 m and land_async went straight to the
+# simulator, and the HUD said so ("Shield not in this loop"). On 19 Nov two
+# of seven AGX flights (nfz3b_agx_hier_aerovla_wgs84_20261119, 132 contacts;
+# agx_onepath_shield_05, 6) listed a level pedestrian among their
+# after-mission contacts, at site (192, 30), where pedestrians walked within a
+# few metres of the descending aircraft (docs/data/onepath_agx_20261119/
+# diagnosis_20261119.md section 3).
+#
+# Now every descent command is handed to the same Shield, the same way, as the
+# transit's, and its verdict decides what flies:
+#
+#   pass     the Shield did not touch it: flown as emitted.
+#   floor    the ONLY objection is an altitude floor (an altitude_envelope's
+#            alt_min, or a corridor's floor: guardrail/holdpoint._floor_rules,
+#            the Shield's own list of the floors "a landing breaks wherever it
+#            is flown"). The descent is flown as asked. This is the one rule
+#            set aside, labelled and counted, exactly as the Shield's own Land
+#            sets it aside (holdpoint.choose_landing_site): no landing exists
+#            that does not cross the floor. A corridor counts as a floor only
+#            while the aircraft is inside its footprint and under its ceiling
+#            (`_corridor_floor_only`); its lateral and ceiling breaches refuse.
+#            Every other rule - the P0 zones, building clearance, stand-offs,
+#            people, the rest of a corridor - still decides.
+#   refused  any other rule objects, to the command or to where the aircraft
+#            already is: the Shield's repair flies (never the descent), and
+#            after LAND_REFUSE_TICKS such ticks in a row, or LAND_REFUSE_IN_WINDOW
+#            of the last LAND_REFUSE_WINDOW (a refusal that comes and goes),
+#            the descent is given up. _land then re-plans to the next landable
+#            site away from this one (landing.choose_site `exclude`) or, with
+#            none, reports and hovers. It never continues silently.
+#
+# The rate asked is the descent law clamped to the kinematic caps the Shield
+# holds in force (fsm.KinematicCaps.clamp), so the Shield's own climb cap is
+# never the reason a descent is refused. The people a distance_envelope over
+# people judges are fed to the Shield on every transit and descent tick, from
+# the mission's own feed (LandingPeopleFeed); without such a rule nothing is
+# fed and nothing changes. A descent that has not reached LAND_TOUCHDOWN_M
+# when its ticks run out ends "timed_out", like a refusal: land_async never
+# starts from altitude.
+#
+# Before the first descent command and again at the last metre the Shield's
+# own column test (holdpoint.landing_breaks: zones, stand-offs, clearance and
+# corridors from here to the ground and one lookahead past touchdown) must be
+# clear; land_async - the final touchdown, below LAND_TOUCHDOWN_M - runs only
+# when it is. Pedestrian-aware site CHOICE is NOT here (an open item); persons
+# near the column are also RECORDED (no decision reads the record).
+# ---------------------------------------------------------------------------
+
+LAND_TOUCHDOWN_M = 1.2      # below this land_async takes the aircraft down
+LAND_REFUSE_TICKS = 5       # refused descent ticks in a row before giving up (0.5 s)
+LAND_REFUSE_WINDOW = 20     # ...or this many of the last ticks...
+LAND_REFUSE_IN_WINDOW = 10  # ...holding this many refusals (a flickering refusal)
+LAND_MAX_REPLANS = 2        # sites tried after the first refused descent
+LAND_PERSON_RECORD_M = 10.0  # persons this near the column are recorded (no decision)
+LAND_CLIMB_TOL_M = 0.5      # the transit moves sideways only above cruise_alt - this
+
+
+def descent_speed(up: float) -> float:
+    """The descent rate (m/s, down) at height `up`: the law flown since the
+    descent was written, 0.15 / s of the height, within 0.6-2.0 m/s. The
+    descent loop clamps it to the Shield's caps in force (descent_ask)."""
+    return max(0.6, min(2.0, up * 0.15))
+
+
+def descent_ask(shield, up: float) -> Action4D:
+    """The descent command for height `up`: descent_speed, clamped to the
+    kinematic caps the Shield holds in force (Shield.kinematic_caps ->
+    fsm.KinematicCaps.clamp, the Shield's own clamp). Asking more than the
+    climb cap made the Shield's kinematic rule object on every tick and the
+    landing stalled (review of f2ea619: a 1.5 m/s cap with the descent at
+    1.5+ m/s above 10 m)."""
+    vz = -descent_speed(up)
+    caps = shield.kinematic_caps()
+    if caps is not None:
+        _vx, _vy, vz = caps.clamp(0.0, 0.0, vz)
+    return Action4D(vx=0.0, vy=0.0, vz_up=float(vz), yaw_rate=0.0)
+
+
+def _floor_ids(shield, state) -> set:
+    """The Shield's altitude floors a landing crosses wherever it is flown
+    (guardrail/holdpoint._floor_rules: hard enforced altitude_envelope
+    floors above the ground and corridor floors)."""
+    from guardrail.holdpoint import _floor_rules
+    return set(_floor_rules(shield, state))
+
+
+def _corridor_floor_only(shield, state, rule_id: str) -> bool:
+    """Can corridor `rule_id`'s objection to a STRAIGHT-DOWN descent from
+    `state` only be its floor? True when the aircraft is inside the
+    corridor's footprint and not above its ceiling now, judged with the
+    Shield's own corridor predicates (guardrail/shield.py corridor_offset,
+    corridor_wide, corridor_band_outside). A vertical command keeps the
+    forecast over this point, so the corridor can then object only to the
+    floor. The Shield reports every corridor breach as category "corridor"
+    (shield._check_corridor), floor, lateral and ceiling alike, so the
+    category cannot tell them apart (review of f2ea619). Anything this
+    cannot read refuses."""
+    from guardrail.shield import corridor_band_outside, corridor_offset, corridor_wide
+    try:
+        for row in shield.rule_status(state):
+            if row["id"] != rule_id:
+                continue
+            c = row["rule"]
+            if corridor_wide(c, corridor_offset(c, state.x, state.y)):
+                return False
+            return not corridor_band_outside(c, state.up)[1]
+    except Exception:                                           # noqa: BLE001
+        return False
+    return False
+
+
+def descent_verdict(shield, dec, state) -> tuple[str, list[str]]:
+    """("pass" | "floor" | "refused", the rule ids behind a refusal) for one
+    descent tick: `dec` the Shield's decision on the straight-down descent
+    command from `state`. An objection counts as the floor only when it is
+    an "altitude" violation of one of the Shield's floors (_floor_ids), or a
+    "corridor" violation of one of them while the aircraft is inside that
+    corridor's footprint and under its ceiling (_corridor_floor_only); any
+    other violation of the command, or any other hard rule the POSITION
+    already breaks (Shield.state_is_unsafe), refuses. A repair with no
+    violation behind it is the Shield's, and refuses too unless the only
+    rule the position breaks is a floor (Shield._floor_the_escape slows a
+    legal action from an illegal position)."""
+    floors = _floor_ids(shield, state)
+
+    def is_floor(v) -> bool:
+        if v.rule_id not in floors:
+            return False
+        if v.category == "altitude":
+            return True
+        return v.category == "corridor" and _corridor_floor_only(shield, state, v.rule_id)
+
+    others = [v.rule_id for v in dec.violations if not is_floor(v)]
+    pos = shield.hard_violations(shield.state_is_unsafe(state))
+    others += [v.rule_id for v in pos if not is_floor(v)]
+    if others:
+        return "refused", sorted(set(others))
+    if not dec.touched:
+        return "pass", []
+    floored = any(is_floor(v) for v in list(dec.violations) + list(pos))
+    if floored:
+        return "floor", []
+    return "refused", sorted({r.operator for r in dec.repairs}) or ["repair"]
+
+
+def column_breaks(shield, x: float, y: float, up: float) -> list[str]:
+    """The Shield's own landing test for the column under (x, y) from `up`
+    to the ground and one lookahead past touchdown (holdpoint.landing_breaks:
+    keep-out zones, stand-offs, clearance and corridors; floors aside, as
+    every landing must). [] = the column is clear."""
+    from guardrail.holdpoint import landing_breaks
+    edges = sorted({e for r in shield.ir.fences
+                    for e in (r.rule.altitude_floor_m, r.rule.altitude_ceiling_m)})
+    return list(landing_breaks(shield, float(x), float(y), float(up), 0.0,
+                               band_edges=edges))
+
+
+def persons_near(people, x: float, y: float, record_within: float = LAND_PERSON_RECORD_M):
+    """RECORD ONLY - no decision reads it. The persons the flight's person
+    feed lists within `record_within` metres of (x, y): [[distance, x, y],
+    ...] nearest first, or None without a feed. A level crowd
+    (level_actors.LevelActors) is polled now (its ground truth, the scoring
+    source); client figures are where they were last commanded. The record
+    distance is no rule's threshold (no people rule is judged here)."""
+    if people is None:
+        return None
+    if hasattr(people, "refresh"):
+        people.refresh()
+    out = []
+    for px, py in people_feed.figure_points(people.figures):
+        d = math.hypot(px - x, py - y)
+        if d <= record_within:
+            out.append([round(d, 2), round(px, 2), round(py, 2)])
+    return sorted(out)
+
+
+class LandingPeopleFeed:
+    """The mission's person feed, carried on into the transit to the landing
+    site and the descent (review of f2ea619). The mission loop hands the
+    Shield its people every tick (SimPeopleFeed -> people_feed.within ->
+    Shield.set_people) and nothing did after it, so a distance_envelope over
+    people judged the landing on the last mission tick's list: ages frozen,
+    culled round where the mission ended, nobody who walked in later.
+
+    Called with the aircraft's position on every transit and descent tick
+    and before each column test: the crowd is brought up to date
+    (people.update, as update_level_truth does in the mission), the memory
+    observes it (`sim`, the mission's SimPeopleFeed when there was one) and
+    the people within `range_m` of the aircraft go to the Shield. Built only
+    when the flight has a people memory, i.e. a people rule; the mission
+    refuses such a policy without a source, so the feed exists whenever the
+    rule does. `n_ticks` / `max_given` for the record."""
+
+    def __init__(self, shield, people, memory, range_m, t0: float, sim=None):
+        self.shield, self.people, self.memory = shield, people, memory
+        self.range_m, self.t0 = range_m, float(t0)
+        self.sim = sim
+        self.n_ticks = 0
+        self.max_given = 0
+
+    def __call__(self, x: float, y: float) -> int:
+        t = time.time() - self.t0
+        if self.people is not None:
+            self.people.update(t)
+        if self.sim is None:
+            self.sim = SimPeopleFeed(self.people, self.memory)
+        ppl = people_feed.within(self.sim.step(t), x, y, self.range_m)
+        self.shield.set_people(ppl)
+        self.n_ticks += 1
+        self.max_given = max(self.max_given, len(ppl))
+        return len(ppl)
+
+    def stats(self) -> dict:
+        return {"ticks_fed": self.n_ticks, "max_people_given": self.max_given}
+
+
+def descent_hud(recorder, pind, t0: float, query: str):
+    """The indicator painter for the descent (every 5th tick): the policy
+    rows idle (pind.ended: the mission is over and the aircraft is below the
+    band) and a banner saying what the Shield made of the descent."""
+    n = [0]
+    words = {"pass": "SHIELD CLEARS IT",
+             "floor": "SHIELD CLEARS IT, ALTITUDE FLOOR SET ASIDE",
+             "refused": "SHIELD REFUSES IT - HOLDING"}
+
+    def paint(kin, up, dec, verdict):
+        n[0] += 1
+        if (n[0] - 1) % 5:
+            return
+        p = kin["pose"]["position"]
+        st = State(x=float(p["x"]), y=float(p["y"]), up=up)
+        recorder.set_hud({
+            "t": time.time() - t0, "sep": None, "brg": 0.0, "fwd": 0.0,
+            "alt": up, "shield": verdict == "refused", "query": query,
+            "mode": "land", "mode_label": "LANDING - descending", "tier": None,
+            "policy": pind.ended(st, f"MISSION ENDED - DESCENDING TO LAND ({words[verdict]})",
+                                 quat_yaw(kin["pose"]["orientation"]), t=time.time() - t0),
+        }, None)
+    return paint
+
+
+async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
+                                  live=None, max_ticks: int = 600,
+                                  sleep_s: float = 0.1, feed_people=None) -> dict:
+    """The vertical descent to LAND_TOUCHDOWN_M, every command through the
+    Shield (THE DESCENT GOES THROUGH THE SHIELD, above). Returns its record:
+    `outcome` "cleared" (at or below LAND_TOUCHDOWN_M, the Shield's column
+    test clear: the caller may land), "column_blocked" (the column test
+    failed before the descent or at the last metre), "refused"
+    (LAND_REFUSE_TICKS refused ticks in a row, or LAND_REFUSE_IN_WINDOW of
+    the last LAND_REFUSE_WINDOW), "timed_out" (max_ticks flown and still
+    above LAND_TOUCHDOWN_M: never "cleared", so land_async never starts from
+    altitude) or "error"; the verdict counts, the rules behind each refusal,
+    the column tests and, record only, persons near the column.
+    `hud`: a callable(kin, up, dec, text) that paints the indicator.
+    `feed_people`: LandingPeopleFeed (None without a people rule), stepped
+    before every Shield call and column test."""
+    live = live if live is not None else _NoBeat()
+    shield.set_subject(None)
+    kin = drone.get_ground_truth_kinematics()
+    p = kin["pose"]["position"]
+    x0, y0, up0 = float(p["x"]), float(p["y"]), -float(p["z"])
+    rec = {"start": [round(x0, 2), round(y0, 2), round(up0, 2)],
+           "verdicts": {"pass": 0, "floor": 0, "refused": 0},
+           "refused_by": {}, "ticks": 0, "floor_set_aside": None}
+    # Persons near the column: a RECORD, read by nothing (pedestrian-aware
+    # landing is an open item, not this change).
+    try:
+        near0 = persons_near(people, x0, y0)
+    except Exception as exc:                                    # noqa: BLE001
+        near0 = f"{type(exc).__name__}: {exc}"
+    rec["persons_near_column"] = {
+        "record_only": True, "decision": None, "within_m": LAND_PERSON_RECORD_M,
+        "source": (None if people is None else
+                   "level actor poll (simulator ground truth)"
+                   if hasattr(people, "refresh") else
+                   "client figures (commanded positions)"),
+        "at_descent_start": near0}
+    try:
+        if feed_people is not None:
+            feed_people(x0, y0)
+        rec["floor_set_aside"] = sorted(_floor_ids(shield, State(x=x0, y=y0, up=up0)))
+        rec["column_at_start"] = column_breaks(shield, x0, y0, up0)
+    except Exception as exc:                                    # noqa: BLE001
+        rec.update(outcome="error", error=f"column test: {type(exc).__name__}: {exc}")
+        return rec
+    if rec["column_at_start"]:
+        print(f"[land] *** the Shield refuses the column at ({x0:.1f}, {y0:.1f}): "
+              f"{', '.join(rec['column_at_start'])}; not descending here")
+        rec["outcome"] = "column_blocked"
+        await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+        return rec
+    refused_run = 0
+    recent: list[bool] = []          # the last LAND_REFUSE_WINDOW ticks: refused?
+    x, y, up = x0, y0, up0
+    for _k in range(max_ticks):
+        kin = drone.get_ground_truth_kinematics()
+        p = kin["pose"]["position"]
+        x, y, up = float(p["x"]), float(p["y"]), -float(p["z"])
+        live.beat(detail=f"descending ({up:.0f} m)")                  # memory only
+        if up <= LAND_TOUCHDOWN_M:
+            break
+        yaw_deg = math.degrees(quat_yaw(kin["pose"]["orientation"]))
+        st = State(x=x, y=y, up=up, yaw_deg=yaw_deg)
+        try:
+            if feed_people is not None:
+                feed_people(x, y)
+            ask = descent_ask(shield, up)
+            dec, _, e_body = filter_world_as_body(shield, st, ask)
+            verdict, why = descent_verdict(shield, dec, st)
+        except Exception as exc:                                # noqa: BLE001
+            # Fail-safe: a Shield that cannot judge the descent has not
+            # cleared it. Hold, and give up as for a refusal.
+            dec, e_body = None, Action4D()
+            verdict, why = "refused", [f"error: {type(exc).__name__}"]
+        rec["ticks"] += 1
+        rec["verdicts"][verdict] += 1
+        recent = (recent + [verdict == "refused"])[-LAND_REFUSE_WINDOW:]
+        if hud is not None:
+            hud(kin, up, dec, verdict)
+        if verdict == "refused":
+            refused_run += 1
+            for r in why:
+                rec["refused_by"][r] = rec["refused_by"].get(r, 0) + 1
+            # The Shield's own answer flies, never the descent: its repair
+            # (it may climb or push away), or a stop when it could not judge.
+            vn, ve, vd, yr = body_to_local_ned(e_body, yaw_deg)
+            if vd > 0.0:
+                vd = 0.0                    # nothing goes DOWN on a refused tick
+            await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
+                                               yaw_is_rate=True, yaw=yr)
+            if refused_run >= LAND_REFUSE_TICKS or sum(recent) >= LAND_REFUSE_IN_WINDOW:
+                print(f"[land] *** the Shield refused the descent at "
+                      f"({x:.1f}, {y:.1f}, {up:.1f} m), {refused_run} ticks in a row, "
+                      f"{sum(recent)} of the last {len(recent)}: {', '.join(why)}")
+                rec.update(outcome="refused", at=[round(x, 2), round(y, 2), round(up, 2)],
+                           last_refusal=why)
+                await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+                return rec
+        else:
+            refused_run = 0
+            if verdict == "pass":
+                vn, ve, vd, yr = body_to_local_ned(e_body, yaw_deg)
+                await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
+                                                   yaw_is_rate=True, yaw=yr)
+            else:
+                # "floor": the descent as asked (straight down, NED +z).
+                await drone.move_by_velocity_async(0.0, 0.0, -ask.vz_up, duration=0.3)
+        await asyncio.sleep(sleep_s)
+    rec["end"] = [round(x, 2), round(y, 2), round(up, 2)]
+    if up > LAND_TOUCHDOWN_M:
+        # Out of ticks above the last metre: NOT cleared. land_async would fly
+        # the rest of the way down outside every velocity loop (review of
+        # f2ea619), so this ends like a refusal: stop, and _land re-plans or
+        # hovers.
+        print(f"[land] *** the descent ran out of ticks at {up:.1f} m "
+              f"({rec['verdicts']['refused']} refused); not landing from here")
+        rec.update(outcome="timed_out", at=[round(x, 2), round(y, 2), round(up, 2)])
+        await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+        return rec
+    # The last metre: land_async flies it outside any velocity loop, so the
+    # Shield clears the column first, from where the aircraft is.
+    try:
+        if feed_people is not None:
+            feed_people(x, y)
+        rec["column_at_last_metre"] = column_breaks(shield, x, y, up)
+    except Exception as exc:                                    # noqa: BLE001
+        rec.update(outcome="error", error=f"column test: {type(exc).__name__}: {exc}")
+        return rec
+    try:
+        rec["persons_near_column"]["at_last_metre"] = persons_near(people, x, y)
+    except Exception as exc:                                    # noqa: BLE001
+        rec["persons_near_column"]["at_last_metre"] = f"{type(exc).__name__}: {exc}"
+    if rec["column_at_last_metre"]:
+        print(f"[land] *** the Shield refuses the last metre at ({x:.1f}, {y:.1f}): "
+              f"{', '.join(rec['column_at_last_metre'])}")
+        rec["outcome"] = "column_blocked"
+        await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+        return rec
+    rec["outcome"] = "cleared"
+    return rec
+
+
+def _site_unusable(site: dict, refused_at) -> str | None:
+    """Why the descent must NOT start where a transit to a landing site
+    ended (_fly_to_landing_site's record), or None: the site was not
+    reached, the maps refuse the place it stopped, or it stopped within
+    landing.EXCLUDE_M of a place a descent was already refused (review of
+    f2ea619: a timed-out re-plan transit, held by the Shield near the
+    refused spot, used to descend there)."""
+    import landing as landing_mod
+    if not site.get("reached"):
+        return "the transit did not reach the site"
+    if site.get("final_landable") is False:
+        return "the maps refuse where it stopped: " + "; ".join(site.get("final_reasons") or [])
+    fin = site.get("final")
+    if fin is not None and any(math.hypot(fin[0] - rx, fin[1] - ry) <= landing_mod.EXCLUDE_M
+                               for rx, ry in refused_at):
+        return "it stopped beside a place a descent was refused"
+    return None
+
+
+async def _land(drone, shield, args, *, fly_to_site=None, first_site=None, people=None,
+                hud=None, live=None, sleep_s: float = 0.1,
+                feed_people=None) -> tuple[dict, bool]:
+    """Descend through the Shield (_descend_through_shield) and, where it is
+    refused, re-plan: fly (through the Shield, climbing to cruise first) to
+    the next landable site away from every refused one
+    (`fly_to_site(exclude)`, _fly_to_landing_site; None - no --land-site -
+    means no re-plan) and descend again, at most LAND_MAX_REPLANS times.
+    A descent starts only where the transit put the aircraft on a usable
+    site (_site_unusable); otherwise that place is excluded too and the next
+    site is tried, which counts as an attempt. `first_site`: the record of
+    the transit flown before _land (None: the descent starts where the
+    mission ended, as without --land-site; a first transit that found no
+    site at all keeps that). Returns (record, cleared): `cleared` True only
+    when the Shield cleared the last metre, the one case the caller may call
+    land_async. Otherwise the aircraft hovers where the Shield last left it
+    and the record says why - never a silent landing."""
+    attempts, refused_at = [], []
+    pending, first = first_site, True
+    while True:
+        why_not = None
+        if pending is not None:
+            no_site = not pending or pending.get("site") is None or pending.get("error")
+            if no_site and not first:
+                print("[land] *** no other landable site; hovering, not landing")
+                break
+            if not no_site:
+                why_not = _site_unusable(pending, refused_at)
+        if why_not is not None:
+            print(f"[land] *** not descending here: {why_not}")
+            fin = pending.get("final") or pending.get("start") or [math.nan, math.nan]
+            d = {"outcome": "site_unusable", "why": why_not,
+                 "at": [round(v, 2) for v in fin[:2]], "verdicts": {}}
+        else:
+            d = await _descend_through_shield(drone, shield, args, people=people, hud=hud,
+                                              live=live, sleep_s=sleep_s,
+                                              feed_people=feed_people)
+        attempts.append(d)
+        if d.get("outcome") == "cleared":
+            break
+        where = d.get("at") or d.get("end") or d.get("start")
+        refused_at.append(tuple(where[:2]))
+        first = False
+        if fly_to_site is None or len(attempts) > LAND_MAX_REPLANS:
+            break
+        pending = await fly_to_site(list(refused_at))
+        attempts[-1]["replan"] = pending
+    cleared = bool(attempts) and attempts[-1].get("outcome") == "cleared"
+    totals = {"pass": 0, "floor": 0, "refused": 0}
+    for a in attempts:
+        for k, v in a.get("verdicts", {}).items():
+            totals[k] = totals.get(k, 0) + v
+    return ({"attempts": attempts, "verdicts": totals, "cleared": cleared,
+             "outcome": attempts[-1].get("outcome"),
+             "refused_at": [[round(v, 2) for v in w] for w in refused_at]}, cleared)
 
 
 async def fly(args) -> int:
@@ -5269,6 +5931,7 @@ async def fly(args) -> int:
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
+    n_fence_cut = 0          # ticks inside a stand-off whose closing part was cut
     guard_hold_ticks = 0        # any hold: fence OR building
 
     presence = PresenceMonitor(args.object, args.colour_min)
@@ -7059,6 +7722,12 @@ async def fly(args) -> int:
             if args.orbit_speed and mode == "track":
                 cvx += -args.orbit_speed * math.sin(yaw)
                 cvy += args.orbit_speed * math.cos(yaw)
+            # Inside a zone's stand-off, take out only the part of the command
+            # that closes on it (FenceGuard.standoff_admit, THE STAND-OFF EDGE):
+            # backing off and moving along the edge stay. Until 2026-11-20 the
+            # whole command was held there (403 ticks on nfz3b_..._wgs84_20261119).
+            cvx, cvy, fcut = fence.standoff_admit(state.x, state.y, cvx, cvy)
+            n_fence_cut += int(fcut > 0.0)
             fscale, fdist, fblocked = fence.gate(state.x, state.y, cvx, cvy)
             gvx, gvy = cvx * fscale, cvy * fscale
             # Commit to a side at the BRAKE distance, not at the stand-off.
@@ -7255,6 +7924,9 @@ async def fly(args) -> int:
                 "fence_mode": fmode,
                 "fence_cause": fence.last_cause,
                 "fence_aim": fence_aim,
+                # m/s of the command taken out inside a zone's stand-off
+                # (FenceGuard.standoff_admit; 0.0: none)
+                "fence_cut": round(fcut, 3),
                 "trail": trail_row, "off_map": off_map,
                 "est": (None if estimator is None else
                         {"served": est_obs is not None,
@@ -7428,36 +8100,44 @@ async def fly(args) -> int:
         live.beat(progress=1.0, phase="landing", detail="mission over; landing")   # memory only
         grounder.stop()
         _hud_live = recorder is not None and pind is not None and pind_error is None
+        # The Shield's people after the mission: the mission's own feed, every
+        # transit and descent tick (LandingPeopleFeed); None without a people
+        # rule, when nothing is fed and nothing changes.
+        land_people = (None if people_mem is None else
+                       LandingPeopleFeed(shield, people, people_mem, people_range, t0,
+                                         sim=sim_people))
         if args.land_site:
             landing_info = await _fly_to_landing_site(
                 drone, shield, args, pind=pind if _hud_live else None,
                 recorder=recorder if _hud_live else None, t0=t0, query=args.object,
-                live=live)
-        for _k in range(600):
-            kin = drone.get_ground_truth_kinematics()
-            up = -kin["pose"]["position"]["z"]
-            live.beat(detail=f"descending ({up:.0f} m)")                      # memory only
-            if _hud_live and _k % 5 == 0:
-                # The descent is flown without the Shield and below the policy
-                # band by design; say so instead of leaving the last mission
-                # tick's verdicts on screen.
-                _p = kin["pose"]["position"]
-                _st = State(x=float(_p["x"]), y=float(_p["y"]), up=up)
-                recorder.set_hud({
-                    "t": time.time() - t0, "sep": None, "brg": 0.0, "fwd": 0.0,
-                    "alt": up, "shield": False, "query": args.object, "mode": "land",
-                    "mode_label": "LANDING - descending", "tier": None,
-                    "policy": pind.ended(_st, "MISSION ENDED - DESCENDING TO LAND (Shield not in this loop)",
-                                         quat_yaw(kin["pose"]["orientation"]),
-                                         t=time.time() - t0),
-                }, None)
-            if up <= 1.2:
-                break
-            await drone.move_by_velocity_async(
-                0.0, 0.0, max(0.6, min(2.0, up * 0.15)), duration=0.3)
-            await asyncio.sleep(0.1)
-        await (await drone.land_async())
-        drone.disarm()
+                live=live, feed_people=land_people)
+        # THE DESCENT GOES THROUGH THE SHIELD (2026-11-20, _land above): every
+        # descent command is filtered like the transit's; a refusal holds and
+        # re-plans (with --land-site) or reports; land_async only after the
+        # Shield clears the last metre. Until then this loop went straight to
+        # the simulator ("Shield not in this loop").
+        async def _to_next_site(exclude):
+            return await _fly_to_landing_site(
+                drone, shield, args, pind=pind if _hud_live else None,
+                recorder=recorder if _hud_live else None, t0=t0, query=args.object,
+                live=live, exclude=exclude, feed_people=land_people)
+
+        descent, _cleared = await _land(
+            drone, shield, args, fly_to_site=(_to_next_site if args.land_site else None),
+            first_site=(landing_info if args.land_site else None),
+            people=people,
+            hud=(descent_hud(recorder, pind, t0, args.object) if _hud_live else None),
+            live=live, feed_people=land_people)
+        landing_info["descent"] = descent
+        if land_people is not None:
+            landing_info["people_fed"] = land_people.stats()
+        if _cleared:
+            await (await drone.land_async())
+            drone.disarm()
+        else:
+            print(f"[land] *** NOT LANDED: the Shield did not clear a descent "
+                  f"({descent['outcome']}); the aircraft is left hovering")
+            await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
         drone.disable_api_control()
     except Exception as exc:
         # Recorded, not only printed: a flight that aborted must not leave a
@@ -7853,6 +8533,7 @@ async def fly(args) -> int:
         "nfz_hold_ticks": nfz_hold_ticks,
         "guard_hold_ticks": guard_hold_ticks,
         "fence_aim_ticks": n_fence_aim,
+        "fence_standoff_cut_ticks": n_fence_cut,
         # What the on-screen indicator showed: per-flight totals and how many
         # ticks each banner level was up (latched), so a video's claims can be
         # checked against the log. Its "held" is ticks with fence_mode "hold"

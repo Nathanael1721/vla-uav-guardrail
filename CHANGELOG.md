@@ -16,6 +16,57 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-20 (follow rail: stand-off edge, descent through the Shield) — FenceGuard no longer traps the aircraft inside a zone's stand-off; the landing descent is filtered by the Shield and land_async waits for its column test. Not flown yet
+
+#### Changed
+- FenceGuard (demo/follow_vlm.py), THE STAND-OFF EDGE: inside a zone's 3 m
+  stand-off `gate()` returned scale 0 for every velocity, retreat and motion
+  along the zone included, and `slide()` found no detour, so
+  nfz3b_agx_hier_aerovla_wgs84_20261119 sat 2.62-3.00 m from
+  nfz-north-street's margin ring for 403 ticks while the car drove 100 m on
+  (follow 0.345). Now the flight loop removes only the part of the command
+  that closes on a zone (`FenceGuard.standoff_admit`; in a corner or where
+  zones overlap, the command must close on none of them, else zero), and
+  `gate()` holds only a velocity that still closes. Outside every stand-off
+  nothing changed: a unit sweep of 18072 position/heading/speed cases is
+  identical to the old law. Open-loop replay
+  (`tools/standoff_edge_replay.py`, output in
+  docs/data/onepath_agx_20261119/standoff_edge_replay.json / .txt): of that
+  flight's 3458 non-skirt ticks whose command the log holds
+  (guard_in / fence_scale), 0 decisions change. On the 403 hold ticks the log
+  keeps no command (guard_in is 0), so it is rebuilt from the logged trail
+  direction and clear_aim at 1, 2 and 4 m/s; with those rebuilt commands
+  the OLD guard reproduces the logged hold on only 357 of 403 ticks (46
+  would have skirted), so the rebuilt commands are not the flown ones on at
+  least 46 ticks. The new guard lets all 403 rebuilt commands through, with
+  the inward part cut on 46. Not flown. New log field `fence_cut`, metric
+  `fence_standoff_cut_ticks`; `ZoneRuler.rings` / `.distances` (per-zone,
+  same measure).
+- Landing (demo/follow_vlm.py `_land`): every descent command goes through
+  the same Shield call as the transit (`filter_world_as_body`). The rate
+  asked is clamped to the Shield's climb cap in force
+  (`fsm.KinematicCaps.clamp`), so the cap never refuses it. The altitude
+  floor is the one rule set aside (the Shield's own Land list,
+  holdpoint._floor_rules: altitude envelopes, and a corridor's floor while
+  the aircraft is inside its footprint and under its ceiling), labelled and
+  counted. Any other objection (zones, clearance, stand-offs, people, a
+  corridor's sides or ceiling) holds the descent - nothing goes down on a
+  refused tick. After 5 refused ticks in a row, or 10 of the last 20, the
+  descent is given up; one that runs out of ticks above 1.2 m ends
+  "timed_out", never "cleared". Then `_land` re-plans to the next landable
+  site away from every refused place (`landing.choose_site(exclude=)`, at
+  most 2 re-plans), or reports with the aircraft left hovering. The transit
+  to a site climbs straight up to cruise before moving sideways, and a
+  descent starts only where the transit reached a site the maps accept, away
+  from refused places. land_async runs only after the Shield's column test
+  (holdpoint.landing_breaks) clears the last metre. On a policy with a
+  distance_envelope over people, the Shield is fed the mission's own person
+  feed on every transit and descent tick (`LandingPeopleFeed`; until this
+  entry it judged the last mission tick's list). Verdict counts in
+  metrics.json `landing.descent` (`landing.people_fed` with a people rule).
+  Persons near the column are also recorded (`persons_near_column`, record
+  only, no decision); pedestrian-aware site choice stays open.
+
 ### 2026-11-20 (frozen camera; exit 134 after a no-mission run) — a camera whose frames stop changing is named and ends the run; the detector thread is joined before run() returns
 
 #### Fixed

@@ -1,0 +1,109 @@
+{
+ "ticks_logged": 4189,
+ "fence_hold_ticks_logged": 428,
+ "hold_window_s": [
+  79.7,
+  120.0
+ ],
+ "hold_window_ticks": 403,
+ "hold_ticks": {
+  "all_fence_holds": {
+   "1.0": {
+    "before": {
+     "skirt": 70,
+     "hold": 358
+    },
+    "after": {
+     "skirt": 24,
+     "hold": 1,
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 358,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 0.947
+   },
+   "2.0": {
+    "before": {
+     "skirt": 70,
+     "hold": 358
+    },
+    "after": {
+     "skirt": 24,
+     "hold": 1,
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 358,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 1.894
+   },
+   "4.0": {
+    "before": {
+     "skirt": 70,
+     "hold": 358
+    },
+    "after": {
+     "skirt": 24,
+     "hold": 1,
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 358,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 3.788
+   }
+  },
+  "hold_window": {
+   "1.0": {
+    "before": {
+     "skirt": 46,
+     "hold": 357
+    },
+    "after": {
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 357,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 0.996
+   },
+   "2.0": {
+    "before": {
+     "skirt": 46,
+     "hold": 357
+    },
+    "after": {
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 357,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 1.992
+   },
+   "4.0": {
+    "before": {
+     "skirt": 46,
+     "hold": 357
+    },
+    "after": {
+     "near": 403
+    },
+    "before_agrees_with_logged_hold": 357,
+    "after_inward_part_cut": 46,
+    "after_mean_speed_when_not_held": 3.984
+   }
+  }
+ },
+ "other_ticks": {
+  "replayed": 3458,
+  "decision_same": 3458,
+  "decision_changed": 0,
+  "inside_a_stand_off": 2,
+  "examples": []
+ },
+ "run": "nfz3b_agx_hier_aerovla_wgs84_20261119",
+ "policy": "follow_car_citylife_nfz3b.yaml",
+ "citymap": "citymap_citylife",
+ "speeds_mps": [
+  1.0,
+  2.0,
+  4.0
+ ],
+ "aim_lookahead_m": 10.0
+}

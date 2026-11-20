@@ -485,9 +485,11 @@ class PolicyIndicator:
     def ended(self, state, text: str, yaw_rad: float | None = None,
               t: float | None = None) -> dict:
         """A snapshot for after the mission: every row idle and one plain
-        banner. The vertical descent and the landing are flown outside the
-        Shield and below the policy's altitude band, so the rows must not keep
-        showing the last mission tick's verdicts over them. Counts unchanged."""
+        banner. The vertical descent is flown below the policy's altitude band
+        (follow_vlm since 2026-11-20 hands each descent command to the Shield,
+        with the floor set aside, and says its verdict in the banner text; the
+        final touchdown is land_async), so the rows must not keep showing the
+        last mission tick's verdicts over them. Counts unchanged."""
         return {
             "t": t,
             "policy": f"{self.policy.policy_id} v{self.policy.version}",

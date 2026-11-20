@@ -147,7 +147,8 @@
 #          test_railvideo_*, test_recorder, test_track_truth.
 #        The city demo's perception and follow controller: test_camera_model,
 #          test_target_state, test_trail, test_search, test_landing,
-#          test_level_actors, test_voxel_map, test_replay_pipeline; and its
+#          test_landing_descent, test_level_actors, test_voxel_map,
+#          test_replay_pipeline; and its
 #          flight CLIs' option parsing (a negative X,Y value):
 #          test_demo_negative_xy.
 #        The VLA side: test_vla_* (backends, the backend table, the bridge,
@@ -849,6 +850,7 @@ jobs:
               tests/test_trail.py \
               tests/test_search.py \
               tests/test_landing.py \
+              tests/test_landing_descent.py \
               tests/test_level_actors.py \
               tests/test_voxel_map.py \
               tests/test_replay_pipeline.py \

@@ -629,6 +629,292 @@ def test_pedestrians_are_placed_on_the_street_they_were_chosen_for():
     assert not off, f"{len(off)} of {len(spots)} figures are not on street: {off}"
 
 
+# ---------------------------------------------------------------------------
+# THE STAND-OFF EDGE (2026-11-20).
+#
+# Inside a zone's stand-off gate() returned scale 0 for EVERY velocity,
+# retreat and motion along the zone included, and slide() offered no
+# sidestep. On nfz3b_agx_hier_aerovla_wgs84_20261119 that held the drone
+# 2.62-3.00 m from nfz-north-street's margin ring for 403 ticks (40 s) while
+# the car drove 100 m on and was lost (docs/data/onepath_agx_20261119/
+# diagnosis_20261119.md section 2). Now only the part of a command that
+# closes on a zone is taken out (FenceGuard.standoff_admit) and gate() holds
+# only a velocity that still closes. Outside every stand-off: unchanged.
+# ---------------------------------------------------------------------------
+
+class _ZonesGuard(FenceGuard):
+    """A FenceGuard whose keep-out MARGIN RINGS are given directly (shapely
+    polygons), measured by the Shield's ruler over them (ZoneRuler.of_rings)."""
+    zones: list = []
+
+    @property
+    def polys(self):
+        return self.zones
+
+
+def _rings_guard(*rings, stand_off_m=3.0, brake_m=12.0):
+    g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+                    brake_m=brake_m, stand_off_m=stand_off_m)
+    g.zones = list(rings)
+    return g
+
+
+# One ring to the north of the aircraft, its south edge at y = 3: from
+# (5, 0.35) the ring is 2.65 m away, inside the 3 m stand-off (the nfz3b hold).
+def _north_ring():
+    from shapely.geometry import box
+    return box(-50.0, 3.0, 50.0, 20.0)
+
+
+IN_BAND = (5.0, 0.35)
+
+
+def test_inside_the_stand_off_backing_off_is_not_held():
+    g = _rings_guard(_north_ring())
+    x, y = IN_BAND
+    for vx, vy in ((0.0, -2.0), (1.0, -2.0), (-1.5, -0.5)):
+        assert g.standoff_admit(x, y, vx, vy) == (vx, vy, 0.0), (vx, vy)
+        scale, dist, blocked = g.gate(x, y, vx, vy)
+        assert scale == 1.0 and not blocked, (vx, vy, scale, blocked)
+        assert abs(dist - 2.65) < 1e-9
+
+
+def test_inside_the_stand_off_moving_along_the_zone_is_not_held():
+    g = _rings_guard(_north_ring())
+    x, y = IN_BAND
+    for vx in (2.0, -2.0, 4.5):
+        assert g.standoff_admit(x, y, vx, 0.0) == (vx, 0.0, 0.0)
+        scale, _d, blocked = g.gate(x, y, vx, 0.0)
+        assert scale == 1.0 and not blocked, (vx, scale, blocked)
+
+
+def test_inside_the_stand_off_the_part_into_the_zone_is_removed():
+    g = _rings_guard(_north_ring())
+    x, y = IN_BAND
+    # Straight in: nothing is left, and gate() holds what is left.
+    vx, vy, cut = g.standoff_admit(x, y, 0.0, 2.0)
+    assert (vx, vy) == (0.0, 0.0) and abs(cut - 2.0) < 1e-12
+    scale, dist, blocked = g.gate(x, y, vx, vy)            # nothing left: a hold
+    assert blocked and abs(dist - 2.65) < 1e-9 and g.last_cause == "fence"
+    # Diagonal in: the inward part goes, the part along the edge stays.
+    vx, vy, cut = g.standoff_admit(x, y, 2.0, 2.0)
+    assert abs(vx - 2.0) < 1e-12 and abs(vy) < 1e-12 and abs(cut - 2.0) < 1e-12
+    assert g.gate(x, y, vx, vy)[0] == 1.0
+    # gate() itself still holds the whole diagonal: a caller that does not
+    # call standoff_admit gets the old hold, never a lunge into the zone.
+    scale, _d, blocked = g.gate(x, y, 2.0, 2.0)
+    assert scale == 0.0 and blocked and g.last_cause == "fence"
+
+
+def test_inside_the_ring_the_way_out_is_kept_and_deeper_is_cut():
+    """Past the margin (overshoot, wind): 0.5 m inside the north ring's
+    south edge. The normal there points OUT, toward that edge
+    (_standoff_normals' inside branch): the command toward the edge passes,
+    deeper in is cut and held, a diagonal keeps only its part along the edge.
+    Dropping or inverting the sign flip fails this; it failed nothing else
+    (review of f2ea619)."""
+    g = _rings_guard(_north_ring())
+    x, y = 5.0, 3.5
+    assert g._ruler().distance(x, y) == 0.0
+    assert g.standoff_admit(x, y, 0.0, -2.0) == (0.0, -2.0, 0.0)          # out
+    scale, _d, blocked = g.gate(x, y, 0.0, -2.0)
+    assert scale == 1.0 and not blocked
+    vx, vy, cut = g.standoff_admit(x, y, 0.0, 2.0)                       # deeper
+    assert (vx, vy) == (0.0, 0.0) and abs(cut - 2.0) < 1e-12
+    scale, _d, blocked = g.gate(x, y, 0.0, 2.0)
+    assert scale == 0.0 and blocked and g.last_cause == "fence"
+    vx, vy, _ = g.standoff_admit(x, y, 2.0, 2.0)                         # diagonal
+    assert abs(vx - 2.0) < 1e-12 and abs(vy) < 1e-12
+
+
+def test_admitted_commands_never_close_on_a_zone_inside_its_stand_off():
+    """The invariant behind the 4 m keep-out: from anywhere inside a ring's
+    stand-off (and inside the ring itself), what standoff_admit lets through
+    never brings the aircraft nearer ANY zone whose stand-off it is in, over
+    random rings, positions and commands - and outside every stand-off it
+    changes nothing."""
+    import random
+    from shapely.geometry import box
+    from guardrail.geometry import boundary_depth, ring_distance
+    rnd = random.Random(20261120)
+    n_inside = 0
+    for _ in range(300):
+        rings = []
+        for _k in range(rnd.randint(1, 3)):
+            cx, cy = rnd.uniform(-8, 8), rnd.uniform(-8, 8)
+            w, h = rnd.uniform(1, 10), rnd.uniform(1, 10)
+            rings.append(box(cx - w, cy - h, cx + w, cy + h).buffer(1.0))
+        g = _rings_guard(*rings)
+        x, y = rnd.uniform(-15, 15), rnd.uniform(-15, 15)
+        a, s = rnd.uniform(0, 2 * math.pi), rnd.uniform(0.2, 5.0)
+        vx, vy = s * math.cos(a), s * math.sin(a)
+        ax, ay, cut = g.standoff_admit(x, y, vx, vy)
+        d0 = [ring_distance(r, x, y) for r in rings]
+        if all(d > g.stand_off_m for d in d0):
+            assert (ax, ay, cut) == (vx, vy, 0.0)
+            continue
+        assert math.hypot(ax, ay) <= s + 1e-9
+        dt = 0.05                                  # half a tick
+        for r, d in zip(rings, d0):
+            if d <= g.stand_off_m and d > 0.0:
+                d1 = ring_distance(r, x + ax * dt, y + ay * dt)
+                assert d1 >= d - 1e-6, (x, y, vx, vy, ax, ay, d, d1)
+            elif d == 0.0:
+                # inside the ring: never deeper (its depth must not grow)
+                b0 = boundary_depth(r, x, y)
+                b1 = boundary_depth(r, x + ax * dt, y + ay * dt) \
+                    if ring_distance(r, x + ax * dt, y + ay * dt) == 0.0 else 0.0
+                assert b1 <= b0 + 1e-6, (x, y, vx, vy, ax, ay, b0, b1)
+                n_inside += 1
+    assert n_inside > 10, n_inside                 # the inside branch was exercised
+
+
+def test_in_the_corner_of_two_zones_the_most_restrictive_wins():
+    from shapely.geometry import box
+    north = box(-50.0, 3.0, 50.0, 20.0)      # 2.5 m north of (0.5, 0.5)
+    east = box(3.0, -50.0, 20.0, 50.0)       # 2.5 m east of it
+    g = _rings_guard(north, east)
+    x, y = 0.5, 0.5
+    # Into the corner, or along one zone INTO the other: nothing left.
+    for v in ((2.0, 2.0), (2.0, 0.0), (0.0, 2.0)):
+        assert g.standoff_admit(x, y, *v)[:2] == (0.0, 0.0), v
+        assert g.gate(x, y, *v)[2], v                      # and gate holds it
+    # Along the north zone, away from the east one: kept.
+    assert g.standoff_admit(x, y, -2.0, 0.0) == (-2.0, 0.0, 0.0)
+    assert g.gate(x, y, -2.0, 0.0)[:3:2] == (1.0, False)
+    # South-east: along the east zone, away from the north one - the part
+    # into the east zone goes, the southward part stays.
+    vx, vy, _ = g.standoff_admit(x, y, 2.0, -2.0)
+    assert abs(vx) < 1e-12 and abs(vy + 2.0) < 1e-12
+    # Straight out of the corner: kept.
+    assert g.standoff_admit(x, y, -2.0, -2.0) == (-2.0, -2.0, 0.0)
+    # Overlapping zones: the same answer as their union's edges.
+    over = _rings_guard(box(-50.0, 3.0, 50.0, 20.0), box(-5.0, 2.0, 10.0, 25.0))
+    vx, vy, _ = over.standoff_admit(5.0, 0.0, 2.0, 2.0)     # 2 m from the lower one
+    assert abs(vy) < 1e-12 and abs(vx - 2.0) < 1e-12
+    assert over.gate(5.0, 0.0, 2.0, 2.0)[0] == 0.0
+
+
+def test_a_zone_on_each_side_leaves_only_the_way_along():
+    from shapely.geometry import box
+    g = _rings_guard(box(-50.0, 2.0, 50.0, 20.0), box(-50.0, -20.0, 50.0, -2.0))
+    assert g.standoff_admit(0.0, 0.0, 3.0, 0.0) == (3.0, 0.0, 0.0)
+    vx, vy, _ = g.standoff_admit(0.0, 0.0, 3.0, 1.0)
+    assert abs(vx - 3.0) < 1e-12 and abs(vy) < 1e-12
+    vx, vy, _ = g.standoff_admit(0.0, 0.0, 3.0, -1.0)
+    assert abs(vx - 3.0) < 1e-12 and abs(vy) < 1e-12
+    assert g.gate(0.0, 0.0, 3.0, 0.0)[:3:2] == (1.0, False)
+
+
+def test_along_one_zone_toward_another_brakes_by_the_other_zones_distance():
+    """Inside one zone's stand-off and running along it, toward a second zone
+    still 6 m away: that zone gets gate()'s ordinary incursion brake, by its
+    own distance - not a hold, and not a free pass."""
+    from shapely.geometry import box
+    g = _rings_guard(_north_ring(), box(11.0, -20.0, 30.0, 2.9))
+    x, y = IN_BAND
+    assert g.standoff_admit(x, y, 2.0, 0.0) == (2.0, 0.0, 0.0)
+    scale, _d, blocked = g.gate(x, y, 2.0, 0.0)
+    assert abs(scale - (6.0 - 3.0) / (12.0 - 3.0)) < 1e-9 and blocked
+    assert g.last_cause == "fence"
+
+
+def _legacy_fence_gate(g, x, y, vx, vy):
+    """gate() as it was before 2026-11-20, its fence half with no buildings
+    (the code in follow_vlm.FenceGuard.gate at 6fb8312)."""
+    import numpy as np
+    ruler = g._ruler()
+    d = ruler.distance(x, y)
+    speed = math.hypot(vx, vy)
+    if speed < 1e-3:
+        return 1.0, d, d <= g.stand_off_m
+    ux, uy = vx / speed, vy / speed
+    horizon = max(g.brake_m, speed * 3.0)
+    d_min = d
+    for a in np.linspace(0.0, horizon, 8)[1:]:
+        d_min = min(d_min, ruler.distance(x + ux * a, y + uy * a))
+        if d_min <= g.stand_off_m:
+            break
+    if d_min > g.stand_off_m:
+        return 1.0, d, False
+    if d <= g.stand_off_m:
+        return 0.0, d, True
+    if d >= g.brake_m:
+        return 1.0, d, False
+    k = (d - g.stand_off_m) / (g.brake_m - g.stand_off_m)
+    return float(np.clip(k, 0.0, 1.0)), d, k < 0.35
+
+
+def test_outside_every_stand_off_nothing_changed():
+    """Positions and headings walked over two zones: wherever the aircraft
+    is outside every zone's stand-off, gate() and the command are exactly
+    what they were before the stand-off edge."""
+    from shapely.geometry import box
+    g = _rings_guard(_north_ring(), box(11.0, -20.0, 30.0, 2.9))
+    n = 0
+    for x in range(-10, 30, 2):
+        for y in range(-25, 3):
+            if g._ruler().distance(x, y) <= g.stand_off_m:
+                continue
+            for hd in range(0, 360, 15):
+                a = math.radians(hd)
+                for s in (0.5, 2.0, 5.0):
+                    vx, vy = s * math.cos(a), s * math.sin(a)
+                    assert g.standoff_admit(x, y, vx, vy) == (vx, vy, 0.0)
+                    assert g.gate(x, y, vx, vy) == _legacy_fence_gate(g, x, y, vx, vy), \
+                        (x, y, hd, s)
+                    n += 1
+    assert n == 18072, n
+
+
+def test_the_replay_tools_before_guard_is_the_old_gate():
+    """tools/standoff_edge_replay.py's LegacyStandoffGuard (the BEFORE of the
+    committed replay, docs/data/onepath_agx_20261119/standoff_edge_replay.*)
+    gives exactly the pre-2026-11-20 gate, inside the stand-off and out,
+    and admits nothing."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    from shapely.geometry import box
+    from standoff_edge_replay import LegacyStandoffGuard
+    old = LegacyStandoffGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+                              brake_m=12.0, stand_off_m=3.0)
+    old.__class__ = type("LegacyZones", (LegacyStandoffGuard,),
+                         {"polys": property(lambda self: self.zones)})
+    old.zones = [_north_ring(), box(11.0, -20.0, 30.0, 2.9)]
+    n = 0
+    for x in range(-10, 30, 3):
+        for y in range(-12, 3):
+            for hd in range(0, 360, 30):
+                a = math.radians(hd)
+                vx, vy = 2.0 * math.cos(a), 2.0 * math.sin(a)
+                assert old.standoff_admit(x, y, vx, vy) == (vx, vy, 0.0)
+                assert old.gate(x, y, vx, vy) == _legacy_fence_gate(old, x, y, vx, vy), (x, y, hd)
+                n += 1
+    assert n > 2000
+
+
+def test_the_nfz3b_hold_position_now_lets_the_drone_move_on():
+    """Where nfz3b_agx_hier_aerovla_wgs84_20261119 held for 403 ticks: the
+    logged position at t=90.4 s, nfz-north-street of the flown policy (the
+    Shield's own ring, WGS84 policy), no obstacle map (the zone half alone).
+    Its commanded clear_aim (-7.7 deg) and straight along the street (+x)
+    were held before; now they pass. Into the zone is still held."""
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife_nfz3b.yaml")
+    g = FenceGuard(pol)
+    x, y = 100.5472640991211, 118.34852600097656
+    d = g._ruler().distance(x, y)
+    assert 2.6 < d < 2.7, d                                 # logged fence_d 2.65
+    for deg in (-7.7, 0.0, -90.0, 180.0):
+        a = math.radians(deg)
+        vx, vy = 2.0 * math.cos(a), 2.0 * math.sin(a)
+        assert _legacy_fence_gate(g, x, y, vx, vy)[0] == 0.0, deg   # the old hold
+        assert g.standoff_admit(x, y, vx, vy) == (vx, vy, 0.0), deg
+        scale, _d, blocked = g.gate(x, y, vx, vy)
+        assert scale == 1.0 and not blocked, (deg, scale)
+    vx, vy, cut = g.standoff_admit(x, y, 0.0, 2.0)          # toward the zone (+y)
+    assert (vx, vy) == (0.0, 0.0) and cut > 1.99
+    assert g.gate(x, y, 0.0, 2.0)[:3:2] == (0.0, True)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

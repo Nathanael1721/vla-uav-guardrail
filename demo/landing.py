@@ -104,6 +104,10 @@ MAX_SEARCH_M = 60.0
 # touched down 0.67 m off it, 2.94 m from a 6-14 m obstacle that needs 3.0 m.
 # When no cell passes with the margin, the search runs again without it.
 SITE_MARGIN_M = 1.0
+# How far from a place where a descent was refused the next site must be
+# (choose_site's `exclude`): the transit stops within 0.8 m of a site and the
+# descent drifts, so a cell next door would be the same column again.
+EXCLUDE_M = 3.0
 CARRIAGEWAY_HALF_M = 8.0      # tools/citylife_routes.py CARRIAGEWAY_HALF_CM / 100
 
 MAP_FILES = {
@@ -466,7 +470,9 @@ def choose_site(maps: LandingMaps, x0: float, y0: float,
                 lane_paths: Optional[LanePaths] = None,
                 max_search_m: float = MAX_SEARCH_M,
                 prefer: Optional[str] = None,
-                margin_m: float = SITE_MARGIN_M) -> dict:
+                margin_m: float = SITE_MARGIN_M,
+                exclude: Sequence[Vec] = (),
+                exclude_m: float = EXCLUDE_M) -> dict:
     """Pick a landing site for an aircraft now at (x0, y0) NED.
 
     The result is a dict with these keys:
@@ -494,6 +500,12 @@ def choose_site(maps: LandingMaps, x0: float, y0: float,
     Candidates are cell centres within max_search_m, taken in order of
     distance, with ties broken by cell index so that the result is
     deterministic.
+
+    `exclude`: places where a descent was already refused (by the Shield,
+    demo/follow_vlm.py's landing, 2026-11-20). No site within `exclude_m` of
+    one is returned, (x0, y0) included, so the next choice is somewhere else;
+    such cells are counted under rejected["excluded"]. here_landable and
+    reasons_rejected_here stay the maps' verdict on (x0, y0).
     """
     if prefer not in (None, "pavement"):
         raise ValueError(f"prefer must be None or 'pavement', not {prefer!r}")
@@ -509,9 +521,15 @@ def choose_site(maps: LandingMaps, x0: float, y0: float,
     def tier(cross, carr):
         return 2 * int(cross) + int(bool(carr) and prefer == "pavement")
 
+    excl = [(float(ex), float(ey)) for ex, ey in exclude]
+
+    def excluded(x, y):
+        return any(math.hypot(x - ex, y - ey) <= exclude_m for ex, ey in excl)
+
     for margin in ((margin_m, 0.0) if margin_m > 0.0 else (0.0,)):
-        best, rejected, n_examined = _search(maps, x0, y0, lanes, max_search_m, here_ok,
-                                             margin, carriage, tier)
+        best, rejected, n_examined = _search(maps, x0, y0, lanes, max_search_m,
+                                             here_ok and not excluded(x0, y0),
+                                             margin, carriage, tier, excluded)
         if best:
             break
 
@@ -520,7 +538,8 @@ def choose_site(maps: LandingMaps, x0: float, y0: float,
            "on_carriageway": None, "cell": None, "clearance": None,
            "n_examined": n_examined, "rejected": rejected,
            "lanes_checked": len(lanes), "prefer": prefer,
-           "max_search_m": max_search_m, "margin_m": margin if best else None}
+           "max_search_m": max_search_m, "margin_m": margin if best else None,
+           "excluded": [list(e) for e in excl]}
     if best:
         d, x, y, cross = best[min(best)]
         out.update(site=(x, y), path_m=round(d, 2), crosses_building=cross,
@@ -529,9 +548,11 @@ def choose_site(maps: LandingMaps, x0: float, y0: float,
     return out
 
 
-def _search(maps, x0, y0, lanes, max_search_m, here_ok, margin, carriage, tier):
+def _search(maps, x0, y0, lanes, max_search_m, here_ok, margin, carriage, tier,
+            excluded=None):
     """choose_site's search at one clearance margin: ({tier: (d, x, y,
-    crosses)}, rejected-by-rule counts, cells examined)."""
+    crosses)}, rejected-by-rule counts, cells examined). `excluded(x, y)`:
+    a place a descent was refused near (choose_site's `exclude`)."""
     best: Dict[int, tuple] = {}
     if here_ok:
         best[tier(False, carriage(x0, y0))] = (0.0, float(x0), float(y0), False)
@@ -559,6 +580,9 @@ def _search(maps, x0, y0, lanes, max_search_m, here_ok, margin, carriage, tier):
             cands = list(zip(D[keep][order], X[keep][order], Y[keep][order]))
         for d, x, y in cands:
             n_examined += 1
+            if excluded is not None and excluded(float(x), float(y)):
+                rejected["excluded"] = rejected.get("excluded", 0) + 1
+                continue
             ok, why = _assess(maps, float(x), float(y), lanes, full=False, margin=margin)
             if not ok:
                 key = reason_keys(why)[0]
