@@ -31,6 +31,7 @@ follow and the guard, not acceptance-KPI episodes.
 |---|---|
 | `runs_summary.json` | Per run: revision, within-30 m, P0 escape rate, detector rate, guard field, off-map ticks, contacts, bundle and signature, VLA authority shares |
 | `onepath_guard_replay.json` / `.txt` | `python tools/onepath_guard_replay.py agx_onepath_shield_01 ... _05 --json ...`: the five onepath runs' logged ticks replayed through the grid-scan guard and the Shield-ruler guard |
+| `standoff_edge_replay.json` / `.txt` | `python tools/standoff_edge_replay.py --root <lab checkout> --json ... --txt ...` (2026-11-20): nfz3b_agx_hier_aerovla_wgs84_20261119 replayed open-loop through FenceGuard before and after the stand-off edge. Hold-tick commands are REBUILT (the log keeps none); the before-guard reproduces the logged hold on 357 of the 403 hold ticks |
 | `diagnosis_20261119.md` | Why onepath_03 and nfz3b scored low, and the after-mission contacts; every claim re-checked by two adversarial verifiers |
 
 Run folders: `demo/out/<tag>/` (lab checkout, gitignored, no frames).

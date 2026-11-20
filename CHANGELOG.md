@@ -28,27 +28,44 @@ shipped change and recorded as one.
   that closes on a zone (`FenceGuard.standoff_admit`; in a corner or where
   zones overlap, the command must close on none of them, else zero), and
   `gate()` holds only a velocity that still closes. Outside every stand-off
-  nothing changed (replayed: 3458 recoverable ticks of that flight, 0
-  decisions changed; a unit sweep of 18072 position/heading/speed cases is
-  identical to the old law). Open-loop on the 403 hold ticks, with the
-  command rebuilt from the logged trail direction and clear_aim: all 403
-  pass (46 with their inward part cut) against 357 hold / 46 skirt on the
-  old guard. Not flown. New log field `fence_cut`, metric
+  nothing changed: a unit sweep of 18072 position/heading/speed cases is
+  identical to the old law. Open-loop replay
+  (`tools/standoff_edge_replay.py`, output in
+  docs/data/onepath_agx_20261119/standoff_edge_replay.json / .txt): of that
+  flight's 3458 non-skirt ticks whose command the log holds
+  (guard_in / fence_scale), 0 decisions change. On the 403 hold ticks the log
+  keeps no command (guard_in is 0), so it is rebuilt from the logged trail
+  direction and clear_aim at 1, 2 and 4 m/s; with those rebuilt commands
+  the OLD guard reproduces the logged hold on only 357 of 403 ticks (46
+  would have skirted), so the rebuilt commands are not the flown ones on at
+  least 46 ticks. The new guard lets all 403 rebuilt commands through, with
+  the inward part cut on 46. Not flown. New log field `fence_cut`, metric
   `fence_standoff_cut_ticks`; `ZoneRuler.rings` / `.distances` (per-zone,
   same measure).
 - Landing (demo/follow_vlm.py `_land`): every descent command goes through
-  the same Shield call as the transit (`filter_world_as_body`). The altitude
+  the same Shield call as the transit (`filter_world_as_body`). The rate
+  asked is clamped to the Shield's climb cap in force
+  (`fsm.KinematicCaps.clamp`), so the cap never refuses it. The altitude
   floor is the one rule set aside (the Shield's own Land list,
-  holdpoint._floor_rules), labelled and counted; any other objection (zones,
-  clearance, stand-offs, people, corridors, kinematic caps) holds the
-  descent - nothing goes down on a refused tick - and after 5 such ticks the
-  descent is given up and re-planned to the next landable site away from
-  the refused one (`landing.choose_site(exclude=)`, at most 2 re-plans), or
-  reported with the aircraft left hovering. land_async runs only after the
-  Shield's column test (holdpoint.landing_breaks) clears the last metre.
-  Verdict counts in metrics.json `landing.descent`. Persons near the column
-  are recorded (`persons_near_column`, record only, no decision);
-  pedestrian-aware landing stays open.
+  holdpoint._floor_rules: altitude envelopes, and a corridor's floor while
+  the aircraft is inside its footprint and under its ceiling), labelled and
+  counted. Any other objection (zones, clearance, stand-offs, people, a
+  corridor's sides or ceiling) holds the descent - nothing goes down on a
+  refused tick. After 5 refused ticks in a row, or 10 of the last 20, the
+  descent is given up; one that runs out of ticks above 1.2 m ends
+  "timed_out", never "cleared". Then `_land` re-plans to the next landable
+  site away from every refused place (`landing.choose_site(exclude=)`, at
+  most 2 re-plans), or reports with the aircraft left hovering. The transit
+  to a site climbs straight up to cruise before moving sideways, and a
+  descent starts only where the transit reached a site the maps accept, away
+  from refused places. land_async runs only after the Shield's column test
+  (holdpoint.landing_breaks) clears the last metre. On a policy with a
+  distance_envelope over people, the Shield is fed the mission's own person
+  feed on every transit and descent tick (`LandingPeopleFeed`; until this
+  entry it judged the last mission tick's list). Verdict counts in
+  metrics.json `landing.descent` (`landing.people_fed` with a people rule).
+  Persons near the column are also recorded (`persons_near_column`, record
+  only, no decision); pedestrian-aware site choice stays open.
 
 ### 2026-11-19 (pab3, prefix A/B on the new clearance horizon) — the prefix A/B re-flown on hil at 1239619: P0 escape 0, fail-safe 15/15 under the adopted reading, slowest tick 18.10 ms; the corridor-drift-out RTL of pab2 did not recur
 

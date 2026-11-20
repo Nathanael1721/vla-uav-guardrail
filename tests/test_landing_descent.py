@@ -38,7 +38,7 @@ HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
 TICK_S = 0.1
 
 
-def _policy(low_zone=True):
+def _policy(low_zone=True, climb=2.0):
     """The follow policies' altitude band (P0, 6-14 m) and kinematic caps,
     plus - where the column test must fail - a P0 zone from the ground to
     4 m round (0, 0): a place the aircraft may fly over but not land in."""
@@ -46,7 +46,7 @@ def _policy(low_zone=True):
         {"id": "alt-band", "type": "altitude_envelope", **HARD_P0,
          "alt_min_m": 6, "alt_max_m": 14},
         {"id": "kin-caps", "type": "kinematic_envelope", **HARD_P0, "priority": "P1",
-         "speed_max_mps": 5.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
+         "speed_max_mps": 5.0, "climb_rate_max_mps": climb, "yaw_rate_max_dps": 45.0},
     ]
     if low_zone:
         cons.append({"id": "low-plaza", "type": "polygon_fence", **HARD_P0,
@@ -67,6 +67,7 @@ class FakeDrone:
     def __init__(self, x, y, up, on_move=None):
         self.x, self.y, self.z = float(x), float(y), -float(up)
         self.cmds = []
+        self.ups = []                 # the height each command was sent at
         self.on_move = on_move
         self.landed = False
 
@@ -80,6 +81,7 @@ class FakeDrone:
 
     async def move_by_velocity_async(self, vn, ve, vd, duration=0.3, **kw):
         self.cmds.append((float(vn), float(ve), float(vd)))
+        self.ups.append(self.up)
         self.x += vn * TICK_S
         self.y += ve * TICK_S
         self.z += vd * TICK_S
@@ -89,6 +91,9 @@ class FakeDrone:
 
 class _Args:
     cruise_alt = 8.0
+    alt_gain = 0.6
+    climb_max = 1.8
+    citymap = "demo/out/citymap_citylife/occ_day.npz"
 
 
 def _shield(pol):
@@ -293,6 +298,219 @@ def test_the_descent_banner_says_what_the_shield_made_of_it():
                      "MISSION ENDED - DESCENDING TO LAND (SHIELD CLEARS IT, "
                      "ALTITUDE FLOOR SET ASIDE)"}, texts
     assert all(h["shield"] is False and h["mode"] == "land" for h in painted)
+
+
+# ------------------------------------------- review of f2ea619 (2026-11-20) --
+
+def _with_verdicts(pattern, fn):
+    """Run fn() with descent_verdict answering `pattern` in turn (cycled):
+    a refusal that comes and goes, which the Shield's geometry alone is hard
+    to make on cue."""
+    real = F.descent_verdict
+    k = [0]
+
+    def fake(shield, dec, state):
+        v = pattern[k[0] % len(pattern)]
+        k[0] += 1
+        return (v, ["flicker"] if v == "refused" else [])
+    F.descent_verdict = fake
+    try:
+        return fn()
+    finally:
+        F.descent_verdict = real
+
+
+def test_a_descent_out_of_ticks_is_timed_out_never_cleared():
+    """It ran out of ticks above the last metre: "timed_out", a stop, and
+    _land does not clear it - land_async never starts from altitude. (At
+    f2ea619 the column test ran from there and could say "cleared".)"""
+    sh, _calls = _shield(_policy(low_zone=False))
+    drone = FakeDrone(30.0, 0.0, 8.0)
+    rec = _with_verdicts(["refused", "floor"], lambda: asyncio.run(
+        F._descend_through_shield(drone, sh, _Args(), sleep_s=0.0, max_ticks=8)))
+    assert rec["outcome"] == "timed_out" and rec["at"][2] > F.LAND_TOUCHDOWN_M, rec
+    assert "column_at_last_metre" not in rec
+    assert drone.cmds[-1] == (0.0, 0.0, 0.0)
+
+    async def no_site(exclude):
+        return {"site": None}
+
+    async def land():
+        real = F._descend_through_shield
+
+        async def short(*a, **k):
+            return await real(*a, **{**k, "max_ticks": 8})
+        F._descend_through_shield = short
+        try:
+            return await F._land(FakeDrone(30.0, 0.0, 8.0), sh, _Args(),
+                                 fly_to_site=no_site, sleep_s=0.0)
+        finally:
+            F._descend_through_shield = real
+    rec2, cleared = _with_verdicts(["refused", "floor"], lambda: asyncio.run(land()))
+    assert not cleared and rec2["outcome"] == "timed_out", rec2
+
+
+def test_a_refusal_that_comes_and_goes_still_ends_the_descent():
+    """4 refused, 1 floor, over and over: never 5 in a row, but 10 of the
+    last 20 ends it."""
+    sh, _calls = _shield(_policy(low_zone=False))
+    drone = FakeDrone(30.0, 0.0, 8.0)
+    rec = _with_verdicts(["refused"] * 4 + ["floor"], lambda: _descend(drone, sh))
+    assert rec["outcome"] == "refused", rec
+    assert rec["verdicts"]["refused"] == F.LAND_REFUSE_IN_WINDOW, rec["verdicts"]
+    assert rec["ticks"] < 20
+
+
+def test_the_descent_asks_no_more_than_the_shields_climb_cap():
+    """A 1.0 m/s climb cap and a descent from 12 m (the law asks 1.8): the
+    ask is clamped to the cap, so the kinematic rule never refuses it and
+    the aircraft lands. At f2ea619 every tick was a kinematic refusal."""
+    sh = F.flight_shield(_policy(low_zone=False, climb=1.0), None)
+    assert sh.kinematic_caps().climb_rate_max_mps == 1.0
+    drone = FakeDrone(30.0, 0.0, 12.0)
+    rec = _descend(drone, sh)
+    assert rec["outcome"] == "cleared" and rec["verdicts"]["refused"] == 0, rec
+    assert max(c[2] for c in drone.cmds) <= 1.0 + 1e-9, max(c[2] for c in drone.cmds)
+    assert F.descent_ask(sh, 12.0).vz_up == -1.0
+
+
+def _corridor_policy():
+    return Policy.model_validate({
+        "policy_id": "landing-corridor-test", "origin": {"lat": 35.6895, "lon": 139.6917},
+        "constraints": [
+            {"id": "route", "type": "corridor", **HARD_P0,
+             "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
+             "width_m": 20.0, "altitude_floor_m": 10.0, "altitude_ceiling_m": 20.0},
+            {"id": "kin-caps", "type": "kinematic_envelope", **HARD_P0, "priority": "P1",
+             "speed_max_mps": 5.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+
+
+def test_a_corridor_floor_is_set_aside_but_not_its_sides():
+    """A corridor's floor is one a landing must cross (holdpoint._floor_rules),
+    but the Shield reports every corridor breach as category "corridor": at
+    f2ea619 the floor refused the descent. Inside the footprint it is now a
+    floor; off the footprint it still refuses."""
+    from guardrail import Action4D
+    sh = F.flight_shield(_corridor_policy(), None)
+    drone = FakeDrone(0.0, 0.0, 15.0)
+    rec = _descend(drone, sh)
+    assert rec["floor_set_aside"] == ["route"], rec["floor_set_aside"]
+    assert rec["outcome"] == "cleared" and rec["verdicts"]["floor"] > 0, rec
+    assert rec["verdicts"]["refused"] == 0, rec["refused_by"]
+    st = State(x=0.0, y=0.0, up=11.0, yaw_deg=0.0)                # inside
+    assert F.descent_verdict(sh, sh.filter(st, Action4D(vz_up=-1.5)), st)[0] == "floor"
+    st2 = State(x=0.0, y=14.0, up=15.0, yaw_deg=0.0)              # 4 m off its side
+    verdict, why = F.descent_verdict(sh, sh.filter(st2, Action4D(vz_up=-1.5)), st2)
+    assert verdict == "refused" and "route" in why, (verdict, why)
+
+
+def test_a_replan_that_did_not_reach_its_site_is_not_descended():
+    """The re-plan transit timed out (reached False) beside the refused
+    place: no descent there; that place is excluded and the next site is
+    tried. A first transit that did not arrive is treated the same."""
+    sh, _calls = _shield(_policy())
+    drone = FakeDrone(0.0, 0.0, 8.0)
+    asked = []
+
+    async def fly_to_site(exclude):
+        asked.append(list(exclude))
+        if len(asked) == 1:                              # held near the refused spot
+            drone.x, drone.y = 1.5, 0.0
+            return {"site": [30.0, 0.0], "reached": False, "final": [1.5, 0.0],
+                    "final_landable": True}
+        drone.x, drone.y = 30.0, 0.0
+        return {"site": [30.0, 0.0], "reached": True, "final": [30.0, 0.0],
+                "final_landable": True}
+
+    n0 = len(drone.cmds)
+    rec, cleared = asyncio.run(F._land(drone, sh, _Args(), fly_to_site=fly_to_site,
+                                       sleep_s=0.0))
+    assert cleared, rec
+    assert [a["outcome"] for a in rec["attempts"]] == \
+        ["column_blocked", "site_unusable", "cleared"], rec["attempts"]
+    assert asked == [[(0.0, 0.0)], [(0.0, 0.0), (1.5, 0.0)]], asked
+    assert len(drone.cmds) > n0
+    # a stop beside a refused place, even when "reached", is not descended
+    assert F._site_unusable({"site": [1, 0], "reached": True, "final": [1.0, 0.0]},
+                            [(0.0, 0.0)])
+    assert F._site_unusable({"site": [1, 0], "reached": True, "final": [9.0, 0.0],
+                             "final_landable": False, "final_reasons": ["car_lane"]}, [])
+    assert F._site_unusable({"site": [9, 0], "reached": True, "final": [9.0, 0.0]},
+                            [(0.0, 0.0)]) is None
+    # the first transit, unreached: not descended either
+    d2 = FakeDrone(5.0, 0.0, 8.0)
+    rec2, cleared2 = asyncio.run(F._land(
+        d2, sh, _Args(), first_site={"site": [30.0, 0.0], "reached": False,
+                                     "final": [5.0, 0.0]},
+        fly_to_site=None, sleep_s=0.0))
+    assert not cleared2 and rec2["attempts"][0]["outcome"] == "site_unusable"
+    assert d2.cmds == []
+
+
+def test_the_transit_climbs_to_cruise_before_it_moves_sideways():
+    """A re-plan starts where a refused descent stopped, as low as the last
+    metre: the transit to the next site now climbs straight up through the
+    Shield first, and moves sideways only within LAND_CLIMB_TOL_M of
+    cruise. (The real _fly_to_landing_site, its map reads stubbed.)"""
+    import landing as L
+    saved = (L.load_landing_maps, L.choose_site, L.is_landable)
+    L.load_landing_maps = lambda *a, **k: object()
+    L.choose_site = lambda maps, x0, y0, **k: {
+        "site": (x0 + 10.0, y0), "here_landable": False, "reasons_rejected_here": [],
+        "path_m": 10.0, "crosses_building": False, "lanes_checked": 0, "excluded": []}
+    L.is_landable = lambda maps, x, y: (True, [])
+    try:
+        sh, _calls = _shield(_policy(low_zone=False))
+        drone = FakeDrone(30.0, 0.0, 1.2)
+        info = asyncio.run(F._fly_to_landing_site(drone, sh, _Args(), exclude=[(30.0, 0.0)],
+                                                  sleep_s=0.0))
+    finally:
+        L.load_landing_maps, L.choose_site, L.is_landable = saved
+    assert info["reached"] and info["climb_ticks"] > 0, info
+    low = _Args.cruise_alt - F.LAND_CLIMB_TOL_M
+    sideways = [(c, u) for c, u in zip(drone.cmds, drone.ups) if math.hypot(c[0], c[1]) > 1e-9]
+    assert sideways and all(u >= low - 1e-9 for _c, u in sideways), sideways[:3]
+    first = drone.cmds[0]
+    assert first[0] == 0.0 and first[1] == 0.0 and first[2] < 0.0, first   # up first
+
+
+class _Walker:
+    """Client figures (pedestrians.Pedestrians duck-typed): update(t) moves
+    them; here one walks under the landing column on its third update."""
+
+    def __init__(self):
+        self.figures = [_Figure(60.0, 0.0)]
+        self.figures[0]._failed = False
+        self.n = 0
+
+    def update(self, t):
+        self.n += 1
+        if self.n >= 3:
+            self.figures[0].x, self.figures[0].y = 30.0, 0.5
+
+
+def test_the_people_rule_judges_people_fed_during_the_descent():
+    """A distance_envelope over people (5 m) and a pedestrian who walks
+    under the column after the descent began. The Shield is fed the
+    mission's feed on every descent tick (LandingPeopleFeed), so it refuses;
+    at f2ea619 it judged the last mission tick's list and never saw them."""
+    import time
+    from guardrail import people as P
+    pol = _policy(low_zone=False)
+    pol = Policy.model_validate({**pol.model_dump(mode="json"), "constraints": [
+        *[c.model_dump(mode="json") for c in pol.constraints],
+        {"id": "de-people", "type": "distance_envelope", **HARD_P0,
+         "object_class": "people", "min_distance_m": 5.0}]})
+    sh = F.flight_shield(pol, None, people_source="test: a walker")
+    walker = _Walker()
+    feed = F.LandingPeopleFeed(sh, walker, P.PeopleMemory(), 50.0, time.time())
+    drone = FakeDrone(30.0, 0.0, 8.0)
+    rec = _descend(drone, sh, feed_people=feed)
+    assert rec["column_at_start"] == [], rec                      # nobody near yet
+    assert rec["outcome"] == "refused" and "de-people" in rec["refused_by"], rec
+    # (the jump reads as a second person to the memory until the first goes stale)
+    assert feed.stats()["ticks_fed"] >= 3 and feed.stats()["max_people_given"] >= 1
+    assert drone.up > F.LAND_TOUCHDOWN_M
 
 
 def test_the_flight_loop_lands_only_through_land():

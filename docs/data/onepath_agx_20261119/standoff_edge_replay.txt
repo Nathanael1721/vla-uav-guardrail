@@ -1,0 +1,11 @@
+nfz3b_agx_hier_aerovla_wgs84_20261119: open-loop replay, FenceGuard before (6fb8312) and after the stand-off edge
+ticks logged 4189; logged fence-cause holds 428; the 79.7-120.0 s hold: 403 ticks (logged hold on every one)
+HOLD TICKS (command REBUILT from trail direction + clear_aim, not logged):
+  all_fence_holds @ 1.0 m/s: before {'skirt': 70, 'hold': 358} (reproduces the logged hold on 358); after {'skirt': 24, 'hold': 1, 'near': 403}, inward part cut on 46, mean admitted speed when not held 0.947
+  all_fence_holds @ 2.0 m/s: before {'skirt': 70, 'hold': 358} (reproduces the logged hold on 358); after {'skirt': 24, 'hold': 1, 'near': 403}, inward part cut on 46, mean admitted speed when not held 1.894
+  all_fence_holds @ 4.0 m/s: before {'skirt': 70, 'hold': 358} (reproduces the logged hold on 358); after {'skirt': 24, 'hold': 1, 'near': 403}, inward part cut on 46, mean admitted speed when not held 3.788
+  hold_window @ 1.0 m/s: before {'skirt': 46, 'hold': 357} (reproduces the logged hold on 357); after {'near': 403}, inward part cut on 46, mean admitted speed when not held 0.996
+  hold_window @ 2.0 m/s: before {'skirt': 46, 'hold': 357} (reproduces the logged hold on 357); after {'near': 403}, inward part cut on 46, mean admitted speed when not held 1.992
+  hold_window @ 4.0 m/s: before {'skirt': 46, 'hold': 357} (reproduces the logged hold on 357); after {'near': 403}, inward part cut on 46, mean admitted speed when not held 3.984
+OTHER TICKS (command = guard_in / fence_scale): 3458 replayed, decision changed on 0 (2 inside a stand-off)
+Open-loop; nothing here flew.

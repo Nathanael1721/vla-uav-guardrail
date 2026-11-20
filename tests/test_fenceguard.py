@@ -706,6 +706,27 @@ def test_inside_the_stand_off_the_part_into_the_zone_is_removed():
     assert scale == 0.0 and blocked and g.last_cause == "fence"
 
 
+def test_inside_the_ring_the_way_out_is_kept_and_deeper_is_cut():
+    """Past the margin (overshoot, wind): 0.5 m inside the north ring's
+    south edge. The normal there points OUT, toward that edge
+    (_standoff_normals' inside branch): the command toward the edge passes,
+    deeper in is cut and held, a diagonal keeps only its part along the edge.
+    Dropping or inverting the sign flip fails this; it failed nothing else
+    (review of f2ea619)."""
+    g = _rings_guard(_north_ring())
+    x, y = 5.0, 3.5
+    assert g._ruler().distance(x, y) == 0.0
+    assert g.standoff_admit(x, y, 0.0, -2.0) == (0.0, -2.0, 0.0)          # out
+    scale, _d, blocked = g.gate(x, y, 0.0, -2.0)
+    assert scale == 1.0 and not blocked
+    vx, vy, cut = g.standoff_admit(x, y, 0.0, 2.0)                       # deeper
+    assert (vx, vy) == (0.0, 0.0) and abs(cut - 2.0) < 1e-12
+    scale, _d, blocked = g.gate(x, y, 0.0, 2.0)
+    assert scale == 0.0 and blocked and g.last_cause == "fence"
+    vx, vy, _ = g.standoff_admit(x, y, 2.0, 2.0)                         # diagonal
+    assert abs(vx - 2.0) < 1e-12 and abs(vy) < 1e-12
+
+
 def test_admitted_commands_never_close_on_a_zone_inside_its_stand_off():
     """The invariant behind the 4 m keep-out: from anywhere inside a ring's
     stand-off (and inside the ring itself), what standoff_admit lets through
@@ -714,8 +735,9 @@ def test_admitted_commands_never_close_on_a_zone_inside_its_stand_off():
     changes nothing."""
     import random
     from shapely.geometry import box
-    from guardrail.geometry import ring_distance
+    from guardrail.geometry import boundary_depth, ring_distance
     rnd = random.Random(20261120)
+    n_inside = 0
     for _ in range(300):
         rings = []
         for _k in range(rnd.randint(1, 3)):
@@ -737,6 +759,14 @@ def test_admitted_commands_never_close_on_a_zone_inside_its_stand_off():
             if d <= g.stand_off_m and d > 0.0:
                 d1 = ring_distance(r, x + ax * dt, y + ay * dt)
                 assert d1 >= d - 1e-6, (x, y, vx, vy, ax, ay, d, d1)
+            elif d == 0.0:
+                # inside the ring: never deeper (its depth must not grow)
+                b0 = boundary_depth(r, x, y)
+                b1 = boundary_depth(r, x + ax * dt, y + ay * dt) \
+                    if ring_distance(r, x + ax * dt, y + ay * dt) == 0.0 else 0.0
+                assert b1 <= b0 + 1e-6, (x, y, vx, vy, ax, ay, b0, b1)
+                n_inside += 1
+    assert n_inside > 10, n_inside                 # the inside branch was exercised
 
 
 def test_in_the_corner_of_two_zones_the_most_restrictive_wins():
@@ -835,6 +865,31 @@ def test_outside_every_stand_off_nothing_changed():
                         (x, y, hd, s)
                     n += 1
     assert n == 18072, n
+
+
+def test_the_replay_tools_before_guard_is_the_old_gate():
+    """tools/standoff_edge_replay.py's LegacyStandoffGuard (the BEFORE of the
+    committed replay, docs/data/onepath_agx_20261119/standoff_edge_replay.*)
+    gives exactly the pre-2026-11-20 gate, inside the stand-off and out,
+    and admits nothing."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    from shapely.geometry import box
+    from standoff_edge_replay import LegacyStandoffGuard
+    old = LegacyStandoffGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+                              brake_m=12.0, stand_off_m=3.0)
+    old.__class__ = type("LegacyZones", (LegacyStandoffGuard,),
+                         {"polys": property(lambda self: self.zones)})
+    old.zones = [_north_ring(), box(11.0, -20.0, 30.0, 2.9)]
+    n = 0
+    for x in range(-10, 30, 3):
+        for y in range(-12, 3):
+            for hd in range(0, 360, 30):
+                a = math.radians(hd)
+                vx, vy = 2.0 * math.cos(a), 2.0 * math.sin(a)
+                assert old.standoff_admit(x, y, vx, vy) == (vx, vy, 0.0)
+                assert old.gate(x, y, vx, vy) == _legacy_fence_gate(old, x, y, vx, vy), (x, y, hd)
+                n += 1
+    assert n > 2000
 
 
 def test_the_nfz3b_hold_position_now_lets_the_drone_move_on():

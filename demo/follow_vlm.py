@@ -4803,7 +4803,8 @@ def final_report(metrics: dict, n_ticks: int, aborted) -> int:
 
 async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
                                pind=None, recorder=None, t0=None, query="",
-                               live=None, exclude=()) -> dict:
+                               live=None, exclude=(), feed_people=None,
+                               sleep_s: float = 0.1) -> dict:
     """Fly at cruise altitude, through the Shield, to a cell demo/landing.py
     calls landable, before the vertical descent.
 
@@ -4813,7 +4814,16 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
     flight's Dashboard heartbeat (beat() only, memory only): up to 45 s of
     this flight used to pass without one (review of 8035d0a, P1).
     `exclude`: places a descent was already refused at (_land's re-plan);
-    no site near one is chosen (landing.choose_site)."""
+    no site near one is chosen (landing.choose_site).
+
+    CLIMB FIRST (2026-11-20, review of f2ea619): below cruise_alt -
+    LAND_CLIMB_TOL_M the transit commands no horizontal motion, only the
+    climb (through the Shield). A re-plan starts wherever a refused descent
+    stopped, as low as the last metre, and the Shield's clearance map is the
+    6-14 m flight band: a horizontal leg at 1-4 m would cross parked cars,
+    kiosks and people no map holds. `climb_ticks` counts those ticks.
+    `feed_people`: the mission's person feed (LandingPeopleFeed), stepped on
+    every tick before the Shield judges it; None without a people rule."""
     live = live if live is not None else _NoBeat()
     info = {"enabled": True}
     try:
@@ -4850,7 +4860,7 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
     print(f"[land] landing site ({sx:.1f}, {sy:.1f}), {info['path_m']} m away"
           f"{'' if not r['reasons_rejected_here'] else ' - here: ' + '; '.join(r['reasons_rejected_here'][:2])}")
     shield.set_subject(None)
-    t_end, reached, n_touched = time.time() + timeout_s, False, 0
+    t_end, reached, n_touched, n_climb = time.time() + timeout_s, False, 0, 0
     while time.time() < t_end:
         kin = drone.get_ground_truth_kinematics()
         p = kin["pose"]["position"]
@@ -4862,8 +4872,13 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
             break
         live.beat(detail=f"flying to the landing site, {d:.0f} m")         # memory only
         v = min(3.0, 0.6 * d)
+        if up < args.cruise_alt - LAND_CLIMB_TOL_M:
+            v = 0.0                       # CLIMB FIRST: straight up to cruise
+            n_climb += 1
         vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
                            -args.climb_max, args.climb_max))
+        if feed_people is not None:
+            feed_people(float(p["x"]), float(p["y"]))
         # In the BODY frame at the aircraft's heading, as the mission loop
         # hands it (frames.filter_world_as_body, WP3-04 / ARCH-04).
         yaw_deg = math.degrees(quat_yaw(kin["pose"]["orientation"]))
@@ -4894,12 +4909,12 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         vn, ve, vd, yr = body_to_local_ned(e_body, yaw_deg)
         await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
                                            yaw_is_rate=True, yaw=yr)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(sleep_s)
     await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
     kin = drone.get_ground_truth_kinematics()
     p = kin["pose"]["position"]
     ok, why = landing_mod.is_landable(maps, float(p["x"]), float(p["y"]))
-    info.update(reached=reached, shield_touched=n_touched,
+    info.update(reached=reached, shield_touched=n_touched, climb_ticks=n_climb,
                 final=[round(float(p["x"]), 2), round(float(p["y"]), 2)],
                 final_landable=bool(ok), final_reasons=why)
     return info
@@ -4927,34 +4942,64 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
 #            is flown"). The descent is flown as asked. This is the one rule
 #            set aside, labelled and counted, exactly as the Shield's own Land
 #            sets it aside (holdpoint.choose_landing_site): no landing exists
-#            that does not cross the floor. Every other rule - the P0 zones,
-#            building clearance, stand-offs, people, corridors, kinematic caps
-#            - still decides.
+#            that does not cross the floor. A corridor counts as a floor only
+#            while the aircraft is inside its footprint and under its ceiling
+#            (`_corridor_floor_only`); its lateral and ceiling breaches refuse.
+#            Every other rule - the P0 zones, building clearance, stand-offs,
+#            people, the rest of a corridor - still decides.
 #   refused  any other rule objects, to the command or to where the aircraft
 #            already is: the Shield's repair flies (never the descent), and
-#            after LAND_REFUSE_TICKS such ticks in a row the descent is given
-#            up. _land then re-plans to the next landable site away from this
-#            one (landing.choose_site `exclude`) or, with none, reports and
-#            hovers. It never continues silently.
+#            after LAND_REFUSE_TICKS such ticks in a row, or LAND_REFUSE_IN_WINDOW
+#            of the last LAND_REFUSE_WINDOW (a refusal that comes and goes),
+#            the descent is given up. _land then re-plans to the next landable
+#            site away from this one (landing.choose_site `exclude`) or, with
+#            none, reports and hovers. It never continues silently.
+#
+# The rate asked is the descent law clamped to the kinematic caps the Shield
+# holds in force (fsm.KinematicCaps.clamp), so the Shield's own climb cap is
+# never the reason a descent is refused. The people a distance_envelope over
+# people judges are fed to the Shield on every transit and descent tick, from
+# the mission's own feed (LandingPeopleFeed); without such a rule nothing is
+# fed and nothing changes. A descent that has not reached LAND_TOUCHDOWN_M
+# when its ticks run out ends "timed_out", like a refusal: land_async never
+# starts from altitude.
 #
 # Before the first descent command and again at the last metre the Shield's
 # own column test (holdpoint.landing_breaks: zones, stand-offs, clearance and
 # corridors from here to the ground and one lookahead past touchdown) must be
 # clear; land_async - the final touchdown, below LAND_TOUCHDOWN_M - runs only
-# when it is. Pedestrian-aware site choice is NOT here (an open item); where
-# the flight has a person feed, persons near the column are RECORDED only.
+# when it is. Pedestrian-aware site CHOICE is NOT here (an open item); persons
+# near the column are also RECORDED (no decision reads the record).
 # ---------------------------------------------------------------------------
 
 LAND_TOUCHDOWN_M = 1.2      # below this land_async takes the aircraft down
 LAND_REFUSE_TICKS = 5       # refused descent ticks in a row before giving up (0.5 s)
+LAND_REFUSE_WINDOW = 20     # ...or this many of the last ticks...
+LAND_REFUSE_IN_WINDOW = 10  # ...holding this many refusals (a flickering refusal)
 LAND_MAX_REPLANS = 2        # sites tried after the first refused descent
 LAND_PERSON_RECORD_M = 10.0  # persons this near the column are recorded (no decision)
+LAND_CLIMB_TOL_M = 0.5      # the transit moves sideways only above cruise_alt - this
 
 
 def descent_speed(up: float) -> float:
     """The descent rate (m/s, down) at height `up`: the law flown since the
-    descent was written, 0.15 / s of the height, within 0.6-2.0 m/s."""
+    descent was written, 0.15 / s of the height, within 0.6-2.0 m/s. The
+    descent loop clamps it to the Shield's caps in force (descent_ask)."""
     return max(0.6, min(2.0, up * 0.15))
+
+
+def descent_ask(shield, up: float) -> Action4D:
+    """The descent command for height `up`: descent_speed, clamped to the
+    kinematic caps the Shield holds in force (Shield.kinematic_caps ->
+    fsm.KinematicCaps.clamp, the Shield's own clamp). Asking more than the
+    climb cap made the Shield's kinematic rule object on every tick and the
+    landing stalled (review of f2ea619: a 1.5 m/s cap with the descent at
+    1.5+ m/s above 10 m)."""
+    vz = -descent_speed(up)
+    caps = shield.kinematic_caps()
+    if caps is not None:
+        _vx, _vy, vz = caps.clamp(0.0, 0.0, vz)
+    return Action4D(vx=0.0, vy=0.0, vz_up=float(vz), yaw_rate=0.0)
 
 
 def _floor_ids(shield, state) -> set:
@@ -4965,20 +5010,51 @@ def _floor_ids(shield, state) -> set:
     return set(_floor_rules(shield, state))
 
 
+def _corridor_floor_only(shield, state, rule_id: str) -> bool:
+    """Can corridor `rule_id`'s objection to a STRAIGHT-DOWN descent from
+    `state` only be its floor? True when the aircraft is inside the
+    corridor's footprint and not above its ceiling now, judged with the
+    Shield's own corridor predicates (guardrail/shield.py corridor_offset,
+    corridor_wide, corridor_band_outside). A vertical command keeps the
+    forecast over this point, so the corridor can then object only to the
+    floor. The Shield reports every corridor breach as category "corridor"
+    (shield._check_corridor), floor, lateral and ceiling alike, so the
+    category cannot tell them apart (review of f2ea619). Anything this
+    cannot read refuses."""
+    from guardrail.shield import corridor_band_outside, corridor_offset, corridor_wide
+    try:
+        for row in shield.rule_status(state):
+            if row["id"] != rule_id:
+                continue
+            c = row["rule"]
+            if corridor_wide(c, corridor_offset(c, state.x, state.y)):
+                return False
+            return not corridor_band_outside(c, state.up)[1]
+    except Exception:                                           # noqa: BLE001
+        return False
+    return False
+
+
 def descent_verdict(shield, dec, state) -> tuple[str, list[str]]:
     """("pass" | "floor" | "refused", the rule ids behind a refusal) for one
-    descent tick: `dec` the Shield's decision on the descent command from
-    `state`. An objection counts as the floor only when it is an "altitude"
-    violation of one of the Shield's floors (_floor_ids); any other
-    violation of the command, or any other hard rule the POSITION already
-    breaks (Shield.state_is_unsafe), refuses. A repair with no violation
-    behind it is the Shield's, and refuses too unless the only rule the
-    position breaks is a floor (Shield._floor_the_escape slows a legal
-    action from an illegal position)."""
+    descent tick: `dec` the Shield's decision on the straight-down descent
+    command from `state`. An objection counts as the floor only when it is
+    an "altitude" violation of one of the Shield's floors (_floor_ids), or a
+    "corridor" violation of one of them while the aircraft is inside that
+    corridor's footprint and under its ceiling (_corridor_floor_only); any
+    other violation of the command, or any other hard rule the POSITION
+    already breaks (Shield.state_is_unsafe), refuses. A repair with no
+    violation behind it is the Shield's, and refuses too unless the only
+    rule the position breaks is a floor (Shield._floor_the_escape slows a
+    legal action from an illegal position)."""
     floors = _floor_ids(shield, state)
 
     def is_floor(v) -> bool:
-        return v.category == "altitude" and v.rule_id in floors
+        if v.rule_id not in floors:
+            return False
+        if v.category == "altitude":
+            return True
+        return v.category == "corridor" and _corridor_floor_only(shield, state, v.rule_id)
 
     others = [v.rule_id for v in dec.violations if not is_floor(v)]
     pos = shield.hard_violations(shield.state_is_unsafe(state))
@@ -5024,6 +5100,46 @@ def persons_near(people, x: float, y: float, record_within: float = LAND_PERSON_
     return sorted(out)
 
 
+class LandingPeopleFeed:
+    """The mission's person feed, carried on into the transit to the landing
+    site and the descent (review of f2ea619). The mission loop hands the
+    Shield its people every tick (SimPeopleFeed -> people_feed.within ->
+    Shield.set_people) and nothing did after it, so a distance_envelope over
+    people judged the landing on the last mission tick's list: ages frozen,
+    culled round where the mission ended, nobody who walked in later.
+
+    Called with the aircraft's position on every transit and descent tick
+    and before each column test: the crowd is brought up to date
+    (people.update, as update_level_truth does in the mission), the memory
+    observes it (`sim`, the mission's SimPeopleFeed when there was one) and
+    the people within `range_m` of the aircraft go to the Shield. Built only
+    when the flight has a people memory, i.e. a people rule; the mission
+    refuses such a policy without a source, so the feed exists whenever the
+    rule does. `n_ticks` / `max_given` for the record."""
+
+    def __init__(self, shield, people, memory, range_m, t0: float, sim=None):
+        self.shield, self.people, self.memory = shield, people, memory
+        self.range_m, self.t0 = range_m, float(t0)
+        self.sim = sim
+        self.n_ticks = 0
+        self.max_given = 0
+
+    def __call__(self, x: float, y: float) -> int:
+        t = time.time() - self.t0
+        if self.people is not None:
+            self.people.update(t)
+        if self.sim is None:
+            self.sim = SimPeopleFeed(self.people, self.memory)
+        ppl = people_feed.within(self.sim.step(t), x, y, self.range_m)
+        self.shield.set_people(ppl)
+        self.n_ticks += 1
+        self.max_given = max(self.max_given, len(ppl))
+        return len(ppl)
+
+    def stats(self) -> dict:
+        return {"ticks_fed": self.n_ticks, "max_people_given": self.max_given}
+
+
 def descent_hud(recorder, pind, t0: float, query: str):
     """The indicator painter for the descent (every 5th tick): the policy
     rows idle (pind.ended: the mission is over and the aircraft is below the
@@ -5051,15 +5167,20 @@ def descent_hud(recorder, pind, t0: float, query: str):
 
 async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
                                   live=None, max_ticks: int = 600,
-                                  sleep_s: float = 0.1) -> dict:
+                                  sleep_s: float = 0.1, feed_people=None) -> dict:
     """The vertical descent to LAND_TOUCHDOWN_M, every command through the
     Shield (THE DESCENT GOES THROUGH THE SHIELD, above). Returns its record:
-    `outcome` "cleared" (at the last metre, the Shield's column test clear:
-    the caller may land), "column_blocked" (the column test failed before
-    the descent or at the last metre), "refused" (LAND_REFUSE_TICKS refused
-    ticks in a row) or "error"; the verdict counts, the rules behind each
-    refusal, the column tests and, record only, persons near the column.
-    `hud`: a callable(kin, up, dec, text) that paints the indicator."""
+    `outcome` "cleared" (at or below LAND_TOUCHDOWN_M, the Shield's column
+    test clear: the caller may land), "column_blocked" (the column test
+    failed before the descent or at the last metre), "refused"
+    (LAND_REFUSE_TICKS refused ticks in a row, or LAND_REFUSE_IN_WINDOW of
+    the last LAND_REFUSE_WINDOW), "timed_out" (max_ticks flown and still
+    above LAND_TOUCHDOWN_M: never "cleared", so land_async never starts from
+    altitude) or "error"; the verdict counts, the rules behind each refusal,
+    the column tests and, record only, persons near the column.
+    `hud`: a callable(kin, up, dec, text) that paints the indicator.
+    `feed_people`: LandingPeopleFeed (None without a people rule), stepped
+    before every Shield call and column test."""
     live = live if live is not None else _NoBeat()
     shield.set_subject(None)
     kin = drone.get_ground_truth_kinematics()
@@ -5082,6 +5203,8 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
                    "client figures (commanded positions)"),
         "at_descent_start": near0}
     try:
+        if feed_people is not None:
+            feed_people(x0, y0)
         rec["floor_set_aside"] = sorted(_floor_ids(shield, State(x=x0, y=y0, up=up0)))
         rec["column_at_start"] = column_breaks(shield, x0, y0, up0)
     except Exception as exc:                                    # noqa: BLE001
@@ -5094,7 +5217,8 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
         await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
         return rec
     refused_run = 0
-    up = up0
+    recent: list[bool] = []          # the last LAND_REFUSE_WINDOW ticks: refused?
+    x, y, up = x0, y0, up0
     for _k in range(max_ticks):
         kin = drone.get_ground_truth_kinematics()
         p = kin["pose"]["position"]
@@ -5104,8 +5228,10 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
             break
         yaw_deg = math.degrees(quat_yaw(kin["pose"]["orientation"]))
         st = State(x=x, y=y, up=up, yaw_deg=yaw_deg)
-        ask = Action4D(vx=0.0, vy=0.0, vz_up=-descent_speed(up), yaw_rate=0.0)
         try:
+            if feed_people is not None:
+                feed_people(x, y)
+            ask = descent_ask(shield, up)
             dec, _, e_body = filter_world_as_body(shield, st, ask)
             verdict, why = descent_verdict(shield, dec, st)
         except Exception as exc:                                # noqa: BLE001
@@ -5115,6 +5241,7 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
             verdict, why = "refused", [f"error: {type(exc).__name__}"]
         rec["ticks"] += 1
         rec["verdicts"][verdict] += 1
+        recent = (recent + [verdict == "refused"])[-LAND_REFUSE_WINDOW:]
         if hud is not None:
             hud(kin, up, dec, verdict)
         if verdict == "refused":
@@ -5128,10 +5255,10 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
                 vd = 0.0                    # nothing goes DOWN on a refused tick
             await drone.move_by_velocity_async(vn, ve, vd, duration=0.3,
                                                yaw_is_rate=True, yaw=yr)
-            if refused_run >= LAND_REFUSE_TICKS:
+            if refused_run >= LAND_REFUSE_TICKS or sum(recent) >= LAND_REFUSE_IN_WINDOW:
                 print(f"[land] *** the Shield refused the descent at "
-                      f"({x:.1f}, {y:.1f}, {up:.1f} m) for {refused_run} ticks: "
-                      f"{', '.join(why)}")
+                      f"({x:.1f}, {y:.1f}, {up:.1f} m), {refused_run} ticks in a row, "
+                      f"{sum(recent)} of the last {len(recent)}: {', '.join(why)}")
                 rec.update(outcome="refused", at=[round(x, 2), round(y, 2), round(up, 2)],
                            last_refusal=why)
                 await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
@@ -5148,10 +5275,20 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
         await asyncio.sleep(sleep_s)
     rec["end"] = [round(x, 2), round(y, 2), round(up, 2)]
     if up > LAND_TOUCHDOWN_M:
-        rec["timed_out"] = True
+        # Out of ticks above the last metre: NOT cleared. land_async would fly
+        # the rest of the way down outside every velocity loop (review of
+        # f2ea619), so this ends like a refusal: stop, and _land re-plans or
+        # hovers.
+        print(f"[land] *** the descent ran out of ticks at {up:.1f} m "
+              f"({rec['verdicts']['refused']} refused); not landing from here")
+        rec.update(outcome="timed_out", at=[round(x, 2), round(y, 2), round(up, 2)])
+        await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+        return rec
     # The last metre: land_async flies it outside any velocity loop, so the
     # Shield clears the column first, from where the aircraft is.
     try:
+        if feed_people is not None:
+            feed_people(x, y)
         rec["column_at_last_metre"] = column_breaks(shield, x, y, up)
     except Exception as exc:                                    # noqa: BLE001
         rec.update(outcome="error", error=f"column test: {type(exc).__name__}: {exc}")
@@ -5170,33 +5307,73 @@ async def _descend_through_shield(drone, shield, args, *, people=None, hud=None,
     return rec
 
 
-async def _land(drone, shield, args, *, fly_to_site=None, people=None, hud=None,
-                live=None, sleep_s: float = 0.1) -> tuple[dict, bool]:
+def _site_unusable(site: dict, refused_at) -> str | None:
+    """Why the descent must NOT start where a transit to a landing site
+    ended (_fly_to_landing_site's record), or None: the site was not
+    reached, the maps refuse the place it stopped, or it stopped within
+    landing.EXCLUDE_M of a place a descent was already refused (review of
+    f2ea619: a timed-out re-plan transit, held by the Shield near the
+    refused spot, used to descend there)."""
+    import landing as landing_mod
+    if not site.get("reached"):
+        return "the transit did not reach the site"
+    if site.get("final_landable") is False:
+        return "the maps refuse where it stopped: " + "; ".join(site.get("final_reasons") or [])
+    fin = site.get("final")
+    if fin is not None and any(math.hypot(fin[0] - rx, fin[1] - ry) <= landing_mod.EXCLUDE_M
+                               for rx, ry in refused_at):
+        return "it stopped beside a place a descent was refused"
+    return None
+
+
+async def _land(drone, shield, args, *, fly_to_site=None, first_site=None, people=None,
+                hud=None, live=None, sleep_s: float = 0.1,
+                feed_people=None) -> tuple[dict, bool]:
     """Descend through the Shield (_descend_through_shield) and, where it is
-    refused, re-plan: fly (through the Shield) to the next landable site away
-    from every refused one (`fly_to_site(exclude)`, _fly_to_landing_site;
-    None - no --land-site - means no re-plan) and descend again, at most
-    LAND_MAX_REPLANS times. Returns (record, cleared): `cleared` True only
+    refused, re-plan: fly (through the Shield, climbing to cruise first) to
+    the next landable site away from every refused one
+    (`fly_to_site(exclude)`, _fly_to_landing_site; None - no --land-site -
+    means no re-plan) and descend again, at most LAND_MAX_REPLANS times.
+    A descent starts only where the transit put the aircraft on a usable
+    site (_site_unusable); otherwise that place is excluded too and the next
+    site is tried, which counts as an attempt. `first_site`: the record of
+    the transit flown before _land (None: the descent starts where the
+    mission ended, as without --land-site; a first transit that found no
+    site at all keeps that). Returns (record, cleared): `cleared` True only
     when the Shield cleared the last metre, the one case the caller may call
     land_async. Otherwise the aircraft hovers where the Shield last left it
     and the record says why - never a silent landing."""
     attempts, refused_at = [], []
+    pending, first = first_site, True
     while True:
-        d = await _descend_through_shield(drone, shield, args, people=people, hud=hud,
-                                          live=live, sleep_s=sleep_s)
+        why_not = None
+        if pending is not None:
+            no_site = not pending or pending.get("site") is None or pending.get("error")
+            if no_site and not first:
+                print("[land] *** no other landable site; hovering, not landing")
+                break
+            if not no_site:
+                why_not = _site_unusable(pending, refused_at)
+        if why_not is not None:
+            print(f"[land] *** not descending here: {why_not}")
+            fin = pending.get("final") or pending.get("start") or [math.nan, math.nan]
+            d = {"outcome": "site_unusable", "why": why_not,
+                 "at": [round(v, 2) for v in fin[:2]], "verdicts": {}}
+        else:
+            d = await _descend_through_shield(drone, shield, args, people=people, hud=hud,
+                                              live=live, sleep_s=sleep_s,
+                                              feed_people=feed_people)
         attempts.append(d)
         if d.get("outcome") == "cleared":
             break
         where = d.get("at") or d.get("end") or d.get("start")
         refused_at.append(tuple(where[:2]))
+        first = False
         if fly_to_site is None or len(attempts) > LAND_MAX_REPLANS:
             break
-        site = await fly_to_site(list(refused_at))
-        attempts[-1]["replan"] = site
-        if not site or site.get("site") is None or site.get("error"):
-            print("[land] *** no other landable site; hovering, not landing")
-            break
-    cleared = attempts[-1].get("outcome") == "cleared"
+        pending = await fly_to_site(list(refused_at))
+        attempts[-1]["replan"] = pending
+    cleared = bool(attempts) and attempts[-1].get("outcome") == "cleared"
     totals = {"pass": 0, "floor": 0, "refused": 0}
     for a in attempts:
         for k, v in a.get("verdicts", {}).items():
@@ -7776,11 +7953,17 @@ async def fly(args) -> int:
         live.beat(progress=1.0, phase="landing", detail="mission over; landing")   # memory only
         grounder.stop()
         _hud_live = recorder is not None and pind is not None and pind_error is None
+        # The Shield's people after the mission: the mission's own feed, every
+        # transit and descent tick (LandingPeopleFeed); None without a people
+        # rule, when nothing is fed and nothing changes.
+        land_people = (None if people_mem is None else
+                       LandingPeopleFeed(shield, people, people_mem, people_range, t0,
+                                         sim=sim_people))
         if args.land_site:
             landing_info = await _fly_to_landing_site(
                 drone, shield, args, pind=pind if _hud_live else None,
                 recorder=recorder if _hud_live else None, t0=t0, query=args.object,
-                live=live)
+                live=live, feed_people=land_people)
         # THE DESCENT GOES THROUGH THE SHIELD (2026-11-20, _land above): every
         # descent command is filtered like the transit's; a refusal holds and
         # re-plans (with --land-site) or reports; land_async only after the
@@ -7790,14 +7973,17 @@ async def fly(args) -> int:
             return await _fly_to_landing_site(
                 drone, shield, args, pind=pind if _hud_live else None,
                 recorder=recorder if _hud_live else None, t0=t0, query=args.object,
-                live=live, exclude=exclude)
+                live=live, exclude=exclude, feed_people=land_people)
 
         descent, _cleared = await _land(
             drone, shield, args, fly_to_site=(_to_next_site if args.land_site else None),
+            first_site=(landing_info if args.land_site else None),
             people=people,
             hud=(descent_hud(recorder, pind, t0, args.object) if _hud_live else None),
-            live=live)
+            live=live, feed_people=land_people)
         landing_info["descent"] = descent
+        if land_people is not None:
+            landing_info["people_fed"] = land_people.stats()
         if _cleared:
             await (await drone.land_async())
             drone.disarm()
