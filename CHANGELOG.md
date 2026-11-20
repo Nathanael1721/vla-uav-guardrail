@@ -16,6 +16,46 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-19 (AGX CityLife follow and people on hil) — the 18-19 Nov code flown on the AGX Orin: one-path guard and WGS84 bundles, P0 escape 0 on all 7 follow flights, two low scores diagnosed; the people envelope flown on hil for the first time, with the person detector's recall measured against truth
+
+#### Flown
+- City follow on the AGX Orin (bfb4973, deploy/orin/run_follow_controller.sh
+  against Project AirSim CityLife on the desktop, v0.1.3 WGS84 bundles,
+  signature verified, `guard_field: "shield"`;
+  docs/data/onepath_agx_20261119/). Topology `projectairsim-remote-sim`:
+  functional evidence, not KPI-grade by design.
+  - Onepath n=5, within 30 m: 0.969 / 0.954 / 0.472 / 0.943 / 0.917
+    (median 0.943); AerialVLA hierarchy 0.987; nfz3b 0.345. P0 escape 0 and
+    0 mission contacts on all 7.
+  - nfz3b: 0 off-map ticks and 0 mission contacts, against 3484 off-map
+    ticks and 1919 building contacts on 3 Nov (old map).
+  - Guard replay: the flown guard's replay equals the logged mode on
+    99.97 % of 20,971 ticks.
+- People envelope on hil (6fb8312, docs/data/people_hil_20261119/): AIoT-VLA
+  v10b follow under follow-car-citylife-people-v0.1.0 ("keep at least 4 m
+  horizontal from any person", P1). P0 escape 0; the mission ended in a
+  correct X7 RTL after 18.2 s (the 5 m ring around the car, recovery losing
+  ground). Against level truth (record only, never a Shield input) the
+  aircraft was within 4 m of a pedestrian on 75 of 178 ticks; the person
+  feed matched 0.19 of pedestrians within 25 m (0.32 of those in view).
+  Not KPI-grade (subject pose read on 166/180 ticks).
+
+#### Found (diagnosis_20261119.md, each claim re-checked by two verifiers)
+- onepath_03 (0.472): the strict identity lock rejected the correct car box
+  by 2 px over its 92 px gate during ten slow detector cycles; not a
+  regression of the one-path change.
+- nfz3b (0.345): inside the 3 m stand-off `FenceGuard.gate()` returns 0 for
+  every velocity, retreat included, so the drone held 40 s beside a zone
+  while the car drove on. Unchanged since 989f967 (4 Nov).
+- The Shield's standoff-any count is against its own estimate: against the
+  car's true position the 5 m ring was breached on 102 ticks and flagged on 2.
+- Landing is outside the guardrail's pedestrian awareness: site choice uses
+  static maps and car lanes only, and the descent bypasses the Shield; 2 of
+  7 flights list a pedestrian among after-mission contacts. Open safety item
+  (seen in five runs from 30 Oct to 3 Nov as well).
+- People rule: with person recall about 0.2-0.3 the 4 m envelope cannot be
+  kept; raising it to P0 needs a measured person detector first.
+
 ### 2026-11-19 (pab3, prefix A/B on the new clearance horizon) — the prefix A/B re-flown on hil at 1239619: P0 escape 0, fail-safe 15/15 under the adopted reading, slowest tick 18.10 ms; the corridor-drift-out RTL of pab2 did not recur
 
 #### Flown
