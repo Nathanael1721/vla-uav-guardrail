@@ -16,6 +16,40 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-20 (follow rail: stand-off edge, descent through the Shield) — FenceGuard no longer traps the aircraft inside a zone's stand-off; the landing descent is filtered by the Shield and land_async waits for its column test. Not flown yet
+
+#### Changed
+- FenceGuard (demo/follow_vlm.py), THE STAND-OFF EDGE: inside a zone's 3 m
+  stand-off `gate()` returned scale 0 for every velocity, retreat and motion
+  along the zone included, and `slide()` found no detour, so
+  nfz3b_agx_hier_aerovla_wgs84_20261119 sat 2.62-3.00 m from
+  nfz-north-street's margin ring for 403 ticks while the car drove 100 m on
+  (follow 0.345). Now the flight loop removes only the part of the command
+  that closes on a zone (`FenceGuard.standoff_admit`; in a corner or where
+  zones overlap, the command must close on none of them, else zero), and
+  `gate()` holds only a velocity that still closes. Outside every stand-off
+  nothing changed (replayed: 3458 recoverable ticks of that flight, 0
+  decisions changed; a unit sweep of 18072 position/heading/speed cases is
+  identical to the old law). Open-loop on the 403 hold ticks, with the
+  command rebuilt from the logged trail direction and clear_aim: all 403
+  pass (46 with their inward part cut) against 357 hold / 46 skirt on the
+  old guard. Not flown. New log field `fence_cut`, metric
+  `fence_standoff_cut_ticks`; `ZoneRuler.rings` / `.distances` (per-zone,
+  same measure).
+- Landing (demo/follow_vlm.py `_land`): every descent command goes through
+  the same Shield call as the transit (`filter_world_as_body`). The altitude
+  floor is the one rule set aside (the Shield's own Land list,
+  holdpoint._floor_rules), labelled and counted; any other objection (zones,
+  clearance, stand-offs, people, corridors, kinematic caps) holds the
+  descent - nothing goes down on a refused tick - and after 5 such ticks the
+  descent is given up and re-planned to the next landable site away from
+  the refused one (`landing.choose_site(exclude=)`, at most 2 re-plans), or
+  reported with the aircraft left hovering. land_async runs only after the
+  Shield's column test (holdpoint.landing_breaks) clears the last metre.
+  Verdict counts in metrics.json `landing.descent`. Persons near the column
+  are recorded (`persons_near_column`, record only, no decision);
+  pedestrian-aware landing stays open.
+
 ### 2026-11-19 (pab3, prefix A/B on the new clearance horizon) — the prefix A/B re-flown on hil at 1239619: P0 escape 0, fail-safe 15/15 under the adopted reading, slowest tick 18.10 ms; the corridor-drift-out RTL of pab2 did not recur
 
 #### Flown

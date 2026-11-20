@@ -970,6 +970,18 @@ class ZoneRuler:
     def distance(self, x: float, y: float) -> float:
         return min((ring_distance(g, x, y) for g in self._rings), default=math.inf)
 
+    @property
+    def rings(self) -> tuple:
+        """The margin rings measured, one per zone (shapely geometry)."""
+        return self._rings
+
+    def distances(self, x: float, y: float) -> tuple[float, ...]:
+        """`distance` to each ring on its own, in `rings` order: the same
+        measure, per zone. FenceGuard's stand-off edge (2026-11-20) needs to
+        know WHICH zones' stand-off the aircraft is inside, and which way out
+        of each, where `distance` gives only the nearest."""
+        return tuple(ring_distance(g, x, y) for g in self._rings)
+
 
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
     """Force every channel finite, returning the names of the ones that were not.

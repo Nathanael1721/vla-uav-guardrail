@@ -141,6 +141,22 @@ def test_choose_site_stays_put_when_it_can():
     assert r["here_landable"] and r["reasons_rejected_here"] == []
 
 
+def test_a_place_the_shield_refused_is_not_chosen_again():
+    """follow_vlm's landing re-plans after the Shield refuses a descent
+    (2026-11-20): the next site is at least EXCLUDE_M from every refused
+    place, here included, while the maps' verdict on here is unchanged."""
+    from landing import EXCLUDE_M
+    r = choose_site(_flat(), 40.0, 40.0, exclude=[(40.0, 40.0)])
+    assert r["here_landable"] and r["reasons_rejected_here"] == [], r
+    assert r["site"] is not None and r["path_m"] > EXCLUDE_M, r
+    assert r["rejected"].get("excluded", 0) > 0 and r["excluded"] == [[40.0, 40.0]], r
+    r2 = choose_site(_flat(), 40.0, 40.0, exclude=[(40.0, 40.0), r["site"]])
+    assert math.hypot(r2["site"][0] - r["site"][0], r2["site"][1] - r["site"][1]) > EXCLUDE_M
+    assert math.hypot(r2["site"][0] - 40.0, r2["site"][1] - 40.0) > EXCLUDE_M
+    # nothing excluded: the result is what it always was
+    assert choose_site(_flat(), 40.0, 40.0)["site"] == (40.0, 40.0)
+
+
 def test_a_site_is_chosen_with_room_for_drift_and_only_then_without():
     """citylife_redcar_id3 reached the nearest cell that passed, touched down
     0.67 m off it and ended 2.94 m from a 6-14 m obstacle that needs 3.0 m.
