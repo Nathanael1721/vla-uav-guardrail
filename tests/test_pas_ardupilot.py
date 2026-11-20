@@ -1157,8 +1157,13 @@ class FakeDetections:
         self.misses, self.cy, self.h = misses, cy, h
 
     def latest(self):
-        self.n += 1
+        # One inference per tick of the clock, as follow_vlm.Grounder: its
+        # seq moves only when a new inference lands, so a second read in the
+        # same tick (the frozen-camera check, 2026-11-20) sees the same one.
         now = self.clock.t
+        if getattr(self, "_t_read", None) != now:
+            self._t_read = now
+            self.n += 1
         miss = self.n // 2 if self.misses else 0
         return {"det": (self.cx, self.cy, self.w, self.h, 0.3, 768, 432, 0.5),
                 "t_det": now - (0.05 if self.fresh else 5.0), "seq": self.n,
