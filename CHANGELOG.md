@@ -16,6 +16,52 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-20 (frozen camera; exit 134 after a no-mission run) — a camera whose frames stop changing is named and ends the run; the detector thread is joined before run() returns
+
+#### Fixed
+- A frozen simulator camera went unreported. After a scene reload the
+  FrontCamera kept delivering messages (~15 Hz) with identical pixels: in
+  pab_aerialvla_04_*_nomission* OWL-ViT ran 1200-1436 inferences on one
+  image and the start gate hovered its whole 330 s, ending "timed_out".
+  - demo/follow_vlm.py: every inference's frame is signed
+    (`frame_signature`, blake2b over every pixel) and its run on one frame
+    counted (`FrameRun`); `latest()` carries `same_frame_n`,
+    `same_frame_s`, `frame_sig`, `frame_withheld`, detections.jsonl the
+    same per row. Past `FROZEN_FRAME_N` 10 inferences and `FROZEN_FRAME_S`
+    3 s on one frame the Grounder withholds its boxes, candidates and
+    people, so every reader takes its lost-subject path; a new frame undoes
+    it. A withheld inference does not feed the TargetLock either (no
+    select / select_strict, identity verdict or prior), so the lock ages as
+    on a real loss. `frame_stats()` goes into fly()'s metrics.json
+    `frozen_camera`.
+  - The PAS loop's people memory holds every track while
+    `frame_withheld` is true (`PeopleMemory.current(hold=True)`: no stale
+    expiry, ages and reach discs keep growing), so the people envelope
+    does not go empty while the camera is known blind; metrics.json
+    `people_feed.held_blind` counts those ticks.
+  - demo/pas_ardupilot/perception_node.py: at `CAMERA_FROZEN_N` 10
+    inferences over `CAMERA_FROZEN_S` 15 s on one frame the start gate ends
+    "camera_frozen" (no mission, whatever --start-timeout-action says; the
+    text names the run and the fix: reload the scene in a freshly started
+    simulator), and a mission ends as a lost link ends it (mission-end LAND,
+    `camera_frozen` event, KPI-grade reason). metrics.json `camera_frozen`
+    and a `[report] camera:` line on every run.
+- Every no-mission run of the perception node on the AGX Orin exited 134
+  ("terminate called without an active exception", core dumped) after its
+  report. run() only flagged the Grounder's thread to stop; a run with no
+  mission writes little after that and returned while the daemon thread was
+  still inside torch/CUDA, and CPython's teardown ended it with
+  pthread_exit through a noexcept C++ frame (the cause as read from the
+  code; not yet re-flown on the AGX). `stop_detector` now stops and
+  joins the thread (at most `DETECTOR_STOP_TIMEOUT_S` 10 s) before the
+  camera goes and before run() returns; `MavrosLink.close()` destroys the
+  node and shuts down the rclpy it initialised, called for a link run()
+  built, after the camera and before the SITL stop. The teardown runs as
+  steps (`run_teardown`): a second Ctrl+C while one waits (the detector's
+  join, the recorder's, SITL's) is kept and re-raised after the last step,
+  so it no longer skips the SITL stop, the link or a VLA server.
+- tests/test_frozen_camera.py (in the CI loop).
+
 ### 2026-11-19 (AGX CityLife follow and people on hil) — the 18-19 Nov code flown on the AGX Orin: one-path guard and WGS84 bundles, P0 escape 0 on all 7 follow flights, two low scores diagnosed; the people envelope flown on hil for the first time, with the person detector's recall measured against truth
 
 #### Flown

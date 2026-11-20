@@ -627,6 +627,30 @@ START_TIMEOUT_S = 330.0
 # episode ends before t0, landed, with the gate's record - and "fly" starts
 # the mission anyway, as follow_vlm does, recorded.
 START_TIMEOUT_ACTIONS = ("land", "fly")
+# THE FROZEN CAMERA (camera_frozen; 2026-11-20). After a scene reload the
+# simulator's FrontCamera went on delivering messages (~15 Hz) whose pixels
+# never changed: in pab_aerialvla_04_*_nomission* the detector ran 1200-1436
+# inferences on one image (luma 82.0 on every detections.jsonl row) and the
+# start gate hovered its whole 330 s, ending "timed_out" with nothing naming
+# the camera. In the live runs no two inferences saw the same frame (traffic,
+# people and the hover's own drift change pixels between any two captures;
+# follow_vlm.frame_signature is exact over every pixel). The verdict needs
+# BOTH at least CAMERA_FROZEN_N inferences in a row and CAMERA_FROZEN_S
+# seconds on one unchanged frame: a hiccup of a few seconds is no verdict,
+# and a detector outrunning the camera sees a frame twice, never ten times.
+# It ENDS a run - the start gate's hover ("camera_frozen": no mission) or the
+# mission (landed, as a lost link ends it) - so it is slower than the
+# Grounder's own withholding of a frozen frame's boxes (follow_vlm.
+# FROZEN_FRAME_N / _S, ~3 s), which a new frame undoes.
+CAMERA_FROZEN_N = 10
+CAMERA_FROZEN_S = 15.0
+# The fix the verdict names: the scene, loaded again in a simulator that was
+# itself started afresh (a reload into the same instance froze it).
+CAMERA_FROZEN_FIX = "reload the scene in a freshly started simulator"
+# How long run() waits on the way out for the detector's thread to finish
+# its inference and end (stop_detector): one inference is ~0.25-0.45 s on the
+# AGX Orin beside the VLA, a model still loading longer.
+DETECTOR_STOP_TIMEOUT_S = 10.0
 # THE HOVER BEFORE THE MISSION IS CAPPED (review 2026-10-22). --start-timeout-s
 # bounds the airborne wait whichever wait it is spent in: the start gate's,
 # and the detector's first inference on a link with no pre-arm step, which
@@ -1918,6 +1942,144 @@ def detector_thread_dead(grounder) -> bool:
                 and not th.is_alive())
 
 
+def camera_frozen(lat, n_min: int = CAMERA_FROZEN_N,
+                  s_min: float = CAMERA_FROZEN_S) -> dict | None:
+    """The frozen-camera verdict (CAMERA_FROZEN_N) on one Grounder.latest()
+    answer: {same_frame_n, same_frame_s, frame_sig} when the detector has run
+    at least `n_min` inferences in a row over at least `s_min` seconds on one
+    unchanged frame, else None. A detector that publishes no frame run (a
+    stand-in, NoDetector) is never frozen. Never raises: it is read on every
+    hover and mission tick."""
+    try:
+        if not isinstance(lat, dict):
+            return None
+        n, s = lat.get("same_frame_n"), lat.get("same_frame_s")
+        if n is None or s is None or int(n) < int(n_min) or float(s) < float(s_min):
+            return None
+        return {"same_frame_n": int(n), "same_frame_s": round(float(s), 1),
+                "frame_sig": lat.get("frame_sig")}
+    except Exception:                                             # noqa: BLE001
+        return None
+
+
+def camera_frozen_text(fz: dict, where: str) -> str:
+    """What a frozen camera ended (`where`), its run length, and the fix."""
+    return (f"the camera is frozen ({where}): the detector ran {fz['same_frame_n']} "
+            f"inferences over {fz['same_frame_s']} s on one unchanged frame "
+            f"(signature {fz.get('frame_sig')}); the simulator is delivering a frame "
+            f"that no longer changes - {CAMERA_FROZEN_FIX}")
+
+
+def camera_frozen_record(gate_frozen: dict | None, mission_frozen: dict | None,
+                         grounder) -> dict:
+    """metrics.json `camera_frozen`: where the frozen-camera verdict ended
+    the run ("start gate", "mission" or None), each verdict, how many there
+    were, the rule, and the detector's own frame record (Grounder.
+    frame_stats; None from a detector that keeps none)."""
+    try:
+        frames = (grounder.frame_stats()
+                  if callable(getattr(grounder, "frame_stats", None)) else None)
+    except Exception as exc:                                      # noqa: BLE001
+        frames = {"error": f"{type(exc).__name__}: {exc}"}
+    return {"ended": ("start gate" if gate_frozen is not None else
+                      "mission" if mission_frozen is not None else None),
+            "verdicts": int(gate_frozen is not None) + int(mission_frozen is not None),
+            "start_gate": gate_frozen, "mission": mission_frozen,
+            "rule": {"same_frame_n": CAMERA_FROZEN_N, "same_frame_s": CAMERA_FROZEN_S,
+                     "fix": CAMERA_FROZEN_FIX},
+            "detector_frames": frames}
+
+
+def camera_frozen_line(rec: dict) -> str:
+    """The [report] line of metrics.json `camera_frozen` - always printed:
+    a frozen camera nothing reported looks like a live one."""
+    fr = rec.get("detector_frames")
+    frames = ("the detector keeps no frame record" if not isinstance(fr, dict)
+              or "longest_same_frame_n" not in fr else
+              f"longest run on one unchanged frame {fr['longest_same_frame_n']} "
+              f"inference(s) / {fr['longest_same_frame_s']} s; boxes withheld on "
+              f"{fr['withheld_inferences']} inference(s) in {fr['withheld_spans']} span(s)")
+    ended = rec.get("ended")
+    v = rec.get(ended.replace(" ", "_")) if ended else None
+    return (f"camera: {frames} | frozen: "
+            + ("no" if ended is None else
+               f"*** YES, ended the {ended} ({v['same_frame_n']} inferences over "
+               f"{v['same_frame_s']} s) - {CAMERA_FROZEN_FIX}"))
+
+
+def run_teardown(steps, log=None) -> None:
+    """run()'s teardown, every step whatever the others do.
+
+    `steps`: (what, fn, quiet) in order; fn None is skipped. A step that
+    raises an Exception is said and the next one runs; a `quiet` step's
+    failure ends there (best effort, as its own guard did before), any
+    other's first failure is re-raised after the last step, so the run still
+    reads as failed. A KeyboardInterrupt - a second Ctrl+C while a step
+    waits (the detector's join up to DETECTOR_STOP_TIMEOUT_S, the
+    recorder's, SITL's) - is kept and the remaining steps STILL run; it is
+    re-raised at the end, ahead of any failure, so the run ends "stopped"
+    with SITL, the link and a VLA server it started already gone (review of
+    a75a3e2: one interrupted join skipped all of them). A third Ctrl+C
+    interrupts only the step it lands in."""
+    say = log or _say
+    interrupt = failure = None
+    for what, fn, quiet in steps:
+        if fn is None:
+            continue
+        try:
+            fn()
+        except KeyboardInterrupt as exc:
+            interrupt = interrupt or exc
+            say(f"[node]   *** interrupted during the teardown ({what}); the rest of it "
+                f"still runs")
+        except Exception as exc:                                  # noqa: BLE001
+            say(f"[node]   *** teardown: {what} failed: {type(exc).__name__}: {exc}")
+            if not quiet:
+                failure = failure or exc
+    if interrupt is not None:
+        raise interrupt
+    if failure is not None:
+        raise failure
+
+
+def stop_detector(grounder, timeout_s: float = DETECTOR_STOP_TIMEOUT_S, log=None) -> dict:
+    """Stop the detector and WAIT for its thread to end (at most `timeout_s`).
+
+    follow_vlm.Grounder.stop() only sets a flag; the thread finishes the
+    inference it is in. A daemon thread still inside torch/CUDA when the
+    interpreter shuts down is the AGX Orin's exit 134 ("terminate called
+    without an active exception", core dumped) after a no-mission run: on
+    Linux, CPython ends a daemon thread that wakes up during finalisation
+    with pthread_exit, whose forced unwind meets a noexcept C++ frame
+    (pybind11's GIL re-acquire as torch's call returns) and std::terminate
+    aborts. A mission has seconds of records to write after the loop's
+    finally stopped the detector, so its thread was long gone; a run that
+    flew no mission writes almost nothing and returned mid-inference (on the
+    stand-ins, ~1 s after the stop: tests/test_frozen_camera.py). That cause
+    is read from the code and the two paths' timing; the abort itself was
+    not reproduced off the Orin. So the run joins the thread before the
+    simulator connection it reads goes and before returning. Returns {"stopped": bool | None (no thread), "waited_s"}; a
+    thread still running at the timeout is said so, never waited on
+    forever."""
+    say = log or _say
+    t0 = time.monotonic()
+    try:
+        if callable(getattr(grounder, "stop", None)):
+            grounder.stop()
+    except Exception as exc:                                      # noqa: BLE001
+        say(f"[detect] *** stop failed: {type(exc).__name__}: {exc}")
+    th = getattr(grounder, "_thread", None)
+    if (th is None or getattr(th, "ident", None) is None
+            or th is threading.current_thread()):
+        return {"stopped": None, "waited_s": 0.0}
+    th.join(max(0.0, float(timeout_s)))
+    out = {"stopped": not th.is_alive(), "waited_s": round(time.monotonic() - t0, 3)}
+    if not out["stopped"]:
+        say(f"[detect] *** the detector thread did not end within {timeout_s:g} s; the "
+            f"process may abort at exit if it is still inside the GPU")
+    return out
+
+
 def _say(msg: str) -> None:
     """A print that cannot raise: the landing net below runs when anything else
     may already have failed, stdout included (a pipe whose reader died, a
@@ -2287,8 +2449,12 @@ def wait_for_subject(gate: StartGate, grounder, watch: HoverWatch, obs, *, timeo
     candidate (its plausible box, placed by subject_estimate from this tick's
     pose and the latest depth: the aircraft is hovering) as the subject.
     `outcome`: "reached", "timed_out", or what ended the hover - "takeover",
-    "link_lost" or "detector_dead" (`aborted` says why: no mission), or
-    "unsafe" (the mission starts, for the Shield and the FSM). The subject's
+    "link_lost", "detector_dead" or "camera_frozen" (`aborted` says why: no
+    mission), or "unsafe" (the mission starts, for the Shield and the FSM).
+    "camera_frozen" (camera_frozen, CAMERA_FROZEN_N): the detector ran
+    CAMERA_FROZEN_N inferences over CAMERA_FROZEN_S seconds on one unchanged
+    frame - a simulator delivering a picture that no longer changes, which no
+    wait will mend; the record's `camera_frozen` holds the run. The subject's
     simulator pose (`truth`, EVALUATION only) is read every `truth_period_s`
     into `truth_trace` [t_s, range_m, bearing off the nose deg, + right]; the
     decision never reads it. Returns the gate's record."""
@@ -2300,6 +2466,7 @@ def wait_for_subject(gate: StartGate, grounder, watch: HoverWatch, obs, *, timeo
     outcome = None
     truth_trace: list = []
     next_truth = 0.0
+    frozen = None
     # The gate's current candidate, placed: (x, y, source, when).
     cand = None
     while True:
@@ -2322,6 +2489,13 @@ def wait_for_subject(gate: StartGate, grounder, watch: HoverWatch, obs, *, timeo
         lat = grounder.latest()
         if lat.get("seq") != last_seq:
             last_seq = lat.get("seq")
+            # A FROZEN CAMERA (camera_frozen): no subject can be confirmed
+            # on a picture that stopped changing, and no wait mends it.
+            frozen = camera_frozen(lat)
+            if frozen is not None:
+                outcome = "camera_frozen"
+                aborted = camera_frozen_text(frozen, "start gate")
+                break
             # Fresh: the detector ran within the last second (the Grounder's
             # "t"; a stand-in without one is fresh).
             fresh = lat.get("t") is None or (t - float(lat["t"])) < GATE_FRESH_S
@@ -2360,6 +2534,9 @@ def wait_for_subject(gate: StartGate, grounder, watch: HoverWatch, obs, *, timeo
            "wait_s": round(clock() - t0, 1), "timeout_s": round(timeout_s, 3),
            "first_candidate_s": None if first_ok is None else round(first_ok, 1),
            "aborted": aborted,
+           # The frozen-camera verdict that ended the hover (camera_frozen:
+           # same_frame_n, same_frame_s, frame_sig), None when none did.
+           "camera_frozen": frozen,
            # [t_s, range_m, bearing off the nose (deg, + right)], every
            # truth_period_s; in view when |bearing| <= hfov / 2.
            "truth_trace": truth_trace, "truth_hfov_deg": hfov_deg}
@@ -6834,6 +7011,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     vla_mission.VLAFrames over the camera's VLAFront / VLADown."""
     popen = popen or subprocess.Popen
     run_cmd = run_cmd or subprocess.run
+    # A link run() builds is run()'s to close on the way out (MavrosLink: its
+    # ROS 2 node and rclpy); an injected one stays its owner's.
+    own_link = link is None
     tag = args.tag or time.strftime("pas_ap_%Y%m%d_%H%M%S")
     out = Path(args.out_root) / tag
     out.mkdir(parents=True, exist_ok=True)
@@ -7519,7 +7699,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                     why=("the hover ended before the gate ran: "
                                          + (no_mission or watch.why or "")))
                 if no_mission is None and not gate_rec["reached"]:
-                    if gate_rec["outcome"] in ("takeover", "link_lost", "detector_dead"):
+                    # A frozen camera flies no mission whatever
+                    # --start-timeout-action says: nothing it shows is there.
+                    if gate_rec["outcome"] in ("takeover", "link_lost", "detector_dead",
+                                               "camera_frozen"):
                         no_mission = gate_rec["aborted"]
                     elif (gate_rec["outcome"] == "timed_out"
                           and args.start_timeout_action == "land"):
@@ -7528,7 +7711,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     "reached", "outcome", "wait_s", "first_candidate_s", "inferences_judged",
                     "inferences_with_plausible", "best_streak", "rejected_by", "pick",
                     "aborted", "timeout_action", "truth_at_decision", "rule",
-                    "decided_by", "identity_gate")})
+                    "decided_by", "identity_gate", "camera_frozen")})
                 print(f"[start]  {'subject acquired' if gate_rec['reached'] else '*** NO SUBJECT ***'}"
                       f" after {gate_rec['wait_s']} s ({gate_rec['outcome']}): "
                       f"{gate_rec.get('inferences_judged', 0)} inferences judged, "
@@ -7642,6 +7825,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # there flies no mission and asks nothing of the autopilot.
         fsm_fault = None
         failsafe_t = None
+        # The frozen-camera verdict that ended the mission (camera_frozen),
+        # with its mission time; None while the camera's frames changed.
+        mission_frozen = None
         end_reason = "max_s reached" if no_mission is None else f"no mission: {no_mission}"
         # The loop's takeover test starts from the hover's last mode (review
         # 2026-10-22), not from a read here: a pilot's switch reported after
@@ -7895,7 +8081,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # person unseen for longer than its staleness.
                 people_now = None
                 if people_mem is not None:
-                    pub = (grounder.latest() or {}).get("people")
+                    lat_p = grounder.latest() or {}
+                    pub = lat_p.get("people")
                     if pub and pub.get("seq") != people_last_seq:
                         people_last_seq = pub.get("seq")
                         pts, prec = people_estimates(pub, st, yaw, s.pitch or 0.0, hfov,
@@ -7912,8 +8099,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             people_place["src"][k] = people_place["src"].get(k, 0) + v
                     # Only those within reach of this tick's decision
                     # (people.cull_range_m); the memory keeps the rest.
-                    people_now = people_feed.within(people_mem.current(t_tick),
-                                                    st.x, st.y, people_range)
+                    # A KNOWN-BLIND CAMERA (a frozen frame whose boxes the
+                    # detector withholds: follow_vlm.FROZEN_FRAME_N) is no
+                    # evidence anyone left: the memory holds every track,
+                    # ageing, so each reach disc widens, until the frames
+                    # change again or the frozen-camera verdict ends the
+                    # mission (PeopleMemory.current's hold).
+                    people_now = people_feed.within(
+                        people_mem.current(t_tick, hold=bool(lat_p.get("frame_withheld"))),
+                        st.x, st.y, people_range)
                     shield.set_people(people_now)
                 # The autopilot's measured velocity: logged on every tick
                 # (state_v), given to the Shield only with the own-velocity
@@ -8477,6 +8671,26 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         failsafe_t is not None and now - failsafe_t > FAILSAFE_GRACE_S)):
                     end_reason = f"escalation FSM ended the mission ({fsm.state.value})"
                     break
+                # A FROZEN CAMERA IN THE MISSION (camera_frozen). The
+                # Grounder stops publishing a frozen frame's boxes after a few
+                # seconds (follow_vlm.FROZEN_FRAME_N), so until here the
+                # mission took the path it takes for any lost subject: the box
+                # went stale, the pilot searched or coasted, the Shield's
+                # subject cleared, the VLA's detector hint had no fresh box.
+                # The escalation FSM has no perception input to hand this to
+                # (its edges read the Shield's verdicts and the position;
+                # X8 is position knowledge), and a camera that stopped
+                # changing does not come back: searching on it would fly
+                # blind until max_s. So, as a lost link does, the verdict
+                # ends the episode, and the mission's end lands it (or leaves
+                # a fail-safe the FSM asked for to the autopilot).
+                mission_frozen = camera_frozen(grounder.latest())
+                if mission_frozen is not None:
+                    mission_frozen["t"] = round(now, 3)
+                    end_reason = camera_frozen_text(mission_frozen, "mission")
+                    rec.event("camera_frozen", phase="mission", **mission_frozen)
+                    print(f"[detect] *** {end_reason}; the episode ends")
+                    break
                 if vla_end is not None:
                     # The VLA mission's own end (vla_mission.END_REASONS): the
                     # model's LAND is landed by the mission-end LAND below,
@@ -8992,7 +9206,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # subject was while it waited (truth_trace). enabled false: the
             # mission started at take-off (--start-when-seen 0).
             # outcome: reached / timed_out / takeover / link_lost /
-            # detector_dead / unsafe / crashed / interrupted; hover_s and
+            # detector_dead / camera_frozen / unsafe / crashed / interrupted; hover_s and
             # unsafe_ticks: its share of pre_mission_hover.
             "start_gate": gate_rec,
             # The detector started before SITL, and how long the mission then
@@ -9000,6 +9214,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # on the ground in the pre-arm step, or airborne (`airborne`) on a
             # link with no pre-arm step; `outcome` as wait_for_detector says.
             "detector_ready": detector_ready,
+            # THE FROZEN CAMERA (camera_frozen, CAMERA_FROZEN_N): where the
+            # verdict ended the run ("start gate": no mission; "mission":
+            # landed) with its run of inferences and seconds on one unchanged
+            # frame, the rule, and the detector's own record of its frames
+            # (follow_vlm.Grounder.frame_stats: the longest run of the flight,
+            # and the inferences whose boxes it withheld). None fields: the
+            # detector publishes no frame run (a stand-in, no detector).
+            "camera_frozen": camera_frozen_record(gate_rec.get("camera_frozen"),
+                                                  mission_frozen, grounder),
             # THE HOVER BEFORE THE MISSION, WATCHED (HoverWatch; review
             # 2026-10-22): its seconds by phase, the ticks the Shield checked,
             # the unsafe ones and their rules (None: no tick was checked), what
@@ -9175,6 +9398,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # A perception-stress run is reported per scenario, never as a
             # KPI (perception_stress.NON_KPI_REASON; WP4-16).
             why.append(pstress.non_kpi_reason(args.stress))
+        if mission_frozen is not None:
+            # The mission's tail ran on a picture that had stopped changing:
+            # what it did then is no measure of the stack.
+            why.append(f"the camera froze {mission_frozen['t']} s into the mission and ended "
+                       f"it ({mission_frozen['same_frame_n']} inferences over "
+                       f"{mission_frozen['same_frame_s']} s on one unchanged frame): a "
+                       f"simulator fault, {CAMERA_FROZEN_FIX}")
         if no_mission is not None:
             why.append(f"no mission was flown: {no_mission}")
         elif gate_rec.get("enabled") and not gate_rec.get("reached"):
@@ -9270,6 +9500,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               f"{fence_breaches} | mode requests {asks.fsm} (sent as "
               f"{asks.autopilot}) | autopilot took "
               f"over: {takeover['mode'] if takeover else 'no'}")
+        print(f"[report] {camera_frozen_line(metrics['camera_frozen'])}")
         print(f"[report] link state not live on {n_stale} tick(s) in "
               f"{len(stale_spans)} span(s)"
               + ("" if freshness_measured else " (NOT measured: the link has no link_age())")
@@ -9425,45 +9656,58 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # converged, Ctrl+C - the simulator connection and the SITL this
             # run started do not outlive it. Nor does the recorder thread: it
             # stops before the camera it reads from (with its recorder.json).
-            if recorder is not None and rec_summary is None:
-                try:
-                    stop_recorder(recorder, view_dir)
-                except Exception as exc:                              # noqa: BLE001
-                    print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
+            # EVERY STEP RUNS (run_teardown): a second Ctrl+C while one of
+            # them waits - the detector's join, the recorder's, SITL's - is
+            # kept and re-raised after the last, so it can no longer skip the
+            # SITL stop, the link or the VLA server (review of a75a3e2; the
+            # 10 s detector join made that window long).
+            #
             # The detector thread (started before SITL, so a refused bring-up
             # leaves it running) and the RPC worker, before the simulator
-            # connection they use goes.
-            if grounder is not None and callable(getattr(grounder, "stop", None)):
-                grounder.stop()
-            rpc.close()
+            # connection they use goes. The detector is STOPPED AND JOINED
+            # (stop_detector): a stop() alone let a run that flew no mission
+            # return while its thread was inside the GPU, and the interpreter's
+            # teardown then aborted the process on the AGX Orin (exit 134,
+            # "terminate called without an active exception", core dumped)
+            # after the records were written.
+            #
             # The VLA's link and records, its frame writer, and a server this
             # run started - on every way out (an attached server is never
-            # stopped: VLAServer.stop has no process to stop). Each guarded:
-            # the simulator connection and SITL below must still go.
-            for what, fn in (
-                    ("pilot", (vla.close if vla is not None else
-                               vla_backend.close if vla_backend is not None else
-                               getattr(vla_rec.get("client"), "close", None))),
-                    ("frames", None if vla_saver is None else vla_saver.close),
-                    ("server", None if vla_srv is None else vla_srv.stop),
-                    # The captures sent, after a crash too (P3-15).
-                    ("captures", None if (not vla_on or vla_captures_written
-                                          or vla_frames is None) else
-                     lambda: _vm().write_jsonl(out / "vla_captures.jsonl",
-                                               list(getattr(vla_frames, "log", None) or [])))):
-                if fn is None:
-                    continue
-                try:
-                    fn()
-                except Exception as exc:                              # noqa: BLE001
-                    _say(f"[vla]    {what} close failed: {type(exc).__name__}: {exc}")
-            if camera is not None and hasattr(camera, "stop"):
-                camera.stop()
-            if sitl_proc is not None:
+            # stopped: VLAServer.stop has no process to stop).
+            #
+            # The autopilot link this run built, after the LAND net above and
+            # the camera (a ROS 2 image topic is read through its node):
+            # MavrosLink destroys its node and shuts rclpy down, as the ROS 2
+            # rail's nodes end.
+
+            def _stop_sitl():
                 run_cmd(rail.wsl_stop_command(args.wsl_distro), check=False)
                 sitl_proc.wait(timeout=30)
-            if sitl_log is not None:
-                sitl_log.close()
+
+            vla_pilot_close = (vla.close if vla is not None else
+                               vla_backend.close if vla_backend is not None else
+                               getattr(vla_rec.get("client"), "close", None))
+            run_teardown((
+                ("recorder", (None if recorder is None or rec_summary is not None
+                              else lambda: stop_recorder(recorder, view_dir)), True),
+                ("detector", None if grounder is None else lambda: stop_detector(grounder),
+                 False),
+                ("sim rpc", getattr(rpc, "close", None), False),
+                ("vla pilot", vla_pilot_close, True),
+                ("vla frames", None if vla_saver is None else vla_saver.close, True),
+                ("vla server", None if vla_srv is None else vla_srv.stop, True),
+                # The captures sent, after a crash too (P3-15).
+                ("vla captures", None if (not vla_on or vla_captures_written
+                                          or vla_frames is None) else
+                 lambda: _vm().write_jsonl(out / "vla_captures.jsonl",
+                                           list(getattr(vla_frames, "log", None) or [])),
+                 True),
+                ("camera", (camera.stop if camera is not None and hasattr(camera, "stop")
+                            else None), False),
+                ("link", (link.close if own_link and link is not None
+                          and callable(getattr(link, "close", None)) else None), True),
+                ("sitl", None if sitl_proc is None else _stop_sitl, False),
+                ("sitl log", None if sitl_log is None else sitl_log.close, False)))
         finally:
             # The Dashboard row ends LAST (never raises). It was the first
             # statement of this `finally`, ahead of the teardown: a second

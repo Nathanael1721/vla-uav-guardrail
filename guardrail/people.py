@@ -175,6 +175,8 @@ class PeopleMemory:
         self.n_tracks = 0
         self.n_dropped_stale = 0
         self.max_live = 0
+        # current() calls made with hold (a known-blind camera: no expiry).
+        self.n_held = 0
 
     def observe(self, t_seen: float, points, key=None) -> int:
         """One frame's fixes; returns how many started a new track."""
@@ -217,9 +219,18 @@ class PeopleMemory:
         self.max_live = max(self.max_live, len(self._tracks))
         return len(new)
 
-    def current(self, t_now: float) -> list[Person]:
-        """The live tracks at `t_now` (the staleness rule applied first)."""
+    def current(self, t_now: float, hold: bool = False) -> list[Person]:
+        """The live tracks at `t_now` (the staleness rule applied first).
+
+        `hold`: the camera is known blind (a frozen frame whose boxes the
+        detector withholds: follow_vlm.FROZEN_FRAME_N), so not seeing a
+        person is no evidence they left. No track is dropped as stale; each
+        keeps ageing, so its reach disc keeps widening (conservative), and
+        the staleness rule applies again on the first tick without hold."""
         t_now = float(t_now)
+        if hold:
+            self.n_held += 1
+            return [Person(tr[0], tr[1], max(0.0, t_now - tr[2])) for tr in self._tracks]
         keep = [tr for tr in self._tracks if t_now - tr[2] <= self.stale_s]
         self.n_dropped_stale += len(self._tracks) - len(keep)
         self._tracks = keep
@@ -231,7 +242,7 @@ class PeopleMemory:
                 "speed_mps": self.speed_mps, "frames": self.n_frames,
                 "fixes": self.n_fixes, "nonfinite": self.n_nonfinite,
                 "tracks": self.n_tracks, "dropped_stale": self.n_dropped_stale,
-                "max_live": self.max_live}
+                "max_live": self.max_live, "held_blind": self.n_held}
 
 
 def within(people, x: float, y: float, range_m: float = PEOPLE_RANGE_M) -> list[Person]:
