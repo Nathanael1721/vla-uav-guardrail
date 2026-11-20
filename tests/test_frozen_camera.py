@@ -98,26 +98,25 @@ def test_a_frozen_frame_is_withheld_only_past_both_limits():
     assert pn.CAMERA_FROZEN_S > fv.FROZEN_FRAME_S
 
 
-def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
-    """The real Grounder._worker against a stand-in OWL-ViT (CPU tensors, no
-    model; as tests/test_range_and_lock.py drives it): four inferences on one
-    frame, then a new frame. With the limits at 3 inferences and 0 s, the 3rd
-    and 4th are withheld - no box, no candidate - and the row says why; the
-    new frame publishes its box again. latest() and frame_stats() carry the
-    run."""
-    try:
-        import torch
-        from PIL import Image
-    except ImportError:
-        return SKIP
-    import tempfile
-    import types
-    w_, h_ = 400, 225
-    frozen = Image.new("RGB", (w_, h_), (128, 128, 128))
+def _red_frames():
+    """A grey 400x225 frame with one red block (the stand-in's box), and the
+    same frame one pixel different (a new frame, the box where it was)."""
+    from PIL import Image
+    frozen = Image.new("RGB", (400, 225), (128, 128, 128))
     frozen.paste((220, 20, 20), (40, 100, 120, 140))
     fresh = frozen.copy()
     fresh.putpixel((399, 0), (127, 128, 128))
-    frames = [frozen, frozen, frozen, frozen, fresh]
+    return frozen, fresh
+
+
+def _drive_worker(make_grounder, frames, on_frame=None):
+    """The real Grounder._worker over `frames` against a stand-in OWL-ViT (CPU
+    tensors, no model; as tests/test_range_and_lock.py drives it), one box at
+    (40, 100, 120, 140) on every frame. `on_frame(g, k)` runs as frame k is
+    fetched (k from 0), i.e. after inference k-1. Returns (grounder, rows)."""
+    import tempfile
+    import types
+    import torch
     scores = torch.tensor([0.30])
     boxes = torch.tensor([[40, 100, 120, 140]], dtype=torch.float32)
 
@@ -153,12 +152,17 @@ def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
 
     class Obs:
         g = None
-        seen: list = []
+        pose = (0.0, 0.0, 0.0)
+
+        def __init__(self):
+            self.k = 0
 
         def get_front_native(self):
-            img = frames[len(self.seen)]
-            self.seen.append(img)
-            if len(self.seen) == len(frames):
+            if on_frame is not None:
+                on_frame(self.g, self.k)
+            img = frames[self.k]
+            self.k += 1
+            if self.k == len(frames):
                 self.g._stop = True           # the last frame, then the loop ends
             return img
 
@@ -169,10 +173,8 @@ def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
     tf.OwlViTProcessor, tf.OwlViTForObjectDetection = Proc, Model
     log = Path(tempfile.mkdtemp()) / "detections.jsonl"
     obs = Obs()
-    g = fv.Grounder(obs, "a red car", thresh=0.02, log_path=log, frozen_n=3, frozen_s=0.0)
+    g = make_grounder(obs, log)
     obs.g = g
-    lat0 = g.latest()
-    assert (lat0["same_frame_n"], lat0["frame_withheld"], lat0["frame_sig"]) == (0, False, None)
     saved_tf = sys.modules.get("transformers")
     to0, sync0, mem0 = torch.Tensor.to, torch.cuda.synchronize, torch.cuda.memory_allocated
 
@@ -191,6 +193,29 @@ def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
         else:
             sys.modules["transformers"] = saved_tf
     rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    return g, rows
+
+
+def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
+    """Four inferences on one frame, then a new frame. With the limits at 3
+    inferences and 0 s, the 3rd and 4th are withheld - no box, no candidate -
+    and the row says why; the new frame publishes its box again. latest()
+    and frame_stats() carry the run."""
+    try:
+        import torch                                                  # noqa: F401
+        from PIL import Image                                         # noqa: F401
+    except ImportError:
+        return SKIP
+    frozen, fresh = _red_frames()
+    seen0 = {}
+
+    def make(obs, log):
+        g = fv.Grounder(obs, "a red car", thresh=0.02, log_path=log, frozen_n=3,
+                        frozen_s=0.0)
+        seen0.update(g.latest())
+        return g
+    g, rows = _drive_worker(make, [frozen, frozen, frozen, frozen, fresh])
+    assert (seen0["same_frame_n"], seen0["frame_withheld"], seen0["frame_sig"]) == (0, False, None)
     assert [r["same_frame_n"] for r in rows] == [1, 2, 3, 4, 1], rows
     assert [r["withheld"] for r in rows] == [False, False, True, True, False], rows
     assert len({r["frame_sig"] for r in rows[:4]}) == 1 and rows[4]["frame_sig"] != rows[0]["frame_sig"]
@@ -205,6 +230,54 @@ def test_the_grounder_signs_logs_and_withholds_a_frozen_frame():
     assert st["longest_same_frame_n"] == 4 and st["withheld_inferences"] == 2, st
     assert st["withheld_spans"] == 1, st
     assert st["withhold_rule"] == {"same_frame_n": 3, "same_frame_s": 0.0}, st
+
+
+def test_a_withheld_frame_does_not_feed_the_target_lock():
+    """REVIEW OF a75a3e2. The lock was run on a withheld frame's candidates
+    before they were scrubbed, so lock.select refreshed last_t on every
+    withheld inference: its hold_s never ran out during a freeze, and the
+    first live frame was gated to the frozen column, as if seen a moment
+    ago. Now a withheld inference is no sighting to the lock either: select
+    is called on the live inferences only, last_t and the counters stay at
+    the last live inference's, and a freeze longer than hold_s leaves the
+    lock stale when the camera comes back - as a real loss does."""
+    try:
+        import torch                                                  # noqa: F401
+        from PIL import Image                                         # noqa: F401
+    except ImportError:
+        return SKIP
+    frozen, fresh = _red_frames()
+
+    class SpyLock(fv.TargetLock):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.calls = 0
+
+        def select(self, *a, **k):
+            self.calls += 1
+            return super().select(*a, **k)
+
+    lock = SpyLock(hfov_deg=90.0, gate_frac=0.12, hold_s=0.05)
+    seen = []                                 # (last_t, locked) after each inference
+
+    def on_frame(g, k):
+        if k > 0:
+            seen.append((lock.last_t, lock.stats()["locked"]))
+        if k == 2:
+            # The freeze outlasts hold_s; the new frame then follows the last
+            # withheld one at once (a lock fed by them would still be fresh).
+            time.sleep(0.1)
+
+    g, rows = _drive_worker(
+        lambda obs, log: fv.Grounder(obs, "a red car", thresh=0.02, log_path=log, lock=lock,
+                                     frozen_n=3, frozen_s=0.0),
+        [frozen, frozen, frozen, frozen, fresh], on_frame)
+    assert [r["withheld"] for r in rows] == [False, False, True, True, False], rows
+    assert lock.calls == 3, f"the lock was asked on {lock.calls} inferences, not the 3 live ones"
+    assert seen[1][0] is not None and seen[2] == seen[1] and seen[3] == seen[1], seen
+    # The first live frame after the freeze found the lock stale (a real
+    # loss: the box is taken afresh and the switch is said), not held.
+    assert rows[4]["det"] is not None and rows[4]["switched"] is True, rows[4]
 
 
 # =========================================================================== #
@@ -523,6 +596,211 @@ def test_run_leaves_an_injected_link_open():
             closed.append(True)
     rc, run, link = T._fly(link_cls=ClosableLink)
     assert rc == 0 and not closed
+
+
+def _run_with_built_mavros(extra=()):
+    """run() with link=None and --link mavros --start-sitl, against a stand-in
+    `mavros_link` module whose MavrosLink is FakeMavrosLink with a recording
+    close(): (rc, order of camera.stop / link.close / sitl.stop, links built)."""
+    import types
+    log, built = [], []
+    clk = T.Clock()
+    anchor = T.ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point")
+
+    class LoggedCamera(T.FakeCamera):
+        def stop(self):
+            self.log.append("camera.stop")
+
+    cam = LoggedCamera(None, log)
+
+    class BuiltMavros(T.FakeMavrosLink):
+        def __init__(self, setpoint_via="mavros"):
+            super().__init__(clk, anchor)
+            self.node = object()
+            built.append(self)
+            cam.link = self
+
+        def close(self):
+            log.append("link.close")
+
+    mod = types.ModuleType("mavros_link")
+    mod.MavrosLink, mod.Ros2ImageSource = BuiltMavros, (lambda *a, **k: None)
+    out = T._tmp()
+    pol = out / "policy.yaml"
+    pol.write_text(T._as_flown(T.CAP_POLICY), encoding="utf-8")
+    args = pn.build_parser().parse_args([
+        "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", "3",
+        "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
+        "--windows-ip", T.WIN, "--wsl-ip", T.WSL, "--shield", "on", "--speed-max", "4",
+        "--dev-yaml", "--start-when-seen", "0", "--link", "mavros", "--start-sitl", *extra])
+    spy = T.Spy(log)
+    saved = sys.modules.get("mavros_link")
+    try:
+        sys.modules["mavros_link"] = mod
+        rc = pn.run(args, link=None, camera=cam, grounder=T.GateDetections(clk),
+                    obs=T.FakeObs(), clock=clk, sleep=clk.sleep, popen=spy.popen,
+                    run_cmd=spy.run)
+    finally:
+        if saved is None:
+            sys.modules.pop("mavros_link", None)
+        else:
+            sys.modules["mavros_link"] = saved
+    order = [e for e in log if e in ("camera.stop", "link.close", "sitl.stop")]
+    return rc, order, built, out / "run"
+
+
+def test_run_closes_the_mavros_link_it_built_after_the_camera_before_sitl():
+    """REVIEW OF a75a3e2: nothing ran the close of a link run() built. With
+    link=None and --link mavros, run() builds the MavrosLink itself and
+    closes it once - after the camera (a ROS 2 image topic is read through
+    its node), before the SITL stop - on the no-mission path and the
+    mission path alike."""
+    for extra in (("--start-when-seen", "5", "--start-timeout-s", "2"), ()):
+        rc, order, built, run = _run_with_built_mavros(extra)
+        m = T._json(run, "metrics.json")
+        assert rc == 0 and len(built) == 1 and (m["ticks"] == 0) == bool(extra), (extra, m["ticks"])
+        assert order == ["camera.stop", "link.close", "sitl.stop"], (extra, order)
+
+
+def test_the_teardown_runs_every_step_through_a_second_ctrl_c():
+    """REVIEW OF a75a3e2. The outer finally's steps ran one after another, so
+    a second Ctrl+C while the detector's join waited (up to
+    DETECTOR_STOP_TIMEOUT_S) left the finally and skipped the RPC worker,
+    the VLA closes, the camera, the link and the SITL stop. run_teardown
+    runs every step; the interrupt is re-raised after the last, ahead of
+    any failure; a loud failure is re-raised after the last; a quiet one is
+    only said."""
+    ran, said = [], []
+
+    def ctrl_c():
+        ran.append("detector")
+        raise KeyboardInterrupt
+
+    def loud():
+        ran.append("rpc")
+        raise RuntimeError("rpc gone")
+
+    def quiet():
+        ran.append("vla")
+        raise OSError("disk")
+
+    steps = (("detector", ctrl_c, False), ("sim rpc", loud, False), ("vla pilot", quiet, True),
+             ("nothing", None, False), ("sitl", lambda: ran.append("sitl"), False))
+    try:
+        pn.run_teardown(steps, log=said.append)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("the interrupt was swallowed")
+    assert ran == ["detector", "rpc", "vla", "sitl"], ran
+    assert any("interrupted during the teardown (detector)" in s for s in said), said
+    ran.clear()
+    try:
+        pn.run_teardown(steps[1:], log=said.append)
+    except RuntimeError as exc:
+        assert str(exc) == "rpc gone"
+    else:
+        raise AssertionError("a loud failure was swallowed")
+    assert ran == ["rpc", "vla", "sitl"], ran
+    ran.clear()
+    pn.run_teardown(steps[2:], log=said.append)
+    assert ran == ["vla", "sitl"], ran
+
+
+def test_a_ctrl_c_in_the_detector_join_still_stops_sitl():
+    """Through run(): the detector's join is interrupted (a second Ctrl+C);
+    the camera and SITL are still stopped, and run() then raises the
+    interrupt (the run ends "stopped")."""
+    log = []
+    spy = T.Spy(log)
+
+    class LoggedCamera(T.FakeCamera):
+        def stop(self):
+            log.append("camera.stop")
+
+    def interrupted_join(g, *a, **k):
+        raise KeyboardInterrupt               # a second Ctrl+C while it waits
+
+    stop0, cam0 = pn.stop_detector, T.FakeCamera
+    try:
+        pn.stop_detector, T.FakeCamera = interrupted_join, LoggedCamera
+        try:
+            T._fly(extra=("--start-sitl", "--start-when-seen", "5", "--start-timeout-s", "2"),
+                   popen=spy.popen, run_cmd=spy.run)
+        except KeyboardInterrupt:
+            pass
+        else:
+            raise AssertionError("the interrupt in the join was swallowed")
+    finally:
+        pn.stop_detector, T.FakeCamera = stop0, cam0
+    assert "camera.stop" in log and log[-1] == "sitl.stop", log
+
+
+class BlindPeopleDetections(T.PeopleDetections):
+    """PeopleDetections whose camera freezes `freeze_at` s after its first
+    answer: from then on the people publication no longer changes and, with
+    `withheld`, the Grounder says its frame is withheld (follow_vlm.
+    FROZEN_FRAME_N)."""
+
+    freeze_at = 2.0
+    withheld = True
+
+    def __init__(self, clock, **kw):
+        super().__init__(clock, **kw)
+        self.t_first = self.pub = None
+
+    def latest(self):
+        out = super().latest()
+        if self.t_first is None:
+            self.t_first = self.clock.t
+        blind = self.clock.t - self.t_first >= self.freeze_at
+        if blind:
+            self.pub = self.pub or out["people"]
+            out["people"] = self.pub
+        out["frame_withheld"] = bool(blind and self.withheld)
+        return out
+
+
+def test_people_are_held_ageing_while_the_camera_is_known_blind():
+    """REVIEW OF a75a3e2. A withheld (frozen) frame publishes no people, and
+    the people memory dropped every person unseen for PEOPLE_STALE_S (3 s):
+    the WP1-07 people envelope went empty while the camera was known to be
+    blind, until the mission's verdict. Now, while latest()["frame_withheld"]
+    is true, the memory holds every track (PeopleMemory.current(hold=True))
+    with its age still growing, so its reach disc widens; a person merely
+    not seen on a live camera still goes stale as before."""
+    rc, run, link = T._fly("on", policy=T.PEOPLE_POLICY, grounder_cls=BlindPeopleDetections,
+                           max_s="10")
+    assert rc == 0
+    rows = T._rows(run)
+    stale_s = T._json(run, "metrics.json")["people_feed"]["stale_s"]
+    late = [r for r in rows if r["people"] and r["people"][0][2] > stale_s + 2.0]
+    assert late and all(len(r["people"]) == 1 for r in rows), [r["people"] for r in rows[-3:]]
+    ages = [r["people"][0][2] for r in rows]
+    assert ages[-1] == max(ages) > stale_s + 2.0, ages[-5:]
+    assert T._json(run, "metrics.json")["people_feed"]["held_blind"] > 0
+    # The same loss on a live camera (nothing withheld): stale, dropped.
+    BlindPeopleDetections.withheld = False
+    try:
+        rc, run, link = T._fly("on", policy=T.PEOPLE_POLICY,
+                               grounder_cls=BlindPeopleDetections, max_s="10")
+    finally:
+        BlindPeopleDetections.withheld = True
+    rows = T._rows(run)
+    assert rc == 0 and rows[0]["people"] and rows[-1]["people"] == [], rows[-1]["people"]
+    pf = T._json(run, "metrics.json")["people_feed"]
+    assert pf["held_blind"] == 0 and pf["dropped_stale"] >= 1, pf
+
+
+def test_the_people_memory_holds_ageing_tracks_only_when_asked():
+    from guardrail import people as P
+    m = P.PeopleMemory(stale_s=3.0)
+    m.observe(0.0, [(10.0, 5.0)], key=1)
+    held = m.current(8.0, hold=True)
+    assert len(held) == 1 and held[0].age_s == 8.0 and m.n_dropped_stale == 0
+    assert held[0].reach_m() > m.current(1.0)[0].reach_m()
+    assert m.current(8.0) == [] and m.n_dropped_stale == 1
+    assert m.record()["held_blind"] == 1
 
 
 if __name__ == "__main__":

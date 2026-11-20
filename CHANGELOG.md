@@ -30,7 +30,15 @@ shipped change and recorded as one.
     same per row. Past `FROZEN_FRAME_N` 10 inferences and `FROZEN_FRAME_S`
     3 s on one frame the Grounder withholds its boxes, candidates and
     people, so every reader takes its lost-subject path; a new frame undoes
-    it. `frame_stats()` goes into fly()'s metrics.json `frozen_camera`.
+    it. A withheld inference does not feed the TargetLock either (no
+    select / select_strict, identity verdict or prior), so the lock ages as
+    on a real loss. `frame_stats()` goes into fly()'s metrics.json
+    `frozen_camera`.
+  - The PAS loop's people memory holds every track while
+    `frame_withheld` is true (`PeopleMemory.current(hold=True)`: no stale
+    expiry, ages and reach discs keep growing), so the people envelope
+    does not go empty while the camera is known blind; metrics.json
+    `people_feed.held_blind` counts those ticks.
   - demo/pas_ardupilot/perception_node.py: at `CAMERA_FROZEN_N` 10
     inferences over `CAMERA_FROZEN_S` 15 s on one frame the start gate ends
     "camera_frozen" (no mission, whatever --start-timeout-action says; the
@@ -48,7 +56,10 @@ shipped change and recorded as one.
   joins the thread (at most `DETECTOR_STOP_TIMEOUT_S` 10 s) before the
   camera goes and before run() returns; `MavrosLink.close()` destroys the
   node and shuts down the rclpy it initialised, called for a link run()
-  built.
+  built, after the camera and before the SITL stop. The teardown runs as
+  steps (`run_teardown`): a second Ctrl+C while one waits (the detector's
+  join, the recorder's, SITL's) is kept and re-raised after the last step,
+  so it no longer skips the SITL stop, the link or a VLA server.
 - tests/test_frozen_camera.py (in the CI loop).
 
 ### 2026-11-19 (pab3, prefix A/B on the new clearance horizon) — the prefix A/B re-flown on hil at 1239619: P0 escape 0, fail-safe 15/15 under the adopted reading, slowest tick 18.10 ms; the corridor-drift-out RTL of pab2 did not recur

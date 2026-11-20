@@ -4150,7 +4150,16 @@ class Grounder:
                 cands = [tb[0]] if tb is not None else []
                 teacher_feat = tb[1] if tb is not None else None
             id_all, tiers, feats, det_tier, det_feat, lock_why = [], [], [], None, None, None
-            if cands and self.teacher is not None:
+            if withhold:
+                # A FROZEN FRAME (FROZEN_FRAME_N) is no sighting, not even to
+                # the TargetLock: no select / select_strict, no identity
+                # verdict, no prior. Re-fed the frozen box, the lock's
+                # last_t was refreshed on every withheld inference, so its
+                # hold never ran out and the first live frame was gated to
+                # the frozen column (review of a75a3e2). Skipped, the lock
+                # ages as on a real loss; nothing is published (below).
+                pass
+            elif cands and self.teacher is not None:
                 # THE box, with its true range and bearing (identity's feature
                 # names, which the start gate, the re-acquirer and the
                 # estimator read); no lock: there is no other box. While

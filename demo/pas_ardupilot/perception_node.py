@@ -2007,6 +2007,41 @@ def camera_frozen_line(rec: dict) -> str:
                f"{v['same_frame_s']} s) - {CAMERA_FROZEN_FIX}"))
 
 
+def run_teardown(steps, log=None) -> None:
+    """run()'s teardown, every step whatever the others do.
+
+    `steps`: (what, fn, quiet) in order; fn None is skipped. A step that
+    raises an Exception is said and the next one runs; a `quiet` step's
+    failure ends there (best effort, as its own guard did before), any
+    other's first failure is re-raised after the last step, so the run still
+    reads as failed. A KeyboardInterrupt - a second Ctrl+C while a step
+    waits (the detector's join up to DETECTOR_STOP_TIMEOUT_S, the
+    recorder's, SITL's) - is kept and the remaining steps STILL run; it is
+    re-raised at the end, ahead of any failure, so the run ends "stopped"
+    with SITL, the link and a VLA server it started already gone (review of
+    a75a3e2: one interrupted join skipped all of them). A third Ctrl+C
+    interrupts only the step it lands in."""
+    say = log or _say
+    interrupt = failure = None
+    for what, fn, quiet in steps:
+        if fn is None:
+            continue
+        try:
+            fn()
+        except KeyboardInterrupt as exc:
+            interrupt = interrupt or exc
+            say(f"[node]   *** interrupted during the teardown ({what}); the rest of it "
+                f"still runs")
+        except Exception as exc:                                  # noqa: BLE001
+            say(f"[node]   *** teardown: {what} failed: {type(exc).__name__}: {exc}")
+            if not quiet:
+                failure = failure or exc
+    if interrupt is not None:
+        raise interrupt
+    if failure is not None:
+        raise failure
+
+
 def stop_detector(grounder, timeout_s: float = DETECTOR_STOP_TIMEOUT_S, log=None) -> dict:
     """Stop the detector and WAIT for its thread to end (at most `timeout_s`).
 
@@ -8046,7 +8081,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # person unseen for longer than its staleness.
                 people_now = None
                 if people_mem is not None:
-                    pub = (grounder.latest() or {}).get("people")
+                    lat_p = grounder.latest() or {}
+                    pub = lat_p.get("people")
                     if pub and pub.get("seq") != people_last_seq:
                         people_last_seq = pub.get("seq")
                         pts, prec = people_estimates(pub, st, yaw, s.pitch or 0.0, hfov,
@@ -8063,8 +8099,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             people_place["src"][k] = people_place["src"].get(k, 0) + v
                     # Only those within reach of this tick's decision
                     # (people.cull_range_m); the memory keeps the rest.
-                    people_now = people_feed.within(people_mem.current(t_tick),
-                                                    st.x, st.y, people_range)
+                    # A KNOWN-BLIND CAMERA (a frozen frame whose boxes the
+                    # detector withholds: follow_vlm.FROZEN_FRAME_N) is no
+                    # evidence anyone left: the memory holds every track,
+                    # ageing, so each reach disc widens, until the frames
+                    # change again or the frozen-camera verdict ends the
+                    # mission (PeopleMemory.current's hold).
+                    people_now = people_feed.within(
+                        people_mem.current(t_tick, hold=bool(lat_p.get("frame_withheld"))),
+                        st.x, st.y, people_range)
                     shield.set_people(people_now)
                 # The autopilot's measured velocity: logged on every tick
                 # (state_v), given to the Shield only with the own-velocity
@@ -9613,11 +9656,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # converged, Ctrl+C - the simulator connection and the SITL this
             # run started do not outlive it. Nor does the recorder thread: it
             # stops before the camera it reads from (with its recorder.json).
-            if recorder is not None and rec_summary is None:
-                try:
-                    stop_recorder(recorder, view_dir)
-                except Exception as exc:                              # noqa: BLE001
-                    print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
+            # EVERY STEP RUNS (run_teardown): a second Ctrl+C while one of
+            # them waits - the detector's join, the recorder's, SITL's - is
+            # kept and re-raised after the last, so it can no longer skip the
+            # SITL stop, the link or the VLA server (review of a75a3e2; the
+            # 10 s detector join made that window long).
+            #
             # The detector thread (started before SITL, so a refused bring-up
             # leaves it running) and the RPC worker, before the simulator
             # connection they use goes. The detector is STOPPED AND JOINED
@@ -9626,46 +9670,44 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # teardown then aborted the process on the AGX Orin (exit 134,
             # "terminate called without an active exception", core dumped)
             # after the records were written.
-            if grounder is not None:
-                stop_detector(grounder)
-            rpc.close()
+            #
             # The VLA's link and records, its frame writer, and a server this
             # run started - on every way out (an attached server is never
-            # stopped: VLAServer.stop has no process to stop). Each guarded:
-            # the simulator connection and SITL below must still go.
-            for what, fn in (
-                    ("pilot", (vla.close if vla is not None else
-                               vla_backend.close if vla_backend is not None else
-                               getattr(vla_rec.get("client"), "close", None))),
-                    ("frames", None if vla_saver is None else vla_saver.close),
-                    ("server", None if vla_srv is None else vla_srv.stop),
-                    # The captures sent, after a crash too (P3-15).
-                    ("captures", None if (not vla_on or vla_captures_written
-                                          or vla_frames is None) else
-                     lambda: _vm().write_jsonl(out / "vla_captures.jsonl",
-                                               list(getattr(vla_frames, "log", None) or [])))):
-                if fn is None:
-                    continue
-                try:
-                    fn()
-                except Exception as exc:                              # noqa: BLE001
-                    _say(f"[vla]    {what} close failed: {type(exc).__name__}: {exc}")
-            if camera is not None and hasattr(camera, "stop"):
-                camera.stop()
+            # stopped: VLAServer.stop has no process to stop).
+            #
             # The autopilot link this run built, after the LAND net above and
             # the camera (a ROS 2 image topic is read through its node):
             # MavrosLink destroys its node and shuts rclpy down, as the ROS 2
-            # rail's nodes end. Guarded: SITL below must still go.
-            if own_link and link is not None and callable(getattr(link, "close", None)):
-                try:
-                    link.close()
-                except Exception as exc:                              # noqa: BLE001
-                    _say(f"[link]   close failed: {type(exc).__name__}: {exc}")
-            if sitl_proc is not None:
+            # rail's nodes end.
+
+            def _stop_sitl():
                 run_cmd(rail.wsl_stop_command(args.wsl_distro), check=False)
                 sitl_proc.wait(timeout=30)
-            if sitl_log is not None:
-                sitl_log.close()
+
+            vla_pilot_close = (vla.close if vla is not None else
+                               vla_backend.close if vla_backend is not None else
+                               getattr(vla_rec.get("client"), "close", None))
+            run_teardown((
+                ("recorder", (None if recorder is None or rec_summary is not None
+                              else lambda: stop_recorder(recorder, view_dir)), True),
+                ("detector", None if grounder is None else lambda: stop_detector(grounder),
+                 False),
+                ("sim rpc", getattr(rpc, "close", None), False),
+                ("vla pilot", vla_pilot_close, True),
+                ("vla frames", None if vla_saver is None else vla_saver.close, True),
+                ("vla server", None if vla_srv is None else vla_srv.stop, True),
+                # The captures sent, after a crash too (P3-15).
+                ("vla captures", None if (not vla_on or vla_captures_written
+                                          or vla_frames is None) else
+                 lambda: _vm().write_jsonl(out / "vla_captures.jsonl",
+                                           list(getattr(vla_frames, "log", None) or [])),
+                 True),
+                ("camera", (camera.stop if camera is not None and hasattr(camera, "stop")
+                            else None), False),
+                ("link", (link.close if own_link and link is not None
+                          and callable(getattr(link, "close", None)) else None), True),
+                ("sitl", None if sitl_proc is None else _stop_sitl, False),
+                ("sitl log", None if sitl_log is None else sitl_log.close, False)))
         finally:
             # The Dashboard row ends LAST (never raises). It was the first
             # statement of this `finally`, ahead of the teardown: a second
