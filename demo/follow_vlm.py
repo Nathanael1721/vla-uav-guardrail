@@ -3641,6 +3641,88 @@ def frame_luma(img, step: int = LUMA_STEP):
         return None
 
 
+# THE FROZEN CAMERA (2026-11-20). After a scene reload the simulator's
+# FrontCamera went on delivering messages (~15 Hz) whose pixels never changed:
+# in pab_aerialvla_04_*_nomission* the detector ran 1200-1436 inferences on
+# one image (luma 82.0 and the same below-threshold box on every
+# detections.jsonl row), the start gate hovered its whole 330 s and nothing
+# said the camera was frozen. In a live scene no two inferences of those runs
+# saw the same frame: the traffic, the people and the aircraft's own hover
+# drift change pixels between any two captures. So each inference's frame is
+# signed (frame_signature) and the Grounder counts how many inferences in a
+# row, over how many seconds, ran on the same one (FrameRun; latest()'s
+# same_frame_n / same_frame_s, detections.jsonl's frame_sig).
+#
+# Past FROZEN_FRAME_N inferences AND FROZEN_FRAME_S seconds on one unchanged
+# frame its boxes are WITHHELD (`frame_withheld`): no box, no candidate and no
+# people are published from it, so every reader takes the path it takes for
+# a lost subject (the box goes stale: the follow searches or coasts, the
+# Shield's subject clears, the VLA's detector hint has no fresh box) instead
+# of acting on a box from a scene that no longer exists. Withholding is
+# undone by the next new frame, so it can afford to be quick: 10 inferences
+# is ~2.5-3 s at the 3.5-4 Hz the detector runs beside the simulator, and
+# 3 s is far from anything a live camera does (an inference outrunning the
+# camera sees a frame twice, never ten times). What ENDS a run on a frozen
+# camera is the caller's verdict, slower on purpose (demo/pas_ardupilot/
+# perception_node.py CAMERA_FROZEN_N / CAMERA_FROZEN_S).
+FROZEN_FRAME_N = 10
+FROZEN_FRAME_S = 3.0
+
+
+def frame_signature(img) -> str | None:
+    """A content signature of a PIL image: blake2b (8 bytes, hex) over its
+    mode, size and every pixel at full resolution. Exact, on purpose: a
+    reduced or quantised copy could round a hovering aircraft's sub-pixel
+    drift away and call a live camera frozen; the frozen frames were
+    identical bytes. ~1 MB per 768x432 frame, a millisecond or two beside an
+    inference. None when it cannot be computed. Never raises: it rides on
+    the detector's log line, not its decision."""
+    try:
+        import hashlib
+        h = hashlib.blake2b(digest_size=8)
+        h.update(f"{img.mode}:{img.size[0]}x{img.size[1]}:".encode("ascii"))
+        h.update(img.tobytes())
+        return h.hexdigest()
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
+class FrameRun:
+    """How long the detector has been looking at ONE frame: observe() takes
+    each inference's frame signature and its time, and answers (n, s) - the
+    inferences in a row on this exact frame (1: the frame is new) and the
+    seconds from the first of them to this one. A signature that could not be
+    computed (None) starts a new run every time: never frozen, never
+    withheld. The longest run of the whole flight is kept (`longest_n`,
+    `longest_s`), so a run that never froze says how close it came."""
+
+    def __init__(self):
+        self.sig = None
+        self.n = 0
+        self.t0 = None
+        self.longest_n = 0
+        self.longest_s = 0.0
+
+    def observe(self, sig, t: float) -> tuple[int, float]:
+        if sig is None or sig != self.sig or self.t0 is None:
+            self.sig, self.n, self.t0 = sig, 1, float(t)
+        else:
+            self.n += 1
+        s = max(0.0, float(t) - self.t0)
+        self.longest_n = max(self.longest_n, self.n)
+        self.longest_s = max(self.longest_s, s)
+        return self.n, s
+
+
+def frame_withheld(same_n, same_s, n_min: int = FROZEN_FRAME_N,
+                   s_min: float = FROZEN_FRAME_S) -> bool:
+    """Whether an inference's boxes are withheld: at least `n_min`
+    inferences in a row AND at least `s_min` seconds on one unchanged frame
+    (FROZEN_FRAME_N above)."""
+    return bool(same_n is not None and same_s is not None
+                and int(same_n) >= int(n_min) and float(same_s) >= float(s_min))
+
+
 class Grounder:
     """Open-vocabulary detector in a background thread: text in, box out.
 
@@ -3659,7 +3741,18 @@ class Grounder:
                  identity: dict | None = None, negatives: list | None = None,
                  teacher=None, teacher_dims: tuple = (4.0, 1.5),
                  people_query: str | None = None,
-                 people_thresh: float = PEOPLE_DET_THRESH):
+                 people_thresh: float = PEOPLE_DET_THRESH,
+                 frozen_n: int = FROZEN_FRAME_N, frozen_s: float = FROZEN_FRAME_S):
+        # THE FROZEN CAMERA (FROZEN_FRAME_N; 2026-11-20): each inference's
+        # frame signed and its run on one frame counted (FrameRun); past
+        # frozen_n inferences and frozen_s seconds its boxes are withheld.
+        self.frozen_n = int(frozen_n)
+        self.frozen_s = float(frozen_s)
+        self._frame_run = FrameRun()
+        self._same = {"frame_sig": None, "same_frame_n": 0, "same_frame_s": 0.0,
+                      "frame_withheld": False}
+        self.n_withheld = 0
+        self.withheld_spans = 0
         # --teacher-truth (teacher_truth_fn; 2026-10-30): a TEACHER for
         # training labels, never a follow result. Each frame's candidates are
         # replaced by ONE box drawn where the subject TRULY is (_teacher_box)
@@ -3937,6 +4030,11 @@ class Grounder:
             # not when it arrived: see SemanticObs.get_front_capture.
             t_capture = (meta.get("t_capture") or t_cap) if meta else None
             W, H = img.size
+            # THE FROZEN CAMERA (FROZEN_FRAME_N): this frame's signature and
+            # how many inferences in a row, over how long, saw exactly it.
+            frame_sig = frame_signature(img)
+            same_n, same_s = self._frame_run.observe(frame_sig, time.time())
+            withhold = frame_withheld(same_n, same_s, self.frozen_n, self.frozen_s)
             # Split, because the total alone cannot say WHY it is slow. Offline
             # on an idle GPU this whole block is 66 ms (26.7 CPU preprocessing,
             # 36.2 forward) at the real 400x225 input - see
@@ -4117,6 +4215,15 @@ class Grounder:
                          else range_from_depth(dep, det))
             if self.teacher is not None and det is not None:
                 det_range = teacher_feat["rng_h"]        # not the depth of a wall
+            if withhold:
+                # A FROZEN FRAME (FROZEN_FRAME_N): nothing from it is
+                # published - no box (it ages out as a lost one does), no
+                # candidate for a start gate or a re-acquisition, no people.
+                # The row below still says what ran, and why it was withheld.
+                det, switched, app, det_range = None, False, None, None
+                det_tier = det_feat = lock_why = None
+                cands, tiers, feats, id_all = [], [], [], []
+                people_pub = None
             with self._lock:
                 # A retarget that landed inside this inference: nothing of it may
                 # be published - not the box, and not the candidate list either,
@@ -4130,6 +4237,11 @@ class Grounder:
                     self._n_miss += 1
                     continue
                 self._seq += 1
+                if withhold:
+                    self.n_withheld += 1
+                    self.withheld_spans += int(not self._same["frame_withheld"])
+                self._same = {"frame_sig": frame_sig, "same_frame_n": same_n,
+                              "same_frame_s": round(same_s, 2), "frame_withheld": withhold}
                 self._infer_ms = ms
                 self._pre_ms = pre_ms
                 self._fwd_ms = fwd_ms
@@ -4190,6 +4302,14 @@ class Grounder:
                        # The frame's mean grey level (frame_luma): how dark
                        # what the detector saw was.
                        "luma": frame_luma(img),
+                       # The frame's signature (frame_signature), the
+                       # inferences in a row and the seconds on exactly this
+                       # frame, and whether its boxes were withheld as a
+                       # frozen camera's (FROZEN_FRAME_N).
+                       "frame_sig": frame_sig,
+                       "same_frame_n": same_n,
+                       "same_frame_s": round(same_s, 2),
+                       "withheld": bool(withhold),
                        "switched": bool(switched),
                        "det": (None if det is None else
                                {"cx": round(det[0], 1), "cy": round(det[1], 1),
@@ -4344,12 +4464,30 @@ class Grounder:
                    "cand_feats": list(self._cand_feats),
                    "tier": self._det_tier, "feat": self._det_feat,
                    "cap": self._det_cap, "lock_why": self._lock_why,
-                   "inf_cap": getattr(self, "_inf_cap", None)}
+                   "inf_cap": getattr(self, "_inf_cap", None),
+                   # The last inference's frame (FROZEN_FRAME_N): its
+                   # signature, the inferences in a row and the seconds on
+                   # exactly that frame, and whether its boxes were withheld.
+                   **self._same}
             if self.people_query:
                 # The last inference's people (people_boxes), with its capture
                 # pose and time: for a distance_envelope over people.
                 out["people"] = self._people_pub
             return out
+
+    def frame_stats(self) -> dict:
+        """The flight's record of the frames the detector ran on (the
+        FROZEN CAMERA, FROZEN_FRAME_N): the longest run of inferences on one
+        unchanged frame (inferences, seconds), the inferences whose boxes were
+        withheld and in how many spans, and the rule that withheld them."""
+        with self._lock:
+            fr = self._frame_run
+            return {"longest_same_frame_n": fr.longest_n,
+                    "longest_same_frame_s": round(fr.longest_s, 2),
+                    "withheld_inferences": self.n_withheld,
+                    "withheld_spans": self.withheld_spans,
+                    "withhold_rule": {"same_frame_n": self.frozen_n,
+                                      "same_frame_s": self.frozen_s}}
 
 
 def identity_rule_key(reason: str) -> str:
@@ -7687,6 +7825,11 @@ async def fly(args) -> int:
         "colour_mask": ({"enabled": bool(args.colour_mask),
                          **(grounder.mask_stats if grounder else {})}
                         if grounder else {"enabled": bool(args.colour_mask)}),
+        # THE FROZEN CAMERA (FROZEN_FRAME_N): the longest run of inferences
+        # on one unchanged frame and the inferences whose boxes were withheld
+        # (the follow then lost its box, as on any loss). None: no detector.
+        "frozen_camera": (grounder.frame_stats()
+                          if callable(getattr(grounder, "frame_stats", None)) else None),
         "mode_frac": {m: round(sum(1 for r in rows if r.get("mode") == m) / max(1, len(rows)), 3)
                       for m in ("track", "coast", "search", "plan", "scan")},
         "sep_min_m": round(min(seps), 1) if seps else None,

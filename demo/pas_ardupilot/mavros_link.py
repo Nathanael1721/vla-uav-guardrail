@@ -205,9 +205,16 @@ class MavrosLink:
         self.rclpy = rclpy
         self.msgs = msgs or load_msgs()
         self.clock = clock
+        # What this link owns, for close(): the node it created, and rclpy
+        # when it was the one to initialise it. A node handed in is its
+        # owner's, as is an rclpy someone else initialised.
+        self._own_node = node is None
+        self._own_rclpy = False
+        self._closed = False
         if node is None:
             if not rclpy.ok():
                 rclpy.init()
+                self._own_rclpy = True
             node = rclpy.create_node(node_name)
         self.node = node
         self.snap = Snapshot()
@@ -377,6 +384,35 @@ class MavrosLink:
             self.rclpy.spin_once(self.node, timeout_sec=0.0)
             n += 1
         return n
+
+    def close(self) -> dict:
+        """The end of the link, as the ROS 2 rail's nodes end
+        (sitl/ros2_shield_node.py): the node this link created destroyed,
+        and rclpy shut down if this link initialised it - not left to the
+        interpreter's exit. Idempotent; never raises (each step's failure is
+        in the answer). A node or an rclpy context handed in is left to its
+        owner. Returns {"node_destroyed", "rclpy_shutdown", "errors"}."""
+        out = {"node_destroyed": False, "rclpy_shutdown": False, "errors": []}
+        if self._closed:
+            return out
+        self._closed = True
+        if self._own_node:
+            try:
+                self.node.destroy_node()
+                out["node_destroyed"] = True
+            except Exception as exc:                              # noqa: BLE001
+                out["errors"].append(f"destroy_node: {type(exc).__name__}: {exc}")
+        if self._own_rclpy:
+            # try_shutdown: no error if something else already shut it down.
+            fn = getattr(self.rclpy, "try_shutdown", None) or getattr(self.rclpy, "shutdown",
+                                                                     None)
+            try:
+                if callable(fn):
+                    fn()
+                    out["rclpy_shutdown"] = True
+            except Exception as exc:                              # noqa: BLE001
+                out["errors"].append(f"rclpy shutdown: {type(exc).__name__}: {exc}")
+        return out
 
     def wait(self, pred, timeout: float, poll: float = 0.05) -> bool:
         deadline = self.clock() + timeout

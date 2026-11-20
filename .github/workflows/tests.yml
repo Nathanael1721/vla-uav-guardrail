@@ -311,6 +311,11 @@
 #          follow_vlm's own functions, closed loop on scripted cars (one
 #          turning), the HUD's words, the node's records;
 #          the box servo unchanged without it; nothing SKIPs).
+#          test_frozen_camera (2026-11-20: the frozen camera - every frame
+#          signed, a frozen one's boxes withheld, the start gate's
+#          camera_frozen no mission and the mission's end on it - and the
+#          detector joined before run() returns, the exit-134 fix; the
+#          Grounder worker test SKIPs without torch).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -878,6 +883,7 @@ jobs:
               tests/test_held_box_gate.py \
               tests/test_subject_track.py \
               tests/test_pas_estimator_follow.py \
+              tests/test_frozen_camera.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
