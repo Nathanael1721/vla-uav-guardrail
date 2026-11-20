@@ -1,0 +1,1500 @@
+{
+ "tag": "nfz3b_agx_hier_aerovla_20261120",
+ "episode_id": 1795170142487524555,
+ "ticks": 4190,
+ "object": "a red car",
+ "detector": "google/owlvit-base-patch32",
+ "teacher_truth": null,
+ "pilot": {
+  "kind": "vla",
+  "model_id": "aerialvla:openvla-7b+aero_vla",
+  "hash": "aerialvla:openvla-7b+aero_vla@sha256:ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+  "hash_source": "local; reported agrees",
+  "reported_digest": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+  "reported_by": "127.0.0.1:8790",
+  "authority": "hierarchical",
+  "controller": "demo/follow_vlm.py hand-written controller, 10 Hz",
+  "detector": {
+   "model_id": "google/owlvit-base-patch32",
+   "hash": "google/owlvit-base-patch32@cbc355fb36458835"
+  },
+  "server_identity": {
+   "id": "aerialvla-lora/aero_vla@unknown",
+   "base": "openvla-7b@47a0ec7f",
+   "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+   "precision": "bf16",
+   "attn": "sdpa",
+   "merged": true
+  },
+  "vla": {
+   "decisions_accepted": 27,
+   "identity": {
+    "id": "aerialvla-lora/aero_vla@unknown",
+    "base": "openvla-7b@47a0ec7f",
+    "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+    "precision": "bf16",
+    "attn": "sdpa",
+    "merged": true
+   },
+   "ticks_by_author": {
+    "hold": 63,
+    "vla_step": 266
+   },
+   "tracker": {
+    "suspends": 7,
+    "rail_flown": 6,
+    "accepted": 27,
+    "kind_land": 5,
+    "land_as_arrival": 5,
+    "smooth_limited_h": 225,
+    "smooth_decay_ticks": 35,
+    "end_superseded": 21,
+    "kind_step": 22,
+    "alt_held": 22,
+    "smooth_limited_yaw": 170,
+    "turn_while_moving": 11,
+    "end_suspended": 6,
+    "completed_tolerance": 1,
+    "carry_ticks": 2
+   },
+   "parse_fail": 0,
+   "server_error": 0,
+   "link_failure": 0
+  },
+  "authority_share": {
+   "controller_follow": 0.3936,
+   "vla_search": 0.0635,
+   "hold": 0.0167,
+   "controller_fallback": 0.5263
+  },
+  "vla_flown_share": 0.0785
+ },
+ "det_seen": 363,
+ "det_missed": 1163,
+ "det_hit_rate": 0.366,
+ "det_hit_rate_all_inferences_legacy": 0.238,
+ "det_mission_inferences": 991,
+ "follow_scored": true,
+ "follow_truth_ticks": 4190,
+ "aborted": null,
+ "det_scored": 1743,
+ "det_unscorable": 0,
+ "det_gt_err_px_median": 8.4,
+ "det_gt_err_px_p95": 92.9,
+ "det_gt_err_deg_median_in_shot": 0.987,
+ "det_gt_err_deg_median_chance_centre": 0.939,
+ "frame_widths_seen": [
+  768
+ ],
+ "frac_on_target": 0.964,
+ "frac_in_shot": 1.0,
+ "det_gt_err_px_median_in_shot": 8.4,
+ "det_gt_err_px_median_chance": 8.0,
+ "det_gt_err_px_median_chance_centre": 8.0,
+ "frac_on_target_chance": 0.934,
+ "frac_on_target_chance_uniform": 0.258,
+ "frac_on_target_chance_centre": 0.929,
+ "frac_on_target_margin": 0.03,
+ "frac_on_target_25px": 0.776,
+ "frac_on_target_25px_chance": 0.772,
+ "frac_on_target_25px_margin": 0.003,
+ "truth_candidates_max": 1,
+ "n_det_with_target_out_of_fov": 0,
+ "standoff_score": {
+  "scored_ticks": 4190,
+  "standoff-pedestrian": {
+   "min_range_m": 10.0,
+   "subject_class": "pedestrian",
+   "bound_ticks": 0,
+   "fires": 0,
+   "tp": 0,
+   "fp": 0,
+   "fn": 0,
+   "precision": null,
+   "recall": null
+  },
+  "standoff-any": {
+   "min_range_m": 5.0,
+   "subject_class": "*",
+   "bound_ticks": 4190,
+   "fires": 0,
+   "tp": 0,
+   "fp": 0,
+   "fn": 164,
+   "precision": null,
+   "recall": 0.0
+  }
+ },
+ "target_lock": {
+  "enabled": true,
+  "locked": 363,
+  "switched": 0,
+  "rejected_candidates": 21,
+  "size_rejected": 21
+ },
+ "pedestrian_truth": {
+  "source": "level",
+  "kind": "pedestrian",
+  "figures": 40,
+  "rpc_polls": 3,
+  "nan_reads": 0,
+  "stale_now": 0
+ },
+ "car_truth": {
+  "source": "level",
+  "kind": "car",
+  "figures": 1,
+  "rpc_polls": 845,
+  "nan_reads": 0,
+  "stale_now": 0,
+  "tag": "Car_10"
+ },
+ "presence_gates_control": false,
+ "presence_superseded_by": "identity",
+ "presence_blocked_ticks": 0,
+ "presence_block_reasons": {},
+ "ground_check_waiver": {
+  "measured": false,
+  "have_depth": true,
+  "waived_detections": 0,
+  "rescued_detections": 0
+ },
+ "start_gate": {
+  "enabled": true,
+  "needed": 5,
+  "reached": true,
+  "wait_s": 190.8,
+  "first_candidate_s": 185.8,
+  "inferences_judged": 535,
+  "inferences_with_plausible": 23,
+  "candidates_judged": 77,
+  "best_streak": 12,
+  "max_range_m": 30.0,
+  "plausible_but_too_far": 3,
+  "last_rejections": [],
+  "snapshots": 36,
+  "identity_gate": {
+   "refused": {
+    "not ok": 24,
+    "too far": 3
+   },
+   "best_streak": 12,
+   "static_places": [],
+   "pick_P": [
+    43.9,
+    0.1
+   ]
+  },
+  "truth_trace": [
+   [
+    0.0,
+    143.3,
+    -11.4
+   ],
+   [
+    2.0,
+    145.0,
+    -13.9
+   ],
+   [
+    4.1,
+    146.9,
+    -16.3
+   ],
+   [
+    6.1,
+    149.0,
+    -18.7
+   ],
+   [
+    8.1,
+    151.4,
+    -21.0
+   ],
+   [
+    10.1,
+    153.5,
+    -22.8
+   ],
+   [
+    12.1,
+    153.6,
+    -22.8
+   ],
+   [
+    14.1,
+    153.6,
+    -22.8
+   ],
+   [
+    16.2,
+    153.6,
+    -22.8
+   ],
+   [
+    18.2,
+    153.6,
+    -22.9
+   ],
+   [
+    20.3,
+    155.4,
+    -24.3
+   ],
+   [
+    22.3,
+    158.3,
+    -26.3
+   ],
+   [
+    24.4,
+    161.6,
+    -28.4
+   ],
+   [
+    26.4,
+    164.9,
+    -30.4
+   ],
+   [
+    28.4,
+    168.4,
+    -32.2
+   ],
+   [
+    30.5,
+    172.3,
+    -34.0
+   ],
+   [
+    32.6,
+    176.3,
+    -35.8
+   ],
+   [
+    34.6,
+    180.3,
+    -37.4
+   ],
+   [
+    36.7,
+    184.5,
+    -39.0
+   ],
+   [
+    38.7,
+    188.9,
+    -40.5
+   ],
+   [
+    40.8,
+    193.5,
+    -42.0
+   ],
+   [
+    42.8,
+    198.0,
+    -43.3
+   ],
+   [
+    44.8,
+    202.6,
+    -44.6
+   ],
+   [
+    46.8,
+    207.3,
+    -45.8
+   ],
+   [
+    49.0,
+    212.3,
+    -47.1
+   ],
+   [
+    51.0,
+    214.3,
+    -48.6
+   ],
+   [
+    53.0,
+    211.2,
+    -50.1
+   ],
+   [
+    55.0,
+    207.3,
+    -51.5
+   ],
+   [
+    57.0,
+    203.6,
+    -53.0
+   ],
+   [
+    59.1,
+    199.8,
+    -54.6
+   ],
+   [
+    61.1,
+    196.3,
+    -56.1
+   ],
+   [
+    63.2,
+    192.8,
+    -57.8
+   ],
+   [
+    65.3,
+    189.5,
+    -59.6
+   ],
+   [
+    67.4,
+    186.5,
+    -61.4
+   ],
+   [
+    69.5,
+    184.0,
+    -62.9
+   ],
+   [
+    71.5,
+    184.0,
+    -62.9
+   ],
+   [
+    73.5,
+    184.0,
+    -62.9
+   ],
+   [
+    75.5,
+    184.0,
+    -62.9
+   ],
+   [
+    77.5,
+    184.0,
+    -62.9
+   ],
+   [
+    79.6,
+    184.0,
+    -62.9
+   ],
+   [
+    81.6,
+    183.7,
+    -63.2
+   ],
+   [
+    83.6,
+    181.3,
+    -64.8
+   ],
+   [
+    85.6,
+    178.8,
+    -66.7
+   ],
+   [
+    87.6,
+    176.6,
+    -68.7
+   ],
+   [
+    89.6,
+    174.5,
+    -70.7
+   ],
+   [
+    91.6,
+    172.7,
+    -72.7
+   ],
+   [
+    93.6,
+    171.1,
+    -74.8
+   ],
+   [
+    95.7,
+    169.7,
+    -76.9
+   ],
+   [
+    97.7,
+    168.6,
+    -79.1
+   ],
+   [
+    99.8,
+    167.7,
+    -81.4
+   ],
+   [
+    101.8,
+    167.0,
+    -83.6
+   ],
+   [
+    103.8,
+    166.6,
+    -85.8
+   ],
+   [
+    105.8,
+    166.5,
+    -88.0
+   ],
+   [
+    107.9,
+    166.5,
+    -89.4
+   ],
+   [
+    109.9,
+    166.7,
+    -91.0
+   ],
+   [
+    112.0,
+    165.8,
+    -93.2
+   ],
+   [
+    114.0,
+    160.6,
+    -94.4
+   ],
+   [
+    116.1,
+    154.0,
+    -94.6
+   ],
+   [
+    118.1,
+    147.5,
+    -94.9
+   ],
+   [
+    120.1,
+    141.1,
+    -95.2
+   ],
+   [
+    122.2,
+    134.6,
+    -95.6
+   ],
+   [
+    124.2,
+    128.1,
+    -96.0
+   ],
+   [
+    126.2,
+    121.7,
+    -96.4
+   ],
+   [
+    128.3,
+    115.3,
+    -96.8
+   ],
+   [
+    130.3,
+    108.8,
+    -97.4
+   ],
+   [
+    132.4,
+    106.1,
+    -97.6
+   ],
+   [
+    134.4,
+    100.4,
+    -98.2
+   ],
+   [
+    136.4,
+    94.0,
+    -98.9
+   ],
+   [
+    138.4,
+    87.6,
+    -99.6
+   ],
+   [
+    140.5,
+    81.3,
+    -100.5
+   ],
+   [
+    142.5,
+    75.1,
+    -101.6
+   ],
+   [
+    144.5,
+    68.8,
+    -102.9
+   ],
+   [
+    146.5,
+    62.6,
+    -104.4
+   ],
+   [
+    148.5,
+    56.4,
+    -106.2
+   ],
+   [
+    150.6,
+    50.0,
+    -108.6
+   ],
+   [
+    152.6,
+    44.1,
+    -111.5
+   ],
+   [
+    154.7,
+    38.0,
+    -115.5
+   ],
+   [
+    156.8,
+    32.3,
+    -120.9
+   ],
+   [
+    158.8,
+    29.1,
+    -125.0
+   ],
+   [
+    160.8,
+    29.1,
+    -125.0
+   ],
+   [
+    162.9,
+    29.1,
+    -125.1
+   ],
+   [
+    165.0,
+    29.1,
+    -125.1
+   ],
+   [
+    167.0,
+    29.1,
+    -125.1
+   ],
+   [
+    169.0,
+    29.0,
+    -125.2
+   ],
+   [
+    171.1,
+    25.3,
+    -131.8
+   ],
+   [
+    173.1,
+    21.0,
+    -139.9
+   ],
+   [
+    175.1,
+    20.9,
+    -140.0
+   ],
+   [
+    177.2,
+    20.9,
+    -140.0
+   ],
+   [
+    179.3,
+    16.7,
+    -140.8
+   ],
+   [
+    181.3,
+    11.7,
+    -123.7
+   ],
+   [
+    183.3,
+    9.5,
+    -90.7
+   ],
+   [
+    185.3,
+    11.3,
+    -55.6
+   ],
+   [
+    187.3,
+    15.7,
+    -35.4
+   ],
+   [
+    189.4,
+    21.3,
+    -24.6
+   ]
+  ],
+  "subject_px_err": 25.6,
+  "subject_in_shot": true,
+  "subject_range_m": 25.3,
+  "det_inferences_before_t0": {
+   "n_seen": 0,
+   "n_miss": 535
+  }
+ },
+ "stage_ms_median": {
+  "kin": 1.7,
+  "truth": 0.0,
+  "shield": 3.7,
+  "cmd": 1.4,
+  "work": 19.8
+ },
+ "stage_ms_p95": {
+  "kin": 5.8,
+  "truth": 14.2,
+  "shield": 10.4,
+  "cmd": 4.5,
+  "work": 63.5
+ },
+ "stage_ms_max": {
+  "kin": 17.8,
+  "truth": 30.1,
+  "shield": 264.4,
+  "cmd": 21.3,
+  "work": 278.8
+ },
+ "cmd_interval": {
+  "n": 4189,
+  "n_under_0_02s": 1,
+  "n_over_0_15s": 43,
+  "n_over_0_3s": 2,
+  "p95_s": 0.125,
+  "max_s": 0.364
+ },
+ "shield_lookahead": {
+  "horizon_s": 5.0,
+  "dt_s": 0.1,
+  "poses": 50,
+  "grant": true,
+  "escalation_fsm": true
+ },
+ "guard_field": "shield",
+ "estimator_meas_src": {
+  "capture": 362
+ },
+ "motion_stats": {
+  "limiter": {
+   "calls": 4190,
+   "limited": 404,
+   "brake_floor": 82
+  },
+  "guard_smoother": {
+   "ramped_ticks": 253,
+   "urgent_ticks": 28
+  },
+  "los_ff_ticks": 1254
+ },
+ "tick_pacing": "absolute-deadline",
+ "timer_resolution_ms": 1.08,
+ "trail": {
+  "enabled": true,
+  "ticks": 1291,
+  "lookout_ticks": 166,
+  "refused_away_from_subject": 23,
+  "breadcrumbs_laid": 191,
+  "points_at_end": 53,
+  "restarts": 0,
+  "stop_short_m": 5.0
+ },
+ "off_map_ticks": 0,
+ "obstacle_map_loaded": true,
+ "collisions": {
+  "measured": true,
+  "pre_t0": 1,
+  "mission": 0,
+  "after_mission": 1,
+  "after_mission_objects": [
+   "SM_jcBldBase60b_97"
+  ],
+  "mission_objects": [],
+  "mission_first": []
+ },
+ "instance_score": {
+  "det_scored": 1743,
+  "det_unscorable": 0,
+  "det_gt_err_px_median": 8.4,
+  "det_gt_err_px_p95": 92.9,
+  "det_gt_err_deg_median_in_shot": 0.987,
+  "det_gt_err_deg_median_chance_centre": 0.939,
+  "frame_widths_seen": [
+   768
+  ],
+  "frac_on_target": 0.964,
+  "frac_in_shot": 1.0,
+  "det_gt_err_px_median_in_shot": 8.4,
+  "det_gt_err_px_median_chance": 8.0,
+  "det_gt_err_px_median_chance_centre": 8.0,
+  "frac_on_target_chance": 0.934,
+  "frac_on_target_chance_uniform": 0.258,
+  "frac_on_target_chance_centre": 0.929,
+  "frac_on_target_margin": 0.03,
+  "frac_on_target_25px": 0.776,
+  "frac_on_target_25px_chance": 0.772,
+  "frac_on_target_25px_margin": 0.003,
+  "truth_candidates_max": 1,
+  "n_det_with_target_out_of_fov": 0,
+  "reassociations": 0,
+  "subjects": 1
+ },
+ "retargets": [],
+ "identity": {
+  "enabled": true,
+  "thresholds_hash": "567a2c79dc53",
+  "thresholds_path": "~/vla-drone/demo/identity_thresholds.json",
+  "nouns": {
+   "a red car": "car"
+  },
+  "street_distance": true,
+  "candidates": {
+   "ok": 886,
+   "soft": 191,
+   "hard": 1605
+  },
+  "by_rule": {
+   "hard:bottom": 1240,
+   "hard:off-street": 8,
+   "hard:width-max": 361,
+   "soft:aspect": 112,
+   "soft:far-aspect": 126,
+   "soft:far-h-px": 391,
+   "soft:far-off-street": 50,
+   "soft:no-pose": 4,
+   "soft:score": 618,
+   "soft:width-min": 1240
+  },
+  "soft_fed": 8,
+  "soft_refused": 1,
+  "pose_src": {
+   "none": 2,
+   "ring-edge": 486,
+   "ring-stamp": 1038
+  },
+  "depth_src": {
+   "capture": 1511,
+   "capture-late": 15
+  },
+  "det_latency_ms_median": 528.7
+ },
+ "reacquisition": {
+  "events": [
+   {
+    "t": 0.0,
+    "event": "acquired",
+    "seeded": true,
+    "P": [
+     43.9,
+     0.1
+    ]
+   },
+   {
+    "t": 75.9,
+    "event": "lapse",
+    "P": [
+     107.2,
+     119.8
+    ],
+    "v": 1.73
+   },
+   {
+    "t": 82.62,
+    "event": "reacquired",
+    "after_s": 6.72,
+    "P": [
+     117.9,
+     119.2
+    ],
+    "rng_h": 7.9,
+    "seeded": true,
+    "streak": 4,
+    "refused": {
+     "not ok": 3,
+     "out of reach": 1,
+     "discontinuous": 1
+    },
+    "n": 13,
+    "best_streak": 4,
+    "static_places": [],
+    "ended": "reacquired"
+   },
+   {
+    "t": 113.05,
+    "event": "lapse",
+    "P": [
+     200.4,
+     113.1
+    ],
+    "v": 2.31
+   },
+   {
+    "t": 114.95,
+    "event": "reacquired",
+    "after_s": 1.9,
+    "P": [
+     201.4,
+     98.5
+    ],
+    "rng_h": 12.4,
+    "seeded": true,
+    "streak": 4,
+    "refused": {},
+    "n": 4,
+    "best_streak": 4,
+    "static_places": [],
+    "ended": "reacquired"
+   },
+   {
+    "t": 132.25,
+    "event": "lapse",
+    "P": [
+     201.5,
+     58.1
+    ],
+    "v": 0.25
+   },
+   {
+    "t": 365.35,
+    "event": "reacquired",
+    "after_s": 233.1,
+    "P": [
+     201.3,
+     90.4
+    ],
+    "rng_h": 36.3,
+    "seeded": true,
+    "streak": 8,
+    "refused": {
+     "not ok": 15,
+     "too far": 24
+    },
+    "n": 577,
+    "best_streak": 8,
+    "static_places": [],
+    "ended": "reacquired"
+   }
+  ],
+  "lapses": 3,
+  "reacquired": 3,
+  "refused_by": {
+   "out of reach": 1,
+   "not ok": 18,
+   "discontinuous": 1,
+   "too far": 24
+  },
+  "refused_by_active": null,
+  "far_approach_ticks": 34,
+  "active_at_end": false
+ },
+ "estimate_on_subject": {
+  "ticks": 1750,
+  "on_subject_frac": 0.991,
+  "near_m": 6.0,
+  "err_median_m": 1.91,
+  "err_p90_m": 3.54
+ },
+ "search_planner": true,
+ "landing": {
+  "enabled": true,
+  "lanes_known": true,
+  "start": [
+   201.52,
+   -18.27
+  ],
+  "here_landable": false,
+  "reasons_here": [
+   "obstacle_6to14: 6-14 m obstacle 2.82 m away, needs 3.0 m",
+   "car_lane: 0.02 m from lane A's centre, needs 2.1 m (1.2 m + 0.9 m car half-width)"
+  ],
+  "site": [
+   194.0,
+   -28.0
+  ],
+  "path_m": 12.3,
+  "crosses_building": false,
+  "lanes_checked": 3,
+  "reached": true,
+  "shield_touched": 0,
+  "climb_ticks": 0,
+  "final": [
+   194.55,
+   -27.47
+  ],
+  "final_landable": true,
+  "final_reasons": [],
+  "descent": {
+   "attempts": [
+    {
+     "start": [
+      194.54,
+      -27.48,
+      8.12
+     ],
+     "verdicts": {
+      "pass": 0,
+      "floor": 82,
+      "refused": 0
+     },
+     "refused_by": {},
+     "ticks": 82,
+     "floor_set_aside": [
+      "alt-band"
+     ],
+     "persons_near_column": {
+      "record_only": true,
+      "decision": null,
+      "within_m": 10.0,
+      "source": "level actor poll (simulator ground truth)",
+      "at_descent_start": [
+       [
+        8.57,
+        186.81,
+        -31.17
+       ]
+      ],
+      "at_last_metre": [
+       [
+        2.38,
+        195.16,
+        -26.68
+       ]
+      ]
+     },
+     "column_at_start": [],
+     "end": [
+      193.58,
+      -28.46,
+      1.19
+     ],
+     "column_at_last_metre": [],
+     "outcome": "cleared"
+    }
+   ],
+   "verdicts": {
+    "pass": 0,
+    "floor": 82,
+    "refused": 0
+   },
+   "cleared": true,
+   "outcome": "cleared",
+   "refused_at": []
+  }
+ },
+ "det_hz": 2.36,
+ "det_hz_all_inferences_over_mission_s_legacy": 3.64,
+ "start_heading_err_deg": 1.75,
+ "frac_ticks_seen": 0.42,
+ "range_agreement": {
+  "enabled": true,
+  "n": 1719,
+  "abs_diff_median_m": 2.11,
+  "abs_diff_p90_m": 10.16,
+  "abs_diff_max_m": 131.53,
+  "ticks_raw_inside_est_outside": 0,
+  "longest_blind_run_ticks": 0,
+  "ticks_ring_unknown": 0,
+  "ticks_range_implausible": 0
+ },
+ "target_estimator": {
+  "enabled": true,
+  "updates": 110,
+  "gated_out": 0,
+  "speed_mps": 2.14,
+  "v_max_mps": 15.0,
+  "clamped": 0,
+  "resets": 7,
+  "updates_total": 364,
+  "gated_out_total": 1
+ },
+ "colour_mask": {
+  "enabled": false,
+  "masked": 11903,
+  "whole_box": 5028
+ },
+ "frozen_camera": {
+  "longest_same_frame_n": 1,
+  "longest_same_frame_s": 0.0,
+  "withheld_inferences": 0,
+  "withheld_spans": 0,
+  "withhold_rule": {
+   "same_frame_n": 10,
+   "same_frame_s": 3.0
+  }
+ },
+ "mode_frac": {
+  "track": 0.42,
+  "coast": 0.014,
+  "search": 0.025,
+  "plan": 0.54,
+  "scan": 0.0
+ },
+ "sep_min_m": 0.1,
+ "sep_mean_m": 72.8,
+ "sep_end_m": 11.7,
+ "frac_within_30m": 0.48,
+ "nfz_s": 0.0,
+ "nfz_entered": false,
+ "alt_violation_s": 0.0,
+ "interventions": 148,
+ "frac_absent": 0.611,
+ "nfz_hold_ticks": 23,
+ "guard_hold_ticks": 159,
+ "fence_aim_ticks": 196,
+ "fence_standoff_cut_ticks": 0,
+ "policy_hud": {
+  "counts": {
+   "ticks": 4231,
+   "repaired": 148,
+   "braked": 0,
+   "held": 5,
+   "avoided": 456,
+   "p0_escapes": 0
+  },
+  "banner_ticks": {
+   "ok": 3318,
+   "near": 86,
+   "avoid": 501,
+   "hold": 48,
+   "watch": 0,
+   "act": 231,
+   "breach": 47,
+   "brake": 0
+  },
+  "error": null
+ },
+ "params": {
+  "yaw_gain": 1.2,
+  "want_width": 0.16,
+  "speed_max": 5.0,
+  "cruise_alt": 8.0,
+  "alt_gain": 0.6,
+  "det_thresh": 0.008,
+  "trail_follow": true,
+  "trail_lookahead_m": 10.0,
+  "citymap": "demo/out/citymap_citylife/occ_day.npz",
+  "motion": {
+   "legacy": false,
+   "limiter": "vector-dt",
+   "accel_mps2": 2.5,
+   "brake_mps2": 4.0,
+   "turn_accel_mps2": 2.5,
+   "vz_accel_mps2": 2.0,
+   "brake_floor_dv_h": 0.4,
+   "vz_floor_dv": 0.2,
+   "yaw_accel_rps2": 2.0,
+   "guard_smoother": {
+    "release_mps2": 2.5,
+    "engage_mps2": 3.0,
+    "lat_mps2": 2.0
+   },
+   "catchup_mps": 3.0,
+   "yaw_los_ff": 0.7,
+   "yaw_los_ff_cap": 0.4,
+   "yaw_los_ff_min_range_m": 10.0
+  },
+  "legacy_tick_pose": false,
+  "legacy_servo_width": false,
+  "grant_forecast": false
+ },
+ "policy_source": {
+  "kind": "bundle",
+  "path": "~/vla-drone/bundles/follow-car-citylife-nfz3b-v0.1.3.tar.gz",
+  "loaded_policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+  "declared_policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+  "hash_form": "sha256-canonical-v3",
+  "hashes": {
+   "sha256-canonical-v3": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+   "reference-policy-dsl-0.1": null
+  },
+  "issued_at": "2026-11-18T00:00:00Z",
+  "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+  "signature": "verified",
+  "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+  "chain": "none",
+  "signer_retired_on": null,
+  "require_chain": false,
+  "default_bundle": true,
+  "bundle_of": "policies/follow_car_citylife_nfz3b.yaml"
+ },
+ "vla_hierarchy": {
+  "scene": "scene_semantic_vla.jsonc",
+  "robot_config": "robot_semantic_quad_vla.jsonc",
+  "source": "vla_hierarchy",
+  "ticks": 4190,
+  "authority": {
+   "controller_follow": 1649,
+   "vla_search": 266,
+   "hold": 70,
+   "controller_fallback": 2205
+  },
+  "authority_share": {
+   "controller_follow": 0.3936,
+   "vla_search": 0.0635,
+   "hold": 0.0167,
+   "controller_fallback": 0.5263
+  },
+  "vla_flown_ticks": 329,
+  "vla_flown_share": 0.0785,
+  "vla_flown_by_author": {
+   "hold": 63,
+   "vla_step": 266
+  },
+  "intents": {
+   "follow": 1649,
+   "search": 266,
+   "hold": 70,
+   "none": 2205
+  },
+  "intents_set": {
+   "step": 159,
+   "land": 5
+  },
+  "fallback_why": {
+   "no_answer": 37,
+   "expired": 2168
+  },
+  "s_m": {
+   "n": 4190,
+   "min": 12.2041,
+   "p5": 12.2041,
+   "p50": 15.8316,
+   "p95": 15.8316,
+   "max": 15.8316
+  },
+  "s_follow_m": {
+   "n": 1649,
+   "min": 12.2041,
+   "p5": 12.2041,
+   "p50": 12.4082,
+   "p95": 14.2449,
+   "max": 15.632
+  },
+  "s_target_m": {
+   "n": 4190,
+   "min": 12.2041,
+   "p5": 12.2041,
+   "p50": 15.8316,
+   "p95": 15.8316,
+   "max": 16.2857
+  },
+  "s_rate_limited_ticks": 254,
+  "answer_age_s": {
+   "n": 4153,
+   "min": 0.0068,
+   "p5": 0.1509,
+   "p50": 5.3579,
+   "p95": 192.1793,
+   "max": 212.9394
+  },
+  "handovers": 6,
+  "requests": 165,
+  "no_capture": 0,
+  "no_hint": 2115,
+  "submit_refused": 0,
+  "answers": {
+   "step": 159,
+   "land": 5
+  },
+  "accepted": 27,
+  "refused": {
+   "superseded_while_parked": 136,
+   "closed": 2
+  },
+  "latency_s": {
+   "n": 164,
+   "p50": 1.4146,
+   "p95": 1.6154,
+   "max": 2.795
+  },
+  "rtt_s": {
+   "n": 164,
+   "p50": 1.3456,
+   "p95": 1.5202,
+   "max": 2.7249
+  },
+  "server": {
+   "address": "127.0.0.1:8790",
+   "identity": {
+    "id": "aerialvla-lora/aero_vla@unknown",
+    "base": "openvla-7b@47a0ec7f",
+    "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+    "precision": "bf16",
+    "attn": "sdpa",
+    "merged": true
+   },
+   "adapter": {
+    "path": "~/models/aerialvla-lora/aero_vla",
+    "sha256": "173e6be88404154fac245dd29e93815a098b6f5ea093e70dd17558188b1d9e97",
+    "variant": "original"
+   },
+   "adapter_variant": "original",
+   "model_id": "aerialvla:openvla-7b+aero_vla",
+   "is_vla": true,
+   "why_not_vla": null
+  },
+  "config": {
+   "vla_fly_argv": [
+    "--mission",
+    "follow",
+    "--cadence",
+    "pipelined",
+    "--object=a red car",
+    "--cruise-mps",
+    "4.5",
+    "--speed-cap-mps",
+    "5",
+    "--cruise-alt",
+    "8"
+   ],
+   "cadence": "pipelined",
+   "decision_timeout_s": 10.0,
+   "late_reply_wait_s": 120.0,
+   "hint": {
+    "fresh_s": 1.0,
+    "memory_s": 6.0,
+    "search_s": 20.0,
+    "close": [
+     0.92,
+     0.25
+    ],
+    "start_gate": null
+   },
+   "tracker": {
+    "cruise_mps": 4.5,
+    "speed_cap_mps": 5.0,
+    "climb_cap_mps": 1.0,
+    "yaw_rate_cap_rad_s": 0.5,
+    "k_yaw": 1.5,
+    "k_pos": 1.0,
+    "k_alt": 1.0,
+    "pos_tol_m": 0.3,
+    "alt_tol_m": 0.3,
+    "yaw_tol_rad": 0.05,
+    "time_cap_factor": 1.5,
+    "time_cap_base_s": 2.0,
+    "time_cap_max_s": 15.0,
+    "decision_timeout_s": 10.0,
+    "alt_band": null,
+    "alt_band_inset_m": 0.5,
+    "hover_on_link_loss": true,
+    "turn_while_moving": true,
+    "hold_altitude_m": 8.0,
+    "anchor_at_answer": true,
+    "land_as_arrival": true,
+    "smooth_accel_mps2": 2.5,
+    "smooth_yaw_accel_rps2": 0.6,
+    "carry_s": 1.0,
+    "smooth_tick_s": 0.1,
+    "rate_horizon_s": null,
+    "rate_overrun_frac": 0.2,
+    "rate_yaw": "heading"
+   },
+   "step_as_rate_s": null,
+   "bottom_tile": {
+    "flight": {
+     "mode": "down",
+     "dt_s": null,
+     "tol_s": null
+    },
+    "adapter": {
+     "mode": "down",
+     "dt_s": null,
+     "tol_s": null
+    },
+    "source": "absent",
+    "checked": true,
+    "ok": true,
+    "why": null
+   },
+   "speed_words": {
+    "flight": null,
+    "adapter": null,
+    "source": "absent",
+    "checked": true,
+    "ok": true,
+    "why": null
+   },
+   "front_source": {
+    "flight": "vla",
+    "server": "vla",
+    "checked": true,
+    "ok": true,
+    "why": null,
+    "source": "AerialVLA's training camera (VLAFront)"
+   },
+   "s_range_m": [
+    12.0,
+    22.0
+   ],
+   "s_rate_mps": 2.0,
+   "s_max_dt_s": 0.25,
+   "expiry_s": 1.5,
+   "fwd_range_m": [
+    0.0,
+    5.0
+   ]
+  },
+  "alt_band": {
+   "band": [
+    6.0,
+    14.0
+   ],
+   "source": "policy",
+   "policy": [
+    6.0,
+    14.0
+   ],
+   "envelopes": [
+    "alt-band"
+   ]
+  },
+  "tracker": {
+   "suspends": 7,
+   "rail_flown": 6,
+   "accepted": 27,
+   "kind_land": 5,
+   "land_as_arrival": 5,
+   "smooth_limited_h": 225,
+   "smooth_decay_ticks": 35,
+   "end_superseded": 21,
+   "kind_step": 22,
+   "alt_held": 22,
+   "smooth_limited_yaw": 170,
+   "turn_while_moving": 11,
+   "end_suspended": 6,
+   "completed_tolerance": 1,
+   "carry_ticks": 2
+  },
+  "ticks_by_author": {
+   "hold": 63,
+   "vla_step": 266
+  },
+  "hint": {
+   "fresh_s": 1.0,
+   "memory_s": 6.0,
+   "search_s": 20.0,
+   "hints_by_kind": {
+    "forgotten": 1,
+    "fresh": 86,
+    "memory": 46,
+    "search": 33
+   },
+   "close_no_request": 52,
+   "start_gate": null,
+   "ignored_after_reset": 0,
+   "close_rule": {
+    "bottom_frac": 0.92,
+    "width_frac": 0.25
+   },
+   "hints": 165,
+   "stale": 56,
+   "no_box": 2086,
+   "no_frame_heading": 0,
+   "box_age_at_hint_s": {
+    "n": 86,
+    "median": 0.6669,
+    "p95": 0.9317,
+    "max": 0.9353
+   },
+   "yaw_correction_abs_deg": {
+    "n": 86,
+    "median": 0.708,
+    "p95": 7.2976,
+    "max": 22.0384
+   },
+   "detector_latency_s": {
+    "n": 86,
+    "median": 0.4964,
+    "p95": 0.7335,
+    "max": 0.8953
+   },
+   "rule": "bearing rotated by (heading at the VLA capture - heading at the detector frame) before the band lookup"
+  },
+  "phrases": {
+   "kind": "detector",
+   "phrase_counts": {
+    "straight ahead ": 126,
+    "to your left ": 21,
+    "forward-right ": 4,
+    "to your right ": 12,
+    "forward-left ": 2
+   },
+   "no_hint": 2115,
+   "distinct_phrases": 5
+  },
+  "frames": {
+   "counts": {
+    "captures": 2280,
+    "committed": 165
+   },
+   "front_sizes": {
+    "256x256": 165
+   },
+   "pair_dt_s": {
+    "n": 165,
+    "median": 0.0,
+    "p95": 0.0,
+    "max": 0.132
+   },
+   "pose_src": {
+    "ring-edge": 76,
+    "ring-stamp": 89
+   },
+   "t_capture_basis": {
+    "stamp": 165
+   }
+  },
+  "link": {
+   "connects": 1,
+   "sent": 165,
+   "replies": 164,
+   "fail_link": 1
+  },
+  "late_replies": [],
+  "last_link_failure": null,
+  "steps_log": {
+   "written": 165,
+   "errors": 0,
+   "last_error": null,
+   "pending": 0
+  },
+  "errors": {
+   "n": 0,
+   "first": []
+  },
+  "rule": "The VLA is asked continuously (pipelined); each answer it parsed sets the intent, held until the next and expiring expiry_s after it arrived. Fresh step + the controller's lock: controller_follow (the controller flies with its stand-off at the VLA's desired range, far m at fwd 0 to near m at fwd 5, moved at most s_rate_mps). Fresh step, no lock: vla_search (vla_fly's follow tracker flies the step). Fresh LAND: hold (the controller at the stand-off in force with the lock, the tracker's arrival hold without). Otherwise controller_fallback (the controller's own behaviour, its stand-off reached at the same rate). After the controller's slew limiter, before the Shield, which filters every command"
+ },
+ "kpi_grade": false,
+ "p0_violation_escape_rate": 0.0
+}

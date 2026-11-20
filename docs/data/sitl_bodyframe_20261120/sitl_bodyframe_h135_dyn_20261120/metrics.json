@@ -1,0 +1,207 @@
+{
+  "tag": "sitl_bodyframe_h135_dyn_20261120",
+  "episode_id": 1795169237207956641,
+  "topology": "ardupilot-sitl-pymavlink",
+  "ticks": 74,
+  "ticks_flown": 2,
+  "ticks_not_flown": 72,
+  "shield_lookahead": {
+    "horizon_s": 5.0,
+    "dt_s": 0.1,
+    "poses": 50
+  },
+  "shield_forecast": {
+    "mode": "commanded",
+    "flag": "--own-velocity-forecast off",
+    "response": {
+      "reaction_s": 0.45,
+      "accel_mps2": 1.75,
+      "source": "ArduCopter V4.5.7 SITL, GUIDED velocity setpoints, Project AirSim CityLife quad (citylife-quad.param): each setpoint flown from 0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* flights, 550 step windows, chosen as the most accurate grid point whose median braking error at 1.5 s in the Shield's form is not short (tools/fit_velocity_response.py; identified aircraft 0.35 s, 2.0 m/s^2)"
+    },
+    "clear_response": {
+      "reaction_s": 0.45,
+      "accel_mps2": 1.75,
+      "source": "ArduCopter V4.5.7 SITL, GUIDED velocity setpoints, Project AirSim CityLife quad (citylife-quad.param): each setpoint flown from 0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* flights, 550 step windows, chosen as the most accurate grid point whose median braking error at 1.5 s in the Shield's form is not short (tools/fit_velocity_response.py; identified aircraft 0.35 s, 2.0 m/s^2)"
+    },
+    "velocity_source": "LOCAL_POSITION_NED vx/vy/vz (pymavlink)",
+    "velocity_ticks": 0,
+    "shield_velocity_ticks": 0,
+    "velocity_nonfinite": 0
+  },
+  "action_frame": {
+    "shield_input": "body",
+    "heading_source": "ATTITUDE.yaw",
+    "heading_missing_ticks": 0,
+    "adapter": "guardrail.frames.body_to_local_ned"
+  },
+  "autopilot_fence": {
+    "FENCE_ENABLE": 1.0,
+    "FENCE_ALT_MAX": 30.0,
+    "FENCE_ACTION": 1.0,
+    "FENCE_TYPE": 5.0,
+    "AVOID_ENABLE": 0.0,
+    "source": "PARAM_VALUE (pymavlink)",
+    "policy_ceiling_m": 20.0,
+    "policy_ceiling_source": "altitude_envelope",
+    "fence_alt_max_raised_from": null,
+    "raise_allowed": true,
+    "backstop_active": true,
+    "stricter_than_policy": false,
+    "note": "this rail uploads no polygons; only the altitude fence applies (the ROS 2 rail uploads the zones)"
+  },
+  "sim_stressors": [],
+  "shield": "on",
+  "reached": false,
+  "frac_within_30m": 0.0,
+  "nfz_s": 0.0,
+  "nfz_by_zone_s": {},
+  "nfz_moving_not_counted": [],
+  "nfz_off_by_clock_s": {},
+  "standoff_s": 0.0,
+  "standoff_min_range_m": null,
+  "subject": null,
+  "alt_violation_s": 0.0,
+  "interventions": 74,
+  "brakes": 0,
+  "seed": 20261120,
+  "shield_ms_max": 27.207,
+  "fsm": {
+    "ticks": 74,
+    "final_state": "RTL",
+    "terminal": true,
+    "terminal_reason": "home reached",
+    "visited": [
+      "Normal",
+      "Brake",
+      "Loiter",
+      "RTL"
+    ],
+    "max_state": "RTL",
+    "failsafe_triggered": true,
+    "loiter_entered": true,
+    "outcome_label": "RTL_triggered",
+    "transitions": [
+      {
+        "tick": 1,
+        "t_s": 4e-06,
+        "from": "Normal",
+        "to": "Brake",
+        "edge": "X1",
+        "reason": "nfz-square (hard P0 project_fix): repair over theta, lat 8.14 m / vert 0.00 m vs theta 2.00 / 0.50 m; projection abandoned"
+      },
+      {
+        "tick": 2,
+        "t_s": 0.141711,
+        "from": "Brake",
+        "to": "Loiter",
+        "edge": "G3",
+        "reason": "nfz-square (hard P0 project_fix): repair over theta, lat 8.14 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+      },
+      {
+        "tick": 73,
+        "t_s": 44.5762,
+        "from": "Loiter",
+        "to": "RTL",
+        "edge": "G5",
+        "reason": "loiter timeout: 44.43 s >= 30 s"
+      },
+      {
+        "tick": 74,
+        "t_s": 44.693033,
+        "from": "RTL",
+        "to": "[*]",
+        "edge": "G9",
+        "reason": "home reached"
+      }
+    ],
+    "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+    "holds": [
+      {
+        "mode": "LOITER",
+        "kind": "in_place",
+        "x": 0.000244,
+        "y": -0.004588,
+        "up": 14.294595,
+        "legal": true,
+        "travel_s": 0.0,
+        "speed_mps": null,
+        "climb_mps": null,
+        "checked_s": 5.0,
+        "breaks": [],
+        "reason": "standing still at (0.0, -0.0, 14.3) breaks no hard rule within the 5 s lookahead",
+        "t_s": 0.141711
+      }
+    ],
+    "holds_moved": 0,
+    "holds_illegal": 0,
+    "ended_holding": null,
+    "fault": null,
+    "theta_basis": {
+      "source": "per-operator magnitude_m",
+      "horizon_s": null
+    },
+    "hold_mode": {
+      "fsm_mode": "LOITER",
+      "autopilot_mode": "BRAKE"
+    },
+    "hold_points": {
+      "choice": "moved",
+      "moved_transits": 0
+    }
+  },
+  "mode_requests": [
+    "RTL"
+  ],
+  "autopilot_mode_requests": [
+    "RTL"
+  ],
+  "generations": [
+    {
+      "generation": 0,
+      "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reason": "take-off",
+      "csp": true,
+      "rule_clock_reading": "2026-11-20T18:07:17"
+    },
+    {
+      "generation": 1,
+      "policy_hash": "sha256:8fb2734cf67502dd4430f0a2cc4719037b096ca84d7cf6ef9e8a146535dd497f",
+      "reason": "hot_apply nfz-dynamic",
+      "csp": true,
+      "rule_clock_reading": "2026-11-20T18:08:36"
+    }
+  ],
+  "rule_clock": {
+    "kind": "wall",
+    "tz": "+08:00 (Asia/Taipei (UTC+08:00, no daylight saving))",
+    "tz_source": "default: the mission's time zone (no --clock-tz)",
+    "first_reading": "2026-11-20T18:07:17",
+    "note": "no --clock-start: time windows and switches are evaluated on the wall clock in this zone, read as naive local time"
+  },
+  "hot_apply": null,
+  "autopilot": {
+    "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)",
+    "flight_sw_version": "040507ff",
+    "git_hash": "2a3dc4b7",
+    "ardupilot_version_source": "AUTOPILOT_VERSION (pymavlink)"
+  },
+  "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)",
+  "policy_source": {
+    "kind": "bundle",
+    "path": "bundles/fase3-sim-demo-v0.1.4.tar.gz",
+    "loaded_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "declared_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "hash_form": "sha256-canonical-v3",
+    "hashes": {
+      "sha256-canonical-v3": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reference-policy-dsl-0.1": null
+    },
+    "issued_at": "2026-11-06T20:26:25Z",
+    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+    "signature": "verified",
+    "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (pure-python)",
+    "chain": "none",
+    "signer_retired_on": null,
+    "require_chain": false
+  }
+}

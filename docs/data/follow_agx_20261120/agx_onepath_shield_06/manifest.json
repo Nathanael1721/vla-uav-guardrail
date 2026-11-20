@@ -1,0 +1,8 @@
+{
+ "code_revision": "28a594dd0c43",
+ "vla_model_hash": "none:hand-written-controller",
+ "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+ "random_seed": 20260817,
+ "sim_speedup": 1.0,
+ "topology": "projectairsim-remote-sim"
+}

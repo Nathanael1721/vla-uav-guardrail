@@ -1,0 +1,42 @@
+  gzsweep_altitude-floor-recovery--seed1001    before=None(0)  ideal=pass(0)
+  gzsweep_corridor-along--seed1001             before=None(0)  ideal=pass(0)
+  gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1001 before=None(0)  ideal=pass(0)
+  gzsweep_failsafe-rtl-zone@ahead_m=12,variant=0--seed1001 before=None(0)  ideal=pass(0)
+  gzsweep_nfz-head-on--seed1001                before=None(0)  ideal=fail(1)
+  gzsweep_nfz-head-on-control--seed1001        before=None(0)  ideal=pass(0)
+  gzsweep_speed-cap--seed1001                  before=None(0)  ideal=pass(0)
+  gzsweep_time-window-switch-event--seed1001   before=None(0)  ideal=pass(0)
+
+fail-safe trigger correctness of 7 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 7
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      not acc.   gzsweep_altitude-floor-recovery--seed1001  (altitude-floor-recovery, seed 1001)
+      not acc.   gzsweep_corridor-along--seed1001  (corridor-along, seed 1001)
+      not acc.   gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1001  (dyn-nfz-translate@variant=0,zone_mps=2, seed 1001)
+      not acc.   gzsweep_failsafe-rtl-zone@ahead_m=12,variant=0--seed1001  (failsafe-rtl-zone@ahead_m=12,variant=0, seed 1001)
+      not acc.   gzsweep_nfz-head-on--seed1001  (nfz-head-on, seed 1001)
+      not acc.   gzsweep_speed-cap--seed1001  (speed-cap, seed 1001)
+      not acc.   gzsweep_time-window-switch-event--seed1001  (time-window-switch-event, seed 1001)
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 7
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      not acc.   gzsweep_altitude-floor-recovery--seed1001  (altitude-floor-recovery, seed 1001)
+      not acc.   gzsweep_corridor-along--seed1001  (corridor-along, seed 1001)
+      not acc.   gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1001  (dyn-nfz-translate@variant=0,zone_mps=2, seed 1001)
+      not acc.   gzsweep_failsafe-rtl-zone@ahead_m=12,variant=0--seed1001  (failsafe-rtl-zone@ahead_m=12,variant=0, seed 1001)
+      not acc.   gzsweep_nfz-head-on--seed1001  (nfz-head-on, seed 1001)
+      not acc.   gzsweep_speed-cap--seed1001  (speed-cap, seed 1001)
+      not acc.   gzsweep_time-window-switch-event--seed1001  (time-window-switch-event, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 7
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      not acc.   gzsweep_altitude-floor-recovery--seed1001  (altitude-floor-recovery, seed 1001)
+      not acc.   gzsweep_corridor-along--seed1001  (corridor-along, seed 1001)
+      not acc.   gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1001  (dyn-nfz-translate@variant=0,zone_mps=2, seed 1001)
+      not acc.   gzsweep_failsafe-rtl-zone@ahead_m=12,variant=0--seed1001  (failsafe-rtl-zone@ahead_m=12,variant=0, seed 1001)
+      not acc.   gzsweep_nfz-head-on--seed1001  (nfz-head-on, seed 1001)
+      not acc.   gzsweep_speed-cap--seed1001  (speed-cap, seed 1001)
+      not acc.   gzsweep_time-window-switch-event--seed1001  (time-window-switch-event, seed 1001)
+
+8/8 run(s) re-scored -> docs/data/gazebo_sweep_20261120/rescore_rail_gz.json

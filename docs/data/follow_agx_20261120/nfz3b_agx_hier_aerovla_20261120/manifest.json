@@ -1,0 +1,8 @@
+{
+ "code_revision": "28a594dd0c43",
+ "vla_model_hash": "aerialvla:openvla-7b+aero_vla@sha256:ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+ "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+ "random_seed": 20260817,
+ "sim_speedup": 1.0,
+ "topology": "projectairsim-remote-sim"
+}

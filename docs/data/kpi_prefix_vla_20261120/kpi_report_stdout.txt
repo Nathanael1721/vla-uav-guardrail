@@ -1,0 +1,4 @@
+wrote docs/data/kpi_prefix_vla_20261120/kpi_report_pab_aerialvla_04_2026-11-20.md and docs/data/kpi_prefix_vla_20261120/kpi_report_pab_aerialvla_04_2026-11-20.json
+12 episodes (12 KPI-grade), 0 inputs skipped
+P0 escape rate: 0.0 Shield on (0 escapes, 12 flights) vs None Shield-off control
+reproduce: python tools/kpi_report.py --runs 'demo/out/pab_aerialvla_04_p*' --no-sweep --out 'docs/data/kpi_prefix_vla_20261120/kpi_report_pab_aerialvla_04_2026-11-20'

@@ -16,15 +16,144 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-20 (flown: prefix A/B with AerialVLA, the first Gazebo sweep, body frame on SITL, follow re-flights on the AGX) — the prefix A/B flown by a learned VLA that reads the prefix: P0 escape 0 on 12 of 12 arms, no prefix effect shown with 3 pairs; the Gazebo functional rail swept for the first time, 7 of 8 missions passing; the body-frame hand-over flown on the pymavlink SITL rail; the follow landed through the Shield; WP4-15 and ARCH-04 DONE, 109 DONE / 26 PARTIAL / 1 DRIFT / 0 MISSING
+
+#### Flown
+- **WP4-15, prefix A/B with a VLA that reads the prefix** (campaign
+  pab_aerialvla_04, hil, 19-20 Nov; docs/data/kpi_prefix_vla_20261120/).
+  AerialVLA (OpenVLA-7B + aero_vla LoRA, bf16 on the AGX Orin) reads the
+  Prefix Compiler's CSP on its instruction line
+  (perception_node.py --vla-prefix), on the PAS CityLife car follow, run by
+  deploy/orin/run_pas_prefix_ab.sh outside the stress harness. 3 pairs x 4
+  arms in ABBA order (csp, off, neutral = rule-free text of the CSP's length
+  in OpenVLA tokens, csp_aa = the csp arm again, the A/A floor), the rig
+  reset before every arm, code bfb4973, seed 20261006. 12 of 12 arms flown,
+  all KPI-grade.
+  - P0 escape 0 on 3,309 P0-violation ticks (passthrough null 0.120).
+  - Mission success 0 on all 12 flights, so success cannot separate the
+    arms: every scored flight dwelt inside the stand-off ring and/or
+    entered an unsafe position. 9 ended with the target lost, p2_off on the
+    420 s limit, and two A/A flights (p1_csp_aa, p2_csp_aa) when ArduPilot
+    took the aircraft in RTL about 400 m from the start, the radius of its
+    circular fence: the autopilot's backstop, not a Shield or FSM
+    escalation.
+  - On vs off: repairs per episode 281.7 vs 342.7, magnitude 2.364 vs
+    2.858 m/s, time to safe 0.644 vs 0.762 s, share within 30 m 0.106 vs
+    0.079. Every delta is within the largest gap inside one A/A pair (433,
+    0.612 m/s, 1.243 s, 0.139); the repairs and magnitude deltas are about
+    twice the A/A mean-to-mean difference (30.0, 0.226 m/s), and the
+    per-pair deltas change sign. With 3 pairs the prefix's effect on this
+    model, never trained with rule text in its prompt, cannot be told
+    apart from flight-to-flight noise: no finding, not a measured zero.
+  - 4 of 27,582 ticks over 100 ms (max 142.85 ms; tick p99 47.2 ms). On
+    each the Shield step itself took 72-85 ms (71.5, 82.2, 85.3, 78.0 ms) on
+    a clearance repair with OpenVLA-7B and OWL-ViT sharing the Orin; the
+    cause is open. The ROS 2 hil rail of the tick KPI campaigns is not this
+    rail (pab3 max 18.10 ms).
+  - Camera to first setpoint p50 1642 ms (AerialVLA about 1.5 s per
+    decision on the Orin): the VLA's decision time, reported beside the
+    Shield's tick, not as it.
+  - Not counted: campaigns _01 to _03 and the failed attempts of _04, kept
+    under their own names on the AGX. Two campaign orchestrators ran at
+    once on 20 Nov 09:06-11:45 (a stopped background script's children
+    stayed alive) and reset the rig under each other; the `_nomission`
+    attempts hovered their start gate on a frozen FrontCamera. The
+    frozen-camera check (2026-11-20 entry below) now names that state.
+- **WP4-04 / ARCH-16, the first Gazebo functional sweep**
+  (docs/data/gazebo_sweep_20261120/): profile gazebo_functional, 8 missions,
+  seed 1001, at 28a594d (clean), Gazebo Harmonic (gz_sim 8.11.0, the ROS 2
+  Jazzy vendor build) behind ArduPilot SITL's JSON backend, stub pilot
+  through the ROS 2 Shield node and MAVROS 2, 1074 s. Every mission
+  functional_only, never KPI-grade (the lab's choice of 17 Nov).
+  - 7 of 8 passed. P0 escape 0.0 on the 7 Shield-on missions (passthrough
+    null 0.047); Shield-off control 0.654, in the zone.
+  - nfz-head-on failed its gate: Brake -> Loiter (repair 2.26 m over theta
+    2.00 m) -> 30 s Loiter timeout -> RTL, the sequence the hil rig flies
+    on every Shield-on nfz-head-on mission of ntFIN, ntFIN2, nt1107,
+    nt1111, hs07 and hs09 (the prefix-on arms of pab1-pab3 take other
+    paths). Ideal-vehicle labels 6/7; the adopted rail-vehicle reading r2
+    labels this cell fail-safe-expected (7/7), but r2's vehicle was fitted
+    to the hil rig, not to Gazebo's iris, so neither is a KPI figure.
+  - Found: the companion's GUIDED-hold setpoint stream faltered in 2 of 7
+    Shield-on missions (nfz-head-on 0.41 s, time-window-switch-event
+    0.44 s, over the 0.3 s limit) and the hold was handed to ArduPilot
+    BRAKE; not seen on the hil rig. Open.
+  - 7 of 8 missions wrote the grant's six-name episode bundle
+    (demo/out/gzsweep_20261120/episode-...); corridor-along (0 repairs)
+    wrote five, with no shield_audit.jsonl because its run wrote none. All
+    8 wrote a signed replay bundle.
+- **WP3-04 / ARCH-04, body frame on the pymavlink SITL rail**
+  (docs/data/sitl_bodyframe_20261120/): the flight wf21-bodyframe left owed.
+  At 28a594d, four flights of the fase3 demo, booted at heading -0.4 deg
+  and at 135.6 deg (SITL_HOME), two of them with `--dynamic`: every tick
+  handed the Shield the body action at ATTITUDE.yaw (heading_missing_ticks
+  0), and every setpoint the rail sent went through
+  `frames.body_to_local_ned`. Same FSM decisions at both headings (X1 on
+  tick 1, Loiter, RTL on the Loiter timeout: this demo's first-tick
+  escalation since 2 Nov), P0 escape 0, 0.0 s in a zone. On tick 1 at
+  135.6 deg the Shield's emitted world action (2.829, -2.827) m/s is
+  (-4.00, 0.04) m/s in the logged body frame; that action was never flown
+  (the FSM braked on ticks 1-2, so the rail sent a zero stop, then the
+  autopilot held the aircraft). No non-zero horizontal setpoint crossed the
+  adapter at 135.6 deg: a hand-over test, not a flown adapter test.
+  - One stall, not reproduced: sitl_bodyframe_h135_dyn_20261120 wrote no row
+    for 36.6 s inside the hot-apply tick, before its first generation file
+    was written. apply_zone takes 1-2 ms offline and 0.73 s in the profiled
+    re-flight (writing the generation files to /mnt/d), whose longest gap,
+    0.85 s, is also its hot-apply tick. Likely a file-system stall on the
+    nearly full D: drive; open.
+- **Follow re-flights on the AGX** (docs/data/follow_agx_20261120/): the
+  20 Nov follow-rail code (stand-off edge, descent through the Shield) at
+  28a594d, the 19 Nov rig and flags. nfz3b_agx_hier_aerovla_20261120 within
+  30 m 0.48 (19 Nov: 0.345; today's single loss was the car's leg-3 stop,
+  as on 4 Nov, not a stand-off hold), agx_onepath_shield_06 0.945 (19 Nov
+  onepath n = 5: median 0.943, range 0.472-0.969; within the spread); P0
+  escape 0, 0.0 s in a zone, 0 contacts in the mission on both.
+  - The stand-off trap did not recur, but no tick was inside a zone's
+    stand-off (the 4 ticks of `fence_d` below 3 m were building clearance),
+    so the new edge is not exercised.
+  - Both landed through the Shield at (194.0, -28.0): 82 and 86 descent
+    ticks, each breaking only the altitude floor the Land sets aside, 0
+    refused, cleared at 1.19 / 1.18 m, column test clear.
+  - A level pedestrian was near the landing column on both flights (nfz3b:
+    2.38 m at the last metre; onepath_06: 3.05 m at descent start; ground
+    truth, record only). Neither policy has a people rule, so the descent
+    could not react to them: pedestrian-aware site choice stays open.
+  - Not KPI-grade (projectairsim-remote-sim). PIP videos and full runs on
+    F:/vla_drone_offload/jetson_runs/.
+
+#### Changed
+- `docs/FINAL-REPORT-outline.md` Appendix A, after an independent review
+  of each row against the grant's wording (one reviewer per row, every
+  finding re-checked by a second):
+  - **WP4-15 -> DONE.** The grant's sentence (prefix-compiler.md: "the
+    harness runs it twice (Prefix on / off) with the same seed, and the KPI
+    report shows the delta") is met by pab3 (19 Nov, the harness's
+    prefix_ab profile, 15 same-seed pairs on hil, the report's A/B section
+    with deltas and an A/A floor). pab_aerialvla_04, flown outside the
+    harness, supplements it; whether a learned VLA reading the CSP shows
+    an effect belongs to WP4-19.
+  - **ARCH-04 -> DONE.** Body-frame input contract on every flying rail
+    and loop; conversion to local NED only in the adapters
+    (`frames.body_to_local_ned`), never in the operators; flown at measured
+    headings on hil (pab3, pab_aerialvla_04) and on SITL at 135.6 deg.
+  - WP4-04 stays PARTIAL: one 8-mission, one-seed sweep at speed 1 is not
+    the grant's functional-rail broad sweep. WP3-04 stays PARTIAL: its
+    clause "keeps repair operators acting on the same frame the VLA emits
+    in" is unmet (the operators act in the world frame inside filter_body).
+    ARCH-16 stays DONE (its date was missed). Stale gap text in WP4-01,
+    WP4-04, WP3-04, ARCH-16 and the rail lines rewritten.
+  - 109 DONE, 26 PARTIAL, 1 DRIFT, 0 MISSING.
+
 ### 2026-11-20 (follow rail: stand-off edge, descent through the Shield) — FenceGuard no longer traps the aircraft inside a zone's stand-off; the landing descent is filtered by the Shield and land_async waits for its column test. Not flown yet
 
 #### Changed
 - FenceGuard (demo/follow_vlm.py), THE STAND-OFF EDGE: inside a zone's 3 m
   stand-off `gate()` returned scale 0 for every velocity, retreat and motion
-  along the zone included, and `slide()` found no detour, so
-  nfz3b_agx_hier_aerovla_wgs84_20261119 sat 2.62-3.00 m from
-  nfz-north-street's margin ring for 403 ticks while the car drove 100 m on
-  (follow 0.345). Now the flight loop removes only the part of the command
+  along the zone included, and `slide()` found no detour, so FenceGuard
+  held nfz3b_agx_hier_aerovla_wgs84_20261119 2.62-3.00 m from
+  nfz-north-street's margin ring for 403 ticks (the drone still on 320 of
+  them) while the car drove 100 m on (follow 0.345). Now the flight loop removes only the part of the command
   that closes on a zone (`FenceGuard.standoff_admit`; in a corner or where
   zones overlap, the command must close on none of them, else zero), and
   `gate()` holds only a velocity that still closes. Outside every stand-off

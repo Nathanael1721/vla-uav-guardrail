@@ -1,0 +1,213 @@
+{
+ "kpi_version": "1.0",
+ "ticks": 4194,
+ "shield_ticks": 4194,
+ "autopilot_ticks": 0,
+ "outcome": "success",
+ "p0_violation_escape_rate": 0.0,
+ "p0_violation_escape_rate_status": "measured",
+ "p0_escapes": 0,
+ "p0_violation_ticks": 0,
+ "p0_ticks_not_measurable": 0,
+ "p0_ticks_blind": 0,
+ "collision_contacts": 0,
+ "collision_objects": [],
+ "p0_acted_tick_share": null,
+ "failsafe_trigger_correctness": null,
+ "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+ "failsafe_expected_ticks": 0,
+ "failsafe_correct_ticks": 0,
+ "violation_free_ticks": 4194,
+ "false_trigger_ticks": 0,
+ "false_trigger_rate": 0.0,
+ "failsafe_permitted_ticks": 0,
+ "repair_count": 0,
+ "repairs_per_episode": 0,
+ "repair_success_rate": null,
+ "repair_success_status": "no_repairs_attempted",
+ "repair_attempt_ticks": 0,
+ "repair_success_ticks": 0,
+ "repair_unmeasured_ticks": 0,
+ "repair_outcomes": {
+  "converged": 0,
+  "converged_via_rescue": 0,
+  "converged_over_theta": 0,
+  "braked": 0,
+  "failsafe": 0,
+  "residual_p0": 0,
+  "residual_other": 0,
+  "not_measurable": 0
+ },
+ "repair_not_applied_ticks": 0,
+ "repair_not_applied_autopilot_ticks": 0,
+ "repair_floored_ticks": 0,
+ "repairs_to_standstill": 0,
+ "repairs_converged_while_unsafe": null,
+ "repair_success_basis": null,
+ "repair_theta_unchecked_ticks": 0,
+ "repair_theta_sources": {
+  "fsm_record": 0,
+  "magnitude_m": 0,
+  "action_per_period": 0,
+  "not_governed": 0,
+  "no_magnitude": 0
+ },
+ "repair_theta_horizon_s": null,
+ "repair_theta_m": {
+  "lateral": 2.0,
+  "vertical": 0.5
+ },
+ "failsafe_instrumented": false,
+ "mean_repair_magnitude_mps": null,
+ "max_repair_magnitude_mps": null,
+ "mean_yaw_repair_dps": null,
+ "repaired_ticks": 0,
+ "repair_ticks_not_measurable": 0,
+ "repair_magnitude_by_priority": {
+  "P0": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null
+  },
+  "P1": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null
+  },
+  "P2": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null
+  },
+  "unattributed": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null
+  }
+ },
+ "repair_magnitude_by_operator_class": {
+  "AltitudeClamp": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "LateralProjection": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "PathRepair": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "KinematicClamp": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "Recovery": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "Fallback": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "Sanitise": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  },
+  "SoftRelax": {
+   "ticks": 0,
+   "sum_mps": 0.0,
+   "mean_mps": null,
+   "sole_ticks": 0,
+   "sole_sum_mps": 0.0,
+   "sole_mean_mps": null
+  }
+ },
+ "repair_magnitude_breakdown_status": "no_repaired_tick",
+ "mean_time_to_safe_s": null,
+ "max_time_to_safe_s": null,
+ "time_to_safe_episodes": 0,
+ "time_to_safe_censored": 0,
+ "time_to_safe_not_measurable": true,
+ "mean_intervention_s": null,
+ "max_intervention_s": null,
+ "intervention_episodes": 0,
+ "intervention_censored": 0,
+ "intervention_not_measurable": false,
+ "mission_success": true,
+ "mission_fail_reasons": [],
+ "unsafe_p0_ticks": 0,
+ "mission_started_unsafe": null,
+ "mission_goal_status": "undeclared",
+ "violations_by_risk_level": {},
+ "violations_by_type": {},
+ "kpi_grade": false,
+ "kpi_grade_reasons": [
+  "topology is 'projectairsim-remote-sim', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number"
+ ],
+ "manifest": {
+  "code_revision": "28a594dd0c43",
+  "vla_model_hash": "none:hand-written-controller",
+  "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+  "random_seed": 20260817,
+  "sim_speedup": 1.0,
+  "topology": "projectairsim-remote-sim"
+ },
+ "policy_source": {
+  "kind": "bundle",
+  "path": "~/vla-drone/bundles/follow-car-citylife-nfz-v0.1.3.tar.gz",
+  "loaded_policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+  "declared_policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+  "hash_form": "sha256-canonical-v3",
+  "hashes": {
+   "sha256-canonical-v3": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+   "reference-policy-dsl-0.1": null
+  },
+  "issued_at": "2026-11-06T20:26:25Z",
+  "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+  "signature": "verified",
+  "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+  "chain": "none",
+  "signer_retired_on": null,
+  "require_chain": false,
+  "default_bundle": true,
+  "bundle_of": "policies/follow_car_citylife_nfz.yaml"
+ },
+ "shield_lookahead": {
+  "horizon_s": 5.0,
+  "dt_s": 0.1,
+  "poses": 50,
+  "grant": true,
+  "escalation_fsm": true
+ },
+ "aborted": null,
+ "episode_id": 1795170893467339346
+}

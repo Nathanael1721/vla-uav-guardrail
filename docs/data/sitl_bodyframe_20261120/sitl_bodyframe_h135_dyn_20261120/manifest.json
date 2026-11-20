@@ -1,0 +1,8 @@
+{
+  "code_revision": "28a594dd0c43",
+  "vla_model_hash": "guardrail.vla_stub.StubVLA@src:e5a32de093693345809324eb7e640a939deb5c6444d8882417a979f030083956",
+  "policy_hash": "sha256:8fb2734cf67502dd4430f0a2cc4719037b096ca84d7cf6ef9e8a146535dd497f",
+  "random_seed": 20261120,
+  "sim_speedup": 1.0,
+  "topology": "ardupilot-sitl-pymavlink"
+}
