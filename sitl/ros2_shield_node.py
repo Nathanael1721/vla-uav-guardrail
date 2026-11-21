@@ -191,6 +191,19 @@ it is valid is the autopilot's call, not the GPS receiver's:
     metrics.json (`fix_quality.estimator.refused`, `sim_params.inputs_refused`),
     and the node flies on fix_ok as before.
 
+THE PIPE IN THE LOG (2026-11-21, WP4-11b). While the fix or the estimator is
+lost the Shield dead-reckons on what this node SENT (Shield.note_flown), and
+under clear_response it reads the setpoints still acting on every tick, both
+on the real-time pipe clock (time.monotonic). Until this, neither was in the
+flight log, and tools/replay_at_revision.py refused such an episode ("the
+pipe the Shield read is not logged per tick"). The pipe clock is now read
+through guardrail.replay.PipeRecorder (the same time.monotonic: nothing
+flies differently), and every row carries `note_flown`: {t, vx, vy,
+pipe_reads} - the pipe time the send was noted at, the world-frame setpoint
+sent (None: nothing), and every pipe-clock reading the Shield took inside
+the tick's filter_body, all full doubles. The replay feeds them back and
+compares the Shield's X8 verdict (`position_lost`) as well.
+
 THE RTL WATCH (2026-11-14, WP3-07 edge G6). The grant's RTL -> Land edge,
 "RTL fails (battery / blocked path)" (Safety Shield p4), takes `rtl_failed`
 from the autopilot's side, and until this date this node passed False on
@@ -509,7 +522,8 @@ from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa:
                                 RTL_ALT_M, ProgressMonitor, band_from_shield,
                                 check_leg, home_reached, remaining_to_home,
                                 leg_rules_from_shield, zones_from_shield)
-from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
+from guardrail.replay import (PIPE_ROW_KEY, EpisodeRecord,              # noqa: E402
+                              PipeRecorder, audit_tick,
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
@@ -2794,9 +2808,15 @@ if HAVE_ROS:
             # ArduPilot vehicle's stop (0.45 s reaction, 1.75 m/s^2), not an
             # instant 3 m/s^2 one; the de_hil1 flights entered both
             # distance envelopes on the shorter horizon.
+            # The pipe clock is still time.monotonic, read through a
+            # PipeRecorder (2026-11-21, WP4-11b): each row logs what was sent
+            # and every reading the Shield took (PIPE_ROW_KEY), so the
+            # open-loop replay rebuilds the dead reckoning of a lost fix or
+            # estimator and the clearance pipe (THE PIPE IN THE LOG).
+            self.pipe_rec = PipeRecorder(time.monotonic)
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
-                                      pipe_clock=time.monotonic, **self.world_kw,
+                                      pipe_clock=self.pipe_rec, **self.world_kw,
                                       **self.ground_kw,
                                       path_repair=self.path_repair,
                                       clear_response=ARDUCOPTER_GUIDED,
@@ -4726,8 +4746,12 @@ if HAVE_ROS:
             # next tick's _prev_judgement): read once, right before the
             # Shield reads it.
             clock_reading = self.clock()
-            decision, raw_w, em_w, em_body = shield_step(
-                self.shield, st_sh, body, self.shield_on)
+            self.pipe_rec.begin_tick()
+            try:
+                decision, raw_w, em_w, em_body = shield_step(
+                    self.shield, st_sh, body, self.shield_on)
+            finally:
+                pipe_reads = self.pipe_rec.end_tick()
             # X8's input, the Shield's own verdict on the position it was
             # handed (ShieldDecision.position_lost: the autopilot reporting its
             # estimate invalid, or - with no estimator report - fix_ok False
@@ -4955,8 +4979,11 @@ if HAVE_ROS:
                 self._last_pub_ns = pub_ns
                 self.delivery.published(t_pub)
             # What was sent, in the Shield's world frame, for the own-velocity
-            # forecast's pipe (read only for a State with a velocity).
-            self.shield.note_flown(flown_w)
+            # forecast's pipe (read only for a State with a velocity), the
+            # dead reckoning of a lost fix and the clearance pipe; noted at
+            # the pipe clock's reading now, as note_flown(flown_w) did, and
+            # kept for the row (PipeRecorder, 2026-11-21).
+            pipe_note = self.pipe_rec.note_flown(self.shield, flown_w, pipe_reads)
             # A stop flown for a stale input did not come from the action.
             lat = latency_fields(tick_ns, pub_ns, rx_ns,
                                  fresh=(not zeroed and seq != self._flown_seq))
@@ -5087,6 +5114,9 @@ if HAVE_ROS:
             zin, zd = zones_at(self.shield, st)
             row = self.rows[-1]
             same = prev == "same"
+            # The pipe the Shield read on this tick (THE PIPE IN THE LOG,
+            # 2026-11-21): what was sent and the pipe clock's readings.
+            row[PIPE_ROW_KEY] = pipe_note
             row.update(clock=clock_reading.isoformat(), zones_in=zin, zone_d_m=zd,
                        unsafe_prev_rules=(row.get("unsafe_rules") if same
                                           else None if prev is None else prev[0]),

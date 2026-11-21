@@ -26,6 +26,11 @@ What is pinned here:
     `decision`; a changed headless audit record and a changed KPI figure read
     `differs`; the fields the replay does not reproduce by design (`ts`, the
     node's fsm_*) are not compared;
+  * a GPS dropout and an estimator loss whose rows log the pipe the Shield
+    read (`note_flown`, guardrail.replay.PipeRecorder, 2026-11-21) replay
+    `identical`, the Shield's X8 verdict compared per tick; the same rows
+    without it keep the old refusal word for word; a changed setpoint sent
+    reads `differs` at position_lost;
   * a subject_standoff run with a DECLARED subject that metrics.json records
     replays identical (set_subject as the node set it); with no record of
     the subject's class it is not_replayable;
@@ -83,6 +88,10 @@ HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
 _TMP: list[Path] = []
 _CACHE: dict = {}
+# The synthetic dropout (_rail_run dropout=True): the ticks [from, to) without
+# a valid fix, and those with the autopilot's estimator declared lost.
+DROPOUT_FIX = (24, 52)
+DROPOUT_EST = (44, 47)
 
 
 def _tmp(prefix: str) -> Path:
@@ -118,7 +127,8 @@ def _head_holds_this_code() -> str | None:
 
 def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
               subject: tuple | None = None, record_subject: bool = True,
-              two_edits: bool = False, clear_response: dict | None = None) -> None:
+              two_edits: bool = False, clear_response: dict | None = None,
+              dropout: bool = False) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
     inside), its audit written by AuditLogger as the rail writes it.
     `subject` (x, y, class): a DECLARED subject set once before the first
@@ -127,24 +137,39 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     zone is moved in the same tick (a spawn and a rotate at one mission
     time, as dyn-nfz-rotate-spin flies), so the rows go from generation 0
     to 2. `clear_response`: the Shield's clearance-horizon response, as the
-    ArduPilot rails pass and record it (shield_forecast) since 2026-11-19."""
+    ArduPilot rails pass and record it (shield_forecast) since 2026-11-19.
+    `dropout` (2026-11-21, WP4-11b): the GPS fix lost over DROPOUT_FIX and
+    the autopilot's estimator declared lost over DROPOUT_EST, the pose handed
+    on frozen meanwhile (a stale fix) while the aircraft flies on; the rail
+    sends its own setpoint after each tick (some ticks a stop, some nothing,
+    the rest the Shield's answer) on a jittered real-time pipe clock read
+    through guardrail.replay.PipeRecorder, and every row logs fix_ok,
+    estimator_ok, position_lost and the pipe (`note_flown`), as the ROS 2
+    node does."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
     run.mkdir(parents=True)
     pol = load_policy(PEDESTRIAN if subject else DEMO)
+    kw: dict = {}
+    wall = [1000.0 + 1 / 3]
+    pipe = None
+    if dropout:
+        from guardrail.replay import PipeRecorder
+        pipe = kw["pipe_clock"] = PipeRecorder(lambda: wall[0])
     if clear_response is not None:
         from guardrail.response import VelocityResponse
         sh = rail_shield(pol, lookahead_s=5.0, dt=0.1,
-                         clear_response=VelocityResponse(**clear_response))
+                         clear_response=VelocityResponse(**clear_response), **kw)
     else:
-        sh = rail_shield(pol, lookahead_s=5.0, dt=0.1)
+        sh = rail_shield(pol, lookahead_s=5.0, dt=0.1, **kw)
     if subject:
         sh.set_subject(*subject)
     (run / "policy_g0.json").write_bytes(sh.policy.canonical_bytes())
     logger = AuditLogger.in_memory(sh.policy, episode_id="1234")
     rows, traj, audit = [], [], []
     x, y, up, yaw = 1 / 3, -2 / 7, 15.0 + 1 / 9, 12.5 + 1 / 7
+    held = (x, y)
     for k in range(ticks):
         if k == spawn_at:
             sh.hot_apply(DynamicNFZ(
@@ -163,7 +188,29 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
                     sh.policy.canonical_bytes())
         raw = Action4D(vx=4.5 + 0.01 * k, vy=0.3 * math.sin(k / 7.0),
                        vz_up=1.2 if k < 30 else -0.1, yaw_rate=0.0)
-        d = sh.filter(State(x=x, y=y, up=up, yaw_deg=yaw), raw)
+        quality: dict = {}
+        hx, hy = x, y
+        if dropout:
+            lost = DROPOUT_FIX[0] <= k < DROPOUT_FIX[1]
+            est = False if DROPOUT_EST[0] <= k < DROPOUT_EST[1] else None
+            quality = {"fix_ok": not lost, "estimator_ok": est}
+            if lost:
+                hx, hy = held
+            else:
+                held = (x, y)
+            wall[0] = 1000.0 + 1 / 3 + 0.1 * k + 0.013 * math.sin(k)
+            pipe.begin_tick()
+            wall[0] += 0.021 + 0.004 * math.cos(k)
+        d = sh.filter(State(x=hx, y=hy, up=up, yaw_deg=yaw,
+                            **{q: v for q, v in quality.items() if v is not None}), raw)
+        if dropout:
+            reads = pipe.end_tick()
+            wall[0] += 0.017 + 0.003 * (k % 3)
+            sent = (None if k % 9 == 4 else Action4D() if k % 7 == 3
+                    else Action4D(vx=d.emitted.vx * 0.75, vy=d.emitted.vy) if k % 5 == 1
+                    else d.emitted)
+            quality.update(position_lost=d.position_lost[0] if d.position_lost else None,
+                           note_flown=pipe.note_flown(sh, sent, reads))
         rec = logger.record(k + 1, d, fsm_record={"fsm_state_before": "Normal",
                                                    "fsm_state_after": "Normal",
                                                    "reason": "rail FSM", "transition": False})
@@ -171,15 +218,16 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
             line = AuditLogger.line(rec)
             line["episode_id"] = "1234"
             audit.append(line)
-        rows.append({"t": round(k * 0.1, 3), "tick": k + 1, "x": round(x, 3),
-                     "y": round(y, 3), "up": round(up, 3), "yaw_deg": round(yaw, 2),
+        rows.append({"t": round(k * 0.1, 3), "tick": k + 1, "x": round(hx, 3),
+                     "y": round(hy, 3), "up": round(up, 3), "yaw_deg": round(yaw, 2),
                      "raw": d.raw.model_dump(), "emitted": d.emitted.model_dump(),
                      "violations": [v.model_dump() for v in d.violations],
                      "repairs": [r.model_dump() for r in d.repairs],
                      "touched": bool(d.touched), "braked": bool(d.braked),
                      "generation": sh.policy.generation, "policy_hash": sh.policy.policy_hash,
-                     **({"tgt_x": subject[0], "tgt_y": subject[1]} if subject else {})})
-        traj.append({"t": round(k * 0.1, 2), "x": x, "y": y, "up": up})
+                     **({"tgt_x": subject[0], "tgt_y": subject[1]} if subject else {}),
+                     **quality})
+        traj.append({"t": round(k * 0.1, 2), "x": hx, "y": hy, "up": up})
         x, y, up = x + 0.1 * d.emitted.vx, y + 0.1 * d.emitted.vy, up + 0.1 * d.emitted.vz_up
     with (run / "flight_log.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
         fh.writelines(json.dumps(r) + "\n" for r in rows)
@@ -272,6 +320,18 @@ def _replayed() -> dict | str:
     # ROS 2 node and the pymavlink SITL rail record it
     from guardrail.response import ARDUCOPTER_GUIDED
     _rail_run(root / "rail_clear_response", rev, clear_response=ARDUCOPTER_GUIDED.to_dict())
+    # a GPS dropout and an estimator loss with the pipe logged per row (the
+    # ROS 2 node since 2026-11-21); the same rows without it (a run flown
+    # before); and one setpoint the rail sent changed on a dropout tick
+    _rail_run(root / "rail_dropout", rev, dropout=True,
+              clear_response=ARDUCOPTER_GUIDED.to_dict())
+    shutil.copytree(root / "rail_dropout", root / "rail_dropout_unlogged")
+    for i in range(80):
+        _edit_jsonl(root / "rail_dropout_unlogged" / "flight_log.jsonl", i,
+                    lambda r: r.pop("note_flown"))
+    shutil.copytree(root / "rail_dropout", root / "rail_dropout_sent_edit")
+    _edit_jsonl(root / "rail_dropout_sent_edit" / "flight_log.jsonl", DROPOUT_FIX[0] + 5,
+                lambda r: r["note_flown"].__setitem__("vx", r["note_flown"]["vx"] + 2.0))
     # the replay bundle alone: a folder holding nothing but <run>.replay.tar.gz
     from guardrail.replay import last_generation_policy, write_replay
     (root / "tar_only").mkdir()
@@ -533,6 +593,134 @@ def test_a_recorded_clear_response_is_rebuilt_not_refused():
     assert r["verdict"] == "identical" and r["kind"] == "open_loop", r
     assert r["shield"]["clear_response"] == ARDUCOPTER_GUIDED.to_dict(), r["shield"]
     assert out["rail_ok"]["shield"]["clear_response"] is None, out["rail_ok"]["shield"]
+
+
+OLD_PIPE_REFUSAL = ("the pipe the Shield read is not logged per tick: {} row(s) with no "
+                    "valid fix and {} with the estimator unhealthy, where the Shield "
+                    "dead-reckons on what the rail sent (note_flown, on a real-time pipe "
+                    "clock no rail logs)")
+
+
+def test_a_gps_dropout_and_an_estimator_loss_replay_identical_on_the_logged_pipe():
+    """WP4-11b (2026-11-21): a run whose rows log the pipe the Shield read
+    (`note_flown`: what the rail sent and the pipe clock's readings, as the
+    ROS 2 node logs it) replays a GPS dropout and an estimator loss open
+    loop, `identical`, the Shield's X8 verdict (`position_lost`) compared
+    tick by tick - both the dead reckoning's and the estimator's. The same
+    rows without the field (every run flown before) keep the refusal, word
+    for word; one setpoint sent changed on a dropout tick reads `differs`
+    at a later tick's position_lost: the logged pipe is what the replay
+    reads."""
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    rows = [json.loads(x) for x in (_CACHE["root"] / "rail_dropout" / "flight_log.jsonl")
+            .read_text(encoding="utf-8").splitlines()]
+    nofix = sum(1 for r in rows if r["fix_ok"] is False)
+    noest = sum(1 for r in rows if r["estimator_ok"] is False)
+    assert (nofix, noest) == (DROPOUT_FIX[1] - DROPOUT_FIX[0],
+                              DROPOUT_EST[1] - DROPOUT_EST[0]), (nofix, noest)
+    lost = [r["position_lost"] for r in rows if r["position_lost"]]
+    assert any(s.startswith("no valid fix") for s in lost), lost
+    assert any(s.startswith("the autopilot reports no valid") for s in lost), lost
+    assert sum(len(r["note_flown"]["pipe_reads"]) for r in rows) > 0, \
+        "the Shield never read the pipe clock: the clearance pipe is untested"
+    r = out["rail_dropout"]
+    assert r["verdict"] == "identical" and r["kind"] == "open_loop", r
+    assert r["shield"]["pipe"].startswith("fed from the rows' note_flown"), r["shield"]
+    assert r["ticks"] == 80 and r["audit"]["n_replayed"] == r["audit"]["n_stored"] > 10, r
+    assert out["rail_clear_response"]["shield"]["pipe"] == "none"
+    u = out["rail_dropout_unlogged"]
+    assert u["verdict"] == "not_replayable", u
+    assert u["why"] == OLD_PIPE_REFUSAL.format(nofix, noest), u["why"]
+    e = out["rail_dropout_sent_edit"]
+    fd = e["first_difference"]
+    assert e["verdict"] == "differs" and e["difference_class"] == "decision", e
+    assert (fd["where"], fd["field"]) == ("flight_log.jsonl", "position_lost"), fd
+    assert fd["tick"] > DROPOUT_FIX[0] + 6, fd
+
+
+def test_the_ros2_nodes_own_dropout_run_replays_identical_on_the_pipe_it_logged():
+    """sitl/ros2_shield_node.py on tests/test_railinputs_node.py's stand-in
+    ROS stack (tests/test_sitl_stressors.py's harness), the GPS fix lost for
+    3.5 s beside nfz-square while the pilot asks 2 m/s north: every row logs
+    `note_flown`, the node's FSM brakes and holds (what was sent is not what
+    the Shield emitted), and the run folder the node wrote replays open loop
+    at this checkout `identical`, its X8 verdicts compared; with the field
+    taken off the rows it is refused as before."""
+    import test_sitl_stressors as TS
+    R, N = TS._node_module()
+    node, clk, out = TS._node(R, N, [])
+    node.start_mission()
+    for k in range(60):
+        node._on_fix(N.NavSatFix(status=R._Msg(status=-1 if 10 <= k < 45 else 0)))
+        node._on_pose(R._pose_msg(N, node.state))
+        R._act(N, node, vx=2.0)
+        clk.t += 0.1
+        node._tick()
+    with contextlib.redirect_stdout(io.StringIO()):
+        node._finish("test over")
+    _TMP.append(out)
+    rows = node.rows
+    assert all(RA._pipe_note(r.get("note_flown")) is not None for r in rows), rows[0]
+    assert sum(1 for r in rows if r.get("fix_ok") is False) == 35
+    assert sum(1 for r in rows if r.get("position_lost")) > 0, "X8 never judged"
+    assert any(r["note_flown"]["pipe_reads"] for r in rows), "the pipe clock was never read"
+    rec = RA._open_loop(out, ROOT)
+    assert rec["verdict"] == "identical", rec["first_difference"]
+    assert rec["shield"]["pipe"].startswith("fed from"), rec["shield"]
+    lines = [json.loads(x) for x in (out / "flight_log.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    for r in lines:
+        r.pop("note_flown")
+    (out / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines),
+                                          encoding="utf-8")
+    try:
+        RA._open_loop(out, ROOT)
+    except RA.Refused as e:
+        assert str(e) == OLD_PIPE_REFUSAL.format(35, 0), str(e)
+    else:
+        raise AssertionError("rows without note_flown were replayed, not refused")
+
+
+def test_the_pipe_recorder_keeps_the_filters_readings_and_what_was_sent():
+    """guardrail.replay.PipeRecorder (2026-11-21): the Shield's pipe clock
+    reads as before, only the readings between begin_tick and end_tick are
+    kept, and note_flown notes the setpoint at the clock's reading now and
+    returns the row field the replay feeds back (_pipe_note); nothing sent
+    and a non-finite setpoint are both None, as Shield.note_flown records
+    them alike."""
+    from guardrail.models import Action4D
+    from guardrail.replay import PIPE_ROW_KEY, PipeRecorder
+    assert PIPE_ROW_KEY == RA.PIPE_ROW_KEY == "note_flown"
+    now = [5.0]
+    rec = PipeRecorder(lambda: now[0])
+    assert rec() == 5.0 and rec.end_tick() == []          # outside a tick: not kept
+    rec.begin_tick()
+    now[0] = 5.25
+    assert rec() == 5.25 and rec() == 5.25
+    assert rec.end_tick() == [5.25, 5.25] and rec.end_tick() == []
+
+    class _Sh:
+        def __init__(self):
+            self.noted = []
+
+        def note_flown(self, action, t=None):
+            self.noted.append((action, t))
+    sh = _Sh()
+    now[0] = 5.3
+    f = rec.note_flown(sh, Action4D(vx=1 / 3, vy=-2.5), [5.25])
+    assert f == {"t": 5.3, "vx": 1 / 3, "vy": -2.5, "pipe_reads": [5.25]}, f
+    assert sh.noted[-1][1] == 5.3
+    assert rec.note_flown(sh, None, [])["vx"] is None and sh.noted[-1] == (None, 5.3)
+    g = rec.note_flown(sh, Action4D(vx=float("nan"), vy=0.0), [])
+    assert g["vx"] is None and g["vy"] is None, g
+    assert RA._pipe_note(f) == f and RA._pipe_note(g) == g
+    for bad in (None, {}, {"t": 1.0}, {"t": 1.0, "vx": 1.0, "vy": None, "pipe_reads": []},
+                {"t": float("nan"), "vx": None, "vy": None, "pipe_reads": []},
+                {"t": 1.0, "vx": None, "vy": None, "pipe_reads": [True]},
+                {"t": "1", "vx": None, "vy": None, "pipe_reads": []}):
+        assert RA._pipe_note(bad) is None, bad
 
 
 def test_a_headless_episode_flown_at_head_is_reflown_identical_by_that_revisions_tool():
