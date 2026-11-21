@@ -1389,6 +1389,126 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
     }
 
 
+# --------------------------------------------------------------------------- #
+# THE MANIFEST AS A FRAME OF THE BAG (ARCH-22, 2026-11-21)
+# --------------------------------------------------------------------------- #
+#
+# The grant's data-flow page: the six fields are "emitted by the orchestrator
+# at episode start and stored as the first frame of every rosbag". Until this
+# date manifest.json sat beside the bag and the bag held none of the six
+# (sitl/bag_custom_data.py, off by default, puts some into the bag's
+# metadata, which is not a frame). The ROS 2 Shield node now publishes the
+# manifest as std_msgs/String JSON on MANIFEST_TOPIC, latched (reliable,
+# transient_local, depth 1): once at episode start with the fields known
+# then (START_FIELDS; the others are named under `not_known_yet` with the
+# reason) and once at episode end with all six, exactly the dict written to
+# manifest.json. Both record commands subscribe to it with transient_local
+# durability (sitl/bag_qos_overrides.yaml), so the start frame is recorded
+# even when the recorder discovers the topic after it was published.
+# tools/replay_from_bag.py reads the frames back and compares the end frame
+# with manifest.json field by field.
+#
+# WHAT "FIRST" CAN MEAN. The recorder starts before the Guardrail nodes and
+# records MAVROS from its own start, so a MAVROS message can precede the
+# start frame in the bag; the start frame is the first message of the
+# episode's own topics. tools/replay_from_bag.py says where it lies.
+#
+# MANIFEST_FIELDS is the grant's six in the grant's order: the keys
+# build_manifest returns (a test pins that the two agree).
+
+MANIFEST_FIELDS = ("code_revision", "vla_model_hash", "policy_hash",
+                   "random_seed", "sim_speedup", "topology")
+MANIFEST_TOPIC = "/guardrail/manifest"
+MANIFEST_FRAME_SCHEMA = "vlaguard-manifest-frame/1"
+FRAME_START = "start"
+FRAME_END = "end"
+FRAME_PHASES = (FRAME_START, FRAME_END)
+# Known when the episode starts, before the autopilot or the pilot answer:
+# the revision of the code that runs, the hash of the policy the launch
+# loaded (generation 0: manifest.json names the LAST generation, the same
+# one only when nothing was hot-applied) and the seed.
+START_FIELDS = ("code_revision", "policy_hash", "random_seed")
+# The others, and when each is known instead (sitl/bag_custom_data.py says
+# the same of the bag's metadata).
+NOT_KNOWN_AT_START = {
+    "vla_model_hash": "resolved from /vla/identity once the pilot is up",
+    "sim_speedup": "read from the autopilot at take-off",
+    "topology": ("decided from the evidence of the flight at its end "
+                 "(detect_topology), never from a flag"),
+}
+
+
+def start_manifest_fields(policy_hash: str | None, seed: int,
+                          repo: str | Path | None = None) -> dict[str, Any]:
+    """The manifest fields an episode knows at its start (START_FIELDS),
+    each computed as build_manifest computes it at the end (2026-11-21)."""
+    return {"code_revision": code_revision(repo),
+            "policy_hash": policy_hash or UNRESOLVED,
+            "random_seed": int(seed)}
+
+
+def manifest_frame(phase: str, fields: dict[str, Any],
+                   episode_id: Any = None) -> dict[str, Any]:
+    """One frame of MANIFEST_TOPIC (2026-11-21): the phase, the episode it
+    belongs to and the manifest fields in the grant's order. An end frame
+    must carry all six; a start frame carries what it has and names the
+    rest under `not_known_yet`. A key that is not one of the six is refused:
+    the frame is the manifest, not a place for anything beside it."""
+    if phase not in FRAME_PHASES:
+        raise ValueError(f"a manifest frame is {' or '.join(FRAME_PHASES)}, not {phase!r}")
+    extra = sorted(str(k) for k in fields if k not in MANIFEST_FIELDS)
+    if extra:
+        raise ValueError(f"not manifest fields: {extra}")
+    missing = [k for k in MANIFEST_FIELDS if k not in fields]
+    if phase == FRAME_END and missing:
+        raise ValueError(f"the end frame carries all six fields; missing {missing}")
+    frame: dict[str, Any] = {
+        "schema": MANIFEST_FRAME_SCHEMA, "phase": phase, "episode_id": episode_id,
+        "manifest": {k: fields[k] for k in MANIFEST_FIELDS if k in fields}}
+    if phase == FRAME_START:
+        frame["not_known_yet"] = {k: NOT_KNOWN_AT_START.get(k, "not known at the start")
+                                  for k in missing}
+    return frame
+
+
+def parse_manifest_frame(text: str) -> dict[str, Any]:
+    """A MANIFEST_TOPIC message's text read back as a frame (2026-11-21);
+    ValueError when it is not one: not JSON, another schema, a phase or a
+    key a frame may not have, an end frame short of the six."""
+    try:
+        doc = json.loads(text)
+    except ValueError as e:
+        raise ValueError(f"not JSON ({e})") from None
+    if not isinstance(doc, dict) or doc.get("schema") != MANIFEST_FRAME_SCHEMA:
+        raise ValueError(f"not a {MANIFEST_FRAME_SCHEMA} document")
+    man = doc.get("manifest")
+    if not isinstance(man, dict):
+        raise ValueError("its `manifest` is not a mapping")
+    manifest_frame(doc.get("phase"), man, doc.get("episode_id"))     # the same rules
+    return doc
+
+
+def compare_manifest_frame(frame_manifest: dict[str, Any],
+                           manifest: dict[str, Any] | None) -> dict[str, Any]:
+    """A frame's fields against manifest.json, field by field in the grant's
+    order (2026-11-21): {"bag", "manifest_json", "equal"} for a field both
+    hold, {"bag", "not_compared"} for one manifest.json lacks. Values are
+    compared as JSON reads them, type included (the node writes both from
+    one dict, so 1 against 1.0 or "7" against 7 is a difference)."""
+    out: dict[str, Any] = {}
+    for k in MANIFEST_FIELDS:
+        if k not in frame_manifest:
+            continue
+        if not isinstance(manifest, dict) or k not in manifest:
+            out[k] = {"bag": frame_manifest[k],
+                      "not_compared": "manifest.json does not hold it"}
+            continue
+        mine, theirs = frame_manifest[k], manifest[k]
+        out[k] = {"bag": mine, "manifest_json": theirs,
+                  "equal": mine == theirs and type(mine) is type(theirs)}
+    return out
+
+
 def is_kpi_grade(manifest: dict, metrics: dict,
                  dev_waiver: str | None = None) -> tuple[bool, list[str]]:
     """May this run's numbers be quoted as contractual KPIs?

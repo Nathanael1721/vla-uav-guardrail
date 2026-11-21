@@ -1950,6 +1950,14 @@ def verify_from_bag(bundle: str | Path,
                      f"{man['equal']} equal, {man['differs']} differ, "
                      f"{man['not_compared']} not compared; "
                      f"{', '.join(sorted(man['not_known_at_launch']))} are in no bag")
+    # The manifest as frames of the bag (/guardrail/manifest, 2026-11-21).
+    frames = rec.get("manifest_in_bag") or {}
+    if frames.get("verdict") == "absent":
+        lines.append(f"manifest frame: absent ({frames.get('why')})")
+    elif frames:
+        lines.append(f"manifest frames in the bag {frames['verdict']}: "
+                     f"{frames['equal']} field(s) equal, {frames['differs']} differ, "
+                     f"{frames['not_compared']} not compared")
     fd = rec.get("first_difference")
     if fd:
         lines.append(f"first difference: {fd['layer']}.{fd['field']} at tick "

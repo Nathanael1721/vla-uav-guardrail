@@ -131,6 +131,34 @@ sim_speedup and the topology the evidence supports are not known at launch
 and are in no bag; a bag recorded without the switch is `absent`, which is
 said, not counted as a difference. It is metadata, not a first frame.
 
+THE MANIFEST AS A FRAME OF THE BAG (2026-11-21)
+
+Since this date the ROS 2 Shield node publishes the manifest itself on
+/guardrail/manifest (guardrail/manifest.py manifest_frame), latched, and
+both record commands record it: a start frame with the fields known at the
+episode's start (the code revision, generation 0's policy hash, the seed)
+and an end frame with all six, the dict manifest.json is written from. Each
+run's record says what the bag holds of them (`manifest_in_bag`):
+
+  identical  the end frame equals manifest.json field by field (value and
+             JSON type), and the start frame's fields equal it too - its
+             policy hash against generation 0 of the run's policy
+             generations, the hash the launch loaded;
+  differs    a field of either frame contradicts the run's records, or the
+             two frames name different episodes: a difference of the run,
+             layer `manifest_frame`, field `<phase>.<field>`;
+  absent     no end frame on the topic (every bag before 2026-11-21, or an
+             episode that never reached its report): said as a limit, not
+             a difference, and never filled in from manifest.json; a start
+             frame alone is still compared and reported;
+  not_compared  an end frame, and no manifest.json to compare it with.
+
+Where the start frame lies is reported, not assumed (`start_frame`): its
+time after the bag's first message and whether it precedes every message
+of the episode topics this tool reads. The recorder starts before the
+Guardrail nodes and records MAVROS from its own start, so the start frame
+is the first frame of the episode's own topics, not of the whole bag.
+
 WHAT "IDENTICAL" MEANS
 
 Every tick of the flight log has a tick in the bag with the same action
@@ -140,7 +168,8 @@ sent agreeing with what the log says was streamed; every logged point is a
 pose message of the bag; and every KPI field the bag can carry on that run
 equals kpi.json (counts exactly, a magnitude to kpi.json's fourth decimal,
 a duration to T_JITTER_S); and every manifest field the bag's metadata
-carries equals the run's. The violated rules, operators and FSM state are on
+carries, and every field of the manifest frames it holds (since
+2026-11-21), equals the run's. The violated rules, operators and FSM state are on
 a topic only on a tick with an intercept; on a tick with none, a log row
 that names a violation or a repair on a Shield-on arm (the node publishes an
 intercept on every tick it touched), or a repair on a Shield-off arm, is a
@@ -204,6 +233,9 @@ for _p in (ROOT, ROOT / "tools", ROOT / "sitl"):
 import bag_custom_data as CD                                     # noqa: E402
 import export_episodes as X                                      # noqa: E402
 from guardrail import kpi as K                                   # noqa: E402
+from guardrail.manifest import (FRAME_END, FRAME_START,          # noqa: E402
+                                MANIFEST_TOPIC, compare_manifest_frame,
+                                parse_manifest_frame)
 from sitl_stressors import parse_marker                          # noqa: E402
 
 # The topics read (sitl/run_ros2_demo.sh and deploy/docker/entrypoint.sh
@@ -217,9 +249,12 @@ EXECUTED_TOPIC = X.SETPOINT_TOPIC                 # /mavros/setpoint_raw/local
 POSE_TOPIC = X.POSE_TOPIC                         # /mavros/local_position/pose
 STATE_TOPIC = "/mavros/state"
 MAVLINK_SINK_TOPIC = "/uas1/mavlink_sink"
+# The Shield node's manifest frames (2026-11-21); read beside the episode's
+# topics, never counted into the bag's first and last time (start_ns, end_ns).
+MANIFEST_FRAME_TOPIC = MANIFEST_TOPIC                  # /guardrail/manifest
 READ_TOPICS = (ACTION_TOPIC, SETPOINT_TOPIC, INTERCEPT_TOPIC, FENCES_TOPIC,
                MODE_REQUEST_TOPIC, EXECUTED_TOPIC, POSE_TOPIC, STATE_TOPIC,
-               MAVLINK_SINK_TOPIC)
+               MAVLINK_SINK_TOPIC, MANIFEST_FRAME_TOPIC)
 BAG_DIRS = ("bag", "episode.bag2")                # the run's, the grant's name
 
 # Message definitions for a bag that does not carry them (a bag rosbag2
@@ -277,6 +312,8 @@ class BagStreams:
     markers: list = field(default_factory=list)       # (nonce8, mission seconds)
     problems: list = field(default_factory=list)
     custom_data: dict | None = None                   # metadata.yaml custom_data (None: none)
+    manifest_frames: list = field(default_factory=list)   # (ts, frame) on /guardrail/manifest
+    bag_start_ns: int | None = None                   # the bag's first message, any topic
 
 
 def f32(v: Any) -> float | None:
@@ -390,11 +427,16 @@ def read_streams(bag_dir: Path) -> BagStreams:
         with cm as reader:
             for c in reader.connections:
                 s.topics[c.topic] = s.topics.get(c.topic, 0) + int(c.msgcount)
+            try:
+                s.bag_start_ns = int(reader.start_time)
+            except (AttributeError, TypeError, ValueError):
+                s.bag_start_ns = None
             conns = [c for c in reader.connections if c.topic in READ_TOPICS]
             for conn, ts, raw in reader.messages(connections=conns):
                 ts = int(ts)
-                s.start_ns = ts if s.start_ns is None else min(s.start_ns, ts)
-                s.end_ns = ts if s.end_ns is None else max(s.end_ns, ts)
+                if conn.topic != MANIFEST_FRAME_TOPIC:
+                    s.start_ns = ts if s.start_ns is None else min(s.start_ns, ts)
+                    s.end_ns = ts if s.end_ns is None else max(s.end_ns, ts)
                 _take(s, reader, conn, ts, raw)
     except ReplayError:
         raise
@@ -402,7 +444,7 @@ def read_streams(bag_dir: Path) -> BagStreams:
         raise ReplayError(f"the bag could not be read with rosbags: "
                           f"{type(e).__name__}: {e}") from None
     for name in ("actions", "setpoints", "intercepts", "fences", "mode_requests",
-                 "executed", "poses", "states", "markers"):
+                 "executed", "poses", "states", "markers", "manifest_frames"):
         getattr(s, name).sort(key=lambda x: x[0])
     s.custom_data, problem = read_custom_data(bag_dir)
     if problem:
@@ -445,6 +487,12 @@ def _take(s: BagStreams, reader, conn, ts: int, raw: bytes) -> None:
         got = parse_marker(statustext(m))
         if got is not None:
             s.markers.append((ts, got))
+    elif topic == MANIFEST_FRAME_TOPIC:
+        try:
+            s.manifest_frames.append((ts, parse_manifest_frame(str(m.data))))
+        except ValueError as e:
+            s.problems.append(f"{topic}: a message that is not a manifest frame is "
+                              f"left out ({e})")
 
 
 # --------------------------------------------------------------------------- #
@@ -907,6 +955,114 @@ def compare_manifest(custom: dict | None, manifest: dict | None,
             "first_difference": first, "fields": fields, "topology_declared": declared,
             "other_custom_data": sorted(k for k in (custom or {}) if k not in CD.KEYS),
             "not_known_at_launch": not_known}
+
+
+# --------------------------------------------------------------------------- #
+# the manifest frames on /guardrail/manifest (2026-11-21)
+# --------------------------------------------------------------------------- #
+
+FRAME_WHERE = (f"{MANIFEST_FRAME_TOPIC}: the Shield node's latched manifest frames "
+               f"(guardrail/manifest.py manifest_frame), a start frame with the fields "
+               f"known at the episode's start and an end frame with all six")
+
+
+def compare_manifest_frames(s: BagStreams, manifest: dict | None,
+                            launch_policy_hash: str | None,
+                            launch_policy_source: str | None) -> dict:
+    """What the bag holds of the manifest as frames (2026-11-21), against
+    the run's manifest.json and, for the start frame's policy hash,
+    generation 0 of its policy (the hash the launch loaded; manifest.json
+    names the last generation). Verdicts: identical, differs, absent (no
+    end frame: a limit, not a difference), not_compared (an end frame and no
+    manifest.json). `first_difference` as the other layers name theirs."""
+    frames = list(s.manifest_frames)
+    starts = [(ts, f) for ts, f in frames if f.get("phase") == FRAME_START]
+    ends = [(ts, f) for ts, f in frames if f.get("phase") == FRAME_END]
+    first = None
+    counts = {"equal": 0, "differs": 0, "not_compared": 0}
+
+    def note(phase: str, fields: dict) -> None:
+        nonlocal first
+        for name, f in fields.items():
+            if "equal" not in f:
+                counts["not_compared"] += 1
+                continue
+            counts["equal" if f["equal"] else "differs"] += 1
+            if not f["equal"] and first is None:
+                first = {"layer": "manifest_frame", "field": f"{phase}.{name}",
+                         "tick": None, "bag": f["bag"], "log": f.get("theirs",
+                                                                    f.get("manifest_json"))}
+
+    rec: dict[str, Any] = {"where": FRAME_WHERE, "frames": len(frames),
+                           "start_frames": len(starts), "end_frames": len(ends)}
+    if starts:
+        ts, f = starts[0]
+        got = compare_manifest_frame(f["manifest"], manifest)
+        if "policy_hash" in got:
+            # The start frame's hash is the launch's: generation 0, not the
+            # last generation manifest.json names (a hot-apply changes it).
+            mine = got["policy_hash"]["bag"]
+            got["policy_hash"] = {"bag": mine, "against": (
+                launch_policy_source or "generation 0 of the run's policy generations")}
+            if launch_policy_hash is None:
+                got["policy_hash"]["not_compared"] = "generation 0 of the policy is not there"
+            else:
+                got["policy_hash"].update(theirs=launch_policy_hash,
+                                          equal=mine == launch_policy_hash)
+            if isinstance(manifest, dict) and "policy_hash" in manifest:
+                got["policy_hash"]["manifest_json_policy_hash"] = manifest["policy_hash"]
+        note(FRAME_START, got)
+        first_episode = s.start_ns            # the episode topics, the frames left out
+        rec["start_frame"] = {
+            "episode_id": f.get("episode_id"), "fields": got,
+            "not_known_yet": sorted(f.get("not_known_yet") or {}),
+            "after_bag_start_s": (None if s.bag_start_ns is None
+                                  else round((ts - s.bag_start_ns) / 1e9, 3)),
+            "before_every_episode_topic_message": (None if first_episode is None
+                                                   else ts <= first_episode),
+            "first_message_of_the_bag": (None if s.bag_start_ns is None
+                                         else ts <= s.bag_start_ns)}
+    end_all_equal = False
+    if ends:
+        ts, f = ends[-1]
+        got = compare_manifest_frame(f["manifest"], manifest)
+        note(FRAME_END, got)
+        end_all_equal = all(g.get("equal") is True for g in got.values())
+        rec["end_frame"] = {"episode_id": f.get("episode_id"), "fields": got,
+                            "after_bag_start_s": (None if s.bag_start_ns is None
+                                                  else round((ts - s.bag_start_ns) / 1e9, 3))}
+        if len(ends) > 1:
+            rec["end_frame"]["note"] = (f"{len(ends)} end frames in one bag: the last "
+                                        f"is compared")
+    if starts and ends:
+        a, b = starts[0][1].get("episode_id"), ends[-1][1].get("episode_id")
+        rec["same_episode"] = a == b
+        if a != b:
+            counts["differs"] += 1
+            if first is None:
+                # Both from the bag: the start frame's episode against the end's.
+                first = {"layer": "manifest_frame", "field": "start.episode_id",
+                         "tick": None, "bag": a, "log": b}
+    if not ends:
+        verdict = "absent"
+        rec["why"] = (f"no end frame on {MANIFEST_FRAME_TOPIC}" + (
+            ": the start frame is in the bag, the end frame (all six fields) is not - the "
+            "episode did not reach its report, or the recorder stopped first"
+            if starts else
+            ": nothing on the topic (every bag recorded before 2026-11-21, when the "
+            "Shield node began publishing it)"))
+        if counts["differs"]:
+            verdict = "differs"
+    elif counts["differs"]:
+        verdict = "differs"
+    elif end_all_equal:
+        verdict = "identical"
+    else:
+        verdict = "not_compared"
+        rec["why"] = ("no manifest.json to compare the end frame with"
+                      if not isinstance(manifest, dict) else
+                      "manifest.json lacks a field of the end frame")
+    return {"verdict": verdict, **counts, **rec, "first_difference": first}
 
 
 # --------------------------------------------------------------------------- #
@@ -1644,6 +1800,15 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
         first = man["first_difference"]
     man.pop("first_difference")
     rec["manifest_in_the_bag"] = man
+    frames = compare_manifest_frames(s, ep.manifest, ep.launch_policy_hash,
+                                     ep.launch_policy_source)
+    if first is None:
+        first = frames["first_difference"]
+    frames.pop("first_difference")
+    rec["manifest_in_bag"] = frames
+    if frames["verdict"] == "absent":
+        limits.append(f"no manifest end frame on {MANIFEST_FRAME_TOPIC}: "
+                      + frames["why"].split(": ", 1)[-1])
     if man["verdict"] == "absent":
         limits.append("no manifest field is in this bag (recorded without --custom-data); "
                       "manifest.json beside it is the only record of the six fields")
@@ -1730,7 +1895,8 @@ def summarise(records: list[dict], command: str, seconds: float,
     which runs these are (the campaigns and how many runs each accepted), so
     a trial on a few runs cannot read as a campaign's count."""
     by: dict[str, int] = {}
-    layers = {"ticks": {}, "trajectory": {}, "kpi": {}, "manifest_in_the_bag": {}}
+    layers = {"ticks": {}, "trajectory": {}, "kpi": {}, "manifest_in_the_bag": {},
+              "manifest_in_bag": {}}
     fields: dict[str, dict] = {}
     totals = {"ticks": 0, "ticks_evidenced_by_the_bag": 0, "ticks_past_bag_end": 0,
               "runs_whose_end_is_not_in_the_bag": 0, "pose_points": 0, "pose_exact": 0,
@@ -1771,6 +1937,10 @@ def summarise(records: list[dict], command: str, seconds: float,
         if mv:
             layers["manifest_in_the_bag"][mv] = layers["manifest_in_the_bag"].get(mv, 0) + 1
             row["manifest_in_the_bag"] = mv
+        fv = (rec.get("manifest_in_bag") or {}).get("verdict")
+        if fv:
+            layers["manifest_in_bag"][fv] = layers["manifest_in_bag"].get(fv, 0) + 1
+            row["manifest_in_bag"] = fv
         for name, f in kp["fields"].items():
             acc = fields.setdefault(name, {"source": FROM_BAG.get(name, f["source"]),
                                            "equal": 0, "differs": 0, "not_on_this_run": 0,

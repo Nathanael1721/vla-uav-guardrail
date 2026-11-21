@@ -1020,6 +1020,8 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
     assert "trajectory identical: 4 of 4 points are the bag's pose message" in text, text
     assert f"{len(R.FROM_BAG)} field(s) from the bag equal, 0 differ" in text, text
     assert "manifest: no field of it is in this bag's metadata" in text, text
+    # the frames on /guardrail/manifest (2026-11-21): none in this bag
+    assert "manifest frame: absent (no end frame on /guardrail/manifest" in text, text
     with_fields = dict(good, manifest_in_the_bag=R.compare_manifest(
         _custom(), _manifest(), "sha256:" + "a" * 64, "policy_g0.json"))
     R.replay_path = lambda p, **kw: (with_fields, None)
@@ -1454,6 +1456,13 @@ def _write_bag(bag_dir: Path, s, custom: dict | None = None) -> None:
         put(R.MAVLINK_SINK_TOPIC, "mavros_msgs/msg/Mavlink", sorted(sink), mavlink)
         # a topic the tool does not read
         put("/mavros/battery", "std_msgs/msg/String", [(T0, "x")], lambda ts, v: String(data=v))
+        # the Shield node's manifest frames (2026-11-21), when the stand-in has
+        # any: a frame as its JSON text, a str as it is (a message that is
+        # not a frame)
+        if s.manifest_frames:
+            put(R.MANIFEST_FRAME_TOPIC, "std_msgs/msg/String",
+                [(ts, f if isinstance(f, str) else json.dumps(f))
+                 for ts, f in s.manifest_frames], lambda ts, v: String(data=v))
 
 
 def test_a_real_rosbag2_is_read_and_replayed_with_rosbags():
@@ -1520,6 +1529,174 @@ def test_a_real_rosbag2_is_read_and_replayed_with_rosbags():
     (junk / "bag" / "bag_0.mcap").write_bytes(b"not a bag")
     rec, _ = R.replay_path(junk)
     assert rec["verdict"] == "not_replayable" and "could not be read" in rec["why"], rec
+
+
+# --------------------------------------------------------------------------- #
+# the manifest as frames of the bag (/guardrail/manifest, 2026-11-21)
+# --------------------------------------------------------------------------- #
+
+G0 = "sha256:" + "a" * 64
+
+
+def _frames(*, start=None, end=None, episode=T0, end_episode=None):
+    """(ts, frame) on /guardrail/manifest as the Shield node publishes them:
+    the start frame before the first action, the end frame after the last."""
+    from guardrail.manifest import manifest_frame
+    out = []
+    if start is not None:
+        out.append((T0 - 10 * TICK, manifest_frame("start", start, episode)))
+    if end is not None:
+        out.append((T0 + 60 * TICK, manifest_frame(
+            "end", end, episode if end_episode is None else end_episode)))
+    return out
+
+
+def _start_of(manifest: dict, **over) -> dict:
+    return dict({"code_revision": manifest["code_revision"], "policy_hash": G0,
+                 "random_seed": manifest["random_seed"]}, **over)
+
+
+def _replay_with_frames(frames, manifest, *, g0=G0):
+    s, rows, traj, kpi = _episode(["pass"] * 4)
+    s.manifest_frames = frames
+    # as read_streams sets them: the episode topics' first message, and the
+    # bag's first of any topic
+    s.start_ns = min(ts for lst in (s.actions, s.poses, s.states, s.fences)
+                     for ts, _ in lst)
+    s.bag_start_ns = min([s.start_ns] + [ts for ts, _ in frames])
+    ep = R.Episode(name="synthetic", source="memory", bag_dir=Path("stand-in"), rows=rows,
+                   trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on",
+                   manifest=manifest, launch_policy_hash=g0,
+                   launch_policy_source="policy_g0.json" if g0 else None)
+    with _bag_is(s):
+        return R.replay(ep)[0]
+
+
+def test_a_bag_without_manifest_frames_reads_absent_and_says_so():
+    """Every bag recorded before 2026-11-21: nothing on /guardrail/manifest.
+    `absent`, a limit, never a difference and never filled in from
+    manifest.json."""
+    rec = _replay_with_frames([], _manifest())
+    fr = rec["manifest_in_bag"]
+    assert rec["verdict"] == "identical" and fr["verdict"] == "absent", fr
+    assert fr["frames"] == 0 and "before 2026-11-21" in fr["why"], fr
+    assert "116214f3e6ee" not in json.dumps(fr), "a manifest value was copied into the record"
+    assert any("no manifest end frame on /guardrail/manifest" in x for x in rec["limits"])
+
+
+def test_the_end_frame_is_compared_with_manifest_json_field_by_field():
+    from guardrail.manifest import MANIFEST_FIELDS
+    man = _manifest()
+    rec = _replay_with_frames(_frames(start=_start_of(man), end=man), man)
+    fr = rec["manifest_in_bag"]
+    assert rec["verdict"] == "identical" and fr["verdict"] == "identical", fr
+    assert tuple(fr["end_frame"]["fields"]) == MANIFEST_FIELDS
+    assert all(f["equal"] for f in fr["end_frame"]["fields"].values())
+    assert (fr["equal"], fr["differs"], fr["not_compared"]) == (9, 0, 0), fr
+    # the start frame's policy hash is the launch's (generation 0), not the
+    # last generation manifest.json names
+    ph = fr["start_frame"]["fields"]["policy_hash"]
+    assert ph == {"bag": G0, "against": "policy_g0.json", "theirs": G0, "equal": True,
+                  "manifest_json_policy_hash": man["policy_hash"]}, ph
+    assert fr["same_episode"] is True and fr["start_frame"]["not_known_yet"] == [
+        "sim_speedup", "topology", "vla_model_hash"]
+    # where the start frame lies: before every episode-topic message here
+    assert fr["start_frame"]["before_every_episode_topic_message"] is True
+    # one field of the end frame the run contradicts: differs, named
+    for field_, bag_v, log_v in (("random_seed", 1002, 1001),
+                                 ("vla_model_hash", "stub@src:cd", "stub@src:ab"),
+                                 ("sim_speedup", 1, 1.0)):       # a type is a difference
+        end = dict(man, **{field_: bag_v})
+        rec = _replay_with_frames(_frames(start=_start_of(man), end=end), man)
+        assert rec["verdict"] == "differs" and rec["manifest_in_bag"]["verdict"] == "differs"
+        assert rec["first_difference"] == {"layer": "manifest_frame",
+                                           "field": f"end.{field_}", "tick": None,
+                                           "bag": bag_v, "log": log_v}, rec["first_difference"]
+        assert rec["compared_with_the_log"]["ticks"]["verdict"] == "identical"
+    # the start frame contradicting the launch's policy, or the run's seed
+    rec = _replay_with_frames(_frames(start=_start_of(man, policy_hash="sha256:" + "c" * 64),
+                                      end=man), man)
+    assert rec["first_difference"]["field"] == "start.policy_hash" and \
+        rec["first_difference"]["log"] == G0, rec["first_difference"]
+    rec = _replay_with_frames(_frames(start=_start_of(man, random_seed=7), end=man), man)
+    assert rec["first_difference"]["field"] == "start.random_seed"
+    # two frames of two episodes
+    rec = _replay_with_frames(_frames(start=_start_of(man), end=man, end_episode=T0 + 1), man)
+    assert rec["manifest_in_bag"]["verdict"] == "differs" and \
+        rec["first_difference"]["field"] == "start.episode_id"
+
+
+def test_a_start_frame_alone_is_compared_and_the_end_frame_said_absent():
+    man = _manifest()
+    rec = _replay_with_frames(_frames(start=_start_of(man)), man)
+    fr = rec["manifest_in_bag"]
+    assert rec["verdict"] == "identical" and fr["verdict"] == "absent", fr
+    assert "the start frame is in the bag" in fr["why"] and fr["equal"] == 3, fr
+    rec = _replay_with_frames(_frames(start=_start_of(man, random_seed=5)), man)
+    assert rec["manifest_in_bag"]["verdict"] == "differs" and rec["verdict"] == "differs"
+    # an end frame and no manifest.json: not compared, not a pass
+    rec = _replay_with_frames(_frames(end=man), None, g0=None)
+    fr = rec["manifest_in_bag"]
+    assert fr["verdict"] == "not_compared" and fr["not_compared"] == 6, fr
+    # the summary counts the layer beside the metadata's
+    summary = R.summarise([_replay_with_frames([], man),
+                           _replay_with_frames(_frames(start=_start_of(man), end=man), man)],
+                          "cmd", 0.0)
+    assert summary["layers"]["manifest_in_bag"] == {"absent": 1, "identical": 1}
+    assert [r["manifest_in_bag"] for r in summary["per_run"]] == ["absent", "identical"]
+
+
+def test_a_manifest_frame_is_the_six_fields_and_nothing_else():
+    from guardrail.manifest import (MANIFEST_FIELDS, TOPOLOGY_ARDUPILOT_SITL, build_manifest,
+                                    manifest_frame, parse_manifest_frame)
+    built = build_manifest(G0, "m", 3, topology=TOPOLOGY_ARDUPILOT_SITL, sim_speedup=1.0)
+    assert tuple(built) == MANIFEST_FIELDS == tuple(GRANT_MANIFEST)
+    end = manifest_frame("end", built, 5)
+    assert parse_manifest_frame(json.dumps(end)) == end and end["manifest"] == built
+    for bad, why in ((lambda: manifest_frame("end", _start_of(built)), "missing"),
+                     (lambda: manifest_frame("start", dict(built, operator="lab")),
+                      "not manifest fields"),
+                     (lambda: manifest_frame("middle", built), "start or end"),
+                     (lambda: parse_manifest_frame("not json"), "not JSON"),
+                     (lambda: parse_manifest_frame(json.dumps({"phase": "end"})),
+                      "vlaguard-manifest-frame/1")):
+        try:
+            bad()
+        except ValueError as e:
+            assert why in str(e), (why, e)
+        else:
+            raise AssertionError(f"accepted: {why}")
+
+
+def test_manifest_frames_round_trip_through_a_real_rosbag2():
+    """The frames as std_msgs/String JSON in a rosbag2 written with `rosbags`,
+    read back by read_streams and compared through the CLI's own path; a
+    message on the topic that is not a frame is left out and said."""
+    if not R.X.have_rosbags():
+        print(f"      SKIP: rosbags is not installed ({R.X.ROSBAGS_INSTALL_HINT})")
+        return SKIP
+    root = _tmp("rfb_frames_")
+    s, rows, traj, kpi = _episode()
+    man = _manifest()
+    s.manifest_frames = _frames(start=_start_of(man), end=man)
+    s.manifest_frames.append((T0 + 61 * TICK, "{not a frame"))
+    run = _run_folder(root, "frames_001", rows, traj, kpi, bag=False)
+    _write_bag(run / "bag", s)
+    (run / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+    got = R.read_streams(run / "bag")
+    assert got.manifest_frames == s.manifest_frames[:2], got.manifest_frames
+    assert any("not a manifest frame" in p for p in got.problems), got.problems
+    # the frames are not counted into the episode topics' first and last time
+    assert got.start_ns == min(s.states[0][0], s.actions[0][0], s.poses[0][0])
+    assert got.bag_start_ns == s.manifest_frames[0][0], (got.bag_start_ns, got.start_ns)
+    rec, _ = R.replay_path(run)
+    fr = rec["manifest_in_bag"]
+    # no policy_g0.json in this folder: the start frame's hash is not compared
+    assert fr["verdict"] == "identical" and fr["not_compared"] == 1, fr
+    assert fr["start_frame"]["first_message_of_the_bag"] is True
+    assert fr["start_frame"]["after_bag_start_s"] == 0.0
+    rc, text = _main(run)
+    assert rc == 0 and "manifest_in_bag: 1 identical" in text, text
 
 
 if __name__ == "__main__":

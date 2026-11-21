@@ -18,6 +18,9 @@
     /mavros/statustext/send is published by /guardrail/safety_shield ONLY: the
                             episode's t = 0 marker for the simulator side
                             (2026-11-07, sitl/sitl_stressors.py)
+    /guardrail/manifest     is published by /guardrail/safety_shield ONLY and
+                            read by the bag recorder: the episode's manifest
+                            as a frame of the bag (2026-11-21, ARCH-22)
 
   and each node may reach the MAVROS services it calls and nothing else.
   Every node also publishes /rosout and /parameter_events and serves its own
@@ -50,6 +53,9 @@
             <topic>/shield/intercept</topic>
             <!-- the episode's t = 0 marker (2026-11-07) -->
             <topic>/mavros/statustext/send</topic>
+            <!-- the manifest as a frame of the bag, latched (ARCH-22,
+                 2026-11-21) -->
+            <topic>/guardrail/manifest</topic>
             <topic>/rosout</topic>
             <topic>/parameter_events</topic>
           </topics>
@@ -232,6 +238,8 @@
             <topic>/parameter_events</topic>
           </topics>
           <topics subscribe="ALLOW">
+            <!-- the Shield node's manifest frames (2026-11-21) -->
+            <topic>/guardrail/manifest</topic>
             <topic>/vla/*</topic>
             <topic>/shield/*</topic>
             <topic>/mavlink_adapter/status</topic>

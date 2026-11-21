@@ -988,6 +988,116 @@ def test_a_stranger_cannot_hot_apply_by_sending_its_request_with_its_finished():
         th.server.should_exit = True
 
 
+# --------------------------------------------------------------------------- #
+# ARCH-22 (2026-11-21): the manifest as a frame of the bag. The grant: the six
+# fields are "stored as the first frame of every rosbag"; until this date no
+# topic carried any of them. Each test fails on 71aabb3 (no publisher on
+# /guardrail/manifest, no manifest_frames in metrics.json).
+# --------------------------------------------------------------------------- #
+
+def _frames(N, node) -> list[dict]:
+    return [json.loads(m.data) for m in node.pubs[N.MANIFEST_TOPIC].sent]
+
+
+def test_the_manifest_is_published_latched_at_the_episodes_start_and_end():
+    """The start frame carries what is known when the node starts (the code
+    revision, generation 0's policy hash, the seed), the end frame all six
+    fields, exactly the manifest.json beside it; both latched (reliable,
+    transient_local, depth 1), on the topic both recorders record."""
+    from guardrail.manifest import MANIFEST_FIELDS, code_revision
+    N, node, clk, out = _build(["--seed", "41"])
+    assert N.MANIFEST_TOPIC == "/guardrail/manifest"
+    q = N.MANIFEST_QOS.__dict__
+    assert q == {"depth": 1, "reliability": 1, "durability": 1}, q   # the stand-in's enums
+    node._manifest_start.join(60)
+    start = _frames(N, node)
+    assert len(start) == 1, start
+    start = start[0]
+    assert start["phase"] == "start" and start["schema"] == "vlaguard-manifest-frame/1"
+    assert start["manifest"] == {"code_revision": code_revision(),
+                                 "policy_hash": node.policy.policy_hash,
+                                 "random_seed": 41}, start
+    assert set(start["not_known_yet"]) == {"vla_model_hash", "sim_speedup", "topology"}
+    assert start["episode_id"] == node.rec.episode_id
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    node._finish("time cap")
+    frames = _frames(N, node)
+    assert [f["phase"] for f in frames] == ["start", "end"], frames
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    end = frames[1]
+    assert end["manifest"] == manifest and tuple(end["manifest"]) == MANIFEST_FIELDS, \
+        (end, manifest)
+    assert end["episode_id"] == start["episode_id"] and "not_known_yet" not in end
+    rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
+    assert rec["topic"] == "/guardrail/manifest" and rec["refused"] is None, rec
+    assert rec["qos"] == {"reliability": "reliable", "durability": "transient_local",
+                          "depth": 1}
+    assert rec["start"]["published"] and rec["start"]["fields"] == list(start["manifest"])
+    assert rec["end"]["published"] and rec["end"]["fields"] == list(MANIFEST_FIELDS)
+
+
+def test_a_refused_manifest_publisher_is_recorded_and_the_node_flies_on():
+    """Under SROS 2 Enforce with a keystore made before sitl/sros2_policy.xml
+    granted /guardrail/manifest, creating the publisher raises: recorded,
+    and the episode and its manifest.json are as without it."""
+    real = _Node.create_publisher
+
+    def refuse(self, msg_type, topic, qos):
+        if topic == "/guardrail/manifest":
+            raise RuntimeError("Failed to create publisher: not permitted")
+        return real(self, msg_type, topic, qos)
+    _Node.create_publisher = refuse
+    try:
+        N, node, clk, out = _build([])
+    finally:
+        _Node.create_publisher = real
+    node._manifest_start.join(60)
+    assert N.MANIFEST_TOPIC not in node.pubs
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    node._finish("time cap")
+    assert (out / "manifest.json").is_file()
+    rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
+    assert "not permitted" in rec["refused"], rec
+    for phase in ("start", "end"):
+        assert rec[phase]["published"] is False and "not permitted" in rec[phase]["why"], rec
+
+
+def test_a_start_frame_still_computing_at_the_end_is_never_published_over_it():
+    """The start frame's git status runs on its own thread. An episode that
+    ends before it finished publishes the end frame and drops the start
+    frame, so the latched sample a late subscriber is handed stays the end
+    frame (one sample, depth 1)."""
+    import threading
+    N, node, clk, out = _build([])
+    node._manifest_start.join(60)
+    gate = threading.Event()
+    real = N.start_manifest_fields
+
+    def slow(*a, **kw):
+        gate.wait(30)
+        return real(*a, **kw)
+    N.start_manifest_fields = slow
+    N.MANIFEST_START_WAIT_S = 0.05
+    node.pubs[N.MANIFEST_TOPIC].sent.clear()
+    node.manifest_frames["start"] = None
+    node._manifest_start = threading.Thread(
+        target=node._publish_start_frame, args=(node.policy.policy_hash, 1), daemon=True)
+    node._manifest_start.start()
+    node.start_mission()
+    _fly(N, node, clk, 1)
+    node._finish("time cap")
+    rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
+    assert rec["start"]["published"] is False and "still being computed" in rec["start"]["why"]
+    gate.set()
+    node._manifest_start.join(60)
+    assert [f["phase"] for f in _frames(N, node)] == ["end"], _frames(N, node)
+    assert "not published over the end frame" in node.manifest_frames["start"]["why"]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

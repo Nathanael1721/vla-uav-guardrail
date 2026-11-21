@@ -484,7 +484,12 @@ if [ "${BAG:-1}" = "1" ]; then
   # Raw MAVLink (since 2026-11-02): MAVROS 2's own link to its router, both
   # directions - /uas1/mavlink_source (from the autopilot) and
   # /uas1/mavlink_sink (to it, SET_POSITION_TARGET_LOCAL_NED among them), as
-  # mavros_msgs/Mavlink. Keep deploy/docker/entrypoint.sh's BAG_TOPICS equal
+  # mavros_msgs/Mavlink. The manifest (since 2026-11-21, ARCH-22): the Shield
+  # node's latched /guardrail/manifest frames, the episode's start and end
+  # (guardrail/manifest.py manifest_frame), subscribed transient_local
+  # (bag_qos_overrides.yaml) so the start frame, published before the
+  # recorder discovers the topic, is recorded all the same. Keep
+  # deploy/docker/entrypoint.sh's BAG_TOPICS equal
   # (tests/test_deploy_configs.py).
   # BAG_MANIFEST=1 (off by default; ARCH-22, 2026-11-16): what the launch
   # knows of the manifest, as KEY=VALUE pairs after --custom-data, which
@@ -505,6 +510,8 @@ if [ "${BAG:-1}" = "1" ]; then
     fi
   fi
   nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
+    --qos-profile-overrides-path "$DIR/bag_qos_overrides.yaml" \
+    /guardrail/manifest \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
     /mavlink_adapter/sent \
