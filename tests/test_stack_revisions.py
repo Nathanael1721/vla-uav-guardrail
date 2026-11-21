@@ -373,6 +373,83 @@ def test_the_grade_does_not_read_the_record():
     assert "stack" not in inspect.signature(M.is_kpi_grade).parameters
 
 
+# ------------------------------------------------- the reader (2026-11-21)
+
+def test_stack_summary_quotes_single_sha_as_written_with_the_revisions_it_names():
+    """The KPI report's reader (tools/kpi_report.py, 2026-11-21): every
+    state single_sha can be in, as the run wrote it, with the companion,
+    desktop and autopilot revisions the record names. Against 71aabb3 this
+    fails: nothing read the record, and guardrail.manifest had no
+    stack_summary."""
+    man = _manifest()
+    cases = (("pending", None, None), ("true", REV, True),
+             ("false", "0123456789ab", False))
+    for state, desk_rev, single in cases:
+        d = _run(man)
+        try:
+            M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+            if desk_rev is not None:
+                M.add_host_revision(d, M.ROLE_DESKTOP, M.host_revision(
+                    host=DESKTOP, revision=desk_rev, describe=_no_describe))
+            before = (d / M.STACK_FILE).read_bytes()
+            s = M.stack_summary(d)
+            assert s["state"] == state and s["single_sha"] is single, (state, s)
+            assert s["companion"] == [REV], s
+            assert s["desktop"] == ([] if desk_rev is None else [desk_rev]), s
+            assert s["autopilot"] == "ArduCopter V4.5.7 (2a3dc4b7)", s
+            assert (s["problems"] == []) is (single is True), s["problems"]
+            # Read only: the record is not rewritten.
+            assert (d / M.STACK_FILE).read_bytes() == before
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_stack_summary_says_missing_and_unreadable_and_never_true_for_them():
+    """A run flown before the record (2026-11-17) is "missing"; a record
+    that is not JSON, of another schema, or without a verdict is
+    "unreadable" - never counted as one SHA across the stack."""
+    d = _run(_manifest())
+    try:
+        s = M.stack_summary(d)
+        assert s["state"] == "missing" and s["single_sha"] is None, s
+        assert M.STACK_FILE in s["why"]
+        for body, said in (("{not json", "not readable JSON"),
+                           (json.dumps({"schema": "vlaguard-stack-revisions/99",
+                                        "single_sha": True}), "stack-revisions/99"),
+                           (json.dumps({"schema": M.STACK_SCHEMA, "hosts": {}}),
+                            "no single_sha"),
+                           (json.dumps({"schema": M.STACK_SCHEMA, "single_sha": "yes"}),
+                            "no single_sha")):
+            (d / M.STACK_FILE).write_text(body, encoding="utf-8")
+            s = M.stack_summary(d)
+            assert s["state"] == "unreadable" and s["single_sha"] is None, (body, s)
+            assert said in s["why"], (body, s["why"])
+        assert set(M.STACK_STATES) == {"true", "false", "pending", "missing", "unreadable"}
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_stack_summary_keeps_a_second_claimant_and_the_components():
+    """A duplicate role ("desktop#2") and a host's components (the WSL
+    helper's checkout) are revisions the record names: kept, not dropped."""
+    man = _manifest()
+    d = _run(man)
+    try:
+        M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+        desk = M.host_revision(host=DESKTOP, revision=REV, describe=_no_describe)
+        desk["components"] = {"wsl_helper": {"code_revision": "0123456789ab"}}
+        M.add_host_revision(d, M.ROLE_DESKTOP, desk)
+        M.add_host_revision(d, M.ROLE_DESKTOP, M.host_revision(
+            host=dict(DESKTOP, hostname="other-pc"), revision="fedcba987654",
+            describe=_no_describe))
+        s = M.stack_summary(d)
+        assert s["state"] == "false", s
+        assert s["desktop"] == sorted([REV, "fedcba987654"]), s
+        assert s["components"] == {"desktop/wsl_helper": "0123456789ab"}, s
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ------------------------------------------------------------ the rails
 
 def test_the_shield_node_writes_the_record_right_after_its_manifest():
