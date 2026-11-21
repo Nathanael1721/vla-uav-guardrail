@@ -160,6 +160,7 @@ import hashlib
 import inspect
 import io
 import json
+import math
 import re
 import shutil
 import tarfile
@@ -1608,6 +1609,75 @@ def rail_shield(policy: Policy, *, lookahead_s: float, dt: float,
     if clock is not None:
         kw["now"] = clock
     return Shield(policy, lookahead_s=lookahead_s, dt=dt, **kw)
+
+
+# The flight-log row key of the pipe the Shield read on that tick (PipeRecorder,
+# 2026-11-21, WP4-11b).
+PIPE_ROW_KEY = "note_flown"
+
+
+class PipeRecorder:
+    """A rail's pipe clock that records what the Shield read of it, so the
+    open-loop replay can rebuild the pipe (WP4-11b, 2026-11-21).
+
+    WHY. A rail hands the Shield what it SENT each tick (`Shield.note_flown`)
+    on a real-time pipe clock (`pipe_clock`). The Shield reads that record
+    while the GPS fix is lost or the autopilot's estimator is unhealthy (its
+    dead reckoning, X8's input: `Shield._position_verdict`), and on every tick
+    under a clearance response (`clear_response`, the setpoints still acting
+    within the vehicle's reaction time). Neither the setpoint sent nor the
+    clock's readings were in the flight log, so tools/replay_at_revision.py
+    refused every episode with a lost fix or estimator as 'not_replayable:
+    the pipe the Shield read is not logged per tick'.
+
+    WHAT. Given to the Shield as its `pipe_clock`, it returns `clock()` as
+    before (the rail flies exactly as it did) and, between `begin_tick()` and
+    `end_tick()` - around the rail's filter / filter_body call - keeps each
+    reading. `note_flown(shield, action, reads)` calls Shield.note_flown at
+    the clock's reading now, as the Shield itself would with t=None, and
+    returns the row field (PIPE_ROW_KEY):
+
+        {"t": <the pipe time the send was noted at>,
+         "vx": <world-frame vx sent, or None>, "vy": <... vy, or None>,
+         "pipe_reads": [<every pipe-clock reading the Shield took inside
+                         this tick's filter, in order>]}
+
+    None for vx / vy is nothing sent (the autopilot holding) or a non-finite
+    setpoint, which note_flown records alike. Every number is the double the
+    Shield was given; the replay feeds them back (note_flown(..., t=t) after
+    the tick's filter, the readings in order from a pinned pipe clock)."""
+
+    def __init__(self, clock: Callable[[], float]):
+        if not callable(clock):
+            raise TypeError(f"clock must be a zero-argument callable, got {clock!r}")
+        self._clock = clock
+        self._reads: list[float] | None = None
+
+    def __call__(self) -> float:
+        t = float(self._clock())
+        if self._reads is not None:
+            self._reads.append(t)
+        return t
+
+    def begin_tick(self) -> None:
+        """Start keeping the readings: call right before the tick's filter."""
+        self._reads = []
+
+    def end_tick(self) -> list[float]:
+        """Stop keeping them and return this tick's, in order."""
+        reads, self._reads = (self._reads or []), None
+        return reads
+
+    def note_flown(self, shield, action, reads: list[float]) -> dict:
+        """Shield.note_flown(action) at the pipe clock's reading now; returns
+        the row field (class docstring)."""
+        t = float(self._clock())
+        shield.note_flown(action, t=t)
+        ok = (action is not None and isinstance(action.vx, (int, float))
+              and isinstance(action.vy, (int, float))
+              and math.isfinite(action.vx) and math.isfinite(action.vy))
+        return {"t": t, "vx": float(action.vx) if ok else None,
+                "vy": float(action.vy) if ok else None, "pipe_reads": list(reads)}
 
 
 def audit_tick(audit, tick: int, decision, *, fsm_out=None,

@@ -72,7 +72,13 @@ TWO REPLAYS, BY WHAT THE EPISODE IS
              row, else the log's 1 mm), the heading (the audit record's
              `body_yaw_deg`, the full double, on a tick that has one; the
              log's 0.01 degree elsewhere), the rule clock's reading, the
-             fix and estimator flags, and the world-frame raw action.
+             fix and estimator flags, and the world-frame raw action; and,
+             where every row logs it (`note_flown`, the ROS 2 node since
+             2026-11-21), the pipe the Shield read: each tick's pipe-clock
+             readings handed to its filter in order, then what the rail
+             sent noted at its pipe time (Shield.note_flown), so the dead
+             reckoning of a lost fix or estimator and the clearance pipe
+             are rebuilt as flown.
              Compared:
                shield_audit.jsonl    every record, bit for bit (JSON text),
                                      except `ts` and the `fsm_*` fields: the
@@ -90,7 +96,11 @@ TWO REPLAYS, BY WHAT THE EPISODE IS
                                      repair operators, touched, braked and
                                      the four emitted floats bit for bit
                                      (Shield-on arm; raw and violations on a
-                                     Shield-off arm).
+                                     Shield-off arm); on a run that logs the
+                                     pipe, also the Shield's X8 verdict
+                                     (`position_lost`, where the row has
+                                     it) and how many pipe-clock readings
+                                     the tick took (`pipe_reads`).
 
 VERDICTS
 
@@ -102,7 +112,8 @@ VERDICTS
                   filled in): for open_loop the reasons of
                   tools/replay_q3.py (no forecast recorded, a map rule, a
                   subject rule, scheduled rules without a clock, the pipe
-                  the Shield read - a measured velocity or a lost fix -
+                  the Shield read - a measured velocity, or a lost fix or
+                  estimator on a run whose rows do not log `note_flown` -
                   not logged per tick) plus what the revision lacks; for
                   refly what rebuild_and_fly refuses;
   refused         the revision is not a clean commit of this repository.
@@ -121,8 +132,9 @@ the run recorded it, the Python version; `replayed_on`), so a last-digit
 difference can be put to the host or to the interpreter only by replaying
 under the other - on this desktop the interpreter (--python), on the Orin
 the host (a rig step) - never by assumption. The rows log no velocity the
-Shield did not use and no pipe clock: an episode whose Shield read either
-is refused, not approximated.
+Shield did not use, and before 2026-11-21 no pipe clock: an episode whose
+Shield read a measured velocity, or the pipe of a lost fix or estimator on
+rows without `note_flown`, is refused, not approximated.
 
 Exit code: 0 every replayed episode identical, 1 one differs, 2 nothing
 could be replayed or the arguments are wrong.
@@ -190,6 +202,12 @@ KNOWN_FORECAST_KEYS = {"mode", "flag", "response", "velocity_source", "velocity_
 # Counts in metrics.json shield_forecast of ticks the Shield was GIVEN a
 # measured velocity: any above zero and the pipe was read.
 VELOCITY_USED_KEYS = ("velocity_ticks", "shield_velocity_ticks")
+# The flight-log row key of the pipe the Shield read on the tick (guardrail.
+# replay PIPE_ROW_KEY / PipeRecorder, the ROS 2 node since 2026-11-21): what
+# the rail sent (note_flown's t, vx, vy) and the pipe clock's readings inside
+# the tick's filter. Named here, not imported: the driver runs older
+# revisions that have no such constant.
+PIPE_ROW_KEY = "note_flown"
 
 
 class Refused(Exception):
@@ -1054,6 +1072,27 @@ def _vec(d: Any) -> list | None:
         return None
 
 
+def _pipe_note(d: Any) -> dict | None:
+    """A row's PIPE_ROW_KEY field as the replay feeds it back, or None when
+    the row has none or it is malformed (2026-11-21): {t, vx, vy, pipe_reads},
+    t and every reading a finite number, vx and vy both numbers (what was
+    sent) or both None (nothing sent, or a non-finite setpoint, which
+    Shield.note_flown records alike)."""
+    def num(v: Any) -> bool:
+        return (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and v == v and v not in (float("inf"), float("-inf")))
+    if not isinstance(d, dict) or not num(d.get("t")):
+        return None
+    vx, vy, reads = d.get("vx"), d.get("vy"), d.get("pipe_reads")
+    if not ((vx is None and vy is None) or (num(vx) and num(vy))):
+        return None
+    if not isinstance(reads, list) or not all(num(v) for v in reads):
+        return None
+    return {"t": float(d["t"]), "vx": None if vx is None else float(vx),
+            "vy": None if vy is None else float(vy),
+            "pipe_reads": [float(v) for v in reads]}
+
+
 def _flown_on(metrics: dict) -> dict | None:
     """The host the Shield node ran on, as the run's hil_evidence says, and
     the interpreter it ran under where the run recorded it (metrics.json
@@ -1127,7 +1166,13 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
                       "metrics.json shield_forecast says otherwise")
     nofix = sum(1 for r in rows if r.get("fix_ok") is False)
     noest = sum(1 for r in rows if r.get("estimator_ok") is False)
-    if nofix or noest:
+    # The pipe the Shield read, when every row logs it (PIPE_ROW_KEY, the
+    # ROS 2 node since 2026-11-21): fed back tick by tick, so a lost fix or
+    # estimator replays like the rest. A run without it on every row keeps
+    # the refusal below, word for word.
+    notes = [_pipe_note(r.get(PIPE_ROW_KEY)) for r in rows]
+    piped = all(n is not None for n in notes)
+    if (nofix or noest) and not piped:
         raise Refused(f"the pipe the Shield read is not logged per tick: {nofix} row(s) "
                       f"with no valid fix and {noest} with the estimator unhealthy, where "
                       f"the Shield dead-reckons on what the rail sent (note_flown, on a "
@@ -1257,6 +1302,23 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
                           f"(metrics.json shield_forecast clear_response {cr!r}: {e})")
     pin: list = [None]
     clock = (lambda: pin[0]) if clocks else None
+    # The pipe clock, pinned (2026-11-21): each tick's filter is handed the
+    # readings its row logs, in order; a read beyond them (`short`) or one
+    # left unread is a difference (`pipe_reads`).
+    pipe_q: list[float] = []
+    pipe_st = {"short": 0, "last": 0.0}
+
+    def pipe_clock() -> float:
+        if pipe_q:
+            pipe_st["last"] = pipe_q.pop(0)
+            return pipe_st["last"]
+        pipe_st["short"] += 1
+        return pipe_st["last"]
+    if piped:
+        if "pipe_clock" not in params or not hasattr(Shield, "note_flown"):
+            raise Refused("the rows log the pipe the Shield read (note_flown), and this "
+                          "revision's Shield takes no pipe_clock or has no note_flown")
+        kw["pipe_clock"] = pipe_clock
     if cfg["escalation"] or rail_shield is None:
         if clock is not None:
             kw["now"] = clock
@@ -1267,6 +1329,8 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
     cfg["path_repair"] = getattr(shield, "path_repair", None)
     cfg["path_repair_from"] = "metrics.json" if isinstance(pr, bool) else "revision default"
     cfg["clear_response"] = cr
+    cfg["pipe"] = (f"fed from the rows' {PIPE_ROW_KEY} (what the rail sent, the pipe "
+                   f"clock's readings)" if piped else "none")
     if subject is not None:
         if not hasattr(shield, "set_subject"):
             raise Refused("this revision's Shield has no set_subject")
@@ -1385,9 +1449,31 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
         for k in ("fix_ok", "estimator_ok"):
             if k in state_fields and isinstance(row.get(k), bool):
                 sk[k] = row[k]
+        if piped:
+            pipe_q[:] = notes[i]["pipe_reads"]
+            short0 = pipe_st["short"]
         dec = shield.filter(State(**sk), Action4D(**{k: float(row["raw"][k]) for k in VEC}))
         # the flight log's Shield fields
         diffs = []
+        if piped:
+            # The pipe: the readings this tick's filter took against the
+            # row's, then what the rail sent, noted as the rail noted it
+            # (after the tick, at its pipe time).
+            n_short, n_left = pipe_st["short"] - short0, len(pipe_q)
+            if n_short or n_left:
+                n_log = len(notes[i]["pipe_reads"])
+                diffs.append(("pipe_reads", n_log, n_log - n_left + n_short))
+            pipe_q.clear()
+            nf = notes[i]
+            shield.note_flown(None if nf["vx"] is None else
+                              Action4D(vx=nf["vx"], vy=nf["vy"]), t=nf["t"])
+            if "position_lost" in row:
+                # X8's input, the Shield's verdict on the position it was
+                # handed: the dead reckoning's output.
+                lost = getattr(dec, "position_lost", None)
+                got_lost = lost[0] if lost else None
+                if row["position_lost"] != got_lost:
+                    diffs.append(("position_lost", row["position_lost"], got_lost))
         got_raw = [float(getattr(dec.raw, k)) for k in VEC]
         if _vec(row.get("raw")) != got_raw:
             diffs.append(("raw", row.get("raw"), dict(zip(VEC, got_raw))))
