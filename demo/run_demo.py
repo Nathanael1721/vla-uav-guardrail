@@ -51,7 +51,8 @@ import airsim
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
+from guardrail import AuditLogger, Shield, State                       # noqa: E402
+from guardrail.bundle import refuse_or_load_yaml                       # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
 from guardrail.audit import AUDIT_FILE                                # noqa: E402
 from guardrail.frames import (body_action, body_to_local_ned,       # noqa: E402
@@ -150,6 +151,17 @@ def nfz_dwell(shield, traj: list[dict], spawn_t: float | None) -> dict:
                                  if spawn_t is not None else None))
 
 
+def load_flight_policy(path: str | Path) -> tuple:
+    """`(policy, source)` for this flight: the --policy YAML through
+    bundle.load_for_flight (bundle.refuse_or_load_yaml), so a policy whose
+    points are stored in local metres is refused (SystemExit naming why)
+    before anything is flown. WP1-14, since 2026-11-21: until then this
+    script read it with models.load_policy and flew it. A WGS84 policy loads
+    as before; VLAGUARD_LEGACY_READ=1 re-runs a recorded flight under a
+    metre one, announced as a read."""
+    return refuse_or_load_yaml(path)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
@@ -184,13 +196,14 @@ def main() -> int:
                      f"(also tried {alt}) — available: "
                      f"{[p.name for p in (ROOT / 'policies').glob('*.yaml')]}")
 
+    # ---- 1. Policy + Compiler (before-VLA half) ----
+    # Loaded before the output folder is made: a refused policy leaves no trace.
+    policy, _source = load_flight_policy(args.policy)
     shield_on = args.shield == "on"
     tag = args.tag or (f"shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
     out = ROOT / "demo" / "out" / tag
     out.mkdir(parents=True, exist_ok=True)
 
-    # ---- 1. Policy + Compiler (before-VLA half) ----
-    policy = load_policy(args.policy)
     compiler = ConstraintCompiler(policy)
     mission = compiler.parse_command(args.command)
     prompt = compiler.build_prompt(mission)

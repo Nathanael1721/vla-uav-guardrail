@@ -53,7 +53,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail import AuditLogger, Shield, State                    # noqa: E402
+from guardrail.bundle import refuse_or_load_yaml                    # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,            # noqa: E402
                               altitude_band_report, min_clearance_on_map)
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
@@ -333,9 +334,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def load_flight_policy(path: str | Path) -> tuple:
+    """`(policy, source)` for this flight: the --policy YAML through
+    bundle.load_for_flight (bundle.refuse_or_load_yaml), so a policy whose
+    points are stored in local metres is refused (SystemExit naming why)
+    before the previous run's logs are deleted. WP1-14, since 2026-11-21:
+    until then this script read it with models.load_policy and flew it. A
+    WGS84 policy loads as before; VLAGUARD_LEGACY_READ=1 re-runs a recorded
+    flight under a metre one, announced as a read."""
+    return refuse_or_load_yaml(path)
+
+
 async def fly(args) -> int:
     from projectairsim import Drone, ProjectAirSimClient, World
 
+    policy, _source = load_flight_policy(args.policy)   # before the old logs go
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
     log_path = out / "flight_log.jsonl"
@@ -345,7 +358,6 @@ async def fly(args) -> int:
     if inf_log.exists():
         inf_log.unlink()
 
-    policy = load_policy(args.policy)
     cmap = city_planner.load_occ(args.citymap)
     shield_map = None
     if policy.by_type(ObstacleClearance) and cmap is not None:

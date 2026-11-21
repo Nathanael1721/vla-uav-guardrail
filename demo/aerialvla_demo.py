@@ -38,7 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail import AuditLogger, Shield, State                    # noqa: E402
+from guardrail.bundle import refuse_or_load_yaml                    # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.aerialvla_codec import parse_action                  # noqa: E402
@@ -369,6 +370,17 @@ class RateLimiter:
         return out
 
 
+def load_flight_policy(path: str | Path) -> tuple:
+    """`(policy, source)` for this flight: the --policy YAML through
+    bundle.load_for_flight (bundle.refuse_or_load_yaml), so a policy whose
+    points are stored in local metres is refused (SystemExit naming why)
+    before anything is flown. WP1-14, since 2026-11-21: until then this
+    script read it with models.load_policy and flew it. A WGS84 policy loads
+    as before; VLAGUARD_LEGACY_READ=1 re-runs a recorded flight under a
+    metre one, announced as a read."""
+    return refuse_or_load_yaml(path)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--command", default="fly to (40, 40) at 6 m/s altitude 20")
@@ -390,11 +402,12 @@ def main() -> int:
     global MAX_S
     MAX_S = args.max_s
 
+    policy, _source = load_flight_policy(args.policy)   # before anything is written
+
     import airsim
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
 
-    policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(args.command)
     shield = Shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
     audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash

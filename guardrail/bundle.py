@@ -2524,6 +2524,49 @@ def load_for_flight(bundle: str | Path | None = None,
     return pol, rec
 
 
+# The legacy flight scripts that take a YAML --policy only and fly it through
+# load_yaml_for_flight (WP1-14, 2026-11-21). tests/test_legacy_rails_wgs84_only.py
+# checks each one.
+LEGACY_YAML_RAILS = ("demo/run_demo.py", "demo/real_vla_demo.py",
+                     "demo/aerialvla_demo.py", "demo/aerialvla_pas_demo.py",
+                     "demo/semantic_demo.py", "demo/semantic_seek.py")
+
+
+def load_yaml_for_flight(path: str | Path, *, say=print) -> tuple[Policy, dict]:
+    """The policy of a legacy flight script that flies a YAML `--policy`
+    only (LEGACY_YAML_RAILS): `(policy, source)` from load_for_flight.
+
+    Why (WP1-14, since 2026-11-21): until then these six AirSim scripts read
+    their --policy with models.load_policy, so a policy whose points are
+    stored in local metres (models.LEGACY_POINT_FORMS) flew through them
+    without a word, while every other rail refused it at load. Now they get
+    the same refusal (LegacyPointFormRefused) and the same one exception: a
+    declared read of a recorded flight (VLAGUARD_LEGACY_READ=1), which is
+    announced through `say` so the console says the run was a read. A
+    WGS84 or point-free policy loads exactly as load_policy loaded it (same
+    rules, same flight_problems refusal, same hash), so a run of these
+    scripts on any policies/*.yaml is unchanged.
+
+    Headless tools and tests that read a metre document on purpose still use
+    models.load_policy; this is for an entry point about to fly."""
+    pol, rec = load_for_flight(None, path)
+    if rec.get("legacy_read"):
+        say(f"[policy] LEGACY READ ({LEGACY_READ_ENV}=1): {Path(path).name} has "
+            f"{rec['point_form']}; flown as a re-run of a recorded flight, not as "
+            f"a new one")
+    return pol, rec
+
+
+def refuse_or_load_yaml(path: str | Path, *, say=print) -> tuple[Policy, dict]:
+    """load_yaml_for_flight for a script's main(): a refused policy ends the
+    run with its message (SystemExit) instead of a traceback, before the
+    script has written anything for the run (WP1-14, 2026-11-21)."""
+    try:
+        return load_yaml_for_flight(path, say=say)
+    except LegacyPointFormRefused as exc:
+        raise SystemExit(f"[policy] REFUSING TO FLY: {exc}") from None
+
+
 def _not_wgs84_message(pol: Policy, path, *, is_bundle: bool) -> str:
     what = f"its points are stored as {pol.point_form}"
     if pol.frame_origin is None:

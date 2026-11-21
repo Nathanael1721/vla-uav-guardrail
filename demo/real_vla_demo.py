@@ -212,7 +212,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail import AuditLogger, State, load_policy               # noqa: E402
+from guardrail import AuditLogger, State                            # noqa: E402
+from guardrail.bundle import refuse_or_load_yaml                    # noqa: E402
 from guardrail import kpi as _kpi                                   # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
@@ -1451,6 +1452,25 @@ def flight_shield(policy: Policy):
     return rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
 
 
+def load_flight_policy(path: str | Path) -> tuple[Policy, dict]:
+    """`(policy, source)` for this flight: the --policy YAML through
+    bundle.load_for_flight (bundle.refuse_or_load_yaml), so a policy whose
+    points are stored in local metres is refused (SystemExit naming why)
+    before anything is written. WP1-14, since 2026-11-21: until then this
+    script read it with models.load_policy and flew it. A WGS84 policy loads
+    as before; VLAGUARD_LEGACY_READ=1 re-runs a recorded flight under a
+    metre one, announced as a read, and metrics.json then carries
+    `legacy_read`, `point_form` and `point_note` (legacy_point_keys)."""
+    return refuse_or_load_yaml(path)
+
+
+def legacy_point_keys(source: dict) -> dict:
+    """The legacy-read keys of a load_for_flight record (empty for a WGS84 or
+    point-free policy, so such a run's metrics.json is what it was)."""
+    return {k: source[k] for k in ("legacy_read", "point_form", "point_note")
+            if k in source}
+
+
 def shield_record(shield) -> dict:
     """What a Shield object judges with, read from the object itself: the
     forecast, the escalation FSM and its config hash, the repair library's
@@ -1726,7 +1746,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--paraphraser and --paraphrase-in-process: one source for the paraphrase")
     rail = rail_label(args.world)
 
-    policy = load_policy(args.policy)
+    policy, policy_source = load_flight_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(DEFAULT_MISSION)
     # The paraphrase, from the paraphraser service unless the in-process
     # fallback is asked for by name; a refusal costs nothing yet.
@@ -2029,7 +2049,7 @@ def main(argv: list[str] | None = None) -> int:
         rows, nfz=dwell, collisions=collisions.summary(), n_inf=vla._n_inf,
         n_refused=vla._n_refused, infer_s=infer_s,
         extra={"tag": args.tag, "run_id": run_id, "rail": rail, "world": args.world,
-               **halt,
+               **halt, **legacy_point_keys(policy_source),
                # G3 (the PI's ruling): the decision rate this flight measured.
                "decision": decision_stats(done_t, infer_s, t0, t_end),
                "vram": vram,
