@@ -55,16 +55,29 @@ a single boundary in the codebase." In this codebase:
     is done as a permutation there) and within a few ulp elsewhere
     (tests/test_frame_boundary.py: |to_body(from_body(b)) - b| <= 4e-15 m/s
     over seeded actions at 0, 90, 179.9, -90 and random headings).
-    This is how the grant's own reference implementation keeps "repair
-    operators acting on the same frame the VLA emits in": its operators take
-    and return the body-frame Action4D and, for their geometry, turn it into
-    the IR's ENU plane and back inside the operator
-    (kuanting-vla-uav-guardrail packages/safety-shield/src/safety_shield/
-    repair.py LateralProjection and GeofenceEscape: `body_to_enu`, the
-    projection in ENU, `enu_to_body`; checker.py and kinematics.py `predict`
-    forecast in ENU the same way). Ours turns once around the whole operator
-    stack instead of once per operator; neither side sees local NED (ours
-    is North / East / up, the reference's East / North / up). That the
+  * BODY IN, BODY OUT at every REPAIR OPERATOR (since 2026-11-21). The
+    grant's "keeps repair operators acting on the same frame the VLA emits
+    in" is honoured at the operator interface (guardrail/repair.py
+    RepairOperator): each operator is handed the body-frame Action4D at the
+    tick's heading (`RepairContext.heading_deg`, the decision state's
+    yaw_deg) and hands one back. This is how the grant's own reference
+    implementation does it: its operators take and return the body-frame
+    Action4D and, for their geometry, turn it into the IR's ENU plane and
+    back inside the operator (kuanting-vla-uav-guardrail packages/
+    safety-shield/src/safety_shield/repair.py LateralProjection and
+    GeofenceEscape: `body_to_enu`, the projection in ENU, `enu_to_body`;
+    checker.py and kinematics.py `predict` forecast in ENU the same way).
+    Ours: `RepairContext.to_world` (`from_body`) and `RepairContext.to_body`
+    (`to_body`) at the tick's heading - HookOperator around each Shield
+    `_repair_*` call, PathRepair around its detour - while the Shield's
+    chain keeps the world action its re-checks read and converts once each
+    way per operator call. The pair is lossless on its own results (a body
+    action `to_body` made converts back to the world action it was made
+    from, not to a re-rotation of it), so the decisions are those of the
+    world-frame stack bit for bit, at every heading. Until 2026-11-21 the
+    operators were handed the world action and the Shield turned once
+    around the whole stack (`filter_body`). Neither side sees local NED
+    (ours is North / East / up, the reference's East / North / up). That the
     repair is the body-frame one - the same body action in a scene that
     turns with the aircraft gets the same emitted body action - is pinned
     for each rule family in tests/test_frame_boundary.py: zone, kinematic
@@ -145,7 +158,9 @@ And besides those adapters:
   * RECORDS, not commands: `guardrail/audit.py` (`to_body` writes each audit
     record's raw and emitted actions in the grant's body-frame keys),
     `guardrail/repair.py` (`to_body` logs PathRepair's detour waypoint in
-    body frame), `demo/real_vla_demo.py` (`from_body` in
+    body frame; and, not a record, `RepairContext.to_world` / `to_body`:
+    the repair-operator interface's rotation pair inside the projection,
+    since 2026-11-21), `demo/real_vla_demo.py` (`from_body` in
     `openvla_raw_to_action`: the step log's `world_action` and its offline
     replay; the flight hands the Shield the body action).
 
@@ -328,7 +343,9 @@ def body_to_local_ned(body, yaw_deg: float) -> tuple:
     setpoint. Repair operators above never see local-NED; the conversion is a
     single boundary in the codebase." Every rail's adapter calls this one
     function, after the projection. Apart from the projection's own internal
-    world frame (`Shield.filter_body`: `from_body`, filter, `to_body`), nothing
+    world frame (`Shield.filter_body`: `from_body`, filter, `to_body`; and
+    the repair-operator interface inside it, guardrail/repair.py
+    `RepairContext.to_world` / `to_body`), nothing
     else in the codebase turns a body action into the world or NED frame;
     tests/test_frame_boundary.py fails on a new crossing."""
     fwd, right, up, yaw_rate = _channels(body)
