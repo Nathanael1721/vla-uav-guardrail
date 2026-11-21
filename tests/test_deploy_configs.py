@@ -749,6 +749,35 @@ def test_the_mission_records_the_native_rails_topics():
     assert _topics(block) and _topics(mine) == _topics(block), (_topics(mine), _topics(block))
 
 
+def test_both_recorders_take_the_manifest_frame_transient_local():
+    """ARCH-22 (2026-11-21). The Shield node publishes the episode's manifest
+    latched on /guardrail/manifest; both record commands record it (first in
+    their lists, which stay equal) and subscribe it transient_local through
+    sitl/bag_qos_overrides.yaml, so a start frame published before the
+    recorder discovers the topic is recorded all the same. Only that topic
+    is overridden (a transient_local subscription would not match a
+    volatile publisher), and --custom-data stays off and last. Fails on
+    71aabb3: neither command named the topic or the overrides."""
+    from guardrail.manifest import MANIFEST_TOPIC
+    qos = yaml.safe_load((ROOT / "sitl" / "bag_qos_overrides.yaml").read_text(encoding="utf-8"))
+    assert qos == {MANIFEST_TOPIC: {"history": "keep_last", "depth": 10,
+                                    "reliability": "reliable",
+                                    "durability": "transient_local"}}, qos
+    native = RUN_ROS2_DEMO.read_text(encoding="utf-8")
+    block = native.split('ros2 bag record -s mcap -o "$OUT/bag"', 1)[1].split(">", 1)[0]
+    assert block.split()[:3] == ["\\", "--qos-profile-overrides-path",
+                                 '"$DIR/bag_qos_overrides.yaml"'], block.split()[:3]
+    mine = ENTRYPOINT.read_text(encoding="utf-8").split("BAG_TOPICS=(", 1)[1].split(")", 1)[0]
+    assert _topics(block)[0] == _topics(mine)[0] == MANIFEST_TOPIC
+    assert block.split()[-2:] == ['"${BAG_CUSTOM[@]}"', "\\"], "--custom-data must stay last"
+    if not find_bash():
+        return SKIP
+    bag = printed(dry_run(ENTRYPOINT, ["mission", "--shield", "on"], _env_for("hil")), "BAG")
+    at = bag.index("--qos-profile-overrides-path")
+    assert bag[at + 1] == f"{ROOT.as_posix()}/sitl/bag_qos_overrides.yaml", bag
+    assert bag[at + 2:] == _topics(mine) and "--custom-data" not in bag, bag
+
+
 def test_nothing_starts_a_second_vla_stub():
     """The launch file runs the stub. A compose service that ran one too would
     put two publishers on /vla/action_4d."""

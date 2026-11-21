@@ -62,8 +62,12 @@ LAUNCH_FILE="sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py"
 
 # The topics the native rail records (sitl/run_ros2_demo.sh, which says what
 # each group is: actions, mode changes, MAVROS's sensor topics and raw MAVLink,
-# the last two since 2026-11-02); a test keeps the two lists equal.
-BAG_TOPICS=(/vla/action_4d /vla/identity /shield/setpoint /shield/intercept
+# the last two since 2026-11-02, and the Shield node's manifest frames since
+# 2026-11-21); a test keeps the two lists equal. The manifest is subscribed
+# transient_local (--qos-profile-overrides-path sitl/bag_qos_overrides.yaml
+# of the mounted checkout), as the native rail does.
+BAG_TOPICS=(/guardrail/manifest
+            /vla/action_4d /vla/identity /shield/setpoint /shield/intercept
             /shield/mode_request /shield/fences /mavlink_adapter/status
             /mavlink_adapter/sent
             /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local
@@ -222,7 +226,8 @@ case "$role" in
     launch=(ros2 launch "$ROOT/$LAUNCH_FILE" "python:=$PY" "repo_root:=$ROOT" "out:=$out"
             "shield_args:=$(printf '%q ' "${shield_args[@]}")" "vla_args:=$vla_args")
     pack=("$PY" -m guardrail.replay pack "$out")
-    bag=(ros2 bag record -s mcap -o "$out/bag" "${BAG_TOPICS[@]}")
+    bag=(ros2 bag record -s mcap -o "$out/bag"
+         --qos-profile-overrides-path "$ROOT/sitl/bag_qos_overrides.yaml" "${BAG_TOPICS[@]}")
     # --custom-data takes every argument after it, so it stays last. A field
     # that cannot be computed is left out; none at all records as before.
     if [ "${VLAGUARD_BAG:-1}" = "1" ] && [ "${VLAGUARD_BAG_MANIFEST:-0}" = "1" ]; then

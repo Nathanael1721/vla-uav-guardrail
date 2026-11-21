@@ -47,6 +47,15 @@ WHAT EVERY RUN RECORDS (WP2-11, WP2-15, WP1-24, WP4-13, WP4-20, WP3-11, WP3-17)
   metrics.json      incl. hil_evidence (the MAVROS chain, the autopilot's
                     own version, the host, the link) and the pilot record.
   manifest.json     the grant's six fields; topology from the evidence.
+  /guardrail/manifest
+                    (2026-11-21, ARCH-22) the same manifest as a frame of the
+                    rosbag: latched (reliable, transient_local, depth 1)
+                    std_msgs/String JSON, published at the episode's start
+                    with the fields known then (code revision, generation 0's
+                    policy hash, seed) and again at its end with all six, the
+                    dict manifest.json is written from (guardrail.manifest
+                    manifest_frame). metrics.json `manifest_frames` says what
+                    was published and when.
   <tag>.replay.tar.gz  written here, and re-packed by run_ros2_demo.sh once
                     the rosbag is closed so it carries bag/ as well.
 
@@ -495,8 +504,10 @@ from guardrail.response import ARDUCOPTER_GUIDED                         # noqa:
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
+                                FRAME_END, FRAME_START, MANIFEST_TOPIC,
                                 flight_bundle_path, flight_policy_choice,
-                                is_kpi_grade, pilot_record)
+                                is_kpi_grade, manifest_frame, pilot_record,
+                                start_manifest_fields)
 from guardrail.models import AltitudeEnvelope, PolygonFence, XY          # noqa: E402
 from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.shield import (altitude_out_of_band, standoff_breached,       # noqa: E402
@@ -2542,6 +2553,11 @@ except ImportError:
 # that wait.
 SIM_SPEEDUP_GRACE_S = 5.0
 
+# How long the end of an episode waits for the manifest's start frame
+# (ARCH-22, 2026-11-21): its git status is computed on its own thread from
+# the node's start, and on any flown episode it finished long before.
+MANIFEST_START_WAIT_S = 30.0
+
 
 def fence_read_done(vals: dict, fence_complete_for_s: float,
                     grace_s: float = SIM_SPEEDUP_GRACE_S,
@@ -2596,6 +2612,12 @@ def landed_from(mode: str | None, ext_landed: bool | None, armed: bool | None,
 if HAVE_ROS:
     LATCHED = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    # THE MANIFEST AS A FRAME OF THE BAG (ARCH-22, 2026-11-21): one latched
+    # sample, the latest frame, for a subscriber that joins late (the
+    # recorder discovers the topic after the start frame went out; it
+    # subscribes transient_local, sitl/bag_qos_overrides.yaml).
+    MANIFEST_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
     LANDED_STATE_ON_GROUND = 1
     # ArduCopter puts EXTENDED_SYS_STATE (MAVLink common, id 245) in none of
     # the stream groups REQUEST_DATA_STREAM switches on, so with the streams
@@ -3047,6 +3069,34 @@ if HAVE_ROS:
             self.pub_mode = self.create_publisher(String, TOPIC_MODE_REQUEST, 10)
             self.pub_fences = self.create_publisher(String, TOPIC_FENCES, LATCHED)
             self.pub_intercept = self.create_publisher(String, "/shield/intercept", 10)
+            # THE MANIFEST AS A FRAME OF THE BAG (ARCH-22, 2026-11-21;
+            # guardrail.manifest): latched on /guardrail/manifest, the fields
+            # known now at the episode's start, all six at its end (_report).
+            # The start frame's code_revision runs git, whose status took
+            # over 20 s on a slow tree, so it is computed and published on its
+            # own thread: bring-up waits for nothing. A publisher SROS 2
+            # refuses (a keystore made before sitl/sros2_policy.xml granted
+            # the topic) is recorded and the node flies without it.
+            self.manifest_frames: dict = {
+                "topic": MANIFEST_TOPIC,
+                "qos": {"reliability": "reliable", "durability": "transient_local",
+                        "depth": 1},
+                "refused": None, FRAME_START: None, FRAME_END: None}
+            self.pub_manifest = None
+            try:
+                self.pub_manifest = self.create_publisher(String, MANIFEST_TOPIC,
+                                                          MANIFEST_QOS)
+            except Exception as e:                               # noqa: BLE001
+                self.manifest_frames["refused"] = f"{type(e).__name__}: {e}"
+            # Held while a frame is published; once the end frame is out a
+            # start frame still being computed is dropped, never published
+            # over it.
+            self._manifest_lock = threading.Lock()
+            self._manifest_closed = False
+            self._manifest_start = threading.Thread(
+                target=self._publish_start_frame, name="manifest-start-frame",
+                args=(self.policy.policy_hash, self.args.seed), daemon=True)
+            self._manifest_start.start()
 
             self.cli_mode = self.create_client(SetMode, "/mavros/set_mode")
             self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
@@ -3115,6 +3165,47 @@ if HAVE_ROS:
                 self._input_refused("marker", e)
             # The fences are published in bring_up(), once the autopilot's
             # fence parameters and the aircraft's position are known.
+
+        # ---------------- the manifest frames ---------------- #
+
+        def _publish_start_frame(self, policy_hash: str, seed: int) -> None:
+            """THE MANIFEST AS A FRAME OF THE BAG (2026-11-21): the start
+            frame, on its own thread (__init__): the code revision, the hash
+            of the policy loaded at launch (generation 0) and the seed."""
+            try:
+                fields = start_manifest_fields(policy_hash, seed)
+            except Exception as e:                               # noqa: BLE001
+                self.manifest_frames[FRAME_START] = {
+                    "published": False, "why": f"{type(e).__name__}: {e}"}
+                return
+            self._publish_manifest_frame(FRAME_START, fields)
+
+        def _publish_manifest_frame(self, phase: str, fields: dict) -> None:
+            """Publish one frame (guardrail.manifest.manifest_frame) and record
+            it under metrics.json `manifest_frames`. Never raises: the frame
+            is evidence about the flight, and its failure is recorded, not
+            flown on (2026-11-21)."""
+            rec: dict = {"published": False}
+            with self._manifest_lock:
+                if phase == FRAME_START and self._manifest_closed:
+                    rec["why"] = ("the episode ended before the start frame was "
+                                  "computed; not published over the end frame")
+                    self.manifest_frames[phase] = rec
+                    return
+                try:
+                    frame = manifest_frame(phase, fields, episode_id=self.rec.episode_id)
+                    rec["fields"] = list(frame["manifest"])
+                    if self.pub_manifest is None:
+                        rec["why"] = "no publisher: " + str(self.manifest_frames["refused"])
+                    else:
+                        self.pub_manifest.publish(String(data=json.dumps(frame)))
+                        rec["published"] = True
+                        rec["wall_time"] = round(time.time(), 3)
+                except Exception as e:                           # noqa: BLE001
+                    rec["why"] = f"{type(e).__name__}: {e}"
+                if phase == FRAME_END:
+                    self._manifest_closed = True
+                self.manifest_frames[phase] = rec
 
         # ---------------- subscriptions ---------------- #
 
@@ -5586,6 +5677,18 @@ if HAVE_ROS:
             if refused is not None:
                 metrics["topology_refused"] = refused
             metrics["topology"] = manifest["topology"]
+            # The end frame (THE MANIFEST AS A FRAME OF THE BAG, 2026-11-21):
+            # all six fields, this dict, the one manifest.json is written from
+            # below. The start frame goes first: its thread is waited for, at
+            # most MANIFEST_START_WAIT_S (it is long done after any flight).
+            self._manifest_start.join(timeout=MANIFEST_START_WAIT_S)
+            self._publish_manifest_frame(FRAME_END, manifest)
+            if self.manifest_frames[FRAME_START] is None:
+                self.manifest_frames[FRAME_START] = {
+                    "published": False,
+                    "why": (f"its code revision was still being computed "
+                            f"{MANIFEST_START_WAIT_S:g} s after the episode ended")}
+            metrics["manifest_frames"] = json.loads(json.dumps(self.manifest_frames))
             if self.ground is not None:
                 # The ground the Shield converted MSL rules over (--ground,
                 # X-11): its file and hash, and over a DEM the home elevation

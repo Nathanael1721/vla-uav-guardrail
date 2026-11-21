@@ -163,6 +163,44 @@ def test_the_demo_script_records_the_grants_topics_and_routes_through_the_adapte
     assert "guardrail.replay pack" in sh, "the bundle must be re-packed with the bag"
 
 
+def _policy_grants(topic: str) -> dict[str, set[str]]:
+    """{"publish": nodes, "subscribe": nodes} that sitl/sros2_policy.xml lets
+    reach `topic`, a trailing-* pattern matched as DDS does (fnmatch)."""
+    import fnmatch
+    tree = ET.parse(ROOT / "sitl" / "sros2_policy.xml")
+    out: dict[str, set[str]] = {"publish": set(), "subscribe": set()}
+    for prof in tree.iter("profile"):
+        for topics in prof.findall("topics"):
+            for way in ("publish", "subscribe"):
+                if topics.get(way) == "ALLOW" and any(
+                        fnmatch.fnmatchcase(topic, (t.text or "").strip())
+                        for t in topics.findall("topic")):
+                    out[way].add(prof.get("node"))
+    return out
+
+
+def test_the_manifest_frame_is_the_shields_to_publish_and_the_bags_to_record():
+    """ARCH-22 (2026-11-21): the Shield node publishes the manifest as a
+    latched frame on /guardrail/manifest (the grant: "stored as the first
+    frame of every rosbag"). Under SROS 2 only its enclave may publish it and
+    the recorder may read it; the native rail records it, subscribed
+    transient_local so the start frame, out before the recorder discovers
+    the topic, is still recorded. Fails on 71aabb3: no grant, not recorded."""
+    sys.path.insert(0, str(ROOT))
+    from guardrail.manifest import MANIFEST_TOPIC
+    grants = _policy_grants(MANIFEST_TOPIC)
+    assert grants["publish"] == {"safety_shield"}, grants
+    assert "rosbag2_recorder" in grants["subscribe"], grants
+    sh = (ROOT / "sitl" / "run_ros2_demo.sh").read_text(encoding="utf-8")
+    cmd = sh.split('ros2 bag record -s mcap -o "$OUT/bag"', 1)[1].split(">", 1)[0]
+    assert MANIFEST_TOPIC in cmd.split(), "the bag does not record the manifest"
+    assert '--qos-profile-overrides-path "$DIR/bag_qos_overrides.yaml"' in cmd
+    assert (ROOT / "sitl" / "bag_qos_overrides.yaml").is_file()
+    src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    import re
+    assert re.search(r"self\.create_publisher\(String, MANIFEST_TOPIC,\s+MANIFEST_QOS\)", src)
+
+
 def test_sitl_loads_the_fence_backstop_and_feeds_the_router():
     sh = (ROOT / "sitl" / "start_sitl.sh").read_text(encoding="utf-8")
     assert "fence/guardrail_fence.parm" in sh

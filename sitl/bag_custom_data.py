@@ -49,6 +49,14 @@ metadata therefore holds part of the manifest, not the six fields, and it is
 metadata, not the bag's first frame. tools/replay_from_bag.py reads these
 back and compares them with manifest.json.
 
+THE FRAMES (2026-11-21). The frame the grant names is now the Shield node's
+own: it publishes the manifest latched on /guardrail/manifest at the
+episode's start (the fields known then) and at its end (all six), and both
+record commands record that topic by default (guardrail/manifest.py,
+"THE MANIFEST AS A FRAME OF THE BAG"). This helper and its switch are
+unchanged and still off by default: the Jazzy recorder's --custom-data has
+not been checked on a flight.
+
 A field that cannot be computed is left out and said on stderr; this never
 fails a launch (exit 0 unless the arguments themselves are wrong). rosbag2
 splits each pair on "=", so a value holding "=" or white space is refused

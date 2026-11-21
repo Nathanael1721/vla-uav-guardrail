@@ -1,0 +1,25 @@
+# QoS overrides for the episode bag's recorder: `ros2 bag record
+# --qos-profile-overrides-path` (sitl/run_ros2_demo.sh and
+# deploy/docker/entrypoint.sh pass this file; ARCH-22, 2026-11-21).
+#
+# WHY. The ROS 2 Shield node publishes the episode's manifest on
+# /guardrail/manifest latched: reliable, transient_local, depth 1
+# (guardrail/manifest.py, "THE MANIFEST AS A FRAME OF THE BAG"). The start
+# frame goes out when the node starts, and the recorder - started earlier,
+# with a topic list - subscribes only once it discovers the topic, which can
+# be after that frame was published. A volatile subscription (the recorder's
+# own choice when nothing overrides it) never receives a sample published
+# before it existed; a transient_local one is handed the publisher's latched
+# sample when it matches. So the recorder subscribes transient_local here.
+#
+# Only /guardrail/manifest is overridden: every other topic is recorded with
+# the QoS rosbag2 picks, as before. A transient_local subscription does not
+# match a volatile publisher, so this must not name a topic whose publisher
+# is not latched. depth 10 is the recorder's own queue for live messages
+# (the start and the end frame of a short episode must not overwrite each
+# other in it); what a late joiner is handed is the publisher's depth, 1.
+/guardrail/manifest:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: transient_local
