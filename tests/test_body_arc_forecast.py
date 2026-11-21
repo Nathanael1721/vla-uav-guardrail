@@ -543,7 +543,10 @@ def test_a_campaign_asks_the_node_for_the_arc_and_refuses_a_run_that_did_not_fly
     # The option, refused off a rail, and on a re-score.
     assert S.main(["--rail-arc-forecast", "on", "--only", "nfz-head-on"]) == 2
     src = (ROOT / "experiments" / "sweep_scenarios.py").read_text(encoding="utf-8")
-    assert src.count("extra_args=rail_arc_args or None") == 2
+    # Both rail launches carry the arc arguments (since 2026-11-21 joined
+    # with the hold model's in rail_args, WP3-07 --rail-hold).
+    assert src.count("rail_args = (rail_arc_args + rail_hold_args) or None") == 1
+    assert src.count("extra_args=rail_args)") == 2
     assert src.count("arc_forecast_problems(metrics, extra_args)") == 2
 
 
