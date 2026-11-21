@@ -525,6 +525,7 @@ from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa
                                   TOPIC_SENT, TOPIC_SETPOINT, TOPIC_STATUS,
                                   ModeRequests,
                                   XYArgumentParser, fence_alt_plan,
+                                  literal_loiter_check,
                                   heading_deg_from_enu_quaternion,
                                   policy_ceiling_m, policy_fences, read_parm,
                                   zones_near)
@@ -1005,6 +1006,27 @@ def adapter_listening(node_names) -> bool:
     the mission-end LAND went to the bag alone while events.jsonl said
     `via: adapter`, and the direct-MAVROS fallback could never run."""
     return ADAPTER_NODE_NAME in node_names
+
+
+def literal_loiter_refusal(args) -> str | None:
+    """Why --literal-loiter on cannot be flown with these arguments, or None
+    (2026-11-21, WP3-07). The FSM's LOITER request reaches the autopilot only
+    when this node does not hold the Loiter in GUIDED itself (--hold-flight
+    brake, or --hold-points in_place), and a request sent straight to MAVROS
+    (no adapter listening) must name LOITER too (--hold-mode LOITER); the
+    adapter's own hold is checked after the flight (literal_loiter_check)."""
+    if getattr(args, "literal_loiter", "off") != "on":
+        return None
+    guided = (getattr(args, "hold_points", "moved") == "moved"
+              and getattr(args, "hold_flight", "guided") == "guided")
+    if guided:
+        return ("--literal-loiter on needs --hold-flight brake (or --hold-points "
+                "in_place): with the GUIDED hold this node never sends LOITER")
+    if getattr(args, "hold_mode", DEFAULT_HOLD_MODE) != "LOITER":
+        return ("--literal-loiter on needs --hold-mode LOITER: a LOITER request sent "
+                "without the adapter would fly as "
+                f"{getattr(args, 'hold_mode', DEFAULT_HOLD_MODE)}")
+    return None
 
 
 def default_tag(shield: str, dynamic: bool) -> str:
@@ -2864,6 +2886,14 @@ if HAVE_ROS:
             self.hold_flight = HoldFlight(
                 guided_hold=(self.moved_holds
                              and getattr(args, "hold_flight", "guided") == "guided"))
+            # The literal LOITER (--literal-loiter on, 2026-11-21, WP3-07;
+            # mavlink_adapter_node, THE LITERAL LOITER): when this node asked
+            # for LOITER, and the adapter's throttle stand-in reports, for the
+            # post-mission check in metrics.json `literal_loiter`. Kept on
+            # every run (two short lists); written only with the option.
+            self.literal_loiter = getattr(args, "literal_loiter", "off") == "on"
+            self._loiter_asks: list[float] = []
+            self._throttle_reports: list[dict] = []
             # Whether the Loiter's hold is kept (the FSM's X9, 2026-11-11):
             # the hold's distance and reach, judged before each FSM step.
             self.hold_watch = HoldWatch()
@@ -3427,6 +3457,10 @@ if HAVE_ROS:
                 self.rec.event("adapter_status_refused", t=self._t(),
                                data=str(msg.data)[:500])
                 return
+            if rec.get("kind") == "rc_override":
+                # The literal LOITER's throttle stand-in (the adapter's
+                # ThrottleStandIn): its holds and releases, for the check.
+                self._throttle_reports.append(rec)
             if rec.get("kind") == "fence_upload":
                 self.fence_status.append(rec)
                 with self._lock:
@@ -3537,6 +3571,10 @@ if HAVE_ROS:
                     self.get_subscriptions_info_by_topic(TOPIC_MODE_REQUEST)]
             to_adapter = adapter_listening(subs)
             ap = self._asks.ask(mode, via_adapter=to_adapter)
+            if str(mode).strip().upper() == "LOITER":
+                t_ask = self._t()
+                if t_ask is not None:
+                    self._loiter_asks.append(t_ask)
             if to_adapter:
                 # The FSM's vocabulary: the adapter maps LOITER to its hold mode.
                 self.pub_mode.publish(String(data=mode))
@@ -5594,6 +5632,18 @@ if HAVE_ROS:
                                      else {"ground": self.ground.record(),
                                            "up_ref": "home"})
                 metrics["ground"]["file"] = dict(self.ground_file)
+            if self.literal_loiter:
+                # The literal LOITER's post-mission check (--literal-loiter on,
+                # 2026-11-21, WP3-07): the heartbeat said LOITER while the FSM
+                # held, the altitude held, the adapter centred the throttle.
+                # Fail closed: a run that fails it is not a literal-LOITER run
+                # (experiments/sweep_scenarios.py literal_loiter_problems).
+                # Absent without the option, so every other run is as it was.
+                metrics["literal_loiter"] = {
+                    "enabled": True,
+                    **literal_loiter_check(self.rows, self._loiter_asks,
+                                           self._throttle_reports),
+                    "throttle_reports": self._throttle_reports}
             (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
                                                    encoding="utf-8")
             (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2),
@@ -5916,6 +5966,14 @@ def make_parser() -> argparse.ArgumentParser:
                          "point, BRAKE only on a stale input or a stream gap; the "
                          "default since 2026-11-07 night) or brake (ArduCopter's "
                          "BRAKE on arrival, as before)")
+    ap.add_argument("--literal-loiter", choices=["on", "off"], default="off",
+                    help="on (2026-11-21, WP3-07; with --hold-flight brake and "
+                         "--hold-mode LOITER, and an adapter flying LOITER with the "
+                         "throttle centred, VLAGUARD_ADAPTER_HOLD=loiter): record the "
+                         "literal-LOITER check in metrics.json literal_loiter - the "
+                         "heartbeat said LOITER while the FSM held and the altitude "
+                         "held (mavlink_adapter_node.literal_loiter_check). off "
+                         "(default): nothing is recorded")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
@@ -5958,6 +6016,9 @@ def main(argv: list[str] | None = None) -> None:
             load_world(args.world, ROOT)
         if args.ground_home_msl is not None and not args.ground:
             raise ValueError("--ground-home-msl is the home elevation of a --ground")
+        why = literal_loiter_refusal(args)
+        if why:
+            raise ValueError(why)
         if args.ground or args.ground_sha256:
             # Read and placed in the policy's frame before ROS starts; the
             # node reads it again with the policy (a bad file, a file that

@@ -43,6 +43,11 @@ WHAT ELSE GOES THROUGH HERE (the MAVROS-facing side, WP3-09)
     forwarded; anything else (STABILIZE, ACRO, ...) is refused and reported.
     The FSM's LOITER is sent as ArduCopter's BRAKE (`autopilot_mode`; see
     DEFAULT_HOLD_MODE for why: LOITER sinks with no pilot on the throttle).
+    Opt-in since 2026-11-21 (WP3-07, THE LITERAL LOITER): with --hold-mode
+    LOITER --loiter-throttle centre (or VLAGUARD_ADAPTER_HOLD=loiter) it is
+    sent as LOITER, and while it is requested channel 3 is held centred by
+    RC_CHANNELS_OVERRIDE from the ground station's system id, on MAVROS's
+    router sink (/uas1/mavlink_sink) - SITL's stand-in for the safety pilot.
   * /shield/fences (std_msgs/String JSON, latched) -> /mavros/geofence/push:
     the policy's keep-out zones, converted to lat/lon about the autopilot's
     home, uploaded as ArduPilot exclusion polygons / circles. With
@@ -151,6 +156,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import struct
 import sys
@@ -339,6 +345,350 @@ class ModeRequests:
         """Did a pending request ask for the mode the autopilot just entered?"""
         mode = str(autopilot_mode_now).strip().upper()
         return any(mode in may for m, may in self._pending if m != "GUIDED")
+
+
+# THE LITERAL LOITER (2026-11-21, WP3-07; opt-in).
+#
+# No hil flight before this date sent SET_MODE LOITER: the FSM's Loiter was
+# held in GUIDED by the Shield node (--hold-flight guided, the default since
+# 2026-11-07 night) or handed to BRAKE (DEFAULT_HOLD_MODE above). The grant
+# names LOITER. `--loiter-throttle centre` (with `--hold-mode LOITER`) flies
+# the FSM's Loiter as ArduCopter's LOITER and supplies the one thing LOITER
+# needs that SITL has no one to give: a pilot holding the throttle centred.
+#
+#   * While LOITER is requested - from the mode request that asks for it to
+#     the next request for anything else, or the autopilot's own report of
+#     leaving LOITER after it was in it (a takeover, a failsafe), or the
+#     adapter's shutdown - the adapter re-sends RC_CHANNELS_OVERRIDE with
+#     channel 3 at LOITER_THROTTLE_PWM every RC_OVERRIDE_PERIOD_S (ArduPilot
+#     lets an override lapse after RC_OVERRIDE_TIME, 3 s by default), every
+#     other channel UINT16_MAX (left alone). The override starts BEFORE
+#     SET_MODE LOITER goes out, so LOITER never runs on an uncentred stick
+#     (in GUIDED the throttle stick is ignored). Then channel 3 = 0 (handed
+#     back to the radio), RC_OVERRIDE_RELEASES times (UDP may drop one).
+#   * ArduPilot takes an override only from SYSID_MYGCS (255 by default; the
+#     ground station's system id), and MAVROS's own /mavros/rc/override goes
+#     out as MAVROS's system_id, which the rails leave at 1. So the frame is
+#     built here (rc_override_frame: MAVLink 2, RC_CHANNELS_OVERRIDE, the
+#     ground station's system id, component MAV_COMP_ID_ONBOARD_COMPUTER) and
+#     published raw on MAVROS's router sink (TOPIC_MAVLINK_SINK), which
+#     forwards a finished frame to the autopilot as it is. Its bytes are
+#     checked against pymavlink in tests/test_mavlink_adapter.py.
+#   * What the autopilot then read on channel 3 (/mavros/rc/in) is counted
+#     while the override is held, as evidence; each hold and release goes out
+#     as a status (kind "rc_override"), which the Shield node keeps.
+#
+# This is the safety-pilot stand-in of the alternatives above ("the
+# companion impersonates the pilot"), so it is for SITL only - hil and sitl
+# campaigns (experiments/sweep_scenarios.py --rail-hold loiter). On an
+# airframe the safety pilot holds the throttle, and an override would take it
+# from them. Off by default: a run without the option sends nothing new.
+#
+# The option reaches the adapter on both rails without a new launch argument
+# through ADAPTER_HOLD_ENV: the hil mission container's entrypoint (baked into
+# the companion image) forwards no adapter arguments, but `docker compose run
+# -e` puts a variable in the container's environment, which `ros2 launch`
+# hands its processes; sitl/run_ros2_demo.sh gets it through WSLENV.
+LOITER_THROTTLE_PWM = 1500          # the centre of SITL's 1100-1900 RC3 range
+RC_OVERRIDE_IGNORE = 65535          # RC_CHANNELS_OVERRIDE ch1-8: leave alone
+RC_OVERRIDE_RELEASE = 0             # ch1-8: back to the radio
+RC_OVERRIDE_SYSID = 255             # ArduPilot's SYSID_MYGCS default
+RC_OVERRIDE_COMPID = 191            # MAV_COMP_ID_ONBOARD_COMPUTER
+RC_OVERRIDE_PERIOD_S = 0.2
+RC_OVERRIDE_RELEASES = 3
+RC_IN_TOL_PWM = 10                  # channel 3 read back "at" the override
+TOPIC_MAVLINK_SINK = "/uas1/mavlink_sink"
+TOPIC_RC_IN = "/mavros/rc/in"
+TOPIC_STATE = "/mavros/state"
+LOITER_THROTTLES = ("off", "centre")
+ADAPTER_HOLD_ENV = "VLAGUARD_ADAPTER_HOLD"
+# ADAPTER_HOLD_ENV's values: (--hold-mode, --loiter-throttle) they stand for.
+ADAPTER_HOLDS = {"brake": ("BRAKE", "off"), "loiter": ("LOITER", "centre")}
+# MAVLink 2 framing of RC_CHANNELS_OVERRIDE (common.xml, id 70, CRC_EXTRA 124).
+MAVLINK2_MAGIC = 0xFD
+MSG_RC_CHANNELS_OVERRIDE = 70
+CRC_EXTRA_RC_CHANNELS_OVERRIDE = 124
+MAVLINK_FRAMING_OK = 1              # mavros_msgs/Mavlink FRAMING_OK
+
+
+def adapter_hold_config(hold_mode: str | None, loiter_throttle: str | None,
+                        env: dict | None = None) -> tuple[str, str]:
+    """(hold mode, loiter throttle) for one adapter process: the command
+    line's where given, else ADAPTER_HOLD_ENV's (THE LITERAL LOITER), else
+    BRAKE and off. Raises ValueError for an unknown value of the variable,
+    and for a centred throttle with any hold mode but LOITER (only LOITER
+    reads the stick)."""
+    env = {} if env is None else env
+    raw = str(env.get(ADAPTER_HOLD_ENV, "") or "").strip().lower()
+    if raw and raw not in ADAPTER_HOLDS:
+        raise ValueError(f"{ADAPTER_HOLD_ENV}={raw!r}: one of {sorted(ADAPTER_HOLDS)}")
+    base_mode, base_throttle = ADAPTER_HOLDS.get(raw or "brake")
+    mode = hold_mode if hold_mode is not None else base_mode
+    throttle = loiter_throttle if loiter_throttle is not None else base_throttle
+    if mode not in HOLD_MODES:
+        raise ValueError(f"hold_mode {mode!r} is not one of {HOLD_MODES}")
+    if throttle not in LOITER_THROTTLES:
+        raise ValueError(f"loiter_throttle {throttle!r} is not one of {LOITER_THROTTLES}")
+    if throttle == "centre" and mode != "LOITER":
+        raise ValueError(f"a centred throttle is for --hold-mode LOITER, not {mode}: "
+                         f"{mode} holds altitude with no pilot input")
+    return mode, throttle
+
+
+def _x25(data: bytes, crc: int = 0xFFFF) -> int:
+    """MAVLink's CRC-16/MCRF4XX (X.25) over `data`."""
+    for b in data:
+        tmp = (b ^ (crc & 0xFF)) & 0xFF
+        tmp = (tmp ^ (tmp << 4)) & 0xFF
+        crc = ((crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)) & 0xFFFF
+    return crc
+
+
+def rc_override_frame(ch3_pwm: int, seq: int, *, sysid: int = RC_OVERRIDE_SYSID,
+                      compid: int = RC_OVERRIDE_COMPID, target_system: int = 1,
+                      target_component: int = 1) -> dict:
+    """One RC_CHANNELS_OVERRIDE as a finished MAVLink 2 frame: channel 3 at
+    `ch3_pwm` (RC_OVERRIDE_RELEASE hands it back), channels 1, 2, 4-8 left
+    alone, 9-18 not set (0 = ignore for those). Returns the fields of a
+    mavros_msgs/Mavlink (payload64: the payload in little-endian 64-bit words)
+    and `frame`, the bytes on the wire. MAVLink 2 trims trailing zero bytes of
+    the payload, as pymavlink does."""
+    ch = [RC_OVERRIDE_IGNORE] * 8
+    ch[2] = int(ch3_pwm)
+    payload = (struct.pack("<8HBB", *ch, int(target_system), int(target_component))
+               + b"\x00" * 20)                       # chan9..chan18 (extensions)
+    payload = payload.rstrip(b"\x00") or b"\x00"
+    seq = int(seq) & 0xFF
+    header = struct.pack("<BBBBBBBHB", MAVLINK2_MAGIC, len(payload), 0, 0, seq,
+                         int(sysid), int(compid), MSG_RC_CHANNELS_OVERRIDE & 0xFFFF,
+                         MSG_RC_CHANNELS_OVERRIDE >> 16)
+    crc = _x25(header[1:] + payload)
+    crc = _x25(bytes([CRC_EXTRA_RC_CHANNELS_OVERRIDE]), crc)
+    padded = payload + b"\x00" * (-len(payload) % 8)
+    words = [struct.unpack("<Q", padded[i:i + 8])[0] for i in range(0, len(padded), 8)]
+    return {"framing_status": MAVLINK_FRAMING_OK, "magic": MAVLINK2_MAGIC,
+            "len": len(payload), "incompat_flags": 0, "compat_flags": 0, "seq": seq,
+            "sysid": int(sysid), "compid": int(compid), "msgid": MSG_RC_CHANNELS_OVERRIDE,
+            "checksum": crc, "payload64": words,
+            "frame": header + payload + struct.pack("<H", crc)}
+
+
+class ThrottleStandIn:
+    """The safety-pilot stand-in for a literal LOITER (THE LITERAL LOITER):
+    channel 3 held at `pwm` while LOITER is requested, released after.
+
+    `send(fields)` hands one rc_override_frame to the link (the ROS node
+    publishes it on TOPIC_MAVLINK_SINK). Call `hold` on a LOITER request,
+    `release` on any other, `beat` from a timer, `on_mode` with every
+    heartbeat mode and `on_rc_in` with every RC report. `hold` and `release`
+    return the status record to publish (None: nothing changed)."""
+
+    def __init__(self, send, pwm: int = LOITER_THROTTLE_PWM, *,
+                 sysid: int = RC_OVERRIDE_SYSID, compid: int = RC_OVERRIDE_COMPID,
+                 target_system: int = 1, target_component: int = 1,
+                 releases: int = RC_OVERRIDE_RELEASES) -> None:
+        self._send = send
+        self.pwm = int(pwm)
+        self.sysid, self.compid = int(sysid), int(compid)
+        self.target = (int(target_system), int(target_component))
+        self.releases = int(releases)
+        self.active = False
+        self.seen_loiter = False          # the autopilot reported LOITER this hold
+        self.seq = 0
+        self.n_sent = 0
+        self.spells: list[dict] = []
+        self.rc3: list[int] = []          # channel 3 as the autopilot read it, held
+
+    def _frame(self, pwm: int) -> None:
+        self._send(rc_override_frame(pwm, self.seq, sysid=self.sysid, compid=self.compid,
+                                     target_system=self.target[0],
+                                     target_component=self.target[1]))
+        self.seq = (self.seq + 1) & 0xFF
+        self.n_sent += 1
+
+    def hold(self, t: float, why: str = "LOITER requested") -> dict | None:
+        if self.active:
+            self._frame(self.pwm)
+            return None
+        self.active, self.seen_loiter = True, False
+        self.rc3 = []
+        self._frame(self.pwm)
+        self.spells.append({"t_start": round(float(t), 3), "t_end": None})
+        return {"kind": "rc_override", "action": "hold", "channel": 3, "pwm": self.pwm,
+                "sysid": self.sysid, "compid": self.compid, "why": why,
+                "t_mono": round(float(t), 3)}
+
+    def beat(self) -> None:
+        if self.active:
+            self._frame(self.pwm)
+
+    def release(self, t: float, why: str) -> dict | None:
+        if not self.active:
+            return None
+        for _ in range(self.releases):
+            self._frame(RC_OVERRIDE_RELEASE)
+        self.active = False
+        self.spells[-1]["t_end"] = round(float(t), 3)
+        at = sum(1 for v in self.rc3 if abs(v - self.pwm) <= RC_IN_TOL_PWM)
+        return {"kind": "rc_override", "action": "release", "channel": 3, "why": why,
+                "t_mono": round(float(t), 3), "held_s": round(
+                    float(t) - self.spells[-1]["t_start"], 3),
+                "autopilot_reported_loiter": self.seen_loiter,
+                "rc3_reports": len(self.rc3), "rc3_at_pwm": at}
+
+    def on_mode(self, mode: str, t: float) -> dict | None:
+        """The autopilot's own mode: once it has reported LOITER in this hold,
+        any other mode ends the hold (a takeover or failsafe the adapter did
+        not ask for)."""
+        mode = str(mode).strip().upper()
+        if not self.active:
+            return None
+        if mode == "LOITER":
+            self.seen_loiter = True
+            return None
+        if self.seen_loiter:
+            return self.release(t, f"the autopilot left LOITER for {mode}")
+        return None
+
+    def on_rc_in(self, channels) -> None:
+        if self.active and len(channels) >= 3:
+            self.rc3.append(int(channels[2]))
+
+    def summary(self) -> dict:
+        return {"pwm": self.pwm, "sysid": self.sysid, "compid": self.compid,
+                "frames_sent": self.n_sent, "spells": self.spells}
+
+
+# The post-mission check of a literal-LOITER run (THE LITERAL LOITER; the
+# Shield node writes it into metrics.json `literal_loiter`, and
+# experiments/sweep_scenarios.py refuses to count a run that fails it).
+#   LITERAL_LOITER_ALT_TOL_M   the altitude a LOITER spell may wander from
+#       where the autopilot entered LOITER. Uncentred, SITL's LOITER sank at
+#       1.4-1.8 m/s (8 Oct, pas_ap_20261008_224440): 2.8 m over
+#       LITERAL_LOITER_MIN_HELD_S; a held altitude stays within decimetres.
+#   LITERAL_LOITER_MIN_HELD_S  the LOITER time (heartbeat) a run must hold in
+#       all to be judged at all; less shows nothing about the altitude.
+#   LITERAL_LOITER_CONFIRM_S   a LOITER request this long before its Loiter
+#       ended must have been confirmed by the heartbeat (MAVROS's /mavros/
+#       state follows SET_MODE in well under a second on both rails).
+LITERAL_LOITER_ALT_TOL_M = 1.0
+LITERAL_LOITER_MIN_HELD_S = 2.0
+LITERAL_LOITER_CONFIRM_S = 2.0
+_FSM_LOITER = FSMState.LOITER.value
+# Heartbeat modes a literal-LOITER spell may show: GUIDED (the entry tick, a
+# moved point's transit, a re-plan's) and LOITER. Anything else (BRAKE: an
+# adapter on its default; LAND / RTL: a takeover) is not a literal LOITER.
+_LOITER_SPELL_MODES = ("GUIDED", "LOITER")
+
+
+def literal_loiter_check(rows: list[dict], loiter_asks, throttle_reports, *,
+                         alt_tol_m: float = LITERAL_LOITER_ALT_TOL_M,
+                         min_held_s: float = LITERAL_LOITER_MIN_HELD_S,
+                         confirm_s: float = LITERAL_LOITER_CONFIRM_S) -> dict:
+    """Was this run's FSM Loiter flown as ArduCopter's LOITER, holding its
+    altitude? Read from the Shield node's rows (per tick: `t`, the FSM's
+    state after the tick `fsm_state_after`, the heartbeat's `mode`, `up` -
+    `up_home` over a DEM), the times the node asked for LOITER
+    (`loiter_asks`) and the adapter's rc_override statuses
+    (`throttle_reports`).
+
+    verdict  "pass"        every Loiter spell's LOITER was confirmed by the
+                           heartbeat, showed no other hold mode, and held its
+                           altitude within `alt_tol_m`; at least `min_held_s`
+                           of LOITER in all; the adapter reported the
+                           throttle stand-in.
+             "fail"        any of that broken (`problems` says what);
+             "not_judged"  no Loiter, or too little LOITER to judge (a run
+                           whose transits never arrived): never a pass.
+    `counted` is verdict == "pass": only such a run counts as a
+    literal-LOITER run. Fail closed: a missing field reads as a failure."""
+    problems: list[str] = []
+    spells: list[dict] = []
+    i, n = 0, len(rows)
+    while i < n:
+        if rows[i].get("fsm_state_after") != _FSM_LOITER:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and rows[j + 1].get("fsm_state_after") == _FSM_LOITER:
+            j += 1
+        spells.append({"rows": rows[i:j + 1],
+                       "t_end": float(rows[j + 1]["t"]) if j + 1 < n else float(rows[j]["t"])})
+        i = j + 1
+    asks = sorted(float(t) for t in (loiter_asks or ()) if t is not None)
+    out_spells = []
+    held_total = 0.0
+    for k, sp in enumerate(spells):
+        rs = sp["rows"]
+        t0, t_end = float(rs[0]["t"]), sp["t_end"]
+        rec = {"t_start": round(t0, 3), "t_end": round(t_end, 3), "loiter_s": 0.0,
+               "alt_dev_max_m": None, "asks": 0, "problems": []}
+        foreign = sorted({str(r.get("mode")) for r in rs
+                          if r.get("mode") not in _LOITER_SPELL_MODES})
+        if foreign:
+            rec["problems"].append(f"heartbeat {foreign} while the FSM held")
+        # The spell's LOITER stretches: consecutive rows the heartbeat called
+        # LOITER (a re-plan's GUIDED transit splits one).
+        segs: list[list[dict]] = []
+        prev_loiter = False
+        for r in rs:
+            now_loiter = r.get("mode") == "LOITER"
+            if now_loiter:
+                if prev_loiter:
+                    segs[-1].append(r)
+                else:
+                    segs.append([r])
+            prev_loiter = now_loiter
+        dev_max = None
+        for seg in segs:
+            ref = seg[0].get("up_home", seg[0].get("up"))
+            ups = [r.get("up_home", r.get("up")) for r in seg]
+            if ref is None or any(u is None for u in ups):
+                rec["problems"].append("a LOITER row carries no altitude")
+                continue
+            dev = max(abs(float(u) - float(ref)) for u in ups)
+            dev_max = dev if dev_max is None else max(dev_max, dev)
+            rec["loiter_s"] += float(seg[-1]["t"]) - float(seg[0]["t"])
+        rec["loiter_s"] = round(rec["loiter_s"], 3)
+        held_total += rec["loiter_s"]
+        if dev_max is not None:
+            rec["alt_dev_max_m"] = round(dev_max, 3)
+            if dev_max > alt_tol_m + 1e-9:
+                rec["problems"].append(f"altitude wandered {dev_max:.2f} m in LOITER "
+                                       f"(tolerance {alt_tol_m:g} m)")
+        mine = [a for a in asks if t0 - 1e-6 <= a <= t_end + 1e-6]
+        rec["asks"] = len(mine)
+        for a in mine:
+            if a + confirm_s > t_end + 1e-9:
+                continue          # asked too late in the spell to be confirmed
+            if not any(r.get("mode") == "LOITER" and float(r["t"]) >= a - 1e-6
+                       for r in rs):
+                rec["problems"].append(f"LOITER asked at {a:.2f} s, never reported by "
+                                       f"the heartbeat before the Loiter ended at "
+                                       f"{t_end:.2f} s")
+        problems += [f"Loiter {k + 1} at {t0:.2f} s: {p}" for p in rec["problems"]]
+        out_spells.append(rec)
+    holds = [s for s in (throttle_reports or ())
+             if isinstance(s, dict) and s.get("action") == "hold"]
+    if held_total > 0 and not holds:
+        problems.append("the adapter reported no throttle stand-in (no rc_override hold "
+                        "status): not the literal-LOITER adapter")
+    if problems:
+        verdict = "fail"
+    elif not spells or held_total + 1e-9 < min_held_s:
+        verdict = "not_judged"
+    else:
+        verdict = "pass"
+    return {"verdict": verdict, "counted": verdict == "pass", "problems": problems,
+            "loiter_spells": len(spells), "loiter_held_s": round(held_total, 3),
+            "spells": out_spells, "loiter_asks": len(asks),
+            "throttle_holds": len(holds),
+            "rules": {"alt_tol_m": alt_tol_m, "min_held_s": min_held_s,
+                      "confirm_s": confirm_s,
+                      "spell_modes_allowed": list(_LOITER_SPELL_MODES),
+                      "altitude": "up_home where the row has it, else up"}}
+
+
 # ArduPilot's FENCE_MARGIN default; the node passes the autopilot's own value.
 FENCE_MARGIN_M = 2.0
 # How far above the policy's highest legal altitude the autopilot's altitude
@@ -952,6 +1302,17 @@ try:
     HAVE_ROS = True
 except ImportError:                                   # Windows, CI: pure part only
     HAVE_ROS = False
+# The literal LOITER's throttle stand-in only (THE LITERAL LOITER): imported
+# apart, so a stack without them still runs every default flight, and only
+# --loiter-throttle centre is refused there.
+HAVE_LITERAL_LOITER = False
+if HAVE_ROS:
+    try:
+        from mavros_msgs.msg import Mavlink, RCIn
+        from mavros_msgs.msg import State as MavState
+        HAVE_LITERAL_LOITER = True
+    except ImportError:
+        pass
 
 LATCHED = None
 if HAVE_ROS:
@@ -962,14 +1323,20 @@ if HAVE_ROS:
         def __init__(self, out: Path | None, upload_fences: bool = True,
                      hold_mode: str = DEFAULT_HOLD_MODE,
                      fences_by_gcs: bool = False,
-                     mission_update_write: str = DEFAULT_MISSION_UPDATE_WRITE) -> None:
+                     mission_update_write: str = DEFAULT_MISSION_UPDATE_WRITE,
+                     loiter_throttle: str = "off",
+                     rc_sysid: int = RC_OVERRIDE_SYSID) -> None:
             super().__init__(ADAPTER_NODE_NAME)
-            if hold_mode not in HOLD_MODES:
-                raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
+            # Raises for an unknown mode, or a centred throttle without LOITER.
+            hold_mode, loiter_throttle = adapter_hold_config(hold_mode, loiter_throttle)
             if mission_update_write not in MISSION_UPDATE_WRITES:
                 raise ValueError(f"mission_update_write {mission_update_write!r} is not "
                                  f"one of {MISSION_UPDATE_WRITES}")
             self.hold_mode = hold_mode
+            # THE LITERAL LOITER (2026-11-21): the throttle stand-in, only
+            # with --loiter-throttle centre; None otherwise, and then this
+            # node creates nothing for it.
+            self.throttle: ThrottleStandIn | None = None
             # How a /shield/mission_update is written (MISSION_UPDATE_WRITES),
             # one at a time (MissionPushQueue).
             self.mission_update_write = mission_update_write
@@ -1025,6 +1392,26 @@ if HAVE_ROS:
                                      self._on_waypoints, LATCHED)
             self.cli_mpush = self.create_client(WaypointPush, "/mavros/mission/push")
             self.cli_mpull = self.create_client(WaypointPull, "/mavros/mission/pull")
+            if loiter_throttle == "centre":
+                if not HAVE_LITERAL_LOITER:
+                    raise RuntimeError("--loiter-throttle centre needs mavros_msgs Mavlink, "
+                                       "RCIn and State, which this stack lacks")
+                self.pub_sink = self.create_publisher(Mavlink, TOPIC_MAVLINK_SINK, 10)
+                self.throttle = ThrottleStandIn(self._send_frame, sysid=rc_sysid)
+                self.create_subscription(MavState, TOPIC_STATE, self._on_state,
+                                         qos_profile_sensor_data)
+                self.create_subscription(RCIn, TOPIC_RC_IN, self._on_rc_in,
+                                         qos_profile_sensor_data)
+                self.create_timer(RC_OVERRIDE_PERIOD_S, self.throttle.beat)
+                self._status({"kind": "hold_config", "hold_mode": hold_mode,
+                              "loiter_throttle": loiter_throttle,
+                              "pwm": self.throttle.pwm, "sysid": rc_sysid,
+                              "compid": self.throttle.compid,
+                              "via": TOPIC_MAVLINK_SINK})
+                self.get_logger().warn(
+                    f"literal LOITER: the FSM's Loiter is SET_MODE LOITER, with channel 3 "
+                    f"held at {self.throttle.pwm} (RC_CHANNELS_OVERRIDE as system "
+                    f"{rc_sysid}) while LOITER is requested - SITL only")
             self.get_logger().info(
                 f"MAVLink adapter up: {TOPIC_SETPOINT} (body) -> "
                 f"{TOPIC_RAW_LOCAL} (FRAME_LOCAL_NED, type_mask "
@@ -1141,6 +1528,14 @@ if HAVE_ROS:
             # The FSM's vocabulary in, ArduCopter's mode out (LOITER -> BRAKE,
             # see DEFAULT_HOLD_MODE); the status carries both.
             ap = autopilot_mode(mode, self.hold_mode)
+            if self.throttle is not None:
+                # THE LITERAL LOITER: the stick centred BEFORE SET_MODE LOITER
+                # goes out, and handed back on any other request.
+                now = time.monotonic()
+                st = (self.throttle.hold(now) if ap == "LOITER" else
+                      self.throttle.release(now, f"{ap} requested"))
+                if st is not None:
+                    self._status(st)
             if not self.cli_mode.service_is_ready():
                 self._status({"kind": "mode_request", "mode": mode,
                               "autopilot_mode": ap,
@@ -1155,6 +1550,26 @@ if HAVE_ROS:
                               "mode_sent": bool(r and r.mode_sent)})
             fut.add_done_callback(done)
             self.get_logger().info(f"SET_MODE {ap} requested (FSM: {mode})")
+
+        # ---------------- the literal LOITER's throttle ---------------- #
+
+        def _send_frame(self, f: dict) -> None:
+            """One rc_override_frame onto MAVROS's router sink, which sends
+            the finished frame to the autopilot as it is (THE LITERAL LOITER)."""
+            m = Mavlink()
+            for k in ("framing_status", "magic", "len", "incompat_flags", "compat_flags",
+                      "seq", "sysid", "compid", "msgid", "checksum"):
+                setattr(m, k, int(f[k]))
+            m.payload64 = [int(w) for w in f["payload64"]]
+            self.pub_sink.publish(m)
+
+        def _on_state(self, msg) -> None:
+            st = self.throttle.on_mode(msg.mode, time.monotonic())
+            if st is not None:
+                self._status(st)
+
+        def _on_rc_in(self, msg) -> None:
+            self.throttle.on_rc_in(list(msg.channels))
 
         # ---------------- fences ---------------- #
 
@@ -1463,6 +1878,16 @@ if HAVE_ROS:
             fut.add_done_callback(pulled)
 
         def close(self) -> None:
+            if self.throttle is not None:
+                # Never leave the stick held behind this process (best
+                # effort: a context already shut down cannot publish; the
+                # override then lapses after RC_OVERRIDE_TIME).
+                try:
+                    st = self.throttle.release(time.monotonic(), "the adapter stopped")
+                    if st is not None:
+                        self._status(st)
+                except Exception:                              # noqa: BLE001
+                    pass
             if self._log_fh is not None:
                 self._log_fh.close()
             self.get_logger().info(f"adapter: {self.n_sent} setpoint(s) sent, "
@@ -1472,25 +1897,12 @@ if HAVE_ROS:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=None,
-                    help="episode directory for adapter_log.jsonl")
-    ap.add_argument("--no-fences", action="store_true",
-                    help="do not upload the policy's fences to the autopilot")
-    ap.add_argument("--fences-by-gcs", action="store_true",
-                    help="the GeoFence is GCS-set (sitl/gcs_backstop.py): upload no "
-                         "zone, and say so in every fence status")
-    ap.add_argument("--hold-mode", choices=HOLD_MODES, default=DEFAULT_HOLD_MODE,
-                    help="ArduCopter mode for the FSM's LOITER: BRAKE (default; holds "
-                         "with no pilot input) or LOITER (needs the throttle centred)")
-    ap.add_argument("--mission-update-write", choices=MISSION_UPDATE_WRITES,
-                    default=DEFAULT_MISSION_UPDATE_WRITE,
-                    help="how /shield/mission_update reaches the autopilot: full "
-                         "(default; the whole mission with the item replaced, "
-                         "MISSION_COUNT + MISSION_ITEM_INT) or partial (one item, "
-                         "MISSION_WRITE_PARTIAL_LIST, which MAVROS 2.14 sends one "
-                         "past the item: ArduPilot's 8 s upload timeout follows)")
-    args, ros_args = ap.parse_known_args(argv)
+    args, ros_args = build_parser().parse_known_args(argv)
+    try:
+        hold_mode, loiter_throttle = adapter_hold_config(args.hold_mode,
+                                                         args.loiter_throttle, os.environ)
+    except ValueError as e:
+        raise SystemExit(f"mavlink_adapter_node: {e}") from None
     if not HAVE_ROS:
         raise SystemExit("mavlink_adapter_node needs rclpy and mavros_msgs: "
                          "source /opt/ros/jazzy/setup.bash and use "
@@ -1498,9 +1910,11 @@ def main(argv: list[str] | None = None) -> None:
     rclpy.init(args=ros_args)
     node = MavlinkAdapterNode(Path(args.out) if args.out else None,
                               upload_fences=not args.no_fences,
-                              hold_mode=args.hold_mode,
+                              hold_mode=hold_mode,
                               fences_by_gcs=args.fences_by_gcs,
-                              mission_update_write=args.mission_update_write)
+                              mission_update_write=args.mission_update_write,
+                              loiter_throttle=loiter_throttle,
+                              rc_sysid=args.rc_sysid)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, Exception) as e:          # noqa: BLE001
@@ -1511,6 +1925,41 @@ def main(argv: list[str] | None = None) -> None:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The adapter's command line (main). --hold-mode and --loiter-throttle
+    default to None: adapter_hold_config fills them from ADAPTER_HOLD_ENV,
+    else BRAKE and off, as before 2026-11-21."""
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=None,
+                    help="episode directory for adapter_log.jsonl")
+    ap.add_argument("--no-fences", action="store_true",
+                    help="do not upload the policy's fences to the autopilot")
+    ap.add_argument("--fences-by-gcs", action="store_true",
+                    help="the GeoFence is GCS-set (sitl/gcs_backstop.py): upload no "
+                         "zone, and say so in every fence status")
+    ap.add_argument("--hold-mode", choices=HOLD_MODES, default=None,
+                    help="ArduCopter mode for the FSM's LOITER: BRAKE (default; holds "
+                         "with no pilot input) or LOITER (needs the throttle centred)")
+    ap.add_argument("--loiter-throttle", choices=LOITER_THROTTLES, default=None,
+                    help="with --hold-mode LOITER, SITL only (2026-11-21, WP3-07): "
+                         "centre holds channel 3 at 1500 by RC_CHANNELS_OVERRIDE from "
+                         "the ground station's system id while LOITER is requested, "
+                         "the safety pilot's stand-in, and releases it after; off "
+                         "(default) sends no override. "
+                         f"{ADAPTER_HOLD_ENV}=loiter sets both, =brake neither")
+    ap.add_argument("--rc-sysid", type=int, default=RC_OVERRIDE_SYSID,
+                    help="the system id the throttle override is sent as: the "
+                         "autopilot's SYSID_MYGCS (ArduPilot's default 255)")
+    ap.add_argument("--mission-update-write", choices=MISSION_UPDATE_WRITES,
+                    default=DEFAULT_MISSION_UPDATE_WRITE,
+                    help="how /shield/mission_update reaches the autopilot: full "
+                         "(default; the whole mission with the item replaced, "
+                         "MISSION_COUNT + MISSION_ITEM_INT) or partial (one item, "
+                         "MISSION_WRITE_PARTIAL_LIST, which MAVROS 2.14 sends one "
+                         "past the item: ArduPilot's 8 s upload timeout follows)")
+    return ap
 
 
 if __name__ == "__main__":

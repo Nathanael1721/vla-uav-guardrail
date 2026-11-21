@@ -976,6 +976,21 @@ TRANSIT_GIVE_UP_RESPONSES = ("rail",)
 #           so, the arm reproduces the hil shakedown hs04's two failures.
 RAIL_HOLD_MODELS = ("guided", "brake")
 RAIL_HOLD_MODEL = "guided"
+# How a FLOWN rail campaign (--backend sitl / hil) flies the FSM's Loiter
+# (--rail-hold, 2026-11-21, WP3-07). Not a model of the headless arm above:
+#   guided  (default) what every rail campaign flies: held in GUIDED by the
+#           Shield node, the node's own --hold-flight guided; nothing added.
+#   loiter  the literal LOITER the grant names: the node hands the hold to
+#           the autopilot (--hold-flight brake --hold-mode LOITER) and the
+#           MAVLink adapter flies it as SET_MODE LOITER with the throttle
+#           centred while it is requested (mavlink_adapter_node, THE LITERAL
+#           LOITER; VLAGUARD_ADAPTER_HOLD=loiter, RAIL_ADAPTER_HOLD_ENV), and
+#           every mission's metrics.json must carry a literal_loiter check that
+#           is not "fail" (literal_loiter_problems), or it is an error, never
+#           a scored episode. The headless rail arm models no such hold: its
+#           numbers are the guided rails'.
+RAIL_HOLDS = ("guided", "loiter")
+DEFAULT_RAIL_HOLD = "guided"
 # ArduCopter 4.5.7's BRAKE after a GUIDED stream, as the rig flies it (hs04_006
 # and hs03_004, docs/DESIGN-hold-points.md "BRAKE's carry"): the velocity loop
 # starts with its integrator at the acceleration GUIDED's last command left -
@@ -3532,6 +3547,20 @@ RAIL_HOTAPPLY_FLAGS = ("--hotapply-port", "--hotapply-host", "--hotapply-pki",
 # arc_forecast_problems refuses a run whose record disagrees - a node from an
 # older bundle would drop the flag without a word (parse_known_args).
 RAIL_FORECAST_FLAGS = {"--arc-forecast": ("on", "off")}
+# The literal LOITER's flags (--rail-hold loiter, 2026-11-21, WP3-07;
+# RAIL_HOLDS): what every mission's Shield node is handed through the same
+# `extra_args`, with the values each may take (only the literal hold's: the
+# node's defaults need no flag). The adapter is told through its environment
+# (RAIL_ADAPTER_HOLD_ENV), which the hil mission container and
+# run_ros2_demo.sh both pass on; the hil entrypoint forwards no adapter
+# arguments. Checked after the flight by literal_loiter_problems.
+RAIL_HOLD_FLAGS = {"--hold-flight": ("brake",), "--hold-mode": ("LOITER",),
+                   "--literal-loiter": ("on", "off")}
+RAIL_LITERAL_LOITER_ARGS = ("--hold-flight=brake", "--hold-mode=LOITER",
+                            "--literal-loiter=on")
+# mavlink_adapter_node.ADAPTER_HOLD_ENV, written out so this module reads it
+# without importing the adapter (tests/test_sweep.py pins the two together).
+RAIL_ADAPTER_HOLD_ENV = "VLAGUARD_ADAPTER_HOLD"
 # Where a campaign's per-mission files (events, scenario record) go, under
 # the checkout's demo/out (gitignored; the Orin mounts demo/out writable).
 CAMPAIGN_DIR = "demo/out/_campaign"
@@ -4335,29 +4364,31 @@ def check_rail_flags(args: list[str]) -> None:
 
 def rail_extra_args(extra_args) -> list[str]:
     """`extra_args` of run_hil / run_sitl, checked: `--flag=value` tokens of
-    RAIL_HOTAPPLY_FLAGS or RAIL_FORECAST_FLAGS (with one of that flag's
-    values, at most once) only, each declared by the Shield node
+    RAIL_HOTAPPLY_FLAGS, RAIL_FORECAST_FLAGS or (since 2026-11-21)
+    RAIL_HOLD_FLAGS (the last two with one of that flag's values, at most
+    once) only, each declared by the Shield node
     (it reads its arguments with parse_known_args, so an undeclared flag
     would vanish without a word). [] for None. Raises UnsupportedScenario
     otherwise."""
     out = [str(a) for a in (extra_args or ())]
     if not out:
         return []
-    allowed = set(RAIL_HOTAPPLY_FLAGS) | set(RAIL_FORECAST_FLAGS)
+    valued = {**RAIL_FORECAST_FLAGS, **RAIL_HOLD_FLAGS}
+    allowed = set(RAIL_HOTAPPLY_FLAGS) | set(valued)
     bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in allowed]
     if bad:
         raise UnsupportedScenario(
             f"extra rail arguments {bad}: only --flag=value forms of "
             f"{sorted(allowed)} may be added to a scenario's own")
     names = [a.split("=", 1)[0] for a in out]
-    twice = sorted({n for n in names if n in RAIL_FORECAST_FLAGS and names.count(n) > 1})
+    twice = sorted({n for n in names if n in valued and names.count(n) > 1})
     if twice:
         raise UnsupportedScenario(f"extra rail arguments name {twice} more than once")
     for a in out:
         name, value = a.split("=", 1)
-        if name in RAIL_FORECAST_FLAGS and value not in RAIL_FORECAST_FLAGS[name]:
+        if name in valued and value not in valued[name]:
             raise UnsupportedScenario(f"{name}={value}: one of "
-                                      f"{list(RAIL_FORECAST_FLAGS[name])}")
+                                      f"{list(valued[name])}")
     node = sitl_node_flags(_REPO / SITL_NODE)
     missing = sorted(set(names) - node)
     if missing:
@@ -4389,6 +4420,61 @@ def arc_forecast_problems(metrics: dict, extra_args) -> list[str]:
         return ["metrics.json shield_forecast.arc is true but no --arc-forecast=on was "
                 "asked: not the arm this mission is named for"]
     return []
+
+
+def literal_loiter_asked(extra_args) -> bool:
+    """Did `extra_args` ask for the literal LOITER (--rail-hold loiter:
+    `--literal-loiter=on`, RAIL_LITERAL_LOITER_ARGS)?"""
+    return "--literal-loiter=on" in [str(a) for a in (extra_args or ())]
+
+
+def rail_adapter_env(extra_args) -> dict[str, str]:
+    """The environment the mission's MAVLink adapter is started with for
+    `extra_args` (2026-11-21, WP3-07): {RAIL_ADAPTER_HOLD_ENV: "loiter"}
+    when the literal LOITER is asked, else {} - and then every launch is
+    exactly what it was."""
+    return {RAIL_ADAPTER_HOLD_ENV: "loiter"} if literal_loiter_asked(extra_args) else {}
+
+
+def literal_loiter_problems(metrics: dict, extra_args) -> list[str]:
+    """Fail closed on the literal LOITER (2026-11-21, WP3-07; --rail-hold
+    loiter): when `extra_args` asked for it, the Shield node's own check
+    (metrics.json literal_loiter, mavlink_adapter_node.literal_loiter_check)
+    must be there and must not say "fail" - the heartbeat did not report
+    LOITER while the FSM held, the altitude wandered past its tolerance,
+    another hold mode flew, or the adapter reported no throttle stand-in. A
+    node older than the flag records no check (parse_known_args drops it)
+    and fails here too. "not_judged" (no Loiter, or too little LOITER to
+    judge) is no problem: the mission is scored, its record says it is not
+    counted as a literal-LOITER run. A check recorded unasked is a mission
+    of another arm. [] when it is the run it is named for."""
+    asked = literal_loiter_asked(extra_args)
+    block = metrics.get("literal_loiter")
+    if not asked:
+        if isinstance(block, dict) and block.get("enabled"):
+            return ["metrics.json literal_loiter is recorded but no --literal-loiter=on "
+                    "was asked: not the arm this mission is named for"]
+        return []
+    if not isinstance(block, dict) or block.get("enabled") is not True:
+        return ["--literal-loiter=on was asked but metrics.json carries no literal_loiter "
+                "check (an older node drops the flag)"]
+    verdict = block.get("verdict")
+    if verdict == "fail":
+        return ["the literal-LOITER check failed: "
+                + "; ".join(str(p) for p in (block.get("problems") or ["no reason given"]))]
+    if verdict not in ("pass", "not_judged"):
+        return [f"metrics.json literal_loiter verdict {verdict!r} is not one the check gives"]
+    return []
+
+
+def literal_loiter_record(metrics: dict) -> dict:
+    """What a scored literal-LOITER mission carries in its results
+    (`literal_loiter`): the check's verdict and whether it counts."""
+    block = metrics.get("literal_loiter") or {}
+    return {"verdict": block.get("verdict"), "counted": block.get("counted") is True,
+            "loiter_spells": block.get("loiter_spells"),
+            "loiter_held_s": block.get("loiter_held_s"),
+            "alt_tol_m": (block.get("rules") or {}).get("alt_tol_m")}
 
 
 def _num(v: float) -> str:
@@ -5936,6 +6022,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     for k, v in rail_physics_env(physics).items():
         env[k] = v
         wslenv.append(f"{k}/u")
+    # The literal LOITER's adapter (--rail-hold loiter, 2026-11-21): none
+    # otherwise, so that launch is exactly what it was.
+    for k, v in rail_adapter_env(extra_args).items():
+        env[k] = v
+        wslenv.append(f"{k}/u")
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
     record_path = None
     if plan is not None:
@@ -5976,6 +6067,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         raise RuntimeError(f"{tag}: not the arc arm's flight: " + "; ".join(arc_problems))
+    loiter_problems = literal_loiter_problems(metrics, extra_args)
+    if loiter_problems:
+        # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
+        raise RuntimeError(f"{tag}: not a literal-LOITER flight: "
+                           + "; ".join(loiter_problems))
     ground_problems = ground_flight_problems(spec, metrics)
     if ground_problems:
         # Fail closed (X-11): never scored over a ground it did not fly.
@@ -5986,6 +6082,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
                        autopilot_texts=run_autopilot_texts(out_dir))
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
+    if literal_loiter_asked(extra_args):
+        extra["literal_loiter"] = literal_loiter_record(metrics)
     if meta.get("arm_record"):
         extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
     if phys is not None:
@@ -6259,9 +6357,15 @@ class SubprocessTransport:
             raise RuntimeError(f"restarting MAVROS on the Orin failed ({rc}): {out[-300:]}")
 
     def run_mission(self, args: list[str], tag: str, shield: str,
-                    timeout_s: float) -> tuple[int, str]:
+                    timeout_s: float, env: dict | None = None) -> tuple[int, str]:
+        """One mission container. `env` (2026-11-21): variables put into that
+        container's environment with `-e` beside mission_env's (the literal
+        LOITER's adapter, rail_adapter_env); None adds nothing, and the
+        command is what it always was."""
+        extra_env = "".join(f"-e {shlex.quote(f'{k}={v}')} "
+                            for k, v in sorted((env or {}).items()))
         remote = (f"cd {self.cfg.remote_root} && {self.cfg.compose()} run --rm -T "
-                  f"{self.cfg.mission_env()}mission mission --shield {shield} "
+                  f"{self.cfg.mission_env()}{extra_env}mission mission --shield {shield} "
                   f"--tag {shlex.quote(tag)} "
                   + " ".join(shlex.quote(a) for a in args))
         try:
@@ -6542,7 +6646,16 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         transport.push(ROOT / CAMPAIGN_DIR / tag, f"{CAMPAIGN_DIR}/{tag}")
         if cfg.restart_mavros:
             transport.restart_mavros()
-        rc, out = transport.run_mission(args, tag, "on" if spec.shield else "off", timeout)
+        adapter_env = rail_adapter_env(extra_args)
+        if adapter_env:
+            # The literal LOITER's adapter (--rail-hold loiter, 2026-11-21),
+            # through the mission container's environment; every other
+            # mission is launched exactly as it was.
+            rc, out = transport.run_mission(args, tag, "on" if spec.shield else "off",
+                                            timeout, env=adapter_env)
+        else:
+            rc, out = transport.run_mission(args, tag, "on" if spec.shield else "off",
+                                            timeout)
     finally:
         transport.stop_sitl()
     try:
@@ -6574,6 +6687,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         problems.append("not the arc arm's flight: " + "; ".join(arc_problems))
+    loiter_problems = literal_loiter_problems(metrics, extra_args)
+    if loiter_problems:
+        # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
+        problems.append("not a literal-LOITER flight: " + "; ".join(loiter_problems))
     ground_problems = ground_flight_problems(spec, metrics)
     if ground_problems:
         # Fail closed (X-11): never scored over a ground it did not fly.
@@ -6592,6 +6709,8 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     extra["sim_stressors_check"] = stress
     if meta.get("arm_record"):
         extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
+    if literal_loiter_asked(extra_args):
+        extra["literal_loiter"] = literal_loiter_record(metrics)
     prios = rail_rule_priorities(pol, gens)
     # `rows`: the scenario's own window, which score() reads (rail_scored_rows);
     # `rows_all`: the whole flight, past the cap to the fail-safe's outcome.
@@ -6677,6 +6796,10 @@ def score_document(meta: dict, res: dict, extra: dict, status: str, bad: list,
         # A prefix-consumer mission only: what its VLA node announced of the
         # arm beside what the harness expected (prefix_flight_record).
         doc["prefix_consumer"] = extra["prefix_consumer"]
+    if extra.get("literal_loiter") is not None:
+        # A --rail-hold loiter mission only (2026-11-21): its literal-LOITER
+        # check, and whether it counts as a literal-LOITER run.
+        doc["literal_loiter"] = extra["literal_loiter"]
     return doc
 
 
@@ -9406,6 +9529,17 @@ def main(argv: list[str] | None = None) -> int:
                          "error, never scored (a node from an older bundle drops the "
                          "flag). off (default): nothing is added. Recorded in sweep.json; "
                          "a separate campaign, never merged with a straight-forecast one")
+    ap.add_argument("--rail-hold", choices=RAIL_HOLDS, default=DEFAULT_RAIL_HOLD,
+                    help="--backend sitl / hil (2026-11-21, WP3-07): how the FSM's Loiter "
+                         "is flown. guided (default): held in GUIDED by the Shield node, "
+                         "nothing added. loiter: the literal LOITER - every mission's "
+                         "Shield node gets --hold-flight=brake --hold-mode=LOITER "
+                         "--literal-loiter=on, its MAVLink adapter "
+                         f"{RAIL_ADAPTER_HOLD_ENV}=loiter (SET_MODE LOITER, the throttle "
+                         "centred by RC_CHANNELS_OVERRIDE while LOITER is requested; SITL "
+                         "only), and a mission whose metrics.json literal_loiter check is "
+                         "missing or failed is an error, never scored. Recorded in "
+                         "sweep.json; a separate campaign")
     ap.add_argument("--rescore-rail", nargs="+", default=None, metavar="RUN_GLOB",
                     help="re-score fetched rail runs (hil / sitl run folders with a "
                          "scenario record) with this checkout's scorer, against the "
@@ -9629,6 +9763,10 @@ def main(argv: list[str] | None = None) -> int:
             print("REFUSED: --rail-arc-forecast chooses what a campaign flies; "
                   "--rescore-rail reads runs already flown")
             return 2
+        if args.rail_hold != DEFAULT_RAIL_HOLD:
+            print("REFUSED: --rail-hold chooses what a campaign flies; "
+                  "--rescore-rail reads runs already flown")
+            return 2
         return rescore_rail_main(args.rescore_rail, episodes, lib.defaults,
                                  args.rail_gates, Path(args.out),
                                  labels_path=(Path(args.rail_labels)
@@ -9653,6 +9791,24 @@ def main(argv: list[str] | None = None) -> int:
         info["rail_arc_forecast"] = "on"
         print("ARC-FORECAST CAMPAIGN: every mission's Shield node flies --arc-forecast=on; "
               "a separate campaign, never merged with a straight-forecast one\n")
+    # The literal LOITER (--rail-hold loiter, 2026-11-21, WP3-07): the
+    # node's flags, checked as above, and the adapter's environment
+    # (rail_adapter_env, derived from these flags by run_sitl / run_hil).
+    rail_hold_args: list[str] = []
+    if args.rail_hold != DEFAULT_RAIL_HOLD:
+        if args.backend not in RAIL_BACKENDS:
+            print("REFUSED: --rail-hold is for a rail's flights (--backend sitl / hil)")
+            return 2
+        try:
+            rail_hold_args = rail_extra_args(list(RAIL_LITERAL_LOITER_ARGS))
+        except UnsupportedScenario as e:
+            print(f"REFUSED: {e}")
+            return 2
+        info["rail_hold"] = args.rail_hold
+        print("LITERAL-LOITER CAMPAIGN: every mission's Loiter is flown as SET_MODE LOITER "
+              "with the throttle centred by the adapter (SITL only); a mission whose "
+              "literal_loiter check fails is an error, never scored\n")
+    rail_args = (rail_arc_args + rail_hold_args) or None
     if args.rail_gates != "ideal" and profile is not None and profile.prefix_consumer:
         # The derived bounds come from a headless flight of the cell's own
         # pilot; a consuming pilot flies another flight.
@@ -9743,6 +9899,9 @@ def main(argv: list[str] | None = None) -> int:
             # mission's Shield node; only then, so every other campaign's
             # record is as it was.
             info["hil"]["arc_forecast"] = "on"
+        if rail_hold_args:
+            # --rail-hold loiter (2026-11-21): only then, as above.
+            info["hil"]["rail_hold"] = args.rail_hold
         if args.hil_dry_run:
             print_hil_plan(plan, hil_cfg, hil_max_s_add)
             return 0
@@ -9920,7 +10079,7 @@ def main(argv: list[str] | None = None) -> int:
                     hil_run = run_hil(spec, ep, ep.seed, lib.defaults, hil_cfg,
                                       hil_transport, hil_campaign, hil_k, hil_store,
                                       max_s_add=hil_max_s_add, rail_battery=rail_battery,
-                                      extra_args=rail_arc_args or None)
+                                      extra_args=rail_args)
                 except UnsupportedScenario:
                     hil_k -= 1
                     raise
@@ -9935,7 +10094,7 @@ def main(argv: list[str] | None = None) -> int:
                 got = run_sitl(spec, sitl_run_tag, ep.seed, lib.defaults, episode=ep,
                                physics=rail_physics, sim_speedup=rail_speedup,
                                rail_battery=rail_battery,
-                               extra_args=rail_arc_args or None)
+                               extra_args=rail_args)
                 if got is None:
                     n_skip += 1
                     print(f"  SKIP  {label:<34} ArduPilot rail not available here")
