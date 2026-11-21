@@ -3505,7 +3505,10 @@ RAIL_SHIELD_FLAGS = ("--seed", "--bundle", "--expected-hash", "--policy", "--dev
                      "--max-s", "--subject", "--subject-class", "--clock-start",
                      "--events", "--scenario-meta", "--world",
                      # A declared ground (X-11, 2026-11-18): rail_ground_args.
-                     "--ground", "--ground-sha256", "--ground-home-msl")
+                     "--ground", "--ground-sha256", "--ground-home-msl",
+                     # The cell's GPS noise / latency on the Shield's view
+                     # (2026-11-21): rail_perception_args.
+                     "--gps-noise-m", "--latency-ticks")
 RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--no-target",
                    "--speed", "--pilot", "--action",
                    # The stub loads the policy too: an MSL rule passes its
@@ -3640,10 +3643,30 @@ def _fence_ceiling(policy) -> tuple[float | None, float]:
 # FS_EKF_ACTION 1) lands the aircraft. docs/RUNBOOK-orin-hil.md step 14 lists
 # the cells whose labels SITL's physics may not reach.
 #
-# Refused (RAIL_STRESS_REFUSALS): gps_noise_m, latency_ticks, gust_mps, and a
-# dropout with fix_quality_reported false. battery_critical_at_s is refused
-# too unless the campaign opted in (RAIL_BATTERY_OPT_IN; until 2026-11-17 it
-# was refused outright).
+# THE PERCEPTION STRESSORS ON THE COMPANION (2026-11-21, WP3-19 / WP4-14).
+# gps_noise_m and latency_ticks were refused until this date: SITL has no
+# honest equivalent (4.5.7's SIM_GPS_NOISE is a slow sine on the GPS altitude
+# alone, SITL/SIM_GPS.cpp:353, and horizontal noise or a lag put into SITL's
+# GPS is fused - and its lag compensated - by the EKF that also flies the
+# aircraft), and the cells' labels were derived for a degraded SHIELD'S VIEW
+# with the aircraft flying on its true position. They are now applied where
+# the labels put them: by the Shield node, on the pose it hands the Shield
+# (sitl/ros2_shield_node.py, THE PERCEPTION STRESSORS; --gps-noise-m,
+# --latency-ticks, rail_perception_args), exactly as _episode does it - a
+# delay line of latency_ticks, then white Gaussian noise on x, y and up from
+# random.Random(f"{seed}:gps") with the episode's seed (the manifest's
+# random_seed), State.pos_sigma_m = gps_noise_m. The VLA stub, the autopilot
+# and the scored position never see either. Nothing is set in SITL for them
+# (rail_stress_plan). The node records what it applied (metrics.json
+# perception_stress, each row's shield_pose) and rail_stress_check refuses a
+# flight whose record is not the cell's (_rail_perception_check). A noise
+# cell with fix_quality_reported false stays headless: the node reports the
+# noise's sigma, as the modelled rail does.
+#
+# Refused (RAIL_STRESS_REFUSALS): gust_mps, a dropout with
+# fix_quality_reported false and GPS noise with fix_quality_reported false.
+# battery_critical_at_s is refused too unless the campaign opted in
+# (RAIL_BATTERY_OPT_IN; until 2026-11-17 it was refused outright).
 #
 # Fail closed (rail_stress_check, after the mission): the simulator side's
 # record (this launch's nonce; every boot parameter set and read back), the
@@ -3652,7 +3675,9 @@ def _fence_ceiling(policy) -> tuple[float | None, float]:
 # autopilot's PARAM_VALUE broadcast as the node received it; the simulator
 # side's own timing only where the node saw no parameter event at all), a
 # dropout reaching the node's fix_ok within RAIL_DROPOUT_ONSET_MAX_S, a
-# jittered home where SITL was told to boot. Anything else is not the cell's
+# jittered home where SITL was told to boot, and (2026-11-21) the Shield
+# node's record of the GPS noise / latency it applied being the cell's, its
+# draws reproducing on the flown rows. Anything else is not the cell's
 # flight: the episode errors, it is never scored under the cell's name.
 
 RAIL_STRESS_DIR = "demo/out/_stress"
@@ -3672,18 +3697,10 @@ SIM_PARAM_TOL = 1e-3
 # SITL's stressor parameters when nothing is stressed (SITL.cpp defaults; the
 # simulator side sets none of them for such a cell).
 SIM_NEUTRAL = {"SIM_WIND_SPD": 0.0, "SIM_WIND_TURB": 0.0, "SIM_GPS_DISABLE": 0.0}
+# gps_noise_m and latency_ticks left this table on 2026-11-21: the Shield
+# node applies them to the Shield's view (THE PERCEPTION STRESSORS ON THE
+# COMPANION, above).
 RAIL_STRESS_REFUSALS = {
-    "gps_noise_m": (
-        "SITL has no equivalent: 4.5.7's SIM_GPS_NOISE is a slow sine on the GPS "
-        "altitude alone (SITL/SIM_GPS.cpp:353), and horizontal noise put into SITL's "
-        "GPS (SIM_GPS_GLITCH) would be fused by the EKF that also flies the aircraft - "
-        "the Shield would see the EKF's filtered estimate and the airframe would chase "
-        "it, where the cell's labels were derived for white noise on the Shield's view "
-        "alone"),
-    "latency_ticks": (
-        "the rail's own pose latency is real and recorded per row (pose_age_ms, "
-        "e2e_ms); SIM_GPS_LAG_MS delays the GPS into the EKF, which compensates its "
-        "own GPS delay, not the state the Shield is handed"),
     "gust_mps": (
         "SITL's SIM_WIND_TURB is not a fair stand-in: its azimuth is redrawn on every "
         "physics step and its speed is a low-pass of SITL's own random draws "
@@ -3778,6 +3795,9 @@ def rail_stress_refusals(spec: ScenarioSpec, defaults=None, *,
     if s.gps_dropout_s is not None and not s.fix_quality_reported:
         out.append("fix_quality_reported false: the rail reports its fix "
                    "(/mavros/global_position/raw/fix), so the blind arm stays headless")
+    elif s.gps_noise_m > 0 and not s.fix_quality_reported:
+        out.append("fix_quality_reported false: the Shield node reports its injected "
+                   "GPS noise's sigma (State.pos_sigma_m), so the blind arm stays headless")
     if s.gps_dropout_s is not None:
         dfl = _as_defaults(defaults)
         t_end = ((spec.ticks or dfl.ticks) - 1) * (spec.dt or dfl.dt)
@@ -3983,6 +4003,125 @@ def _rail_battery_check(plan: dict, record: dict | None, metrics: dict,
     return problems
 
 
+# A stressed row's shield_pose against its reconstruction from the flown
+# rows and the seed (_rail_perception_check): the rows' x, y, up are rounded
+# to 1 mm and shield_pose to 0.1 mm, so 2 mm is rounding, never a draw.
+RAIL_PERCEPTION_TOL_M = 0.002
+RAIL_PERCEPTION_RNG = "random.Random(f'{seed}:gps')"
+
+
+def rail_perception_args(spec: ScenarioSpec) -> list[str]:
+    """The Shield node's flags for the cell's GPS noise and state latency
+    (THE PERCEPTION STRESSORS ON THE COMPANION, 2026-11-21): --gps-noise-m
+    and --latency-ticks, each only when the cell sets it, so every other
+    cell's argument list is the one it was."""
+    s = spec.stress
+    out = []
+    if s.gps_noise_m > 0:
+        out.append(f"--gps-noise-m={_num(s.gps_noise_m)}")
+    if s.latency_ticks > 0:
+        out.append(f"--latency-ticks={int(s.latency_ticks)}")
+    return out
+
+
+def _rail_perception_check(spec: ScenarioSpec, metrics: dict, rows: list[dict],
+                           seed: int, summary: dict) -> list[str]:
+    """The GPS noise / latency part of rail_stress_check (2026-11-21): the
+    Shield node's record (metrics.json perception_stress) must be the
+    cell's - its sigma, its latency, the episode's seed and the harness's
+    generator, applied on every row - and each row's shield_pose must be
+    what that generator draws on the flown rows (the pose latency_ticks rows
+    earlier plus the draws, within RAIL_PERCEPTION_TOL_M). A cell with
+    neither stressor and no record: [] and nothing in the summary (every
+    flight before this date). A record on a cell without them is a problem
+    too: that flight's Shield saw another pose than the cell's. Fills
+    summary["perception"]; returns the problems."""
+    s = spec.stress
+    sigma, lat = float(s.gps_noise_m), int(s.latency_ticks)
+    stressed = sigma > 0 or lat > 0
+    rec = metrics.get("perception_stress")
+    if not stressed and rec is None:
+        return []
+    problems: list[str] = []
+    out: dict[str, Any] = {"cell": {"gps_noise_m": sigma, "latency_ticks": lat,
+                                    "seed": int(seed), "rng": RAIL_PERCEPTION_RNG},
+                           "node": rec, "tolerance_m": RAIL_PERCEPTION_TOL_M}
+    summary["perception"] = out
+    if not isinstance(rec, dict):
+        problems.append("gps_noise_m / latency_ticks: the Shield node recorded no "
+                        "perception_stress (metrics.json) - a node that does not read "
+                        "--gps-noise-m / --latency-ticks drops them, and its Shield saw "
+                        "the pose unstressed")
+        return problems
+
+    def _same(a, b) -> bool:
+        try:
+            return _num(float(a)) == _num(float(b))
+        except (TypeError, ValueError):
+            return False
+
+    if bool(rec.get("applied")) != stressed:
+        problems.append(f"the Shield node {'applied' if rec.get('applied') else 'did not apply'} "
+                        f"a GPS noise / latency stressor, and the cell "
+                        f"{'sets one' if stressed else 'sets none'}")
+    if not _same(rec.get("gps_noise_m"), sigma):
+        problems.append(f"gps_noise_m: the Shield node applied {rec.get('gps_noise_m')!r}, "
+                        f"the cell's is {sigma:g}")
+    if rec.get("latency_ticks") != lat:
+        problems.append(f"latency_ticks: the Shield node applied {rec.get('latency_ticks')!r}, "
+                        f"the cell's is {lat}")
+    if not stressed:
+        return problems
+    if rec.get("seed") != int(seed):
+        problems.append(f"the Shield node drew its noise from seed {rec.get('seed')!r}, the "
+                        f"episode's is {int(seed)}")
+    if rec.get("rng") != RAIL_PERCEPTION_RNG:
+        problems.append(f"the Shield node drew from {rec.get('rng')!r}, not the harness's "
+                        f"{RAIL_PERCEPTION_RNG}")
+    want_sigma = sigma if sigma > 0 else None
+    if (rec.get("pos_sigma_m") is None) != (want_sigma is None) or (
+            want_sigma is not None and not _same(rec.get("pos_sigma_m"), want_sigma)):
+        problems.append(f"pos_sigma_m: the Shield node reported {rec.get('pos_sigma_m')!r}, "
+                        f"the cell's is {want_sigma!r}")
+    if rec.get("ticks") != len(rows):
+        problems.append(f"the Shield node applied the stressors on {rec.get('ticks')!r} "
+                        f"tick(s), the flight log has {len(rows)} row(s)")
+    if problems:
+        return problems
+    # The draws themselves, on the flown rows: the harness's generator for
+    # this seed, x then y then up per tick, on the pose `lat` rows earlier.
+    rng = random.Random(f"{int(seed)}:gps")
+    worst, bad_at, missing = 0.0, None, 0
+    for i, r in enumerate(rows):
+        old = rows[max(0, i - lat)]
+        noise = [rng.gauss(0, sigma) if sigma else 0.0 for _ in range(3)]
+        got = r.get("shield_pose")
+        if not (isinstance(got, (list, tuple)) and len(got) == 3):
+            missing += 1
+            continue
+        try:
+            want = [float(old["x"]) + noise[0], float(old["y"]) + noise[1],
+                    float(old["up"]) + noise[2]]
+            err = max(abs(float(g) - w) for g, w in zip(got, want))
+        except (KeyError, TypeError, ValueError):
+            missing += 1
+            continue
+        if err > worst:
+            worst = err
+        if err > RAIL_PERCEPTION_TOL_M and bad_at is None:
+            bad_at = r.get("t", i)
+    out["rows_checked"] = len(rows) - missing
+    out["max_error_m"] = round(worst, 6)
+    if missing:
+        problems.append(f"{missing} of {len(rows)} row(s) carry no readable shield_pose: "
+                        f"the pose the Shield was handed is not on record")
+    if bad_at is not None:
+        problems.append(f"the pose the Shield was handed is not the cell's draw (first at "
+                        f"t={bad_at}, worst {worst:.4f} m off the pose {lat} row(s) earlier "
+                        f"plus {RAIL_PERCEPTION_RNG} for seed {int(seed)})")
+    return problems
+
+
 def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None,
                       metrics: dict, rows: list[dict], seed: int = 0
                       ) -> tuple[list[str], dict]:
@@ -4003,7 +4142,10 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
     (the episode ended in the dropout, as a headless one can). A battery
     cell (since 2026-11-17): its fail-safe setup read back and ArduPilot's
     CRITICAL reaching the node within RAIL_BATTERY_ONSET_MAX_S
-    (_rail_battery_check, summary["battery"]).
+    (_rail_battery_check, summary["battery"]). GPS noise / state latency
+    (since 2026-11-21): the Shield node's record and every row's
+    shield_pose the cell's (_rail_perception_check, summary["perception"]);
+    checked with or without a plan.
 
     summary["entries"] is every SIM_* parameter the simulator side set, in
     the record the pymavlink rail writes into metrics.json `sim_stressors`
@@ -4023,6 +4165,7 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
             "battery_critical_at_s": plan.get("battery_critical_at_s")}
            if plan.get("firmware") else {})},
         "node_at_takeoff": node_vals, "align_tol_s": RAIL_STRESS_TOL_S, "entries": []}
+    problems += _rail_perception_check(spec, metrics, rows, seed, summary)
     dx, dy = start_jitter(spec, seed)
     if dx or dy:
         hc = metrics.get("home_check") if isinstance(metrics.get("home_check"), dict) else {}
@@ -4170,8 +4313,10 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     start jitter; since 2026-11-17 the battery hook, opt-in), so a scenario
     is refused only for what neither rail can realise:
       * the stressors SITL has no honest equivalent for (RAIL_STRESS_
-        REFUSALS: GPS noise, state latency, gusts), and a dropout flown
-        blind (fix_quality_reported false);
+        REFUSALS: gusts), and a dropout or GPS noise flown blind
+        (fix_quality_reported false); GPS noise and state latency fly
+        since 2026-11-21, applied by the Shield node to its Shield's view
+        (THE PERCEPTION STRESSORS ON THE COMPANION);
       * the battery hook unless `rail_battery` (the campaign's profile has
         `rail_battery: true`; RAIL_BATTERY_OPT_IN);
       * a relabel schedule (the node declares one subject class);
@@ -4577,6 +4722,9 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         args.append(f"--events={events}")
     if meta:
         args.append(f"--scenario-meta={meta}")
+    # The cell's GPS noise / state latency, applied by the Shield node to
+    # the pose it hands the Shield (2026-11-21); none for every other cell.
+    args.extend(rail_perception_args(spec))
     if getattr(spec, "ground", None) is not None:
         # A declared ground (X-11, 2026-11-18): named to both nodes by path
         # and sha256, with the home elevation SITL boots at (sitl_home);

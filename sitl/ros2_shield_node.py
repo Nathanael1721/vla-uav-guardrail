@@ -146,6 +146,8 @@ THE GPS FIX AND THE SIMULATOR'S STRESSORS (2026-11-07, X-14).
     branch needs sigma <= 0.33 m (SITL reports 0.3 m; a field receiver
     reports metres, and every mission passing near a zone would return);
     sizing margins to the rail's accuracy is a policy decision left open.
+    (One exception since 2026-11-21: a cell's own GPS noise, injected here,
+    is reported with its sigma - "THE PERCEPTION STRESSORS".)
     Rows carry fix_ok, fix_status, fix_age_ms and the Shield's
     position_lost; metrics.json `fix_quality`.
   * The simulator's stressors are set on the SIMULATOR'S side
@@ -158,6 +160,40 @@ THE GPS FIX AND THE SIMULATOR'S STRESSORS (2026-11-07, X-14).
     records every change the autopilot broadcasts (/mavros/param/event) on
     its own mission clock - the measured alignment the stress harness checks
     (metrics.json `sim_params`).
+
+THE PERCEPTION STRESSORS (2026-11-21, WP3-19 / WP4-14). The stress library's
+GPS noise and state latency (scenario_spec.Stress gps_noise_m, latency_ticks)
+have no honest SITL equivalent (experiments/sweep_scenarios.py, THE
+SIMULATOR'S STRESSORS ON THE RAILS): noise put into SITL's GPS is fused by
+the EKF that also flies the aircraft, and SIM_GPS_LAG_MS is compensated by
+that EKF. Their labels were derived for a degraded SHIELD'S VIEW with the
+aircraft flying on its true position, so they are applied here, on the
+companion, to the pose the Shield is handed - never to the autopilot, the
+VLA stub or the flight log's position (PerceptionStress):
+  * --latency-ticks N: the Shield is handed the pose of N ticks ago (the
+    first pose until N ticks have passed), the harness's
+    hist[max(0, i - N)];
+  * --gps-noise-m S: white Gaussian noise of sigma S on that pose's x, y and
+    up, drawn per tick from random.Random(f"{--seed}:gps") in the order x,
+    y, up - the harness's own generator and draws, so one cell and seed
+    draws the same sequence on both - with State.pos_sigma_m = S (the
+    modelled rail reports its accuracy; the stress harness refuses a noise
+    cell with fix_quality_reported false on the rails).
+  The heading stays the current one: the action the Shield judges is body
+  frame, turned by the adapter at the current heading, so a delayed heading
+  would make the Shield judge another world action than the one flown (the
+  harness turns its world action at the heading it hands the Shield, so its
+  Shield always judges the flown one). Everything the Shield and the FSM
+  are asked about the position (filter, stop_illegal, unsafe_depth, the
+  hand-back and the hold planner) gets the degraded pose; what the autopilot
+  flies on (the RTL watch, home reached, the hold's transit and kept-hold
+  watch) and what the flight is scored on (the row's x, y, up, `unsafe`,
+  zones) keep the true pose, as in the harness. Rows carry `shield_pose`
+  and `pos_sigma_m`; metrics.json `perception_stress` records what was
+  applied, and the stress harness refuses to score a flight whose record
+  is not the cell's (rail_stress_check). With neither flag (the default,
+  every flight before 2026-11-21) the Shield is handed the pose object
+  itself and nothing is recorded.
 
 THE AUTOPILOT'S ESTIMATOR (2026-11-12). The pose this node hands the Shield
 is the autopilot's own navigation estimate (EKF3, through MAVROS), so whether
@@ -466,10 +502,12 @@ import argparse
 import gc
 import json
 import math
+import random
 import struct
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import NamedTuple
 
@@ -1040,6 +1078,79 @@ def shield_state(state: State, velocity, age_s: float | None, enabled: bool) -> 
             or not all(math.isfinite(c) for c in velocity)):
         return state
     return state.model_copy(update={"velocity": tuple(velocity)})
+
+
+class PerceptionStress:
+    """The stress cell's GPS noise and state latency on the pose the Shield
+    is handed (module docstring, "THE PERCEPTION STRESSORS"; since
+    2026-11-21, WP3-19 / WP4-14). Mirrors the headless harness
+    (experiments/sweep_scenarios.py _episode, "what the Shield sees"):
+    apply() keeps a delay line of latency_ticks + 1 poses and returns the
+    oldest (the first pose until it fills), plus white Gaussian noise of
+    sigma gps_noise_m on x, y and up drawn from random.Random(f"{seed}:gps")
+    in that order, with pos_sigma_m = gps_noise_m when it is > 0. The
+    heading is the current pose's (the body-frame action is flown at it).
+    Inactive (both 0, the default) apply() returns its argument itself and
+    draws nothing."""
+
+    RNG = "random.Random(f'{seed}:gps')"
+
+    def __init__(self, gps_noise_m: float = 0.0, latency_ticks: int = 0,
+                 seed: int = 0) -> None:
+        sigma = float(gps_noise_m)
+        if not (math.isfinite(sigma) and sigma >= 0.0):
+            raise ValueError(f"--gps-noise-m must be 0 or more metres, got {gps_noise_m!r}")
+        if isinstance(latency_ticks, bool) or int(latency_ticks) != latency_ticks \
+                or int(latency_ticks) < 0:
+            raise ValueError(f"--latency-ticks must be 0 or more ticks, got {latency_ticks!r}")
+        self.sigma = sigma
+        self.latency_ticks = int(latency_ticks)
+        self.seed = int(seed)
+        self._rng = random.Random(f"{self.seed}:gps")
+        self._line: deque = deque(maxlen=self.latency_ticks + 1)
+        self.ticks = 0
+        self.draws = 0
+        self.max_offset_m = 0.0
+
+    @property
+    def active(self) -> bool:
+        return self.sigma > 0.0 or self.latency_ticks > 0
+
+    def apply(self, st: State) -> State:
+        """The pose the Shield is handed this tick for the true pose `st`
+        (one call per tick; `st` itself when inactive)."""
+        if not self.active:
+            return st
+        self._line.append(st)
+        old = self._line[0]
+        s = self.sigma
+        # The harness's argument order: x, then y, then up.
+        nx = self._rng.gauss(0, s) if s else 0.0
+        ny = self._rng.gauss(0, s) if s else 0.0
+        nu = self._rng.gauss(0, s) if s else 0.0
+        self.draws += 3 if s else 0
+        self.ticks += 1
+        seen = old.model_copy(update={"x": old.x + nx, "y": old.y + ny,
+                                      "up": old.up + nu, "yaw_deg": st.yaw_deg,
+                                      "pos_sigma_m": s if s else None})
+        self.max_offset_m = max(self.max_offset_m, math.hypot(seen.x - st.x, seen.y - st.y))
+        return seen
+
+    def row_fields(self, seen: State) -> dict:
+        """The flight-log fields of one stressed tick: the pose the Shield
+        was handed beside the row's true x, y, up."""
+        return {"shield_pose": [round(seen.x, 4), round(seen.y, 4), round(seen.up, 4)],
+                "pos_sigma_m": seen.pos_sigma_m}
+
+    def summary(self) -> dict:
+        """metrics.json `perception_stress`: what was applied."""
+        return {"applied": self.active, "gps_noise_m": self.sigma,
+                "latency_ticks": self.latency_ticks, "seed": self.seed,
+                "rng": self.RNG, "draw_order": ["x", "y", "up"],
+                "pos_sigma_m": self.sigma if self.sigma else None,
+                "heading": "current (not delayed)", "ticks": self.ticks,
+                "draws": self.draws, "max_horizontal_offset_m": round(self.max_offset_m, 4),
+                "where": "companion side: the pose the Shield is handed only"}
 
 
 def fix_ok_from(status, age_s: float | None, stale_s: float = FIX_STALE_S) -> bool | None:
@@ -2810,6 +2921,11 @@ if HAVE_ROS:
             self.vel_rx: float | None = None
             self.n_vel_used = 0
             self.n_vel_seen = 0
+            # The cell's GPS noise / state latency on the Shield's view
+            # (THE PERCEPTION STRESSORS); inactive by default.
+            self.perception = PerceptionStress(
+                getattr(args, "gps_noise_m", 0.0), getattr(args, "latency_ticks", 0),
+                args.seed)
             # Held by every control tick and by the REST hot-apply thread
             # while it swaps the Shield's rules and records the generation.
             self._lock = threading.RLock()
@@ -4709,8 +4825,11 @@ if HAVE_ROS:
             vel_age = (None if self.vel_rx is None else time.monotonic() - self.vel_rx)
             vel = self.vel if (vel_age is not None and vel_age <= VELOCITY_MAX_AGE_S) else None
             self.n_vel_seen += vel is not None
-            st_sh = shield_state(st, vel, vel_age, self.own_v)
-            self.n_vel_used += st_sh is not st
+            # The pose the Shield is handed (THE PERCEPTION STRESSORS): `st`
+            # itself unless the cell's GPS noise / latency is on.
+            seen = self.perception.apply(st)
+            st_sh = shield_state(seen, vel, vel_age, self.own_v)
+            self.n_vel_used += st_sh is not seen
             # The GPS fix (2026-11-07): the Shield is told whether this
             # position is a current valid fix (None, no report: as before).
             fix_ok = self.fix_ok_now()
@@ -4766,10 +4885,10 @@ if HAVE_ROS:
                 self.fsm.unobserved()
             if fsm_live and not self._holds and not pose_stale:
                 try:
-                    stop_illegal = self.shield.state_is_unsafe(st)
+                    stop_illegal = self.shield.state_is_unsafe(seen)
                     # How far from legal: X6's progress and X7's losing-ground
                     # tests read its trend.
-                    unsafe_depth = self.shield.unsafe_depth(st, stop_illegal)
+                    unsafe_depth = self.shield.unsafe_depth(seen, stop_illegal)
                     # The hold point's inputs (--hold-points moved, since
                     # 2026-11-07): is the Loiter's point still legal, and
                     # would handing this request back fly into a spot where
@@ -4790,7 +4909,7 @@ if HAVE_ROS:
                     # point at the speed it asks for (sm1110_010 was handed
                     # back 14 times on a repair read from the held aircraft).
                     handback, hb_untrusted = (
-                        self.hold_planner.handback(self.shield, st, decision.emitted,
+                        self.hold_planner.handback(self.shield, seen, decision.emitted,
                                                    fsm=self.fsm, raw=decision.raw,
                                                    horizon_s=self.theta_horizon_s)
                         if (in_loiter and not hard_unsafe
@@ -4840,6 +4959,10 @@ if HAVE_ROS:
                         # not every cap the policy lists (Shield.applied_caps).
                         caps=self.shield.applied_caps or False,
                         position_lost=lost[0] if lost else None,
+                        # The onset hysteresis under a reported accuracy
+                        # (2026-11-21: only a stressed pose reports one
+                        # here; False on every other tick, as before).
+                        noise_marginal=bool(getattr(decision, "noise_marginal", None)),
                         hold_legal=hold_legal, handback_unsafe=handback,
                         handback_untrusted=hb_untrusted,
                         hold_off_m=hold_off, hold_reach_m=hold_reach)
@@ -4855,9 +4978,9 @@ if HAVE_ROS:
                                         if math.hypot(a.vx, a.vy) > 0.1), None)
                         got = self.hold_planner.tick(
                             self.shield, self.fsm,
-                            lambda: holdpoint.plan_for(self.shield, self.fsm, st,
+                            lambda: holdpoint.plan_for(self.shield, self.fsm, seen,
                                                        unsafe=hard_unsafe, heading=heading),
-                            here=st, unsafe=hard_unsafe)
+                            here=seen, unsafe=hard_unsafe)
                         if self._hold_work is not None or self.hold_planner.slice:
                             self._hold_work = {**(self._hold_work or {}),
                                                "slice_units": self.hold_planner.slice}
@@ -5048,9 +5171,13 @@ if HAVE_ROS:
                                  # and whether the Shield flew on it.
                                  state_v=(None if vel is None
                                           else [round(c, 3) for c in vel]),
-                                 shield_velocity=st_sh is not st,
+                                 shield_velocity=st_sh is not seen,
                                  # What ran this tick (THE TICK SCHEDULE).
                                  tick_trigger=trigger)
+            if seen is not st:
+                # The pose the Shield was handed (THE PERCEPTION STRESSORS);
+                # only on a stressed flight's rows.
+                self.rows[-1].update(self.perception.row_fields(seen))
             if transit is not None:
                 # The moved hold's transit, world frame (North, East, up);
                 # only on such rows (guardrail/hold_flight.py).
@@ -5573,6 +5700,17 @@ if HAVE_ROS:
                 "hil_evidence": self.hil_evidence,
                 "policy_source": self.policy_source,
             }
+            if self.perception.active:
+                # What was applied to the Shield's view (THE PERCEPTION
+                # STRESSORS), read by the stress harness's rail_stress_check;
+                # absent on every other flight.
+                metrics["perception_stress"] = self.perception.summary()
+                if self.perception.sigma:
+                    metrics["fix_quality"]["pos_sigma_m"] = self.perception.sigma
+                    metrics["fix_quality"]["pos_sigma_m_why"] = (
+                        "the cell's own GPS noise, injected on the companion "
+                        "(perception_stress), reported with its sigma as the "
+                        "modelled rail reports it")
             (self.out / "flight_log.jsonl").write_text(
                 "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
 
@@ -5881,6 +6019,16 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--seed", type=int, default=0,
                     help="recorded in the manifest. StubVLA itself draws no "
                          "random numbers.")
+    ap.add_argument("--gps-noise-m", type=float, default=0.0, metavar="SIGMA",
+                    help="a stress cell's GPS noise (2026-11-21): white Gaussian noise "
+                         "of this sigma on the pose the Shield is handed, drawn from "
+                         "--seed as the stress harness draws it, reported as "
+                         "State.pos_sigma_m; the autopilot and the log's position are "
+                         "untouched. 0 (default): none")
+    ap.add_argument("--latency-ticks", type=int, default=0, metavar="N",
+                    help="a stress cell's state latency (2026-11-21): the Shield is "
+                         "handed the pose of N ticks ago (heading current). 0 "
+                         "(default): none")
     ap.add_argument("--max-s", type=float, default=MAX_S,
                     help="mission time cap, seconds")
     ap.add_argument("--subject", default=None, metavar="X,Y",
@@ -5950,6 +6098,7 @@ def main(argv: list[str] | None = None) -> None:
         if not (math.isfinite(args.reach_m) and args.reach_m > 0):
             raise ValueError(f"--reach-m must be a positive number of metres, "
                              f"got {args.reach_m!r}")
+        PerceptionStress(args.gps_noise_m, args.latency_ticks, args.seed)
         if args.scenario_meta:
             load_scenario_meta(args.scenario_meta)
         if args.events:

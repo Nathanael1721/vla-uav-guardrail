@@ -1549,6 +1549,13 @@ class ShieldDecision(BaseModel):
     # pos_sigma_m); None otherwise and on a Shield with its own FSM, which
     # reads the verdict directly. Excluded from model_dump() like `trace`.
     position_lost: tuple[str, str] | None = Field(default=None, exclude=True)
+    # The FSM's onset hysteresis input (TickInput.noise_marginal) for a rail
+    # that runs THE escalation FSM itself, as position_lost above (since
+    # 2026-11-21: the ROS 2 node hands the Shield a pose with pos_sigma_m
+    # under a stress cell's GPS noise). Computed only for a state that
+    # reports pos_sigma_m; None otherwise and on a Shield with its own FSM.
+    # Excluded from model_dump() like `trace`.
+    noise_marginal: bool | None = Field(default=None, exclude=True)
 
     @property
     def touched(self) -> bool:
@@ -8884,6 +8891,11 @@ class Shield:
                     or getattr(state, "pos_sigma_m", None) is not None
                     or getattr(state, "estimator_ok", None) is not None):
                 upd["position_lost"] = self._position_verdict(tick, state, d.raw)
+            # The onset hysteresis that rail's FSM needs under a REPORTED
+            # accuracy (2026-11-21): the same judgement this Shield's own FSM
+            # is given (_noise_marginal). Only for a state with pos_sigma_m.
+            if getattr(state, "pos_sigma_m", None) is not None:
+                upd["noise_marginal"] = self._noise_marginal(tick, state, d)
             return d.model_copy(update=upd)
         if self._fsm_fault is not None:
             upd.update(fsm_fault=self._fsm_fault, setpoint="none", command=None,

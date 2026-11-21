@@ -439,8 +439,16 @@ def test_the_rails_fly_wind_dropout_and_jitter_and_refuse_the_rest_with_why():
         jit = _with(_cell("wind-gusts", lane_y=15.0, wind_speed_mps=2),
                     **{"stress.gust_mps": 0.0})
         assert not why(jit), why(jit)
-        noise = why(_cell("gps-noise-within-margin", pass_y=23.2, sigma=0.3, latency=2))
-        assert "gps_noise_m" in noise and "SIM_GPS_NOISE" in noise and "latency_ticks" in noise
+        # GPS noise / latency: refused until 2026-11-21 (no SITL equivalent);
+        # since then the Shield node applies them to its Shield's view, and
+        # nothing is set in SITL for them.
+        noise_cell = _cell("gps-noise-within-margin", pass_y=23.2, sigma=0.3, latency=2)
+        assert not why(noise_cell), why(noise_cell)
+        assert "gps_noise_m" not in S.RAIL_STRESS_REFUSALS
+        assert "latency_ticks" not in S.RAIL_STRESS_REFUSALS
+        assert S.rail_stress_plan(noise_cell, 0, DEFAULTS) is None
+        blind_noise = _with(noise_cell, **{"stress.fix_quality_reported": False})
+        assert "fix_quality_reported false" in why(blind_noise), why(blind_noise)
         assert "gust_mps" in why(BY_ID["wind-gusts"]) and "SIM_WIND_TURB" in why(BY_ID["wind-gusts"])
         # 2026-11-14: the node's RTL watch reads ArduPilot's battery verdict,
         # and the blocked return home flies. Until 2026-11-17 the battery
@@ -458,7 +466,7 @@ def test_the_rails_fly_wind_dropout_and_jitter_and_refuse_the_rest_with_why():
         assert "fix_quality_reported false" in why(blind)
         late = _with(BY_ID["gps-dropout"], **{"stress.gps_dropout_s": [70.0, 80.0]})
         assert "after the run's last tick" in why(late)
-        assert "no SIM_* wind or GPS stressor is wired" not in noise
+        assert "no SIM_* wind or GPS stressor is wired" not in why(BY_ID["wind-gusts"])
 
 
 # --------------------------------------------------------------------------- #

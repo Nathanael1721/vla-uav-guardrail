@@ -297,6 +297,33 @@ def test_a_clean_tick_within_three_sigma_of_a_ring_is_marked_for_the_fsm():
                    (0.3, 24.5): True, (0.3, 30.0): None}, rec
 
 
+def test_a_rail_running_its_own_fsm_gets_the_same_noise_marginal_verdict():
+    """A rail's Shield has no FSM of its own (guardrail.replay.rail_shield),
+    so until 2026-11-21 the ROS 2 node's FSM never saw `noise_marginal`: a
+    stressed pose with pos_sigma_m (the node's PerceptionStress) would have
+    counted ring re-touches as onsets the harness's FSM does not. Now the
+    decision carries it, the very verdict the Shield's own FSM is given, for
+    a state with pos_sigma_m only (None otherwise: every rail before that
+    date), and it stays out of model_dump()."""
+    from guardrail import load_policy
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    raw = Action4D(vx=4.0)
+    for sigma in (None, 0.3):
+        for y in (24.5, 30.0):
+            st = State(x=-14.0, y=y, up=15.0, pos_sigma_m=sigma)
+            own = (Shield(pol).filter(st, raw, t=0.0).fsm_record or {}).get("noise_marginal")
+            d = rail_shield(pol, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
+                            path_repair=False).filter(
+                st, raw, t=0.0)
+            if sigma is None:
+                assert d.noise_marginal is None, (y, d.noise_marginal)
+            else:
+                assert d.noise_marginal is bool(own), (y, d.noise_marginal, own)
+            assert "noise_marginal" not in d.model_dump()
+
+
 # --------------------------------------------------------------------------- #
 # recovery_law cap_all
 # --------------------------------------------------------------------------- #

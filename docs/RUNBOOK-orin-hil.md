@@ -942,8 +942,9 @@ Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed
 held `ssh ... mkdir -p` open into its 60 s timeout (shk02).
 
 What the rail cannot fly is refused before anything flies, with the reason,
-and listed: the stressors SITL has no honest equivalent for (GPS noise,
-state latency, gusts; the battery hook unless the profile opts in,
+and listed: the stressors SITL has no honest equivalent for (gusts; GPS
+noise and state latency until 2026-11-21, now applied by the Shield node to
+its Shield's view; the battery hook unless the profile opts in,
 `rail_battery: true`, since 2026-11-17; next section), an
 RTL that must fail (`rtl_failed_ticks`, until 2026-11-14), a non-finite pilot action, a relabel schedule, start
 altitudes below 1 m or at the GeoFence ceiling (the 0.5 m and 30 m cells),
@@ -971,16 +972,26 @@ tree in WSL (`~/ardupilot`, paths under `libraries/`):
 | `gps_dropout_s` | `SIM_GPS_DISABLE` 1 at t0 + start, 0 at t0 + end | 0/1; 4.5.7's name (4.6 renames it `SIM_GPS1_DISABLE`); the GPS reports no lock, fix type 0 | `SITL.cpp:561, 183`; `SITL/SIM_GPS.cpp:333`; `SIM_GPS_UBLOX.cpp:202-251` |
 | `start_jitter_m` | `SITL_HOME` and `--start` | m, drawn as the harness draws it (`random.Random(f"{seed}:jitter")`): the headless and the rail episode of one cell and seed start at one point | `experiments/sweep_scenarios.py` `_resolve_mission`, `rail_mission` |
 
-Refused, with the reason in the dry run: `gps_noise_m` (4.5.7's
-`SIM_GPS_NOISE` is a slow sine on the GPS altitude alone, `SIM_GPS.cpp:353`,
-and horizontal noise fed to SITL's GPS would be fused by the EKF that also
-flies the aircraft), `latency_ticks` (the rail's own latency is real and
-recorded per row; `SIM_GPS_LAG_MS` delays the GPS into the EKF, which
-compensates it), `gust_mps` (`SIM_WIND_TURB` redraws its azimuth every
-physics step and low-passes SITL's own random speed, `SIM_Aircraft.cpp:785-
-800`: neither the process nor the seed's draw of the harness's per-tick
-gust), and a dropout flown blind (`fix_quality_reported: false`: the rail
-reports its fix). A gate on `rtl_failed_ticks` is no longer refused: the
+`gps_noise_m` and `latency_ticks` fly since 2026-11-21, but not in SITL:
+4.5.7's `SIM_GPS_NOISE` is a slow sine on the GPS altitude alone
+(`SIM_GPS.cpp:353`), horizontal noise fed to SITL's GPS would be fused by the
+EKF that also flies the aircraft, and `SIM_GPS_LAG_MS` is compensated by that
+EKF. The Shield node applies them itself, to the pose it hands the Shield
+only (`--gps-noise-m`, `--latency-ticks`; sitl/ros2_shield_node.py, THE
+PERCEPTION STRESSORS): a delay line of `latency_ticks` ticks, then white
+Gaussian noise on x, y and up from `random.Random(f"{seed}:gps")`, the
+harness's own draws, with `State.pos_sigma_m` = `gps_noise_m`. The autopilot,
+the VLA stub and the scored position are untouched. metrics.json
+`perception_stress` and each row's `shield_pose` record it, and the sweep
+errors a flight whose record or draws are not the cell's
+(`rail_stress_check`).
+
+Refused, with the reason in the dry run: `gust_mps` (`SIM_WIND_TURB` redraws
+its azimuth every physics step and low-passes SITL's own random speed,
+`SIM_Aircraft.cpp:785-800`: neither the process nor the seed's draw of the
+harness's per-tick gust), and a dropout or GPS noise flown blind
+(`fix_quality_reported: false`: the rail reports its fix, and the node the
+noise's sigma). A gate on `rtl_failed_ticks` is no longer refused: the
 node writes `rtl_failed` on every RTL row (failsafe-rtl-blocked flies; the
 FSM edges G2, G4, G6, X2 and X3 have a profile of their own,
 `--profile fsm_edges`, experiments/profiles/fsm_edges.yaml).
