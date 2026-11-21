@@ -274,8 +274,13 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
     for backend in S.RAIL_BACKENDS:
         def why(spec, **kw):
             return S.rail_refusal(spec, backend, **kw) or ""
-        assert "stressors" in why(BY_ID["gps-noise-within-margin"])
-        assert "gps_noise_m" in why(BY_ID["gps-noise-within-margin"])
+        # Since 2026-11-21 GPS noise and state latency fly too, applied by
+        # the Shield node to its Shield's view (THE PERCEPTION STRESSORS ON
+        # THE COMPANION); flown blind they stay headless.
+        assert not why(BY_ID["gps-noise-within-margin"]), why(BY_ID["gps-noise-within-margin"])
+        assert not why(BY_ID["gps-noise-beyond-margin"]), why(BY_ID["gps-noise-beyond-margin"])
+        blind = _with(BY_ID["gps-noise-within-margin"], **{"stress.fix_quality_reported": False})
+        assert "fix_quality_reported false" in why(blind), why(blind)
         # Since 2026-11-07 SITL realises wind, its direction, GPS denial and
         # start jitter (tests/test_sitl_stressors.py); gusts stay refused.
         assert not why(BY_ID["gps-dropout"]), why(BY_ID["gps-dropout"])
@@ -311,9 +316,10 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
     reasons = {e.arm_tag: S.rail_refusal(e.cell.spec, "hil", episode=e) for e in eps}
     assert reasons.pop("canonical,prefix-on") is None and reasons, reasons
     assert all("paraphrase / prefix arm" in r for r in reasons.values()), reasons
-    # sitl_refusal is the desktop rail's.
-    noise = BY_ID["gps-noise-within-margin"]
-    assert S.sitl_refusal(noise) == S.rail_refusal(noise, "sitl") and S.sitl_refusal(noise)
+    # sitl_refusal is the desktop rail's. (The refused example was the GPS
+    # noise cell until 2026-11-21, when the Shield node began to apply it.)
+    gusts = BY_ID["wind-gusts"]
+    assert S.sitl_refusal(gusts) == S.rail_refusal(gusts, "sitl") and S.sitl_refusal(gusts)
     assert S.sitl_refusal(BY_ID["nfz-head-on"]) is None
 
 
@@ -1216,6 +1222,177 @@ def test_latency_hands_the_shield_the_state_from_n_ticks_ago():
     rows = S.run_episode(spec, DEFAULTS, 0).rows
     for i in (10, 50, 120):
         assert rows[i]["perceived"]["x"] == rows[i - 5]["x"], i
+
+
+# --------------------------------------------------------------------------- #
+# GPS noise / latency on the rails: the Shield node's own injection (2026-11-21)
+# --------------------------------------------------------------------------- #
+
+def _node():
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as N
+    return N
+
+
+def test_the_shield_nodes_noise_and_delay_line_is_deterministic_under_a_seed():
+    """sitl/ros2_shield_node.py PerceptionStress, the companion-side GPS
+    noise / latency (WP3-19 / WP4-14): inactive it hands back the pose object
+    itself and draws nothing (every flight before 2026-11-21); active, the
+    pose latency_ticks calls ago (the first one until the line fills) plus
+    random.Random(f"{seed}:gps") draws in the order x, y, up, pos_sigma_m =
+    sigma, the CURRENT heading - the same sequence for the same seed, another
+    for another seed. Bad values are refused."""
+    import math
+    import random
+    N = _node()
+    poses = [State(x=-30.0 + 0.4 * i, y=23.6 + 0.01 * i, up=15.0 + 0.02 * i,
+                   yaw_deg=float(3 * i)) for i in range(30)]
+    off = N.PerceptionStress()
+    assert not off.active and all(off.apply(p) is p for p in poses)
+    assert off.ticks == 0 and off.draws == 0
+    ns = N.make_parser().parse_args([])
+    assert ns.gps_noise_m == 0.0 and ns.latency_ticks == 0
+    for sigma, lat in ((0.3, 0), (0.3, 2), (0.0, 3), (2.0, 5)):
+        a, b = N.PerceptionStress(sigma, lat, 1001), N.PerceptionStress(sigma, lat, 1001)
+        rng = random.Random("1001:gps")
+        sa = [a.apply(p) for p in poses]
+        assert [(s.x, s.y, s.up) for s in sa] == [(s.x, s.y, s.up) for s in map(b.apply, poses)]
+        for i, (p, s) in enumerate(zip(poses, sa)):
+            old = poses[max(0, i - lat)]
+            n = [rng.gauss(0, sigma) if sigma else 0.0 for _ in range(3)]
+            assert (s.x, s.y, s.up) == (old.x + n[0], old.y + n[1], old.up + n[2]), (sigma, lat, i)
+            assert s.yaw_deg == p.yaw_deg, "the heading must stay the current one"
+            assert s.pos_sigma_m == (sigma if sigma else None)
+        assert a.ticks == len(poses) and a.draws == (3 * len(poses) if sigma else 0)
+        c = N.PerceptionStress(sigma, lat, 1002)
+        other = [c.apply(p) for p in poses]
+        assert ([(s.x, s.y) for s in other] != [(s.x, s.y) for s in sa]) == bool(sigma)
+        summ = a.summary()
+        assert summ["applied"] and summ["gps_noise_m"] == sigma and summ["latency_ticks"] == lat
+        assert summ["seed"] == 1001 and summ["rng"] == S.RAIL_PERCEPTION_RNG
+        assert summ["ticks"] == len(poses)
+        row = a.row_fields(sa[-1])
+        assert row["shield_pose"] == [round(sa[-1].x, 4), round(sa[-1].y, 4), round(sa[-1].up, 4)]
+    for bad in ((-0.1, 0), (math.nan, 0), (math.inf, 0), (0.3, -1), (0.3, 1.5), (0.3, True)):
+        try:
+            N.PerceptionStress(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+
+
+def test_the_node_hands_its_shield_the_pose_the_harness_hands_its_own():
+    """The labels of the GPS noise / latency cells were derived on the
+    headless harness's degraded view (_episode, "what the Shield sees"): the
+    node's PerceptionStress, fed the harness's true poses with the episode's
+    seed, hands the Shield exactly the harness's `perceived` pose on every
+    tick - noise and latency together, and each alone."""
+    N = _node()
+    base = _cell("gps-noise-within-margin", pass_y=23.6, sigma=0.3, latency=2)
+    for over in ({}, {"stress.latency_ticks": 0}, {"stress.gps_noise_m": 0.0}):
+        spec = _with(base, **over)
+        rows = S.run_episode(spec, DEFAULTS, 1001).rows
+        ps = N.PerceptionStress(spec.stress.gps_noise_m, spec.stress.latency_ticks, 1001)
+        for i, r in enumerate(rows):
+            seen = ps.apply(State(x=r["x"], y=r["y"], up=r["up"]))
+            p = r["perceived"]
+            assert (seen.x, seen.y, seen.up) == (p["x"], p["y"], p["up"]), (over, i)
+
+
+def test_the_rails_hand_the_cells_noise_and_latency_to_the_shield_node_only():
+    """rail_node_args (2026-11-21): a GPS noise / latency cell carries
+    --gps-noise-m and --latency-ticks, which the Shield node reads and the
+    VLA stub drops (its pilot flies the true pose, as the harness's does);
+    nothing is set in SITL for them (no stress plan); every other cell's
+    argument list has neither flag."""
+    N = _node()
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_vla_stub_node as V
+    cell = _cell("gps-noise-within-margin", pass_y=23.6, sigma=0.3, latency=2)
+    for backend in S.RAIL_BACKENDS:
+        assert S.rail_refusal(cell, backend, defaults=DEFAULTS) is None
+    args = S.rail_node_args(cell, 1001, DEFAULTS, backend="sitl")
+    assert "--gps-noise-m=0.3" in args and "--latency-ticks=2" in args, args
+    assert S.rail_perception_args(cell) == ["--gps-noise-m=0.3", "--latency-ticks=2"]
+    ns, _ = N.make_parser().parse_known_args(args)
+    assert ns.gps_noise_m == 0.3 and ns.latency_ticks == 2 and ns.seed == 1001
+    _, rest_v = V.make_parser().parse_known_args(args)
+    assert {"--gps-noise-m", "--latency-ticks"} <= _flag_names(rest_v), rest_v
+    assert S.rail_stress_plan(cell, 1001, DEFAULTS) is None
+    lat_only = _with(cell, **{"stress.gps_noise_m": 0.0})
+    assert S.rail_perception_args(lat_only) == ["--latency-ticks=2"]
+    for sid in ("nfz-head-on", "gps-dropout", "wind-within-authority"):
+        plain = S.rail_node_args(BY_ID[sid], 0, DEFAULTS, backend="sitl")
+        assert not {"--gps-noise-m", "--latency-ticks"} & _flag_names(plain), (sid, plain)
+
+
+def _stressed_flight(sigma, lat, seed, n=40):
+    """A flight log and metrics.json as the Shield node writes them under
+    PerceptionStress(sigma, lat, seed): the rows' true pose (rounded as
+    build_row rounds it) and each row's shield_pose."""
+    N = _node()
+    ps = N.PerceptionStress(sigma, lat, seed)
+    rows = []
+    for i in range(n):
+        st = State(x=-30.0 + 0.4 * i + 1e-4 * i, y=23.6, up=15.0)
+        seen = ps.apply(st)
+        rows.append({"t": round(0.1 * i, 2), "x": round(st.x, 3), "y": round(st.y, 3),
+                     "up": round(st.up, 3), **ps.row_fields(seen)})
+    return rows, ({"perception_stress": ps.summary()} if ps.active else {})
+
+
+def test_rail_stress_check_scores_only_the_cells_own_noise_and_latency():
+    """Fail closed (2026-11-21): a GPS noise / latency cell is scored only
+    when the Shield node's record (metrics.json perception_stress) is the
+    cell's - sigma, latency, the episode's seed, the harness's generator, on
+    every row - and every row's shield_pose reproduces from the flown rows
+    and that seed. A node that dropped the flags, another sigma, latency or
+    seed, a missing or altered shield_pose: problems. A cell without either
+    stressor and no record is checked exactly as before (no problem, nothing
+    in the summary); a record on such a cell is a problem."""
+    cell = _cell("gps-noise-within-margin", pass_y=23.6, sigma=0.3, latency=2)
+
+    def check(spec, rows, metrics, seed=1001):
+        return S.rail_stress_check(spec, S.rail_stress_plan(spec, seed, DEFAULTS), None,
+                                   metrics, rows, seed)
+
+    rows, met = _stressed_flight(0.3, 2, 1001)
+    problems, summ = check(cell, rows, met)
+    assert problems == [], problems
+    assert summ["perception"]["rows_checked"] == len(rows)
+    assert summ["perception"]["max_error_m"] <= S.RAIL_PERCEPTION_TOL_M
+    lat_only = _with(cell, **{"stress.gps_noise_m": 0.0})
+    r0, m0 = _stressed_flight(0.0, 2, 1001)
+    assert check(lat_only, r0, m0)[0] == []
+    assert m0["perception_stress"]["pos_sigma_m"] is None
+
+    def why(spec, rows, metrics, seed=1001):
+        return " | ".join(check(spec, rows, metrics, seed)[0])
+
+    assert "seed" in why(cell, rows, met, seed=1002)
+    assert "recorded no perception_stress" in why(cell, rows, {})
+    r2, m2 = _stressed_flight(0.2, 2, 1001)
+    assert "gps_noise_m" in why(cell, r2, m2)
+    r3, m3 = _stressed_flight(0.3, 1, 1001)
+    assert "latency_ticks" in why(cell, r3, m3)
+    assert "not the cell's draw" in why(cell, r0, m0 | {"perception_stress": dict(
+        m0["perception_stress"], gps_noise_m=0.3, pos_sigma_m=0.3, draws=3 * len(r0))})
+    tampered = copy.deepcopy(rows)
+    tampered[17]["shield_pose"][1] += 0.05
+    assert "not the cell's draw" in why(cell, tampered, met)
+    assert "tick(s)" in why(cell, rows[:-1], met)
+    unposed = copy.deepcopy(rows)
+    del unposed[5]["shield_pose"]
+    assert "no readable shield_pose" in why(cell, unposed, met)
+    wrong_rng = {"perception_stress": dict(met["perception_stress"], rng="numpy")}
+    assert "drew from" in why(cell, rows, wrong_rng)
+    # A cell without either stressor: as before, unless a record says the
+    # Shield saw another pose than the cell's.
+    plain = BY_ID["nfz-head-on"]
+    flat = [{"t": r["t"], "x": r["x"], "y": r["y"], "up": r["up"]} for r in rows]
+    problems, summ = check(plain, flat, {}, seed=0)
+    assert problems == [] and "perception" not in summ, (problems, summ)
+    assert "sets none" in why(plain, rows, met, seed=0)
 
 
 def test_true_state_violations_are_counted_apart_from_the_shields_own():
@@ -3470,8 +3647,10 @@ def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     # until 2026-11-14, when failsafe-rtl-blocked did (the node's RTL watch
     # feeds G6 and writes the rtl_failed its gate counts). The battery cell
     # (2026-11-17) is opt-in on the rails (RAIL_BATTERY_OPT_IN): the smoke
-    # profile does not opt in, so its campaign stays 48 / 16.
-    assert "48 mission(s) to fly, 16 refused" in out, out[:300]
+    # profile does not opt in, so its campaign stayed 48 / 16 - until
+    # 2026-11-21, when its three GPS noise / latency cells began to fly
+    # (the Shield node applies them to its Shield's view): 51 / 13.
+    assert "51 mission(s) to fly, 13 refused" in out, out[:300]
     flown, _, refused = out.partition("\n  refused:")
     assert "_failsafe-rtl-blocked  failsafe-rtl-blocked" in flown, "the blocked return flies"
     assert "failsafe-low-battery" not in flown and "SITL setup" not in flown
@@ -3481,7 +3660,11 @@ def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     # The simulator's stressors, as the desktop side will set them.
     assert "SIM_GPS_DISABLE=1 at 4 s" in out and "SIM_WIND_DIR=180" in out
     assert "--stress-plan" in out and "--stress-record" in out
-    for why in ("gps_noise_m", "gust_mps", "battery_critical_at_s", "non-finite",
+    # The GPS noise / latency cells fly with the Shield node's flags.
+    assert "--gps-noise-m=0.3" in flown and "--latency-ticks=2" in flown
+    assert "--gps-noise-m=2" in flown and "--latency-ticks=5" in flown
+    assert "gps_noise_m" not in refused and "gps-noise" not in refused
+    for why in ("gust_mps", "battery_critical_at_s", "non-finite",
                 "start altitude 30 m", "relabel", "paraphrase / prefix arm",
                 "Shield-off control arm"):
         assert why in out, why

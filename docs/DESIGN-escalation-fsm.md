@@ -184,7 +184,10 @@ episode. The next section says why each edge never fired and what flies it.
   fits in T and the edges are reachable there: not a tick or decision-period
   gap. In the published headless sweep (4 Nov, ideal vehicle) G2 fires on
   nine cells and G4 on eight: G4 only through GPS noise
-  (gps-noise-beyond-margin; `gps_noise_m` is refused on the rails), G2
+  (gps-noise-beyond-margin; `gps_noise_m` was refused on the rails until
+  2026-11-21, when the Shield node began to inject it on its Shield's view,
+  `--gps-noise-m`, with the onset hysteresis `noise_marginal` fed to its
+  FSM), G2
   through GPS noise or a noise-free forecast re-touching a ring on the
   ideal vehicle (near-edge-at-12mps, corridor-drift-angles at -60 deg) or a
   bar sweeping across it (dyn-nfz-rotate-spin). The nightly profile flies
