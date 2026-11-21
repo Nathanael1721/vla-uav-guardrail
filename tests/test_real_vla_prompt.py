@@ -168,11 +168,17 @@ def _nothing_in_region():
     out of the mission region, so the CSP has no sentences. load_policy refuses
     a policy with NO rules since 2026-10-06 (the DSL lint), so a rule-less
     policy file can no longer reach the prompt builder; this one can, and it
-    still exercises the "no sentences" refusal."""
-    return Policy.model_validate({"policy_id": "nothing-in-region", "constraints": [
-        {"id": "nfz-far", "type": "polygon_fence", **HARD_P0, "vertices": [
-            {"x": 9000, "y": 9000}, {"x": 9010, "y": 9000},
-            {"x": 9010, "y": 9010}, {"x": 9000, "y": 9010}]}]})
+    still exercises the "no sentences" refusal. In WGS84 about the demo
+    policy's origin since 2026-11-21 (WP1-14): the script now loads through
+    bundle.load_for_flight, which refuses a policy stored in metres."""
+    from guardrail.projection import raw_points_in_wgs84
+    origin = yaml.safe_load(URBAN.read_text(encoding="utf-8"))["origin"]
+    rules = [{"id": "nfz-far", "type": "polygon_fence", **HARD_P0, "vertices": [
+        {"x": 9000, "y": 9000}, {"x": 9010, "y": 9000},
+        {"x": 9010, "y": 9010}, {"x": 9000, "y": 9010}]}]
+    return Policy.model_validate({"policy_id": "nothing-in-region", "origin": origin,
+                                  "constraints": raw_points_in_wgs84(
+                                      rules, (origin["lat"], origin["lon"]))})
 
 
 def _policy_file(pol):
