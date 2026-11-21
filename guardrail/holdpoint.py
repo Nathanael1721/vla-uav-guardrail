@@ -375,6 +375,26 @@ HOLD_MARGIN_M = 0.5
 # winning heading is searched again at this step (the rings are 2 m and 5 m
 # apart past 10 m), so "nearest" is within half a metre on that heading.
 REFINE_STEP_M = 0.5
+# THE RETREAT RAY (since 2026-11-21). When the hold horizon's search (the one
+# that asks a point to stay legal for the Loiter's whole span) spends its
+# budget and finds nothing, the plan was the lookahead's alone: legal for one
+# lookahead, so a zone moving onto it made it illegal later, too late to move.
+# smfin1120_021 (dyn-nfz-rotate-spin@3, hil, 71aabb3): the Loiter began at
+# x -188.1, 20.1 m from the centre of a 40 m bar spinning at 3 deg/s, inside
+# the disc its margin ring sweeps (about 21.1 m); every point of the 1 m ring
+# stays inside it, and the budget was spent on those 16 before the 2 m ring.
+# Held in place, the point broke at 25.3 s, the repair stayed over theta, G8
+# never came and the Loiter's timeout flew RTL: a false fail-safe. rel060's
+# flight of the cell began 0.5 m farther out and found (-189.6, -0.1) on the
+# 1 m ring. Now, and only when that search ends with its budget spent, the
+# search gets RETREAT_QUERIES more units for the ray away from the hard zones
+# (_away_heading: the way the nearest zone's room grows fastest at the
+# start), its points tried in RADII_M order with the same test as every other
+# candidate (accept_held: a legal transit, legal with its HOLD_MARGIN_M
+# neighbours from arrival through the Loiter's span). A search that finds a
+# point inside MAX_QUERIES plans exactly as before; the ray is counted, never
+# timed, and paced over ticks like the rest (THE PER-TICK BOUND).
+RETREAT_QUERIES = 300
 # The rule categories a landing SITE can satisfy (shield.Violation.category).
 # Not "altitude" (a descent breaks every floor wherever it is flown) and not
 # "corridor" (its band likewise; its footprint is judged apart, _corridor_out).
@@ -478,6 +498,9 @@ class _Ledger:
 
     def __init__(self, shield, state: State, horizon_s: float, site_only: bool = False):
         self._left = float(MAX_QUERIES)
+        # Every unit this search was given: MAX_QUERIES, plus the retreat
+        # ray's when it runs (grant).
+        self._total = float(MAX_QUERIES)
         # The search's pacing over monitor ticks (THE PER-TICK BOUND): the
         # HoldSearch running it, or None for a search made within one call.
         self._pacer = getattr(_PACE, "search", None)
@@ -543,7 +566,15 @@ class _Ledger:
 
     @property
     def spent(self) -> float:
-        return MAX_QUERIES - self.left
+        return self._total - self.left
+
+    def grant(self, units: float) -> None:
+        """`units` more for this search (THE RETREAT RAY), on top of what is
+        left (never below 0). Not a charge: the pacer sees only what the new
+        units are spent on."""
+        base = max(self._left, 0.0)
+        self._total += base - self._left + float(units)
+        self._left = base + float(units)
 
     def read_cost(self, ids) -> float:
         """What one rule_clearances read of these rules is charged."""
@@ -725,6 +756,54 @@ def _search(shield, state: State, speed: float, climb: float, up_t: float,
                     j += 1
             return plan
     return None
+
+
+def _away_heading(shield, state: State, ledger: "_Ledger"):
+    """THE RETREAT RAY's direction: the horizontal unit vector in which the
+    room to the nearest hard enforced keep-out zone in force over the
+    aircraft's altitude grows fastest at `state`, by central differences
+    1 m either side (four reads, charged to `ledger`), with the ids of the
+    zones read. None where there is no such zone or no direction is better
+    than another."""
+    ids = sorted(r["id"] for r in ledger.rows
+                 if r["type"] in _ZONE_TYPES and _binding_row(r))
+    if not ids:
+        return None
+
+    def room(dx: float, dy: float):
+        ledger.left -= ledger.read_cost(ids)
+        got = shield.rule_clearances(
+            State(x=state.x + dx, y=state.y + dy, up=state.up, yaw_deg=state.yaw_deg), ids)
+        hs = [c.h for c in got.values()
+              if c.keep_out and c.lo >= 0.0 and c.hi >= 0.0]
+        return min(hs) if hs else None
+
+    e, w, n, s = room(1.0, 0.0), room(-1.0, 0.0), room(0.0, 1.0), room(0.0, -1.0)
+    if None in (e, w, n, s):
+        return None
+    gx, gy = 0.5 * (e - w), 0.5 * (n - s)
+    g = math.hypot(gx, gy)
+    if g < 1e-6:
+        return None
+    return gx / g, gy / g, tuple(ids)
+
+
+def _retreat(shield, state: State, speed: float, tz: float, ledger: "_Ledger", accept):
+    """THE RETREAT RAY: RETREAT_QUERIES more units, then the points along
+    _away_heading at RADII_M, nearest first, each judged by `accept` (the
+    hold horizon's own test). (plan, zone ids) or (None, ids or ())."""
+    ledger.grant(RETREAT_QUERIES)
+    away = _away_heading(shield, state, ledger)
+    if away is None:
+        return None, ()
+    ux, uy, ids = away
+    for r in RADII_M:
+        if ledger.left <= 0:
+            break
+        got = accept(r, -2, max(r / speed, tz), state.x + r * ux, state.y + r * uy)
+        if got is not None:
+            return got, ids
+    return None, ids
 
 
 def _pose_at(start: State, end: State, tau: float, speed: float, climb: float) -> State:
@@ -1084,7 +1163,9 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
     alone gives - the plan before this change - so no hold is worse than it
     was. The lookahead's own search runs first and keeps its whole budget;
     the longer one gets what it left (candidates it refused are not paid
-    for twice), so a search still costs at most MAX_QUERIES."""
+    for twice), so a search costs at most MAX_QUERIES - plus RETREAT_QUERIES
+    when the longer one ends with its budget spent (THE RETREAT RAY, since
+    2026-11-21)."""
     look = float(shield.lookahead_s)
     if unsafe is None:
         unsafe = shield.hard_violations(shield.state_is_unsafe(state))
@@ -1250,6 +1331,16 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                          accept_held, ledger)
         if better is not None:
             return better
+        if ledger.left <= 0:
+            # THE RETREAT RAY: only where the budget, not the reach, ended
+            # the search.
+            ray, ids = _retreat(shield, state, speed, tz, ledger, accept_held)
+            if ray is not None:
+                return replace(ray, reason=(
+                    f"{ray.reason}; found on the retreat ray away from "
+                    f"{', '.join(ids)} ({RETREAT_QUERIES:g} more units) after "
+                    f"{BUDGET_NOTE} found no point legal for the {span:.1f} s "
+                    f"the Loiter can last"))
         limit = BUDGET_NOTE if ledger.left <= 0 else f"{RADII_M[-1]:g} m"
         return replace(plan, reason=(
             f"{plan.reason}; no point within {limit} stays legal for the "

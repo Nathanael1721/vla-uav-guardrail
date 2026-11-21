@@ -97,14 +97,29 @@ def test_where_nothing_stays_legal_the_lookahead_plan_is_kept():
     """The budget spent before a point legal for the span is found: the plan
     the lookahead alone gives (here: in place), never a worse one."""
     sh = _slow_bar()
+    keep, keep_ray = HP.MAX_QUERIES, HP.RETREAT_QUERIES
+    HP.MAX_QUERIES, HP.RETREAT_QUERIES = 12, 0      # the retreat ray finds nothing
+    try:
+        p = HP.choose_hold_point(sh, HERE, hold_s=30.0)
+    finally:
+        HP.MAX_QUERIES, HP.RETREAT_QUERIES = keep, keep_ray
+    assert (p.kind, p.legal, p.checked_s) == ("in_place", True, 5.0), p
+    assert "the lookahead's plan" in p.reason, p.reason
+
+
+def test_a_spent_budget_moves_along_the_retreat_ray_to_a_point_held_for_the_span():
+    """THE RETREAT RAY (2026-11-21): the same spent budget, the ray's units
+    left in: a point the hold horizon's own test accepts, legal for the span."""
+    sh = _slow_bar()
     keep = HP.MAX_QUERIES
     HP.MAX_QUERIES = 12
     try:
         p = HP.choose_hold_point(sh, HERE, hold_s=30.0)
     finally:
         HP.MAX_QUERIES = keep
-    assert (p.kind, p.legal, p.checked_s) == ("in_place", True, 5.0), p
-    assert "the lookahead's plan" in p.reason, p.reason
+    assert (p.kind, p.legal) == ("moved", True), p
+    assert "retreat ray" in p.reason, p.reason
+    assert _legal_through(sh, p, 30.0), p
 
 
 def test_a_world_that_cannot_change_plans_exactly_as_before():
