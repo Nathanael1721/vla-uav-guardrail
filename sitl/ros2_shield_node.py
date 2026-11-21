@@ -2828,6 +2828,9 @@ if HAVE_ROS:
             self._in_tick = False
             self.gc_pacer = GcPacer(pace=getattr(args, "gc_pacing", "on") == "on")
             self.hot = None             # guardrail.api.FlightHotApply, if served
+            # The audit log exists from here, empty until a record (since
+            # 2026-11-21): an episode the Shield never repaired still bundles
+            # its shield_audit.jsonl, 0 records (WP4-04).
             self.audit = AuditLogger(out / AUDIT_FILE, self.policy,
                                      episode_id=str(self.rec.episode_id))
 
