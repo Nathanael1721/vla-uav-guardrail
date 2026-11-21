@@ -157,7 +157,9 @@ ONE FILE PER EPISODE ("Python module; rotated per mission", Outputs table).
 2026-11-02); `rotate(episode_id)` starts the next one.
 The plain constructor still APPENDS to the path it is given, because the rails
 pair it with guardrail/replay.py's EpisodeRecord, which moves a stale audit
-file aside before the logger opens it.
+file aside before the logger opens it. Since 2026-11-21 it also creates the
+file (empty) when it is absent, so an episode with no record still has its
+shield_audit.jsonl: 0 records, not a missing bundle name.
 """
 from __future__ import annotations
 
@@ -583,6 +585,18 @@ class AuditLogger:
         those win over both forms.
 
         `fresh=True` truncates the file (a new episode); the default appends.
+
+        Either way the file EXISTS from construction, i.e. from mission start
+        (since 2026-11-21, WP4-04). Until then only `fresh=True` created it,
+        and every rail builds its logger with the default (append, after
+        EpisodeRecord moved a stale log aside), so an episode in which the
+        Shield repaired nothing wrote no shield_audit.jsonl at all, and its
+        bundle lacked one of the grant's six names ("not written: the run
+        folder has no shield_audit.jsonl"). The append path now opens the file
+        in append mode and closes it: created empty when absent, an existing
+        (resumed) log left byte for byte as it was. An empty file reads as 0
+        records everywhere (`read_audit`, guardrail.replay._jsonl,
+        tools/replay_at_revision).
         """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -592,6 +606,9 @@ class AuditLogger:
         self._n = 0
         if fresh:
             self.path.write_text("", encoding="utf-8")
+        else:
+            with self.path.open("a", encoding="utf-8"):
+                pass
 
     @classmethod
     def in_memory(cls, policy: "str | object", *,

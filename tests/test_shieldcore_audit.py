@@ -593,6 +593,55 @@ def test_upgrading_keeps_every_stored_value():
         assert isinstance(up["repair_results"], list)
 
 
+def test_a_zero_repair_episode_still_has_its_audit_file_from_mission_start():
+    """WP4-04 (2026-11-21): every flown bundle holds the grant's six names.
+    The rails build AuditLogger with the default (append) right after
+    EpisodeRecord moved a stale log aside, and until today only fresh=True
+    created the file, so an episode the Shield never repaired wrote no
+    shield_audit.jsonl and its bundle said "not written". Now the file
+    exists, empty, from construction; an existing (resumed) log is left byte
+    for byte; and every reader takes the empty file as 0 records, not as an
+    error and not as "not written". Fails before: no file."""
+    import shutil
+    sys.path.insert(0, str(ROOT / "tools"))
+    import replay_at_revision as RA
+    from guardrail import harness_service as H
+    from guardrail import replay as R
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        run = tmp / "run"
+        al = AuditLogger(run / AUDIT_FILE, "h", episode_id="1")
+        p = run / AUDIT_FILE
+        assert p.is_file() and p.read_bytes() == b"", "no audit file at mission start"
+        assert al.records_written == 0
+        assert audit_path(run) == p and read_audit(p) == []
+        # A record in, then the logger built again (a resumed episode): appended
+        # to, not truncated.
+        sh = Shield(load_policy(DEMO))
+        d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
+        al.log(1, d)
+        before = p.read_bytes()
+        assert before.count(b"\n") == 1, before
+        AuditLogger(p, "h", episode_id="1")
+        assert p.read_bytes() == before, "the default constructor truncated a log"
+        # fresh=True still truncates (a new episode).
+        AuditLogger(p, "h", episode_id="2", fresh=True)
+        assert p.read_bytes() == b""
+        # Readers: 0 records.
+        assert R._jsonl(p.read_bytes()) == []
+        assert R._audit_member({R.EPISODE + AUDIT_FILE: b""}) == (AUDIT_FILE, b"")
+        assert RA._jsonl_bytes(p.read_bytes()) == []
+        data, src = RA.read_run_file(run, AUDIT_FILE)
+        assert data == b"" and src == AUDIT_FILE
+        ep = tmp / "bundle"
+        ep.mkdir()
+        files, _ = H.rail_bag_and_audit(run, ep)
+        assert files[AUDIT_FILE].startswith("written"), files[AUDIT_FILE]
+        assert (ep / AUDIT_FILE).read_bytes() == b""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def regenerate_fixtures() -> Path:
     lines = []
     for run, nums in LEGACY_SOURCES:

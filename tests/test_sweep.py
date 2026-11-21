@@ -4529,8 +4529,9 @@ def _rail_dirs() -> set:
 
 
 def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
-    """--profile gazebo_functional --backend sitl --sitl-dry-run: the eight
-    smoke cells as missions on the Gazebo rail - "gzsweep_" tags, PHYSICS=
+    """--profile gazebo_functional --backend sitl --sitl-dry-run: the 41
+    cells x 3 seeds (since 2026-11-21; eight cells x 1 seed before) as
+    missions on the Gazebo rail, none refused - "gzsweep_" tags, PHYSICS=
     gazebo in the environment, the run folder and replay bundle each will
     leave, the grant's episode name as a label that names no file - and the
     wall-time estimate from the caps in wall seconds; nothing launched
@@ -4555,16 +4556,19 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
         S.sitl_available, S.subprocess.run = saved
     out = buf.getvalue()
     assert rc == 0 and _rail_dirs() == before, (rc, _rail_dirs() - before)
-    assert "8 mission(s) to fly, 0 refused" in out, out[:400]
+    assert "123 episode(s), 123 mission(s) to fly, 0 refused" in out, out[:400]
     assert "FUNCTIONAL, NOT KPI-GRADE" in out
-    assert out.count("env        PHYSICS=gazebo") == 8 and "SITL_SPEEDUP" not in out
+    assert out.count("env        PHYSICS=gazebo") == 123 and "SITL_SPEEDUP" not in out
     for cell in ("nfz-head-on", "nfz-head-on-control", "speed-cap", "altitude-floor-recovery",
-                 "corridor-along", "time-window-switch-event"):
-        assert f"FLY  gzsweep_{cell}--seed1001  {cell}  seed=1001" in out, cell
-        assert re.search(rf"grant name episode-\S+Z--{re.escape(cell)}--seed1001  \(the "
-                         rf"episode bundle, written after the flight\)\n", out), cell
-        assert (f"run folder demo/out/gzsweep_{cell}--seed1001  (replay demo/out/gzsweep_"
-                f"{cell}--seed1001/gzsweep_{cell}--seed1001.replay.tar.gz)") in out, cell
+                 "corridor-along", "time-window-switch-event", "failsafe-rtl-blocked",
+                 "standoff-wedge", "altitude-recovery-depth@start_up=9.5",
+                 "corridor-drift-angles@ask_mps=8,drift_deg=0"):
+        for s in (1001, 1002, 1003):
+            assert f"FLY  gzsweep_{cell}--seed{s}  {cell}  seed={s}" in out, (cell, s)
+            assert re.search(rf"grant name episode-\S+Z--{re.escape(cell)}--seed{s}  \(the "
+                             rf"episode bundle, written after the flight\)\n", out), cell
+            assert (f"run folder demo/out/gzsweep_{cell}--seed{s}  (replay demo/out/gzsweep_"
+                    f"{cell}--seed{s}/gzsweep_{cell}--seed{s}.replay.tar.gz)") in out, cell
     assert "wsl bash sitl/run_ros2_demo.sh off '' --tag gzsweep_nfz-head-on-control" in out
     assert "grant names: " + S.GRANT_EPISODE_NAME_NOTE in out
     # since 2026-11-18 the rail writes the episode's bundle under that name
@@ -4575,7 +4579,8 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
     # as they are, plus the overhead per mission.
     plan = S.sitl_plan(S.expand(LIBRARY, prof)[0], DEFAULTS, "gazebo")
     caps = sum(p["rail_max_s"] for p in plan if p["fly"])
-    est = (caps + S.RAIL_MISSION_OVERHEAD_S * 8) / 60
+    assert len(plan) == 123 and all(p["fly"] for p in plan)
+    est = (caps + S.RAIL_MISSION_OVERHEAD_S * 123) / 60
     assert (f"estimate: at most {est:.0f} min wall ({caps / 60:.1f} min of flight caps, "
             in out), out[-400:]
     assert "an estimate, not a measurement" in out and "caps at x" not in out
@@ -4622,6 +4627,41 @@ def test_the_gazebo_rail_refuses_what_it_cannot_fly_and_the_sitl_plan_is_unchang
             assert p["cmd"] == [c.replace(sitl[pid]["tag"], p["tag"])
                                 for c in sitl[pid]["cmd"]], pid
             assert p["grant_episode_name"] == sitl[pid]["grant_episode_name"]
+
+
+def test_the_gazebo_profile_is_every_family_the_rail_admits_at_three_seeds():
+    """WP4-11a (2026-11-21): the profile was eight cells x 1 seed. Now its
+    families are exactly those of the library (every family a profile with
+    `families: all` flies, at every swept cell) with at least one cell the
+    Gazebo plan flies (neither rail_refusal nor gazebo_refusal refuses it),
+    at seeds 1001-1003; each of its cells is a smoke cell (the smoke
+    profile's sweep_overrides); and none of its 123 missions is refused.
+    Fails before: 8 families, seed 1001 only."""
+    from guardrail.scenario_spec import Profile, load_profile
+    prof = load_profile(GAZEBO_PROFILE)
+    assert list(prof.seeds) == [1001, 1002, 1003]
+    every = yaml.safe_load(GAZEBO_PROFILE.read_text(encoding="utf-8"))
+    every.update(families="all", sweep_overrides={}, expected_cells=[1, 100000])
+    eps_all, _ = S.expand(LIBRARY, Profile.model_validate(every))
+    admitted = {ep.cell.scenario_id
+                for ep, p in zip(eps_all, S.sitl_plan(eps_all, DEFAULTS, "gazebo"))
+                if p["fly"]}
+    assert set(prof.families) == admitted, (sorted(set(prof.families) - admitted),
+                                            sorted(admitted - set(prof.families)))
+    eps, info = S.expand(LIBRARY, prof)
+    assert info["cells"] == 41 and info["cells_within_expected"], info["cells"]
+    assert len(eps) == 123 and not info["duplicate_cells"], info["duplicate_cells"]
+    plan = S.sitl_plan(eps, DEFAULTS, "gazebo")
+    assert all(p["fly"] for p in plan), [(p["id"], p["refused"]) for p in plan
+                                         if not p["fly"]]
+    smoke_eps, _ = S.expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles"
+                                                  / "smoke.yaml"))
+    smoke_cells = {ep.episode_id for ep in smoke_eps}
+    assert {ep.episode_id for ep in eps} <= smoke_cells
+    # Every refused family is refused at every cell and seed, saying why.
+    for ep, p in zip(eps_all, S.sitl_plan(eps_all, DEFAULTS, "gazebo")):
+        if ep.cell.scenario_id not in admitted:
+            assert not p["fly"] and p["refused"], p
 
 
 def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
@@ -4803,22 +4843,27 @@ def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
             doc = json.loads(out.read_text(encoding="utf-8"))
     finally:
         S.run_sitl = saved
-    assert rc in (0, 1) and calls == [("gzsweep_speed-cap--seed1001",
+    # Three seeds since 2026-11-21: one mission per seed.
+    seeds = (1001, 1002, 1003)
+    assert rc in (0, 1) and calls == [(f"gzsweep_speed-cap--seed{s}",
                                        {"physics": "gazebo", "sim_speedup": 1.0,
                                         "rail_battery": False,
-                                        "extra_args": None})], calls
+                                        "extra_args": None}) for s in seeds], calls
     assert doc["_not_kpi_grade"] == S.GAZEBO_FUNCTIONAL_WHY
     assert doc["_scope"]["kpi_bearing_this_run"] is False
     assert doc["_scope"]["rail"]["physics"] == "gazebo"
     assert doc["_scope"]["rail"]["functional_only"] is True
-    (ep,) = [r for r in doc["results"] if r["id"] == "speed-cap"]
-    assert ep["run"] == "demo/out/gzsweep_speed-cap--seed1001" and ep["functional_only"]
-    assert re.fullmatch(r"episode-\S+Z--speed-cap--seed1001", ep["grant_episode_name"]), ep
-    assert ep["grant_episode_name_note"] == S.GRANT_EPISODE_NAME_NOTE
-    assert "the grant's six file names" in ep["grant_episode_name_note"]
-    assert ep["replay_bundle"] == ("demo/out/gzsweep_speed-cap--seed1001/"
-                                   "gzsweep_speed-cap--seed1001.replay.tar.gz")
-    assert "episode_bundle_name" not in ep
+    eps = sorted((r for r in doc["results"] if r["id"] == "speed-cap"),
+                 key=lambda r: r["seed"])
+    assert [r["seed"] for r in eps] == list(seeds), eps
+    for s, ep in zip(seeds, eps):
+        assert ep["run"] == f"demo/out/gzsweep_speed-cap--seed{s}" and ep["functional_only"]
+        assert re.fullmatch(rf"episode-\S+Z--speed-cap--seed{s}", ep["grant_episode_name"]), ep
+        assert ep["grant_episode_name_note"] == S.GRANT_EPISODE_NAME_NOTE
+        assert "the grant's six file names" in ep["grant_episode_name_note"]
+        assert ep["replay_bundle"] == (f"demo/out/gzsweep_speed-cap--seed{s}/"
+                                       f"gzsweep_speed-cap--seed{s}.replay.tar.gz")
+        assert "episode_bundle_name" not in ep
     with contextlib.redirect_stdout(io.StringIO()):
         assert _sweep(["--profile", "gazebo_functional", "--only", "speed-cap"]) == 2
         assert _sweep(["--profile", "gazebo_functional", "--backend", "hil",

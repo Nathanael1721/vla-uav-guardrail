@@ -1,6 +1,6 @@
-# Gazebo functional profile: a small functional sweep on the Gazebo Harmonic rail.
+# Gazebo functional profile: a functional sweep on the Gazebo Harmonic rail.
 #
-# WHY THIS PROFILE EXISTS (2026-11-17, contract item WP4-04)
+# WHY THIS PROFILE EXISTS (2026-11-17, contract item WP4-04; widened 2026-11-21)
 #
 # Grant, Stress Testing: "Where it runs (Gazebo Harmonic for functional
 # sweeps, Project AirSim for perception stress)", and "Test scheduling":
@@ -8,17 +8,18 @@
 # The Gazebo rail first flew end to end on 2026-11-02 (ARCH-16:
 # sitl/run_ros2_demo.sh with PHYSICS=gazebo, Gazebo's physics behind SITL's
 # JSON backend, the stub pilot through the ROS 2 Shield node and MAVROS 2).
-# No sweep had run on it. This profile is the first one: a handful of smoke
-# cells, one seed, flown one mission per cell by
+# No sweep had run on it. This profile was the first one: eight smoke cells,
+# one seed (2026-11-17). Since 2026-11-21 (WP4-04 / WP4-11a) it is every
+# family the rail admits, three seeds, flown one mission per cell and seed by
 #
 #   python experiments/sweep_scenarios.py --profile gazebo_functional --backend sitl
 #
 # (`--sitl-dry-run` lists every mission, its tag, environment, command and
 # run folder, with nothing flown or written; it needs neither WSL nor
 # Gazebo). It also prints the grant's per-episode name
-# (`episode-<UTC>--<cell>--seed<n>`) beside each mission as a label: the
-# rail writes no file of that name (its bundle is the run folder's
-# <tag>.replay.tar.gz), so WP4-11's bundle naming stays open.
+# (`episode-<UTC>--<cell>--seed<n>`) beside each mission: since 2026-11-18
+# the rail writes each flown episode's bundle under that name, with the
+# grant's six file names.
 #
 # WHAT IT IS NOT
 #
@@ -36,13 +37,25 @@
 #
 # THE CELLS
 #
-# One family per row of the Safety Shield's test matrix the rail can fly
-# without the simulator's stressors: a static zone head-on with its Shield-off
-# control, the speed cap, the altitude floor, a corridor, a zone moving into
-# the path, a time-window switch and a fail-safe (RTL) cell. Cells that need
-# SITL's SIM_* stressors (wind, GPS dropout) are refused on this rail
-# (sweep_scenarios.gazebo_refusal): SITL's wind does not act on a vehicle
-# whose dynamics Gazebo computes. Arms are off (`paraphrase_k: 0`,
+# Every family of the library that the rail admits (2026-11-21): each family
+# with a cell that neither sweep_scenarios.rail_refusal (the SITL rail's
+# limits) nor sweep_scenarios.gazebo_refusal refuses, at the smoke profile's
+# cells (experiments/profiles/smoke.yaml's sweep_overrides, copied below for
+# the families that have them), less the cells the rail refuses: the 30 m
+# start of altitude-recovery-depth (at or above the GeoFence's ceiling) and
+# corridor-drift-angles' -60 deg drift (a start yaw off north with no target).
+# 38 families, 41 cells (high-speed-near-edge, near-edge-at-12mps and
+# time-window-opens-on-vehicle keep the smoke's two cells each), three seeds:
+# 123 missions, none refused.
+#
+# Not flown, every cell refused on this rail (sweep_scenarios.sitl_plan on
+# physics "gazebo" says why for each): cells that need SITL's SIM_* stressors (gps-dropout,
+# wind-within-authority, wind-beyond-authority; SITL's wind does not act on a
+# vehicle whose dynamics Gazebo computes), the target-less cells whose start
+# yaw is off north (three-simultaneous-violations), and what the SITL rail
+# cannot fly on either physics (gps-noise-within-margin,
+# gps-noise-beyond-margin, wind-gusts, failsafe-low-battery,
+# nonfinite-action, standoff-reclassified). Arms are off (`paraphrase_k: 0`,
 # `prefix_ab: false`): the rails fly the canonical arm only.
 #
 # SPEED
@@ -57,29 +70,98 @@
 # manifest's sim_speedup is the one the autopilot reports.
 
 profile: gazebo_functional
-cadence: on demand (functional rail shakedown)
-grant_scope: "functional sweeps on Gazebo Harmonic (a handful of smoke cells x 1 seed)"
+cadence: on demand (functional rail sweep)
+grant_scope: "functional sweeps on Gazebo Harmonic (every family the rail admits, 41 cells x 3 seeds)"
 grant_sim_speedup: "> 1.0 allowed for the broad sweep (functional rail only); flown at 1.0: the Shield node runs on wall time"
 grant_kpi_bearing: false
 rail_physics: gazebo
 rail_sim_speedup: 1.0
 library: experiments/scenarios.yaml
-seeds: [1001]
+seeds: [1001, 1002, 1003]
 samples_per_family: 1
 paraphrase_k: 0
 prefix_ab: false
 families:
   - nfz-head-on
   - nfz-head-on-control
-  - speed-cap
+  - rail-mission-stub-vla
   - altitude-floor-recovery
+  - altitude-ceiling-hold
+  - altitude-recovery-depth
+  - speed-cap
   - corridor-along
+  - corridor-drift-out
+  - corridor-drift-angles
+  - corridor-curfew-in-hours
+  - corridor-curfew-out-of-hours
+  - standoff-approach
+  - standoff-wedge
+  - standoff-approach-angles
+  - dyn-nfz-spawn-ahead
+  - dyn-nfz-spawn-on-top
   - dyn-nfz-translate
+  - dyn-nfz-rotate-step
+  - dyn-nfz-rotate-spin
+  - time-window-closes-mid-run
+  - time-window-opens-on-vehicle
+  - time-window-opens-on-sideways-pilot
+  - time-window-opens-ahead
   - time-window-switch-event
+  - rule-deactivated-mid-run
+  - rule-activated-mid-run
+  - radius-scaling-grow
+  - radius-scaling-grow-deep
+  - radius-scaling-shrink
+  - corridor-swap-shifted
+  - corridor-swap-narrowed
   - failsafe-rtl-zone
-expected_cells: [8, 8]
+  - failsafe-land-zone
+  - failsafe-loiter-timeout
+  - failsafe-rtl-blocked
+  - high-speed-near-edge
+  - near-edge-at-12mps
+expected_cells: [41, 41]
+# The smoke profile's cells, and the two pins that leave out a refused cell
+# (altitude-recovery-depth's 30 m, corridor-drift-angles' -60 deg).
 sweep_overrides:
+  altitude-recovery-depth:
+    start_up: [9.5]
+  corridor-drift-angles:
+    drift_deg: [0]
+    ask_mps: [8]
+  standoff-approach-angles:
+    offset_m: [12]
+    subject_class: [pedestrian]
+  dyn-nfz-spawn-ahead:
+    vehicle_speed_mps: [4]
+    ahead_m: [12]
+  dyn-nfz-spawn-on-top:
+    size_m: [40]
   dyn-nfz-translate:
     zone_mps: [2]
+  dyn-nfz-rotate-spin:
+    deg_per_s: [3]
+  time-window-closes-mid-run:
+    clock: ["2026-09-07T17:29:50"]
+    vehicle_speed_mps: [4]
+  time-window-opens-on-vehicle:
+    clock: ["2026-09-07T07:29:58"]
+  time-window-opens-ahead:
+    clock: ["2026-09-07T07:29:52"]
+  rule-activated-mid-run:
+    at: [2.0]
+  radius-scaling-grow:
+    factor: [3.3]
+  radius-scaling-shrink:
+    factor: [0.5]
+  corridor-swap-narrowed:
+    ask_mps: [2]
   failsafe-rtl-zone:
     ahead_m: [12]
+  high-speed-near-edge:
+    pass_y: [23.2]
+    ask_mps: [20]
+    edge_deg: [0, 90]
+  near-edge-at-12mps:
+    pass_y: [41.1]
+    ask_mps: [12, 20]
