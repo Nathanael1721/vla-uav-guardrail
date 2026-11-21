@@ -40,6 +40,24 @@ the chain logs its `Repair` records into. The reference implementation
 (kuanting-vla-uav-guardrail/.../safety_shield/repair.py) made the same
 extension, with `state` and `cfg` as extra positional arguments.
 
+THE FRAME (WP3-04, since 2026-11-21). The grant: "Action input frame: body
+frame (vx, vy, vz, yaw_rate) ... keeps repair operators acting on the same
+frame the VLA emits in." `action` and the attempt's `action` are the BODY-
+frame Action4D (vx forward, vy right, vz_up up, yaw_rate rad/s) at the
+tick's heading, `ctx.heading_deg`. The rules are world geometry, so an
+operator whose geometry is the world's turns the action with the
+interface's rotation pair: `ctx.to_world` (frames.from_body) in,
+`ctx.to_body` (frames.to_body) out - HookOperator around each Shield
+`_repair_*` call, PathRepair around its detour, as the reference's
+operators do (`body_to_enu` ... `enu_to_body`). The Shield's chain and the
+first-feasible loop keep the action in the world frame for their re-checks
+(`_check`) and convert once each way per operator call. The pair is
+lossless on its own results (RepairContext), so the default chain's
+decisions did not change. Until 2026-11-21 the operators were handed the
+world action and the Shield turned once around the whole stack
+(Shield.filter_body); an operator registered before then that read the
+action as North / East now reads forward / right (the same at heading 0).
+
 An operator written to the grant's signature exactly - `repair(action,
 violation, ir)`, no `ctx`, no `categories` - is accepted too: `register`
 wraps it (`GrantOperator`; it then covers every category, and a change it
@@ -59,6 +77,8 @@ THE OPERATORS
     CorridorProjection   Shield._repair_corridor           CorridorReturn CorridorAltitudeFix
     LateralProjection    Shield._repair_geofence           GeofenceEscape GeofenceSlide
     PathRepair           a body-frame detour waypoint      PathRepair      (default on since 2026-11-17)
+
+Every one takes and hands back the body-frame action (THE FRAME above).
 
 In the audit record (version 4, 2026-11-02) `repair_attempts` lists these
 operators flat, in the order they ran, as the grant's example does, and
@@ -100,12 +120,12 @@ from __future__ import annotations
 
 import inspect
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
 from shapely.geometry import LineString, Polygon
 
-from .frames import to_body
+from .frames import from_body, to_body
 from .geometry import boundary_depth, edge_distance, enters_interior, ring_contains
 from .ir import coarse_ring
 from .models import Action4D, State
@@ -116,6 +136,16 @@ from .models import Action4D, State
 RESULTS = ("ok", "skip", "fail", "fallback", "relaxed")
 
 
+def _same_values(a: tuple, b: tuple) -> bool:
+    """Channel by channel equal, a NaN equal to a NaN (so a non-finite action
+    the interface made is still recognised as its own)."""
+    return all(x == y or (x != x and y != y) for x, y in zip(a, b))
+
+
+def _channels(a: Action4D) -> tuple:
+    return (a.vx, a.vy, a.vz_up, a.yaw_rate)
+
+
 @dataclass
 class RepairContext:
     """What an operator may read, beyond the grant's (action, violation, ir).
@@ -124,7 +154,31 @@ class RepairContext:
     that acts appends to it (that is how the decision's `repairs` is built).
     `open_violations` are the violations open at the start of the pass, as
     the monitor last saw them (`open_label` says when: "on the raw action" or
-    "after pass k"); they only feed the reason given for a skip."""
+    "after pass k"); they only feed the reason given for a skip.
+
+    THE FRAME (WP3-04, since 2026-11-21). The action an operator is handed
+    and the one it hands back are in the BODY frame the VLA emits in (an
+    Action4D with vx forward, vy right, vz_up up, yaw_rate rad/s) at
+    `heading_deg`, the tick's heading (the decision state's yaw_deg: 0 =
+    North, clockwise positive). `raw` stays the Shield's WORLD-frame raw
+    action (North / East / up), as the monitor and the decision's records
+    read it; `raw_body` is it in the body frame. `to_world` and `to_body`
+    are the operator interface's one rotation pair (frames.from_body /
+    frames.to_body at `heading_deg`): an operator whose geometry is world
+    geometry (every one wrapping a Shield `_repair_*` method, and
+    PathRepair) turns the body action into the world frame with
+    `to_world`, computes, and hands back `to_body` of its result, as the
+    grant's reference operators do (`body_to_enu` ... `enu_to_body`).
+
+    The pair is LOSSLESS on what it made: `to_body` remembers each body
+    action it builds (in `frame_memo`, by identity and value), and
+    `to_world` of that same, unmodified body action returns the world action
+    it was made from, not a re-rotation of it, which at a heading that is
+    not a whole number of quarter turns could differ in the last bits. A
+    body action an operator builds itself is rotated (`from_body`). So the
+    default chain's decisions are the world-frame chain's bit for bit
+    (tests/test_shieldcore_repair.py compares them with the old chain at
+    random headings) while every operator speaks the body frame."""
     shield: Any
     state: State
     repairs: list
@@ -133,13 +187,51 @@ class RepairContext:
     open_violations: tuple = ()
     open_label: str = "on the raw action"
     pass_no: int = 0
+    heading_deg: float | None = None
+    # id(body) -> (body, world, body's channels); id(world) -> body. Shared by
+    # the copies `dataclasses.replace` makes (first-feasible's trials).
+    frame_memo: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def __post_init__(self):
+        if self.heading_deg is None:
+            self.heading_deg = float(getattr(self.state, "yaw_deg", 0.0) or 0.0)
+
+    def to_body(self, world: Action4D) -> Action4D:
+        """`world` as the body-frame Action4D at the tick's heading."""
+        memo = self.frame_memo
+        hit = memo.get(("w", id(world)))
+        if (hit is not None and hit[0] is world and _same_values(_channels(world), hit[2])
+                and _same_values(_channels(hit[1]), hit[3])):
+            return hit[1]
+        fwd, right, up, yaw_rate = to_body(world, self.heading_deg)
+        body = Action4D.model_construct(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+        vals = _channels(body)
+        memo[("b", id(body))] = (body, world, vals)
+        memo[("w", id(world))] = (world, body, _channels(world), vals)
+        return body
+
+    def to_world(self, body: Action4D) -> Action4D:
+        """A body-frame action at the tick's heading in the world frame: the
+        world action `to_body` made it from when it is one of `to_body`'s,
+        unchanged; `frames.from_body` otherwise."""
+        hit = self.frame_memo.get(("b", id(body)))
+        if hit is not None and hit[0] is body and _same_values(_channels(body), hit[2]):
+            return hit[1]
+        return from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, self.heading_deg)
+
+    @property
+    def raw_body(self) -> Action4D:
+        """The raw action in the body frame at the tick's heading."""
+        return self.to_body(self.raw)
 
 
 @dataclass
 class RepairAttempt:
     """One operator, one call. `action` is the action it handed on (unchanged
-    on a skip), `repairs` the Repair records it logged, `iterations` the pass
-    it ran in (0 = before the iterated loop, 1..3 inside it)."""
+    on a skip), in the BODY frame at the tick's heading (since 2026-11-21,
+    WP3-04; `RepairContext.to_world` reads it in the world frame),
+    `repairs` the Repair records it logged, `iterations` the pass it ran in
+    (0 = before the iterated loop, 1..3 inside it)."""
     operator: str
     result: str
     action: Action4D
@@ -162,6 +254,10 @@ class RepairAttempt:
 
 @runtime_checkable
 class RepairOperator(Protocol):
+    """`repair` takes and returns the BODY-frame action (vx forward, vy
+    right, vz_up up, yaw_rate rad/s) at `ctx.heading_deg` (WP3-04, since
+    2026-11-21): the frame the VLA emits in. World geometry goes through
+    `ctx.to_world` / `ctx.to_body`."""
     name: str
     categories: tuple
 
@@ -176,7 +272,16 @@ class HookOperator:
     Shield subclass is honoured. It is "ok" when it logged a Repair or changed
     the action, "skip" otherwise, with the reason: the rule class is not in
     force (or cannot act: no map, no subject), no violation of its class was
-    open, or one was and it changed nothing."""
+    open, or one was and it changed nothing.
+
+    Body in, body out (WP3-04, since 2026-11-21): the action handed in is
+    the body-frame one at the tick's heading (`ctx.heading_deg`); the
+    Shield's `_repair_*` method computes in the world frame its rules are
+    written in, so the call is wrapped in the interface's rotation pair,
+    `ctx.to_world` before it and `ctx.to_body` after it (frames.from_body /
+    frames.to_body). A skip hands back the method's own return in the body
+    frame: the body action it was given, the same object, when the method
+    returned the action it was handed."""
 
     def __init__(self, name: str, hook: str, categories: tuple, *,
                  takes_state: bool = True):
@@ -191,13 +296,17 @@ class HookOperator:
     def repair(self, action, violation, ir, *, ctx: RepairContext) -> RepairAttempt:
         n0 = len(ctx.repairs)
         fn = getattr(ctx.shield, self.hook)
-        out = (fn(ctx.state, action, ctx.repairs) if self.takes_state
-               else fn(action, ctx.repairs))
+        world = ctx.to_world(action)
+        out = (fn(ctx.state, world, ctx.repairs) if self.takes_state
+               else fn(world, ctx.repairs))
         new = tuple(ctx.repairs[n0:])
-        if new or out != action:
-            return RepairAttempt(self.name, "ok", out,
+        if new or out != world:
+            return RepairAttempt(self.name, "ok", ctx.to_body(out),
                                  "; ".join(r.detail for r in new), new, ctx.pass_no)
-        return RepairAttempt(self.name, "skip", out, self.skip_reason(ctx), (),
+        # The method's own return, as it always was (equal to what it was
+        # handed, possibly another object, a signed zero apart): when it is
+        # the action handed in, that is the body action itself.
+        return RepairAttempt(self.name, "skip", ctx.to_body(out), self.skip_reason(ctx), (),
                              ctx.pass_no)
 
     def inert(self, sh) -> str | None:
@@ -383,10 +492,17 @@ class PathRepair:
         return f"PathRepair(chain_categories={self.chain_categories!r})"
 
     def repair(self, action, violation, ir, *, ctx: RepairContext) -> RepairAttempt:
+        """Body in, body out (WP3-04, since 2026-11-21): `action` is the
+        body-frame action at `ctx.heading_deg`. The detour's geometry is the
+        world's (the rings, the subject, the aircraft's position), so the
+        action is turned into the world frame (`ctx.to_world`), the detour
+        built there, and handed back through `ctx.to_body`; a skip hands back
+        `action` itself."""
         sh, st, raw = ctx.shield, ctx.state, ctx.raw
+        body_in, action = action, ctx.to_world(action)
 
         def skip(why: str) -> RepairAttempt:
-            return RepairAttempt(self.name, "skip", action, why, (), ctx.pass_no)
+            return RepairAttempt(self.name, "skip", body_in, why, (), ctx.pass_no)
 
         spd = math.hypot(raw.vx, raw.vy)
         if spd < self.MIN_SPEED_MPS:
@@ -454,7 +570,7 @@ class PathRepair:
                 if sh._check(st, cand):
                     continue                          # never trade one breach for another
                 fwd, right, _, _ = to_body(Action4D(vx=dx, vy=dy, vz_up=0.0, yaw_rate=0.0),
-                                           st.yaw_deg)
+                                           ctx.heading_deg)
                 detail = (f"{v.rule_id}: detour waypoint {fwd:+.1f} m forward, "
                           f"{right:+.1f} m right (body frame) at {speed:.2f} m/s; "
                           f"the action handed in kept {max(0.0, prog) / spd:.0%} of the "
@@ -469,7 +585,8 @@ class PathRepair:
                              magnitude_m=self.depth_magnitude(depth, gone),
                              axis="lateral", recovery=False)
                 ctx.repairs.append(rep)
-                return RepairAttempt(self.name, "ok", cand, detail, (rep,), ctx.pass_no)
+                return RepairAttempt(self.name, "ok", ctx.to_body(cand), detail, (rep,),
+                                     ctx.pass_no)
         if deeper or hugs:
             return skip(f"{deeper} detour waypoint(s) would take the aircraft where the "
                         f"request's forecast goes deeper into the ring, {hugs} would run "
@@ -647,7 +764,13 @@ class GrantOperator:
     when it says "ok" and changed the action but logged no Repair, one is
     logged in its name (detail: its reason), so the decision's `repairs`
     and the audit record never fly a change nobody owns. An operator that
-    takes `ctx` but declares no categories is wrapped too, and gets `ctx`."""
+    takes `ctx` but declares no categories is wrapped too, and gets `ctx`.
+
+    The action it is handed, and the one it returns, are in the BODY frame
+    the VLA emits in, at the tick's heading (WP3-04, since 2026-11-21: the
+    grant's "repair operators acting on the same frame the VLA emits in").
+    Until then a registered operator was handed the world-frame action
+    (North / East); at heading 0 the two are the same action."""
 
     def __init__(self, op, *, pass_ctx: bool = False):
         self.op = op

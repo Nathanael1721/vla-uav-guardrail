@@ -7500,8 +7500,16 @@ class Shield:
         grant's own reference implementation does the same per operator
         (kuanting-vla-uav-guardrail safety_shield/repair.py: each operator
         takes and returns the body action and turns it into the IR's ENU
-        plane for its geometry, `body_to_enu` ... `enu_to_body`); this turns
-        once around the stack. Pinned per rule family in tests/
+        plane for its geometry, `body_to_enu` ... `enu_to_body`), and since
+        2026-11-21 (WP3-04) so do ours: the monitor and the records read the
+        world action this method makes, and each repair operator is handed
+        the BODY action at the state's heading and hands one back
+        (`_repair_chain`, repair.RepairContext.to_body / to_world; a
+        `_repair_*` method it wraps computes in the world frame between the
+        two). Until then the operators were handed the world action and the
+        only turn was this method's, once around the whole stack; the
+        decisions are the same bit for bit (the interface's rotation pair is
+        lossless on its own results). Pinned per rule family in tests/
         test_frame_boundary.py (zone, envelopes, corridor, stand-off and its
         overhead recovery, PathRepair's stand-off detour at any heading; the
         clearance rule on a raster map and its direction search, whose
@@ -7539,7 +7547,8 @@ class Shield:
         `_opening_imposed` and the inside rule's escape point at the opening
         (`t_open`); the own-velocity "stop after one control period"
         clearance forecast (`_clear_steps` with a measured velocity); the
-        repair operators' own geometry (they steer in the world frame).
+        repair operators' own geometry (body in, body out at their
+        interface; their geometry steers in the world frame).
         Outside this call the Shield's queries (state_is_unsafe,
         recheck_commanded, advise, handback_unsafe) are straight.
 
@@ -7778,12 +7787,23 @@ class Shield:
 
         The default mode runs the operators of guardrail/repair.py in the
         order this method always called the `_repair_*` methods it wraps,
-        with the same arguments, so its decisions are the old chain's."""
+        with the same arguments, so its decisions are the old chain's.
+
+        THE FRAME AT THE OPERATOR INTERFACE (WP3-04, since 2026-11-21). The
+        chain carries the action in the world frame its re-checks (`_check`)
+        read; each operator is handed it in the BODY frame at the decision
+        state's heading (`ctx.to_body`) and what it hands back is read in the
+        world frame again (`ctx.to_world`): one conversion each way per
+        operator call. Lossless on the pair's own results
+        (repair.RepairContext), so the default chain decides as it did when
+        the operators were handed the world action, bit for bit. Until
+        2026-11-21 the operators were handed the world action and the only
+        rotation was `filter_body`'s, around the whole stack."""
         prev, tick.skip = tick.skip, frozenset(skip)
         tick.chain_runs += 1
         ops, ir = self.repair_operators, tick.rt.ir
         ctx = _repair.RepairContext(self, state, repairs, raw, tuple(raw_violations),
-                                    tuple(raw_violations))
+                                    tuple(raw_violations), heading_deg=state.yaw_deg)
         passes: list = []
         tick.ledger.append((tick.chain_runs, passes))
         try:
@@ -7792,9 +7812,9 @@ class Shield:
             else:
                 fixed, pre = raw, []
                 for name in _repair.CHAIN_PRE:
-                    att = ops[name].repair(fixed, None, ir, ctx=ctx)
+                    att = ops[name].repair(ctx.to_body(fixed), None, ir, ctx=ctx)
                     pre.append(att)
-                    fixed = att.action
+                    fixed = ctx.to_world(att.action)
                 passes.append((0, pre))
                 # Clearance and geofence are COUPLED: the anti-stall tangent can
                 # leave the clearance ring violated and the clearance push can aim
@@ -7809,9 +7829,9 @@ class Shield:
                     ctx.pass_no = k
                     atts = []
                     for name in loop:
-                        att = ops[name].repair(fixed, None, ir, ctx=ctx)
+                        att = ops[name].repair(ctx.to_body(fixed), None, ir, ctx=ctx)
                         atts.append(att)
-                        fixed = att.action
+                        fixed = ctx.to_world(att.action)
                     passes.append((k, atts))
                     still = self._check(state, fixed)
                     if not still:
@@ -7856,15 +7876,19 @@ class Shield:
                 op = ops[name]
                 if target.category not in op.categories:
                     atts.append(_repair.RepairAttempt(
-                        name, "skip", fixed,
+                        name, "skip", ctx.to_body(fixed),
                         f"not a {target.category} violation ({target.rule_id})", (), k))
                     continue
                 trial = list(ctx.repairs)
-                att = op.repair(fixed, target, ir, ctx=replace(ctx, repairs=trial))
+                # Body frame at the operator interface, world frame for the
+                # re-check (WP3-04, since 2026-11-21; _repair_chain).
+                att = op.repair(ctx.to_body(fixed), target, ir,
+                                ctx=replace(ctx, repairs=trial))
                 if att.result != "ok":
                     atts.append(att)
                     continue
-                after = self._check(state, att.action)
+                att_world = ctx.to_world(att.action)
+                after = self._check(state, att_world)
                 if any(v.rule_id == target.rule_id for v in after):
                     atts.append(replace(att, result="fail",
                                         reason=f"{target.rule_id} still violated: {att.reason}"))
@@ -7894,7 +7918,7 @@ class Shield:
                         f"repairs, as the FSM reads it: {att.reason}")))
                     continue
                 ctx.repairs[:] = trial
-                fixed, open_ = att.action, after
+                fixed, open_ = att_world, after
                 ctx.open_violations, ctx.open_label = tuple(after), f"after pass {k}"
                 atts.append(att)
                 won = True

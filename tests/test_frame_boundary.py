@@ -40,7 +40,9 @@ Pinned here:
   * ONE CROSSING. Parsed from the source of every module outside tests/ and
     the reference checkout: `from_body` / `to_local_ned` are referenced only
     by guardrail/frames.py, by the Shield's projection (filter_body,
-    advise_body, check_body) and by one named record helper;
+    advise_body, check_body; and the repair-operator interface inside it,
+    guardrail/repair.py RepairContext.to_world, since 2026-11-21) and by
+    one named record helper;
     `body_to_local_ned` - the adapter function - is called only by the
     listed adapters, and each of them calls it; no velocity command,
     Action4D or vx / vy assignment uses cos(E) and sin(E) of one angle E,
@@ -556,6 +558,10 @@ ROTATION_USERS = {
     # The Shield's projection: its internal world frame between from_body
     # and to_body (body in, body out at its interface).
     "guardrail/shield.py": {"filter_body", "advise_body", "check_body"},
+    # The repair-operator interface inside the projection (WP3-04, since
+    # 2026-11-21): operators take and return the body action, and
+    # RepairContext.to_world turns it into the projection's world frame.
+    "guardrail/repair.py": {"to_world"},
     # A RECORD: the step log's world_action and its offline replay; the
     # flight hands the Shield the body action.
     "demo/real_vla_demo.py": {"openvla_raw_to_action"},

@@ -8,6 +8,10 @@ Run:  python tests/test_shieldcore_repair.py
     result and, for a skip, the reason;
   * an operator written to the grant's three-argument signature registers,
     and `repair_order` puts a registered name to work;
+  * every operator is handed, and hands back, the BODY-frame action at the
+    tick's heading (WP3-04, since 2026-11-21), in chain and first-feasible
+    mode, PathRepair included; a grant-signature operator acts on the body
+    frame; the interface's rotation pair is lossless on its own results;
   * repair_mode="first_feasible" applies the grant's selection: the
     earliest violation is the target, an operator whose repair is over
     theta (2.0 m lateral, 0.5 m vertical; summed per axis with the tick's
@@ -408,6 +412,164 @@ def test_a_subclass_override_of_a_repair_hook_is_the_one_that_runs():
     d = Spy(load_policy(ROOT / "policies" / "demo_policy.yaml")).filter(
         State(x=0, y=15, up=4), Action4D(vx=1.3))
     assert calls and [r.operator for r in d.repairs] == ["GeofenceSlide"]
+
+
+# ------------------------------------------- the frame at the operator interface
+#
+# WP3-04 (since 2026-11-21): every repair operator is handed the BODY-frame
+# action at the tick's heading and hands one back (guardrail/repair.py, THE
+# FRAME). Each test below fails at 71aabb3, where the operators were handed
+# the world action and RepairContext had no heading.
+
+class _Spy:
+    """Wraps a registered operator and records what it was handed and what
+    it handed back, with the context's heading."""
+
+    def __init__(self, op, log):
+        self.op, self.log = op, log
+        self.name, self.categories = op.name, op.categories
+
+    def repair(self, action, violation, ir, *, ctx):
+        att = self.op.repair(action, violation, ir, ctx=ctx)
+        self.log.append((self.name, action, att, ctx.heading_deg))
+        return att
+
+
+def _spied(sh):
+    log = []
+    sh.repair_operators = {k: _Spy(op, log) for k, op in sh.repair_operators.items()}
+    return sh, log
+
+
+def _close(a, b, tol=1e-12):
+    return all(abs(x - y) <= tol for x, y in zip((a.vx, a.vy, a.vz_up, a.yaw_rate),
+                                                 (b.vx, b.vy, b.vz_up, b.yaw_rate)))
+
+
+def test_every_operator_is_handed_and_hands_back_the_body_action():
+    """demo_policy's square ahead of the nose at 37.3 degrees, the action in
+    the body frame (filter_body): the first operator is handed the body
+    action that came in (to the round trip's ulp, not the world action,
+    which is 0.8 m/s away), every operator is told the tick's heading, and
+    the body action the last one hands back is the Shield's emitted body
+    action, to the bit. The `_repair_*` method LateralProjection wraps is
+    handed the WORLD action (HookOperator turns it, frames.from_body)."""
+    from guardrail.frames import from_body
+    seen = []
+
+    class Hooked(Shield):
+        def _repair_geofence(self, state, a, repairs):
+            seen.append(a)
+            return super()._repair_geofence(state, a, repairs)
+    h = 37.3
+    w_in = Action4D(vx=1.3)
+    st = State(x=0, y=15, up=4, yaw_deg=h)
+    from guardrail.frames import body_action
+    body = body_action(w_in, h)
+    sh, log = _spied(Hooked(load_policy(ROOT / "policies" / "demo_policy.yaml"),
+                            escalation=False))
+    d, emitted_body = sh.filter_body(st, body)
+    assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
+    assert log and all(hd == h for _, _, _, hd in log), log
+    first_in = log[0][1]
+    assert _close(first_in, body) and not _close(first_in, w_in, 0.5), (first_in, body)
+    assert log[-1][2].action == emitted_body, (log[-1][2].action, emitted_body)
+    lat = [(a, att) for n, a, att, _ in log if n == "LateralProjection"]
+    assert lat and lat[0][1].result == "ok"
+    assert seen and _close(seen[0], from_body(lat[0][0].vx, lat[0][0].vy, lat[0][0].vz_up,
+                                              lat[0][0].yaw_rate, h)), seen
+    assert not _close(seen[0], lat[0][0], 0.5)          # the hook's is the world one
+
+
+class _NoSideways:
+    """An operator written to the grant's signature: it removes the
+    sideways (body right) speed of the action it is handed."""
+    name = "NoSideways"
+
+    def repair(self, action, violation, ir):
+        return Action4D(vx=action.vx, vy=0.0, vz_up=action.vz_up, yaw_rate=action.yaw_rate)
+
+
+def test_a_grant_signature_operator_acts_in_the_body_frame():
+    """Over the 3 m/s cap at 30 degrees, forward 3 and right 2 m/s in the
+    body frame: KinematicClamp scales it to 3 m/s, then NoSideways (in the
+    loop via repair_order) removes the right component OF THE BODY ACTION,
+    so the emitted body action has no right component and keeps the clamped
+    forward speed. Handed the world action (71aabb3) it removed the East
+    component instead, and at 30 degrees the emitted body action kept
+    0.66 m/s of sideways speed (measured at 71aabb3)."""
+    pol = Policy.model_validate({"policy_id": "k", "constraints": [
+        {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 3.0,
+         "climb_rate_max_mps": 3.0, "yaw_rate_max_dps": 90.0}]})
+    R.register(_NoSideways())
+    try:
+        for h in (30.0, 90.0, -123.4):
+            sh = Shield(pol.model_copy(deep=True), escalation=False,
+                        repair_order=("NoSideways", "KinematicClamp"))
+            d, eb = sh.filter_body(State(x=0, y=0, up=10, yaw_deg=h),
+                                   Action4D(vx=3.0, vy=2.0))
+            assert [r.operator for r in d.repairs][:2] == ["SpeedClamp", "NoSideways"], d.repairs
+            k = 3.0 / math.hypot(3.0, 2.0)
+            assert abs(eb.vy) <= 1e-12 and abs(eb.vx - 3.0 * k) <= 1e-12, (h, eb)
+    finally:
+        del R.REGISTRY["NoSideways"]
+
+
+def test_path_repair_and_first_feasible_hand_back_the_body_action():
+    """PathRepair's zone detour at 30 degrees (the scene of
+    test_path_repair_detours_round_a_zone_projection_slides_along, turned
+    by nothing but the heading): the attempt's action is the emitted action
+    in the BODY frame at 30 degrees, not the world one. First-feasible mode
+    hands LateralProjection the body action and its win is the emitted
+    action in the body frame too."""
+    from guardrail.frames import body_action
+    h = 30.0
+    st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=h), Action4D(vx=2.0)
+    sh, log = _spied(_zones(Shield(_square_policy(), escalation=False, path_repair=True)))
+    d = sh.filter(st, a)
+    pr = [att for n, _, att, _ in log if n == "PathRepair" and att.result == "ok"]
+    assert pr and [r.operator for r in d.repairs if r.operator == "PathRepair"], d.repairs
+    want = body_action(d.emitted, h)
+    assert pr[0].action == want and not _close(pr[0].action, d.emitted, 0.5), (pr, d.emitted)
+    sh, log = _spied(Shield(load_policy(ROOT / "policies" / "demo_policy.yaml"),
+                            escalation=False, repair_mode="first_feasible",
+                            path_repair=False))
+    st2 = State(x=0, y=15, up=4, yaw_deg=h)
+    d = sh.filter(st2, Action4D(vx=1.3))
+    lat = [(x, att) for n, x, att, _ in log if n == "LateralProjection" and att.result == "ok"]
+    assert lat, log
+    assert _close(lat[0][0], body_action(Action4D(vx=1.3), h)), lat[0][0]
+    assert lat[0][1].action == body_action(d.emitted, h), (lat[0][1].action, d.emitted)
+
+
+def test_the_interface_rotation_pair_is_lossless_on_its_own_results():
+    """RepairContext.to_body / to_world at a heading whose rotation is not
+    exact: a body action the pair made converts back to the very world
+    action it was made from (a non-finite channel included, which a
+    rotation would spread to both horizontal channels); an equal body
+    action an operator built itself, or the pair's own one changed in place,
+    is rotated (frames.from_body). The heading defaults to the state's."""
+    from guardrail.frames import from_body
+    sh = Shield(load_policy(ROOT / "policies" / "demo_policy.yaml"))
+    ctx = R.RepairContext(sh, State(x=0, y=0, up=5, yaw_deg=37.3), [], Action4D(vx=1.0))
+    assert ctx.heading_deg == 37.3
+    rng = random.Random(20261121)
+    n_lossy = 0
+    for _ in range(200):
+        w = Action4D(vx=rng.uniform(-8, 8), vy=rng.uniform(-8, 8), vz_up=1.0, yaw_rate=0.2)
+        b = ctx.to_body(w)
+        assert ctx.to_world(b) is w and ctx.to_body(w) is b
+        own = Action4D(vx=b.vx, vy=b.vy, vz_up=b.vz_up, yaw_rate=b.yaw_rate)
+        back = ctx.to_world(own)
+        assert back is not w and _close(back, w, 1e-13)
+        n_lossy += (back.vx, back.vy) != (w.vx, w.vy)
+    assert n_lossy > 20, n_lossy        # the plain round trip is NOT exact here
+    w = Action4D(vx=float("nan"), vy=1.0)
+    assert ctx.to_world(ctx.to_body(w)) is w
+    b = ctx.to_body(Action4D(vx=2.0, vy=0.5))
+    b.vx = 0.0
+    assert ctx.to_world(b) == from_body(0.0, b.vy, b.vz_up, b.yaw_rate, 37.3)
+    assert ctx.raw_body == ctx.to_body(ctx.raw)
 
 
 # ------------------------------------------------------------- first feasible
