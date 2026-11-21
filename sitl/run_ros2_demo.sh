@@ -88,6 +88,12 @@
 #                      (not --dev-yaml). Mission Planner is not on the GCS
 #                      endpoint for such a run.
 #   ADAPTER_ARGS=""    extra arguments for sitl/mavlink_adapter_node.py
+#   VLAGUARD_ADAPTER_HOLD (2026-11-21, WP3-07; unset by default): read by
+#                      the adapter itself, not by this script. =loiter flies
+#                      the FSM's Loiter as SET_MODE LOITER with the throttle
+#                      centred while it is requested (the adapter's THE
+#                      LITERAL LOITER); experiments/sweep_scenarios.py
+#                      --rail-hold loiter sets it through WSLENV.
 #   STYLE=guided       mission = the grant's pre-planned waypoint mission
 #                      (WP3-09): sitl/ros2_mission_node.py, the mission-style
 #                      Shield, takes the Shield's place (the extra args are

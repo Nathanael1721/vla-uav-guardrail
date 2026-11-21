@@ -3800,6 +3800,208 @@ def test_the_hil_transport_hands_the_chain_requirement_to_the_mission_container(
 
 
 # --------------------------------------------------------------------------- #
+# the literal LOITER (--rail-hold loiter, 2026-11-21, WP3-07)
+# --------------------------------------------------------------------------- #
+
+def test_the_literal_loiter_hands_the_node_and_the_adapter_their_settings():
+    """--rail-hold loiter adds the Shield node's --hold-flight=brake
+    --hold-mode=LOITER --literal-loiter=on (each declared by the node, read
+    by it as meant, ignored by the VLA stub) and puts VLAGUARD_ADAPTER_HOLD=
+    loiter in the adapter's environment - the variable the adapter reads, to
+    LOITER with the throttle centred. The hil mission container gets it with
+    `-e`; with no literal LOITER nothing is added anywhere, and the command
+    is the one every campaign flew. Other values of the flags are refused."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import mavlink_adapter_node as A
+    import ros2_shield_node as N
+    import ros2_vla_stub_node as V
+    lit = list(S.RAIL_LITERAL_LOITER_ARGS)
+    assert S.rail_extra_args(lit) == lit
+    assert S.rail_extra_args(["--arc-forecast=on"] + lit) == ["--arc-forecast=on"] + lit
+    for bad in (["--hold-flight=guided"], ["--hold-mode=BRAKE"], ["--literal-loiter=yes"],
+                ["--hold-flight=brake", "--hold-flight=brake"], ["--hold-flight", "brake"],
+                ["--hold-points=in_place"]):
+        try:
+            S.rail_extra_args(bad)
+        except S.UnsupportedScenario:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    assert S.RAIL_ADAPTER_HOLD_ENV == A.ADAPTER_HOLD_ENV
+    assert S.rail_adapter_env(None) == {} == S.rail_adapter_env(["--arc-forecast=on"])
+    env = S.rail_adapter_env(lit)
+    assert env == {"VLAGUARD_ADAPTER_HOLD": "loiter"}
+    assert A.adapter_hold_config(None, None, env) == ("LOITER", "centre")
+    ns, rest = N.make_parser().parse_known_args(lit)
+    assert rest == [] and (ns.hold_flight, ns.hold_mode, ns.literal_loiter) == (
+        "brake", "LOITER", "on")
+    assert N.literal_loiter_refusal(ns) is None
+    dflt = N.make_parser().parse_known_args([])[0]
+    assert dflt.literal_loiter == "off" and N.literal_loiter_refusal(dflt) is None
+    alone = N.make_parser().parse_known_args(["--literal-loiter=on"])[0]
+    assert "--hold-flight brake" in N.literal_loiter_refusal(alone)
+    brake = N.make_parser().parse_known_args(["--literal-loiter=on", "--hold-flight=brake"])[0]
+    assert "--hold-mode LOITER" in N.literal_loiter_refusal(brake)
+    in_place = N.make_parser().parse_known_args(
+        ["--literal-loiter=on", "--hold-points=in_place", "--hold-mode=LOITER"])[0]
+    assert N.literal_loiter_refusal(in_place) is None
+    vs, rest_v = V.make_parser().parse_known_args(lit)
+    assert rest_v == lit, "the VLA stub must ignore them, not misread them"
+    # The mission container: `-e` only when asked.
+    sent = []
+
+    class _Done:
+        returncode, stdout, stderr = 0, "ok", ""
+
+    def run(cmd, **kw):
+        sent.append(cmd)
+        return _Done()
+    saved = os.environ.pop("VLAGUARD_REQUIRE_CHAIN", None)
+    try:
+        t = S.SubprocessTransport(S.HilConfig(), run=run)
+        t.run_mission(["--x"], "tag", "on", 5.0)
+        plain = sent[-1][-1]
+        assert "run --rm -T mission mission --shield on --tag tag --x" in plain, plain
+        t.run_mission(["--x"], "tag", "on", 5.0, env=None)
+        assert sent[-1][-1] == plain, "env=None adds nothing"
+        t.run_mission(["--x"], "tag", "on", 5.0, env=env)
+        assert ("run --rm -T -e VLAGUARD_ADAPTER_HOLD=loiter mission mission --shield on "
+                "--tag tag --x") in sent[-1][-1], sent[-1][-1]
+    finally:
+        if saved is not None:
+            os.environ["VLAGUARD_REQUIRE_CHAIN"] = saved
+
+
+def test_a_literal_loiter_run_that_fails_its_check_is_never_counted():
+    """Fail closed (literal_loiter_problems): asked, a run must carry the
+    node's literal_loiter check and it must not say fail - a node older than
+    the flag records none; "not_judged" (no Loiter held long enough) is
+    scored but not counted; a check recorded unasked is another arm's run."""
+    lit = list(S.RAIL_LITERAL_LOITER_ARGS)
+    ok = {"literal_loiter": {"enabled": True, "verdict": "pass", "counted": True,
+                             "loiter_spells": 1, "loiter_held_s": 4.2,
+                             "rules": {"alt_tol_m": 1.0}}}
+    assert S.literal_loiter_problems(ok, lit) == []
+    assert S.literal_loiter_record(ok) == {"verdict": "pass", "counted": True,
+                                           "loiter_spells": 1, "loiter_held_s": 4.2,
+                                           "alt_tol_m": 1.0}
+    unjudged = {"literal_loiter": {"enabled": True, "verdict": "not_judged",
+                                   "counted": False}}
+    assert S.literal_loiter_problems(unjudged, lit) == []
+    assert S.literal_loiter_record(unjudged)["counted"] is False
+    failed = {"literal_loiter": {"enabled": True, "verdict": "fail", "counted": False,
+                                 "problems": ["Loiter 1 at 3.00 s: altitude wandered 4.40 m"]}}
+    got = S.literal_loiter_problems(failed, lit)
+    assert len(got) == 1 and "altitude wandered" in got[0], got
+    assert "older node" in S.literal_loiter_problems({}, lit)[0]
+    assert S.literal_loiter_problems({"literal_loiter": {"enabled": True, "verdict": "?"}},
+                                     lit)
+    assert S.literal_loiter_problems({}, None) == [] == S.literal_loiter_problems({}, [])
+    assert "no --literal-loiter=on" in S.literal_loiter_problems(ok, None)[0]
+    src = (ROOT / "experiments" / "sweep_scenarios.py").read_text(encoding="utf-8")
+    assert src.count("literal_loiter_problems(metrics, extra_args)") == 2, \
+        "both rails (run_sitl, run_hil) must check it"
+
+
+def test_rail_hold_loiter_is_refused_off_the_rails():
+    """--rail-hold chooses what a flown campaign flies: refused on the
+    headless backend and on a re-score; guided (the default) adds nothing."""
+    assert S.main(["--rail-hold", "loiter", "--only", "nfz-head-on"]) == 2
+    with tempfile.TemporaryDirectory() as td:
+        assert S.main(["--rail-hold", "loiter", "--rescore-rail", str(Path(td) / "x*"),
+                       "--out", str(Path(td) / "o.json")]) == 2
+    try:
+        S.main(["--rail-hold", "brake", "--only", "nfz-head-on"])
+    except SystemExit as e:
+        assert e.code == 2
+    else:
+        raise AssertionError("--rail-hold brake was accepted")
+    assert S.RAIL_HOLDS == ("guided", "loiter") and S.DEFAULT_RAIL_HOLD == "guided"
+
+
+class _LoiterRig(_FakeRig):
+    """_FakeRig whose mission takes the container's environment and writes the
+    literal_loiter check the Shield node would (`verdict`; None writes none,
+    as a node older than the flag)."""
+    verdict = "pass"
+
+    def run_mission(self, args, tag, shield, timeout_s, env=None):
+        self.calls.append(("env", tag, dict(env or {})))
+        rc, out = super().run_mission(args, tag, shield, timeout_s)
+        p = self.remote / "demo" / "out" / tag / "metrics.json"
+        m = json.loads(p.read_text(encoding="utf-8"))
+        if self.verdict is not None and "--literal-loiter=on" in args:
+            m["literal_loiter"] = {
+                "enabled": True, "verdict": self.verdict, "counted": self.verdict == "pass",
+                "problems": (["Loiter 1 at 5.00 s: heartbeat ['BRAKE'] while the FSM held"]
+                             if self.verdict == "fail" else []),
+                "loiter_spells": 1, "loiter_held_s": 6.0, "rules": {"alt_tol_m": 1.0}}
+        p.write_text(json.dumps(m), encoding="utf-8")
+        return rc, out
+
+
+def _loiter_campaign(verdict, extra, tagname):
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        cfg = td / "hil.json"
+        cfg.write_text(json.dumps({"store": str(td / "store"),
+                                   "bundles_dir": str(_signed_like_bundles(td))}),
+                       encoding="utf-8")
+        rigs = []
+        mk = S.make_hil_transport
+
+        def make(c):
+            rig = _LoiterRig(c)
+            rig.verdict = verdict
+            rigs.append(rig)
+            return rig
+        S.make_hil_transport = make
+        try:
+            _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
+                    "--out", str(td / "s.json"), "--no-bundles", "--only", "speed-cap",
+                    "--hil-campaign", tagname] + extra)
+        finally:
+            S.make_hil_transport = mk
+            for d in (ROOT / S.CAMPAIGN_DIR).glob(f"{tagname}*"):
+                shutil.rmtree(d, ignore_errors=True)
+        doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
+        score = None
+        sp = td / "store" / f"{tagname}_001_speed-cap" / S.SCENARIO_SCORE
+        if sp.is_file():
+            score = json.loads(sp.read_text(encoding="utf-8"))
+    (r,) = [r for r in doc["results"] if r["id"] == "speed-cap"]
+    return r, doc, rigs[0], score
+
+
+def test_a_literal_loiter_hil_campaign_flies_the_adapter_loiter_and_checks_it():
+    """--backend hil --rail-hold loiter on a fake rig: the mission container
+    gets VLAGUARD_ADAPTER_HOLD=loiter and the node its three flags; a run
+    whose check passes is scored as any other, with the check in its
+    scenario_score.json and the campaign's record saying rail_hold loiter; one
+    whose check fails, or that carries none (an older node), is an ERROR,
+    never scored. Without the option the mission is launched as before."""
+    r, doc, rig, score = _loiter_campaign("pass", ["--rail-hold", "loiter"], "tst7a")
+    assert r["status"] == "pass", r
+    (env,) = [c for c in rig.calls if c[0] == "env"]
+    assert env[2] == {"VLAGUARD_ADAPTER_HOLD": "loiter"}, env
+    (run,) = [c for c in rig.calls if c[0] == "run_mission"]
+    assert all(a in run[3] for a in S.RAIL_LITERAL_LOITER_ARGS), run[3]
+    assert score["literal_loiter"]["verdict"] == "pass" and score["literal_loiter"]["counted"]
+    assert doc["_scope"]["hil"]["rail_hold"] == "loiter" == doc["_scope"]["rail_hold"]
+    r, _, _, _ = _loiter_campaign("fail", ["--rail-hold", "loiter"], "tst7b")
+    assert r["status"] == "error" and "not a literal-LOITER flight" in r["error"], r
+    assert "BRAKE" in r["error"], r
+    r, _, _, _ = _loiter_campaign(None, ["--rail-hold", "loiter"], "tst7c")
+    assert r["status"] == "error" and "older node" in r["error"], r
+    r, _, rig, score = _loiter_campaign("pass", [], "tst7d")
+    assert r["status"] == "pass", r
+    (env,) = [c for c in rig.calls if c[0] == "env"]
+    assert env[2] == {}, "no literal LOITER asked: nothing in the container's environment"
+    (run,) = [c for c in rig.calls if c[0] == "run_mission"]
+    assert not any(a in run[3] for a in S.RAIL_LITERAL_LOITER_ARGS), run[3]
+    assert "literal_loiter" not in score
+
+
+# --------------------------------------------------------------------------- #
 # the rail scorer (2026-11-07): the rule readings from the rail's own log, the
 # scenario's window, the proposed rail gates, the offline re-score
 # --------------------------------------------------------------------------- #

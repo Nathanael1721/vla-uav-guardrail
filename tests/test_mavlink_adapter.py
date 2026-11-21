@@ -1069,7 +1069,7 @@ def _adapter_module():
     for mod, ns in (("geometry_msgs.msg", ("PoseStamped",)),
                     ("std_msgs.msg", ("Float32MultiArray", "String")),
                     ("mavros_msgs.msg", ("HomePosition", "PositionTarget", "Waypoint",
-                                         "WaypointList"))):
+                                         "WaypointList", "Mavlink", "RCIn", "State"))):
         for n in ns:
             setattr(m[mod], n, type(n, (_Msg,), {}))
     pt = m["mavros_msgs.msg"].PositionTarget
@@ -1222,6 +1222,64 @@ def test_the_adapter_judges_a_fence_clear_by_its_read_back():
     assert not ups[3]["success"] and ups[3]["read_back"] == 1, ups[3]
 
 
+def _ch3(msg) -> int:
+    """Channel 3 of an RC_CHANNELS_OVERRIDE the node published (payload64)."""
+    import struct
+    raw = b"".join(struct.pack("<Q", w) for w in msg.payload64)
+    return struct.unpack("<H", raw[4:6])[0]
+
+
+def test_the_adapter_node_centres_the_throttle_around_its_loiter_request():
+    """The node on a stand-in ROS stack (THE LITERAL LOITER, 2026-11-21). By
+    default nothing changes: LOITER is sent as BRAKE and nothing is published
+    on MAVROS's router sink. With --hold-mode LOITER --loiter-throttle centre
+    the FSM's LOITER goes out as LOITER, the override (channel 3 = 1500, system
+    255) is published BEFORE the mode request is made, the timer re-sends it,
+    and the next request for anything else hands channel 3 back (0) and
+    reports what the autopilot read; shutting down releases a hold left on."""
+    M = _adapter_module()
+    plain = M.MavlinkAdapterNode(None)
+    plain._on_mode_request(_Msg(data="LOITER"))
+    assert plain.throttle is None and M.TOPIC_MAVLINK_SINK not in plain.pubs
+    st = _statuses(M, plain)
+    assert [s["kind"] for s in st] == ["mode_request"] and st[0]["autopilot_mode"] == "BRAKE"
+    try:
+        M.MavlinkAdapterNode(None, hold_mode="BRAKE", loiter_throttle="centre")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a centred throttle was accepted with BRAKE")
+
+    node = M.MavlinkAdapterNode(None, hold_mode="LOITER", loiter_throttle="centre")
+    cfg = _statuses(M, node)[0]
+    assert cfg["kind"] == "hold_config" and cfg["loiter_throttle"] == "centre", cfg
+    sink = node.pubs[M.TOPIC_MAVLINK_SINK].sent
+    assert sink == []
+    node._on_mode_request(_Msg(data="LOITER"))
+    st = _statuses(M, node)
+    assert [s["kind"] for s in st[-2:]] == ["rc_override", "mode_request"], st
+    assert st[-2]["action"] == "hold" and st[-1]["autopilot_mode"] == "LOITER"
+    assert len(sink) == 1 and (sink[0].sysid, sink[0].compid, sink[0].msgid) == (255, 191, 70)
+    assert _ch3(sink[0]) == 1500 and sink[0].checksum == A.rc_override_frame(1500, 0)["checksum"]
+    (beat,) = [t for t in node.timers if t.cb == node.throttle.beat]
+    beat.cb()
+    assert len(sink) == 2 and _ch3(sink[1]) == 1500
+    node._on_rc_in(_Msg(channels=[1500, 1500, 1500, 1500]))
+    node._on_state(_Msg(mode="LOITER"))
+    node._on_mode_request(_Msg(data="GUIDED"))
+    st = _statuses(M, node)
+    rel = [s for s in st if s["kind"] == "rc_override"][-1]
+    assert rel["action"] == "release" and "GUIDED requested" in rel["why"], rel
+    assert rel["rc3_at_pwm"] == 1 and rel["autopilot_reported_loiter"] is True
+    assert [_ch3(m) for m in sink[2:]] == [0] * A.RC_OVERRIDE_RELEASES
+    beat.cb()
+    assert len(sink) == 2 + A.RC_OVERRIDE_RELEASES, "nothing is sent once released"
+    node._on_mode_request(_Msg(data="LOITER"))
+    node.close()
+    assert _ch3(sink[-1]) == 0 and not node.throttle.active
+    assert "the adapter stopped" in _statuses(M, node)[-1]["why"]
+
+
 def test_the_mission_update_flag_defaults_to_the_full_write():
     src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
     main = src[src.index("def main("):]
@@ -1306,6 +1364,205 @@ def test_the_pas_adapter_route_refuses_to_arm_without_one_adapter_and_one_publis
     else:
         raise AssertionError("--setpoint-via adapter was accepted with --link pymavlink")
     assert pn.build_parser().parse_args([]).setpoint_via == "mavros"
+
+
+# --------------------------------------------------------------------------- #
+# THE LITERAL LOITER (2026-11-21, WP3-07)
+# --------------------------------------------------------------------------- #
+
+# pymavlink's bytes for the same frames (pymavlink 2.4, MAVLINK20=1,
+# srcSystem 255, srcComponent 191, seq 7, target 1/1, chan1-8 UINT16_MAX but
+# chan3, chan9-18 0), written down so the test needs no pymavlink.
+PYMAVLINK_RC3_1500 = "fd12000007ffbf460000ffffffffdc05ffffffffffffffffffff01018d5e"
+PYMAVLINK_RC3_RELEASE = "fd12000007ffbf460000ffffffff0000ffffffffffffffffffff010136ac"
+
+
+def test_the_throttle_override_frame_is_the_one_pymavlink_builds():
+    """The adapter builds RC_CHANNELS_OVERRIDE itself (it is published raw on
+    MAVROS's router sink, as the ground station's system id): its bytes, CRC
+    included, must be MAVLink's, or ArduPilot drops every frame and LOITER
+    sinks. Checked against pymavlink's frames, and against pymavlink itself
+    for other sequence numbers when it is installed."""
+    f = A.rc_override_frame(1500, 7)
+    assert f["frame"].hex() == PYMAVLINK_RC3_1500, f["frame"].hex()
+    assert A.rc_override_frame(A.RC_OVERRIDE_RELEASE, 7)["frame"].hex() == PYMAVLINK_RC3_RELEASE
+    assert (f["sysid"], f["compid"], f["msgid"], f["len"]) == (255, 191, 70, 18)
+    assert f["magic"] == 0xFD and f["framing_status"] == 1
+    # payload64 carries exactly the payload, in little-endian 64-bit words
+    import struct
+    raw = b"".join(struct.pack("<Q", w) for w in f["payload64"])[:f["len"]]
+    assert raw == f["frame"][10:10 + f["len"]]
+    assert int.from_bytes(f["frame"][-2:], "little") == f["checksum"]
+    assert A.rc_override_frame(1500, 300)["seq"] == 300 & 0xFF
+    try:
+        import os
+        os.environ.setdefault("MAVLINK20", "1")
+        from pymavlink.dialects.v20 import common as m
+    except Exception:                                     # noqa: BLE001
+        return
+    mav = m.MAVLink(None, srcSystem=255, srcComponent=191)
+    U = A.RC_OVERRIDE_IGNORE
+    for seq, pwm in ((0, 1500), (200, 1500), (255, 0), (12, 1234)):
+        mav.seq = seq
+        want = m.MAVLink_rc_channels_override_message(
+            1, 1, U, U, pwm, U, U, U, U, U, *([0] * 10)).pack(mav)
+        assert A.rc_override_frame(pwm, seq)["frame"] == want, (seq, pwm)
+
+
+def test_the_adapter_flies_brake_unless_the_literal_loiter_is_asked():
+    """Default unchanged: BRAKE, no override. VLAGUARD_ADAPTER_HOLD=loiter
+    (how --rail-hold loiter reaches the adapter on both rails) means LOITER
+    with the throttle centred; the command line wins where it is given; a
+    centred throttle with BRAKE, or an unknown value, is refused - main()
+    exits before ROS starts."""
+    assert A.adapter_hold_config(None, None, {}) == ("BRAKE", "off")
+    assert A.adapter_hold_config(None, None) == ("BRAKE", "off")
+    env = {A.ADAPTER_HOLD_ENV: "loiter"}
+    assert A.adapter_hold_config(None, None, env) == ("LOITER", "centre")
+    assert A.adapter_hold_config(None, None, {A.ADAPTER_HOLD_ENV: " Brake "}) == ("BRAKE", "off")
+    assert A.adapter_hold_config("LOITER", None, {}) == ("LOITER", "off")
+    assert A.adapter_hold_config("LOITER", "off", env) == ("LOITER", "off")
+    for bad in (("BRAKE", "centre", {}), ("BRAKE", None, env), (None, "centre", {}),
+                (None, None, {A.ADAPTER_HOLD_ENV: "sideways"}), ("HOVER", None, {})):
+        try:
+            A.adapter_hold_config(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    ns = A.build_parser().parse_args([])
+    assert (ns.hold_mode, ns.loiter_throttle, ns.rc_sysid) == (None, None, 255)
+    import os
+    saved = os.environ.get(A.ADAPTER_HOLD_ENV)
+    try:
+        os.environ[A.ADAPTER_HOLD_ENV] = "sideways"
+        try:
+            A.main([])
+        except SystemExit as e:
+            assert A.ADAPTER_HOLD_ENV in str(e), e
+        else:
+            raise AssertionError("main() started with an unknown hold")
+    finally:
+        if saved is None:
+            os.environ.pop(A.ADAPTER_HOLD_ENV, None)
+        else:
+            os.environ[A.ADAPTER_HOLD_ENV] = saved
+    assert A.ADAPTER_HOLD_ENV == "VLAGUARD_ADAPTER_HOLD"
+
+
+def _frames_sent():
+    sent = []
+    return sent, sent.append
+
+
+def test_the_throttle_is_held_centred_only_while_loiter_is_requested():
+    """hold() sends channel 3 at 1500 as system 255 at once (before SET_MODE
+    LOITER goes out), beat() re-sends it while held and nothing otherwise;
+    release() hands channel 3 back (0) three times and says how long it was
+    held and what the autopilot read; the autopilot leaving LOITER after it
+    was in it ends the hold, a GUIDED report before it ever got there does
+    not."""
+    sent, send = _frames_sent()
+    th = A.ThrottleStandIn(send)
+    th.beat()
+    assert sent == [] and th.release(1.0, "x") is None, "nothing held, nothing sent"
+    st = th.hold(10.0)
+    assert st["kind"] == "rc_override" and st["action"] == "hold" and st["pwm"] == 1500
+    assert st["sysid"] == 255 and len(sent) == 1
+    assert sent[0]["frame"] == A.rc_override_frame(1500, 0)["frame"]
+    assert th.hold(10.1) is None and len(sent) == 2, "a second LOITER request re-sends"
+    th.beat()
+    th.beat()
+    assert len(sent) == 4 and [f["seq"] for f in sent] == [0, 1, 2, 3]
+    assert th.on_mode("GUIDED", 10.2) is None and th.active, "not in LOITER yet"
+    th.on_rc_in([1500, 1500, 1500, 1500])
+    assert th.on_mode("LOITER", 10.4) is None and th.seen_loiter
+    th.on_rc_in([1500, 1500, 1497, 1500])
+    th.on_rc_in([1500, 1500, 1100])
+    rel = th.on_mode("RTL", 13.0)
+    assert rel["action"] == "release" and "left LOITER for RTL" in rel["why"]
+    assert rel["held_s"] == 3.0 and rel["autopilot_reported_loiter"] is True
+    assert (rel["rc3_reports"], rel["rc3_at_pwm"]) == (3, 2), rel
+    releases = sent[4:]
+    assert len(releases) == A.RC_OVERRIDE_RELEASES
+    assert all(r["frame"][10 + 4:10 + 6] == b"\x00\x00" for r in releases), "ch3 = 0"
+    th.beat()
+    assert len(sent) == 4 + A.RC_OVERRIDE_RELEASES, "released: nothing more is sent"
+    # A new hold, ended by the adapter's own next request.
+    th.hold(20.0)
+    assert th.release(21.5, "GUIDED requested")["held_s"] == 1.5
+    s = th.summary()
+    assert [sp["t_end"] for sp in s["spells"]] == [13.0, 21.5] and s["sysid"] == 255
+
+
+def _rows(spell, before=3, after=2, t0=10.0, dt=0.1):
+    """Shield-node rows around one FSM Loiter: `spell` is [(mode, up), ...]."""
+    rows, t = [], t0 - before * dt
+    for _ in range(before):
+        rows.append({"t": round(t, 3), "fsm_state_after": "Normal", "mode": "GUIDED",
+                     "up": 15.0})
+        t += dt
+    for mode, up in spell:
+        rows.append({"t": round(t, 3), "fsm_state_after": "Loiter", "mode": mode, "up": up})
+        t += dt
+    for _ in range(after):
+        rows.append({"t": round(t, 3), "fsm_state_after": "Normal", "mode": "LOITER",
+                     "up": 15.0})
+        t += dt
+    return rows
+
+
+HOLD = [{"kind": "rc_override", "action": "hold"}]
+
+
+def test_the_literal_loiter_check_passes_only_a_held_loiter():
+    """The post-mission check behind metrics.json literal_loiter: a Loiter the
+    heartbeat confirmed as LOITER that held its altitude passes; one that
+    sank as uncentred LOITER does (1.5 m/s), flew BRAKE (an adapter on its
+    default), was asked and never confirmed, or had no throttle stand-in
+    fails; no Loiter, or too little LOITER to judge, is not judged - and
+    only a pass is counted."""
+    held = [("GUIDED", 15.0)] * 3 + [("LOITER", 15.0 + 0.1 * ((i % 3) - 1))
+                                     for i in range(30)]
+    ok = A.literal_loiter_check(_rows(held), [10.05], HOLD)
+    assert ok["verdict"] == "pass" and ok["counted"] is True, ok
+    assert ok["loiter_spells"] == 1 and abs(ok["loiter_held_s"] - 2.9) < 1e-6, ok
+    assert ok["spells"][0]["alt_dev_max_m"] <= 0.2 + 1e-9 and ok["spells"][0]["asks"] == 1
+    sank = [("GUIDED", 15.0)] * 3 + [("LOITER", 15.0 - 0.15 * i) for i in range(30)]
+    bad = A.literal_loiter_check(_rows(sank), [10.05], HOLD)
+    assert bad["verdict"] == "fail" and not bad["counted"]
+    assert "altitude wandered" in bad["problems"][0], bad
+    brake = [("GUIDED", 15.0)] * 3 + [("BRAKE", 15.0)] * 30
+    bad = A.literal_loiter_check(_rows(brake), [10.05], HOLD)
+    assert bad["verdict"] == "fail" and "['BRAKE']" in bad["problems"][0], bad
+    never = [("GUIDED", 15.0)] * 33
+    bad = A.literal_loiter_check(_rows(never), [10.05], HOLD)
+    assert bad["verdict"] == "fail" and "never reported" in bad["problems"][0], bad
+    bad = A.literal_loiter_check(_rows(held), [10.05], [])
+    assert bad["verdict"] == "fail" and "no throttle stand-in" in bad["problems"][0], bad
+    # Fail closed on a row with no altitude.
+    gap = held[:10] + [("LOITER", None)] + held[11:]
+    assert A.literal_loiter_check(_rows(gap), [10.05], HOLD)["verdict"] == "fail"
+    # Nothing to judge: no Loiter; a request too late in a short Loiter to be
+    # confirmed; LOITER shorter than LITERAL_LOITER_MIN_HELD_S.
+    none = A.literal_loiter_check(_rows([]), [], [])
+    assert none["verdict"] == "not_judged" and none["loiter_spells"] == 0
+    late = A.literal_loiter_check(_rows([("GUIDED", 15.0)] * 10), [10.5], HOLD)
+    assert late["verdict"] == "not_judged", late
+    short = [("GUIDED", 15.0)] * 3 + [("LOITER", 15.0)] * 10
+    assert A.literal_loiter_check(_rows(short), [10.05], HOLD)["verdict"] == "not_judged"
+    # A re-plan: LOITER, a GUIDED transit to a point 2 m up, LOITER again -
+    # each stretch judged from where its LOITER began.
+    replan = ([("GUIDED", 15.0)] * 2 + [("LOITER", 15.0)] * 16
+              + [("GUIDED", 15.0 + 0.4 * i) for i in range(5)] + [("LOITER", 17.0)] * 16)
+    got = A.literal_loiter_check(_rows(replan), [10.05, 12.4], HOLD)
+    assert got["verdict"] == "pass" and abs(got["loiter_held_s"] - 3.0) < 1e-6, got
+    # Over a DEM the row's up is above the ground; the hold is judged on up_home.
+    dem = [dict(r, up=r["up"] + (3.0 if i % 2 else 0.0), up_home=15.0)
+           for i, r in enumerate(_rows(held))]
+    assert A.literal_loiter_check(dem, [10.05], HOLD)["verdict"] == "pass"
+    r = ok["rules"]
+    assert (r["alt_tol_m"], r["min_held_s"]) == (A.LITERAL_LOITER_ALT_TOL_M,
+                                                 A.LITERAL_LOITER_MIN_HELD_S)
 
 
 if __name__ == "__main__":

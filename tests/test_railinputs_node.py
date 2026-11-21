@@ -582,6 +582,47 @@ def test_a_pilot_taking_the_aircraft_out_of_the_fsms_loiter_is_a_takeover():
         [r["setpoint"] for r in node.rows]
 
 
+def test_a_literal_loiter_run_records_its_check_and_no_other_run_does():
+    """--literal-loiter on (2026-11-21, WP3-07): the node keeps when it asked
+    for LOITER and the adapter's rc_override statuses, and writes metrics.json
+    literal_loiter at the end (mavlink_adapter_node.literal_loiter_check) -
+    here half a second of LOITER, too little to judge, never a pass. A run
+    without the option writes no such key; the option without --hold-flight
+    brake is refused before ROS starts."""
+    N, node, clk, out = _build(["--literal-loiter=on", "--hold-flight=brake",
+                                "--hold-mode=LOITER"])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    node._request_mode("LOITER", "test: the FSM's Loiter")
+    node._on_adapter(N.String(data=json.dumps(
+        {"kind": "rc_override", "action": "hold", "channel": 3, "pwm": 1500})))
+    _mode(N, node, "LOITER")
+    assert node.takeover is None
+    _fly(N, node, clk, 5)
+    node._finish("test over")
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    ll = m["literal_loiter"]
+    assert ll["enabled"] is True and ll["loiter_asks"] == 1 and ll["throttle_holds"] == 1, ll
+    assert ll["loiter_spells"] == 1 and 0.0 < ll["loiter_held_s"] < 2.0, ll
+    assert ll["verdict"] == "not_judged" and ll["counted"] is False, ll
+    assert ll["throttle_reports"][0]["pwm"] == 1500
+    assert "adapter_rc_override" in [e["kind"] for e in _events(out)]
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _fly(N, node, clk, 2)
+    node._finish("test over")
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert "literal_loiter" not in m
+    try:
+        N.main(["--policy", str(POLICY), "--dev-yaml", "--literal-loiter=on"])
+    except SystemExit as e:
+        assert "--hold-flight brake" in str(e), e
+    else:
+        raise AssertionError("--literal-loiter on was accepted with the GUIDED hold")
+
+
 def test_takeover_controls_guided_to_rtl_is_one_and_a_requested_mode_is_not():
     N, node, clk, out = _build([])
     node.start_mission()
