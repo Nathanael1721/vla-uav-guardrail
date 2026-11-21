@@ -460,7 +460,9 @@ def test_the_ros_node_hands_the_fsm_the_depth_and_the_caps_the_shield_applied():
     assert "unsafe_depth_m=unsafe_depth" in call, call
     assert "caps=self.shield.applied_caps or False" in call, call
     assert "horizon_s=self.theta_horizon_s" in call, call
-    j = node.index("unsafe_depth = self.shield.unsafe_depth(st, stop_illegal)")
+    # The pose the Shield judged: `seen` is the perceived pose under a GPS-noise
+    # / latency cell and the true one otherwise (2026-11-21, WP3-19).
+    j = node.index("unsafe_depth = self.shield.unsafe_depth(seen, stop_illegal)")
     assert j < i
     assert "shield=self.shield, unsafe_depth=unsafe_depth))" in node
     import sys as _sys

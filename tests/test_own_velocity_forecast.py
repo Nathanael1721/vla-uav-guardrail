@@ -1459,7 +1459,9 @@ def test_the_sitl_rails_give_the_velocity_only_when_asked():
     assert "default=OWN_VELOCITY_DEFAULT" in src and "shield.note_flown(flown)" in src
     # Both age the pipe on their real clock (Shield(pipe_clock=...)).
     rsrc = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert "pipe_clock=lambda: time.time()" in src and "pipe_clock=time.monotonic" in rsrc
+    assert "pipe_clock=lambda: time.time()" in src
+    # The node reads time.monotonic through a PipeRecorder (2026-11-21, WP4-11).
+    assert "PipeRecorder(time.monotonic)" in rsrc and "pipe_clock=self.pipe_rec" in rsrc
     assert rn.velocity_from_enu(SimpleNamespace(x=-3.0, y=1.0, z=0.5)) == (1.0, -3.0, 0.5)
     st = State(x=1.0, y=2.0, up=8.0)
     assert rn.shield_state(st, (1.0, 2.0, 0.0), 0.1, False) is st

@@ -44,17 +44,18 @@
 # the families that have them), less the cells the rail refuses: the 30 m
 # start of altitude-recovery-depth (at or above the GeoFence's ceiling) and
 # corridor-drift-angles' -60 deg drift (a start yaw off north with no target).
-# 38 families, 41 cells (high-speed-near-edge, near-edge-at-12mps and
-# time-window-opens-on-vehicle keep the smoke's two cells each), three seeds:
-# 123 missions, none refused.
+# 40 families, 44 cells (high-speed-near-edge, near-edge-at-12mps,
+# time-window-opens-on-vehicle and gps-noise-within-margin keep the smoke's two
+# cells each), three seeds: 132 missions, none refused. The GPS noise /
+# latency cells fly since 2026-11-21: the ROS 2 Shield node applies them to
+# the pose the Shield is handed (WP3-19), on either physics.
 #
 # Not flown, every cell refused on this rail (sweep_scenarios.sitl_plan on
 # physics "gazebo" says why for each): cells that need SITL's SIM_* stressors (gps-dropout,
 # wind-within-authority, wind-beyond-authority; SITL's wind does not act on a
 # vehicle whose dynamics Gazebo computes), the target-less cells whose start
 # yaw is off north (three-simultaneous-violations), and what the SITL rail
-# cannot fly on either physics (gps-noise-within-margin,
-# gps-noise-beyond-margin, wind-gusts, failsafe-low-battery,
+# cannot fly on either physics (wind-gusts, failsafe-low-battery,
 # nonfinite-action, standoff-reclassified). Arms are off (`paraphrase_k: 0`,
 # `prefix_ab: false`): the rails fly the canonical arm only.
 #
@@ -71,7 +72,7 @@
 
 profile: gazebo_functional
 cadence: on demand (functional rail sweep)
-grant_scope: "functional sweeps on Gazebo Harmonic (every family the rail admits, 41 cells x 3 seeds)"
+grant_scope: "functional sweeps on Gazebo Harmonic (every family the rail admits, 44 cells x 3 seeds)"
 grant_sim_speedup: "> 1.0 allowed for the broad sweep (functional rail only); flown at 1.0: the Shield node runs on wall time"
 grant_kpi_bearing: false
 rail_physics: gazebo
@@ -120,7 +121,9 @@ families:
   - failsafe-rtl-blocked
   - high-speed-near-edge
   - near-edge-at-12mps
-expected_cells: [41, 41]
+  - gps-noise-within-margin
+  - gps-noise-beyond-margin
+expected_cells: [44, 44]
 # The smoke profile's cells, and the two pins that leave out a refused cell
 # (altitude-recovery-depth's 30 m, corridor-drift-angles' -60 deg).
 sweep_overrides:
@@ -165,3 +168,11 @@ sweep_overrides:
   near-edge-at-12mps:
     pass_y: [41.1]
     ask_mps: [12, 20]
+  gps-noise-within-margin:
+    pass_y: [23.6]
+    sigma: [0.3]
+    latency: [0, 2]
+  gps-noise-beyond-margin:
+    pass_y: [23.6]
+    sigma: [2.0]
+    latency: [5]

@@ -4941,9 +4941,9 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
         S.sitl_available, S.subprocess.run = saved
     out = buf.getvalue()
     assert rc == 0 and _rail_dirs() == before, (rc, _rail_dirs() - before)
-    assert "123 episode(s), 123 mission(s) to fly, 0 refused" in out, out[:400]
+    assert "132 episode(s), 132 mission(s) to fly, 0 refused" in out, out[:400]
     assert "FUNCTIONAL, NOT KPI-GRADE" in out
-    assert out.count("env        PHYSICS=gazebo") == 123 and "SITL_SPEEDUP" not in out
+    assert out.count("env        PHYSICS=gazebo") == 132 and "SITL_SPEEDUP" not in out
     for cell in ("nfz-head-on", "nfz-head-on-control", "speed-cap", "altitude-floor-recovery",
                  "corridor-along", "time-window-switch-event", "failsafe-rtl-blocked",
                  "standoff-wedge", "altitude-recovery-depth@start_up=9.5",
@@ -4964,8 +4964,8 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
     # as they are, plus the overhead per mission.
     plan = S.sitl_plan(S.expand(LIBRARY, prof)[0], DEFAULTS, "gazebo")
     caps = sum(p["rail_max_s"] for p in plan if p["fly"])
-    assert len(plan) == 123 and all(p["fly"] for p in plan)
-    est = (caps + S.RAIL_MISSION_OVERHEAD_S * 123) / 60
+    assert len(plan) == 132 and all(p["fly"] for p in plan)
+    est = (caps + S.RAIL_MISSION_OVERHEAD_S * 132) / 60
     assert (f"estimate: at most {est:.0f} min wall ({caps / 60:.1f} min of flight caps, "
             in out), out[-400:]
     assert "an estimate, not a measurement" in out and "caps at x" not in out
@@ -5020,7 +5020,7 @@ def test_the_gazebo_profile_is_every_family_the_rail_admits_at_three_seeds():
     `families: all` flies, at every swept cell) with at least one cell the
     Gazebo plan flies (neither rail_refusal nor gazebo_refusal refuses it),
     at seeds 1001-1003; each of its cells is a smoke cell (the smoke
-    profile's sweep_overrides); and none of its 123 missions is refused.
+    profile's sweep_overrides); and none of its 132 missions (GPS noise in since its rail injection) is refused.
     Fails before: 8 families, seed 1001 only."""
     from guardrail.scenario_spec import Profile, load_profile
     prof = load_profile(GAZEBO_PROFILE)
@@ -5034,8 +5034,8 @@ def test_the_gazebo_profile_is_every_family_the_rail_admits_at_three_seeds():
     assert set(prof.families) == admitted, (sorted(set(prof.families) - admitted),
                                             sorted(admitted - set(prof.families)))
     eps, info = S.expand(LIBRARY, prof)
-    assert info["cells"] == 41 and info["cells_within_expected"], info["cells"]
-    assert len(eps) == 123 and not info["duplicate_cells"], info["duplicate_cells"]
+    assert info["cells"] == 44 and info["cells_within_expected"], info["cells"]
+    assert len(eps) == 132 and not info["duplicate_cells"], info["duplicate_cells"]
     plan = S.sitl_plan(eps, DEFAULTS, "gazebo")
     assert all(p["fly"] for p in plan), [(p["id"], p["refused"]) for p in plan
                                          if not p["fly"]]

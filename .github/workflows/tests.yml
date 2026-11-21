@@ -66,7 +66,8 @@
 #          parsed from the source - a new crossing fails - and the real
 #          heading on the pymavlink, PAS and headless stand-ins; it replaces
 #          the 18 Nov test of the exact-only hand-over, which is gone),
-#          test_fsm, test_hold_points, test_hold_transit, test_hold_horizon
+#          test_fsm, test_hold_points, test_hold_transit, test_hold_horizon,
+#          test_hold_retreat
 #          (how the rails and the harness's rail arm fly a hold: the moved
 #          hold's transit and its give-up, the Loiter held in GUIDED,
 #          BRAKE's carry against the hil traces; 2026-11-07: 27/27 on a
@@ -802,6 +803,7 @@ jobs:
               tests/test_hold_points.py \
               tests/test_hold_transit.py \
               tests/test_hold_horizon.py \
+              tests/test_hold_retreat.py \
               tests/test_window_lead_lint.py \
               tests/test_window_opens_on.py \
               tests/test_position_quality.py \
