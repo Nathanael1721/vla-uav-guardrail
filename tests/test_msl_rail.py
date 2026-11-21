@@ -33,6 +33,15 @@ WHAT IS PINNED
       envelope in MSL (a clean flight is 0, not every tick), and the
       AerialVLA bridge takes --ground as the stub does.
 
+  (e) The goto pilot's terrain feed-forward (2026-11-21, X-11,
+      guardrail/vla_stub.py TerrainFeed): opt-in (without it the law is the
+      71aabb3 one to the bit), the climb tracks the ground within
+      GOTO_CLIMB_MPS; flown on the rail's reading (height above home), the
+      msl-dem-zone-ridge cells end Loiter -> RTL without it and reach the
+      pad with it, no vertical repair, theta unchanged; only a goto cell
+      over a declared ground gets it (headless and --terrain-feed=on on the
+      rails), and the VLA stub refuses a feed it cannot fly.
+
 Byte-identity of every flight without a ground (141 library episodes of the
 profiles smoke, distance_envelope, fsm_edges, grant_example and prefix_ab,
 base 7b0f50c and this branch, both digest sets stored) is
@@ -527,6 +536,235 @@ def test_the_stub_and_the_bundle_builder_take_the_ground():
                               rows[0]["bundle"], "--allow-unverified-bundle"],
                              policy=None)
     assert node.policy.policy_id == "msl-dem-sitl"
+
+
+# ------------------------------------------------------------------ (e)
+# The goto pilot's terrain feed-forward (2026-11-21, X-11). On the sitl /
+# hil rails the msl-dem-zone-ridge goto pilot read its pose's height above
+# HOME and held its target there, level in MSL: over the crest the Shield's
+# AGL-band repair was over the FSM's vertical theta (0.5 m) every tick, so
+# the cell went Brake -> Loiter -> RTL short of its pad. TerrainFeed reads
+# the target as a height above the ground and feeds the ground's rise into
+# the climb; only a goto cell that declares a ground gets it.
+
+def _ridge_cells() -> list:
+    from guardrail.scenario_spec import load_profile
+    eps, _ = expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles" / "msl_dem.yaml"))
+    return [e.cell for e in eps if e.cell.spec.scenario_id == "msl-dem-zone-ridge"]
+
+
+def _old_goto(target, st, speed, approach_accel=None, goal_tol_m=3.0):
+    """guardrail.vla_stub.goto_action as it was at 71aabb3 (before the feed)."""
+    from guardrail.models import Action4D
+    from guardrail.vla_stub import APPROACH_P, GOTO_CLIMB_MPS, sqrt_controller
+    gx, gy, gup = target
+    dx, dy = gx - st.x, gy - st.y
+    d = math.hypot(dx, dy)
+    v = speed
+    if approach_accel is not None:
+        v = min(v, sqrt_controller(d, APPROACH_P, approach_accel, 0.0))
+    vx, vy = (0.0, 0.0) if d < 1e-6 else (v * dx / d, v * dy / d)
+    if d < goal_tol_m:
+        vx = vy = 0.0
+    vz = 0.0
+    if gup is not None:
+        vz = max(-GOTO_CLIMB_MPS, min(GOTO_CLIMB_MPS, float(gup) - st.up))
+    return Action4D(vx=vx, vy=vy, vz_up=vz)
+
+
+def test_the_goto_terrain_feed_is_opt_in_and_tracks_the_ground():
+    from guardrail import vla_stub as VS
+    dem = terrain.load_ground(DEM, CMAC, root=ROOT)
+    rng = random.Random(7)
+    # Without a feed the law is the one it was, to the bit.
+    for _ in range(400):
+        st = State(x=rng.uniform(-80, 80), y=rng.uniform(-20, 220), up=rng.uniform(0, 40))
+        tgt = (rng.uniform(-80, 80), rng.uniform(-20, 220),
+               rng.choice([None, rng.uniform(5, 30)]))
+        acc = rng.choice([None, VS.APPROACH_ACCEL_MPS2])
+        assert VS.goto_action(tgt, st, 3.0, acc) == _old_goto(tgt, st, 3.0, acc)
+        assert VS.GotoPilot(tgt, 3.0, approach_accel=acc).act(st) == _old_goto(tgt, st, 3.0, acc)
+    # With one (up already above the ground): the climb is the ground's rise
+    # one horizon ahead plus the height error, clamped at GOTO_CLIMB_MPS.
+    feed = VS.TerrainFeed(dem)
+    st = State(x=-45.0, y=60.0, up=15.0)                 # on the ridge's west flank
+    a = VS.goto_action((-45.0, 200.0, 15.0), st, 3.0, terrain=feed)
+    rise = (dem.elevation_at(-45.0, 63.0) - dem.elevation_at(-45.0, 60.0)) / 1.0
+    assert rise > 0.5 and abs(a.vz_up - rise) < 1e-9, (a, rise)
+    assert (a.vx, a.vy) == (0.0, 3.0)
+    down = VS.goto_action((-45.0, 200.0, 15.0), State(x=-45.0, y=140.0, up=15.0), 3.0,
+                          terrain=feed)
+    assert down.vz_up < -0.5                             # the east flank falls
+    far = VS.goto_action((-45.0, 200.0, 40.0), st, 3.0, terrain=feed)
+    assert far.vz_up == VS.GOTO_CLIMB_MPS                # inside the envelope
+    # Inside the goal tolerance nothing horizontal, so nothing fed forward.
+    near = VS.goto_action((-45.0, 61.0, 15.0), st, 3.0, terrain=feed)
+    assert (near.vx, near.vy, near.vz_up) == (0.0, 0.0, 0.0)
+    # The rail's reading: a height above HOME at the home's elevation is
+    # converted first, so the same aircraft gets the same command.
+    home = (-45.0, 0.0)
+    g_home = dem.elevation_at(*home)
+    rail = VS.TerrainFeed(dem, home_msl_m=g_home, home_xy=home)
+    st_home = st.model_copy(update={"up": 15.0 + dem.elevation_at(-45.0, 60.0) - g_home})
+    b = VS.goto_action((-45.0, 200.0, 15.0), st_home, 3.0, terrain=rail)
+    assert abs(b.vz_up - a.vz_up) < 1e-9 and abs(rail.agl(st_home) - 15.0) < 1e-9
+    rec = rail.record()
+    assert rec["up_ref"] == "home" and rec["home_xy"] == list(home), rec
+    assert feed.record()["up_ref"] == "terrain" and "home_msl_m" not in feed.record()
+    # Refused: a flat ground, a home the DEM disagrees with, a bad horizon.
+    for bad in (lambda: VS.TerrainFeed(terrain.SITL_CMAC),
+                lambda: VS.TerrainFeed(dem, home_msl_m=g_home + 10.0, home_xy=home),
+                lambda: VS.TerrainFeed(dem, horizon_s=0.0)):
+        try:
+            bad()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a terrain feed was built that must be refused")
+
+
+def _fly_ridge_on_the_rail_reading(spec, feed: bool, response: str = "ideal"):
+    """The cell flown headless with the goto pilot handed what the rail's VLA
+    stub reads - its pose's height above HOME (MAVROS local z) - with the
+    feed the stub builds for --terrain-feed on, or without (the law every
+    rail flight of the cell flew before 2026-11-21)."""
+    import sweep_scenarios as S
+    from guardrail import vla_stub as VS
+    ground = S.episode_ground(spec, spec.policy.load(ROOT))
+    orig = S._pilot
+
+    def rail_pilot(m, kind, st, approach_accel=None):
+        g_home = ground.elevation_at(*m.home)
+        st_home = st.model_copy(update={"up": st.up + ground.elevation_at(st.x, st.y) - g_home})
+        tf = VS.TerrainFeed(ground, home_msl_m=g_home, home_xy=m.home) if feed else None
+        return VS.goto_action(m.target, st_home, m.speed, approach_accel, terrain=tf)
+    S._pilot = rail_pilot
+    try:
+        return S.run_episode(spec, LIBRARY.defaults, 1001, response=response)
+    finally:
+        S._pilot = orig
+
+
+def test_the_ridge_is_passable_without_changing_theta():
+    """Both msl-dem-zone-ridge cells on the rail's reading: level (no feed),
+    the AGL-band repair is over theta 0.5 m and the cell ends Loiter -> RTL
+    short of its pad (the 19 Nov sitl / hil2 flights); with the feed no
+    vertical repair at all, no Loiter, the pad reached, no P0 tick - on the
+    ideal vehicle and the rail's fitted response. The FSM's theta is the
+    one it was."""
+    from guardrail import fsm
+    assert fsm.FSMConfig().theta_vertical_m == 0.5
+    for cell in _ridge_cells():
+        for response in ("ideal", "rail"):
+            for feed in (False, True):
+                run = _fly_ridge_on_the_rail_reading(cell.spec, feed, response)
+                vert = [r["magnitude_m"] for row in run.rows for r in row["repairs"]
+                        if r.get("axis") == "vertical" and r.get("magnitude_m") is not None]
+                states = {row.get("fsm_state_after") for row in run.rows}
+                what = (cell.spec.mission.target.x, response, feed)
+                assert run.extra["true_p0_flown_ticks"] == 0, what
+                if feed:
+                    assert run.extra["reached_goal"] is True, what
+                    assert vert == [] and not states & {"Loiter", "RTL"}, (what, states)
+                    assert min(row["up"] for row in run.rows) > 14.5, what
+                else:
+                    assert run.extra["reached_goal"] is False, what
+                    assert max(vert) > 0.5 and {"Loiter", "RTL"} <= states, (what, states)
+
+
+def test_only_a_goto_cell_over_a_ground_gets_the_feed():
+    """The harness's opt-in: pilot_terrain_feed is None for any other law or
+    without a ground; run_episode hands the zone-ridge goto pilot the feed
+    (its rows carry no vertical repair, as before - the headless pilot read
+    the height above the ground already); rail_node_args sends
+    --terrain-feed=on to exactly those cells and the stub reads it."""
+    import importlib.util
+    import sweep_scenarios as S
+    from guardrail import vla_stub as VS
+    dem = terrain.load_ground(DEM, CMAC, root=ROOT)
+    assert S.pilot_terrain_feed("goto", None) is None
+    assert S.pilot_terrain_feed("constant", dem) is None
+    assert S.pilot_terrain_feed("stub_vla", dem) is None
+    assert S.pilot_terrain_feed("goto", terrain.SITL_CMAC) is None
+    assert isinstance(S.pilot_terrain_feed("goto", dem), VS.TerrainFeed)
+    seen = []
+    real = VS.goto_action
+
+    def spy(*a, **kw):
+        seen.append(kw.get("terrain"))
+        return real(*a, **kw)
+    VS.goto_action = spy
+    try:
+        cell = _ridge_cells()[0]
+        run = S.run_episode(cell.spec, LIBRARY.defaults, 1001)
+    finally:
+        VS.goto_action = real
+    assert seen and all(isinstance(t, VS.TerrainFeed) and t.ref is None for t in seen)
+    assert run.extra["reached_goal"] is True
+    # The rails: --terrain-feed=on for the goto cells over a ground only.
+    spec_v = importlib.util.spec_from_file_location("stub_feed",
+                                                    ROOT / "sitl" / "ros2_vla_stub_node.py")
+    V = importlib.util.module_from_spec(spec_v)
+    spec_v.loader.exec_module(V)
+    from guardrail.scenario_spec import load_profile
+    eps, _ = expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles" / "msl_dem.yaml"))
+    for e in eps:
+        spec = e.cell.spec
+        args = S.rail_node_args(spec, 1001, LIBRARY.defaults, backend="sitl")
+        S.check_rail_flags(args)
+        goto = spec.mission.pilot.type == "goto"
+        assert ("--terrain-feed=on" in args) == goto, (spec.scenario_id, args)
+        vs, _ = V.make_parser().parse_known_args(args)
+        mission, target, _start = V.mission_from_args(
+            vs, V.ConstraintCompiler(V.stub_policy(vs)[0]).parse_command(vs.command))
+        pilot, rec = V.pilot_from_args(vs, mission, target)
+        if goto:
+            tf = pilot.terrain
+            assert isinstance(tf, VS.TerrainFeed) and tf.ref is not None
+            assert abs(tf.ref.home_msl_m - vs.ground_home_msl) < 1e-9
+            assert rec["terrain_feed"]["up_ref"] == "home", rec
+        else:
+            assert "terrain_feed" not in rec
+    # A cell without a ground: nothing added.
+    plain = S.rail_node_args(next(iter(LIBRARY.by_id()["altitude-ceiling-hold"].cells())).spec,
+                             1001, LIBRARY.defaults, backend="sitl")
+    assert not [a for a in plain if a.startswith("--terrain-feed")], plain
+
+
+def test_the_stub_refuses_a_terrain_feed_it_cannot_fly():
+    import importlib.util
+    spec_v = importlib.util.spec_from_file_location("stub_feed2",
+                                                    ROOT / "sitl" / "ros2_vla_stub_node.py")
+    V = importlib.util.module_from_spec(spec_v)
+    spec_v.loader.exec_module(V)
+    base = ["--policy", str(POLICY), "--start=-45,0,15", "--target=-45,200,15",
+            "--speed=3"]
+    cases = ((["--pilot=constant", "--action=3,0,0", "--no-target", f"--ground={DEM}",
+               "--terrain-feed=on"], "goto law"),
+             (["--pilot=stub_vla", f"--ground={DEM}", "--terrain-feed=on"], "goto law"),
+             (["--pilot=goto", "--terrain-feed=on"], "--ground"),
+             (["--pilot=goto", f"--ground={DEM}", "--ground-home-msl=600",
+               "--terrain-feed=on"], "differ"))
+    for extra, why in cases:
+        argv = [a for a in base if not (a.startswith("--target") and "--no-target" in extra)]
+        ns, _ = V.make_parser().parse_known_args(argv + extra)
+        try:
+            V.check_args(ns)
+        except ValueError as e:
+            assert why in str(e), (extra, e)
+        else:
+            raise AssertionError(f"the stub took {extra}")
+    # Off (or absent): the goto record is the one it was, key for key.
+    for extra in ([], ["--terrain-feed=off"]):
+        ns, _ = V.make_parser().parse_known_args(base + ["--pilot=goto", f"--ground={DEM}"]
+                                                 + extra)
+        V.check_args(ns)
+        probe = V.ConstraintCompiler(V.stub_policy(ns)[0]).parse_command(ns.command)
+        mission, target, _ = V.mission_from_args(ns, probe)
+        pilot, rec = V.pilot_from_args(ns, mission, target)
+        assert pilot.terrain is None and set(rec) == {
+            "type", "model_id", "speed_mps", "target_up", "approach_accel_mps2",
+            "goal_tol_m"}, rec
 
 
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
