@@ -1350,6 +1350,132 @@ def test_the_report_shows_what_the_autopilot_flew_on_the_rail_runs():
     assert "What the autopilot flew" not in "\n".join(KR._render_rail_autopilot([]))
 
 
+# --------------------------------------------------------------------------- #
+# single_sha across the stack, reported (ARCH-31, 2026-11-21)
+# --------------------------------------------------------------------------- #
+#
+# Every hil run writes stack_revisions.json (guardrail.manifest, since
+# 2026-11-17) and nothing read it. These fail against 71aabb3: the report has
+# no `stack_revisions`, its episodes carry none, and guardrail.manifest has no
+# stack_summary.
+
+_AGX = {"hostname": "agx", "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+        "host_arch": "aarch64", "l4t_release": "R36.4.3",
+        "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)", "autopilot_kind": "sitl"}
+_PC = {"hostname": "desktop", "device_model": None, "host_arch": "AMD64",
+       "l4t_release": None}
+
+
+def _campaign_tests():
+    """tests/test_kpi_campaign.py's hil-campaign fixtures (signed replay
+    bundles, KPI-grade manifests) and the report module."""
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_kpi_campaign as C
+    return C, _report_module()
+
+
+def _stack(run: Path, desktop_rev=None):
+    """The Orin's record of `run` (pending on hil), and the desktop's revision
+    added when `desktop_rev` is given, the way the hil harness adds it."""
+    from guardrail import manifest as M
+    man = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    M.write_stack_revisions(run, man, _AGX, describe=lambda repo=None: "v-test")
+    if desktop_rev is not None:
+        M.add_host_revision(run, M.ROLE_DESKTOP, M.host_revision(
+            host=_PC, revision=desktop_rev, describe=lambda repo=None: "v-test"))
+
+
+def test_single_sha_is_reported_per_campaign_and_over_the_kpi_grade_runs():
+    """A campaign's four flights: cx_001_a one SHA across the stack (true),
+    cx_002_b the Orin's write alone (pending), cx_003_ctrl no record
+    (missing: flown before 2026-11-17), cx_004_d the desktop on another
+    commit (false; the campaign did not accept it). Reported per campaign,
+    over the KPI-grade flights, in the JSON and the Markdown - and no grade
+    moves: the record is evidence, not a gate."""
+    import shutil
+    C, KR = _campaign_tests()
+    root, trust, summ, _ = C._fixture()
+    try:
+        store = root / "hil_smoke"
+        rev = json.loads((store / "cx_001_a" / "manifest.json")
+                         .read_text(encoding="utf-8"))["code_revision"]
+        _stack(store / "cx_001_a", rev)
+        _stack(store / "cx_002_b")
+        _stack(store / "cx_004_d", "0123456789ab")
+        rep = C._report(summ, None, trust)
+        st = rep["stack_revisions"]
+        cx = st["by_campaign"]["cx"]
+        assert list(st["by_campaign"]) == ["cx"], st["by_campaign"]
+        assert (cx["runs"], cx["true"], cx["false"], cx["pending"], cx["missing"],
+                cx["unreadable"]) == (4, 1, 1, 1, 1, 0), cx
+        assert cx["false_runs"] == ["cx_004_d"] and cx["pending_runs"] == ["cx_002_b"], cx
+        assert cx["companion_revisions"] == [rev], cx
+        assert cx["desktop_revisions"] == sorted([rev, "0123456789ab"]), cx
+        assert cx["autopilot_revisions"] == ["ArduCopter V4.5.7 (2a3dc4b7)"], cx
+        kg = st["kpi_grade"]
+        assert (kg["runs"], kg["true"], kg["false"], kg["pending"], kg["missing"]) \
+            == (3, 1, 0, 1, 1), kg
+        assert st["all_flights"]["runs"] == 4 and "report only" in st["gate"]
+        # Each episode carries its record as written; the KPI-grade list its verdict.
+        assert C._ep(rep, "cx_004_d")["stack_revisions"]["state"] == "false"
+        assert {e["id"]: e["single_sha"] for e in rep["kpi_grade_episodes"]} == {
+            "cx_001_a": "true", "cx_002_b": "pending", "cx_003_ctrl": "missing"}
+        # No grade moved: pending and missing stay KPI-grade, and the one not
+        # graded is refused by the campaign alone, never by its record.
+        for n in ("cx_001_a", "cx_002_b", "cx_003_ctrl"):
+            assert C._ep(rep, n)["kpi_grade"] is True, n
+        d = C._ep(rep, "cx_004_d")
+        assert d["kpi_grade_manifest"] is True and len(d["kpi_grade_reasons"]) == 1, d
+        assert "single_sha" not in " ".join(d["kpi_grade_reasons"])
+        assert '"stack_revisions"' in json.dumps(KR.json_safe(rep), allow_nan=False)
+        md = KR.render_markdown(KR.json_safe(rep))
+        assert "### Stack revisions by campaign" in md, md
+        assert ("- `cx`: 4 run(s): single_sha true 1, false 1, pending 1, missing 1; "
+                f"companion `{rev}`;") in md, md
+        assert "Stack revisions of the KPI-grade episodes" in md
+        assert "3 run(s): single_sha true 1, false 0, pending 1, missing 1;" in md, md
+        assert "pending: `cx_002_b`" in md and "false: `cx_004_d`" in md, md
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_single_sha_with_supplements_is_tallied_under_the_campaign_counted():
+    """A main campaign and its supplement: each counted flight is tallied
+    under the campaign it came from; a superseded flight is not read, so not
+    tallied. No record anywhere: every run is "missing", none "true"."""
+    import shutil
+    C, KR = _campaign_tests()
+    root, trust, store, main, supp, rs_main, rs_supp = C._two_campaigns()
+    try:
+        rep = C._report([main, supp], None, trust)
+        by = rep["stack_revisions"]["by_campaign"]
+        assert {k: v["runs"] for k, v in by.items()} == {"mx": 3, "mxs": 2}, by
+        assert all(v["missing"] == v["runs"] and v["true"] == 0 for v in by.values()), by
+        assert all(v["companion_revisions"] == [] for v in by.values())
+        md = KR.render_markdown(KR.json_safe(rep))
+        assert "- `mxs`: 2 run(s): single_sha true 0, false 0, pending 0, missing 2; " \
+               "companion none recorded" in md, md
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_without_a_campaign_or_a_flight_the_stack_lines_stay_out():
+    """Flights read without --campaign are tallied under "(no --campaign)" and
+    the Campaign section's lines are not printed; a report of no flight at
+    all (stress bundles, sweep JSON) has no stack section."""
+    KR = _report_module()
+    with tempfile.TemporaryDirectory() as td:
+        _three_runs(td)
+        rep = KR.build_report([str(Path(td) / "*")], [], 10, False, "cmd")
+    st = rep["stack_revisions"]
+    assert list(st["by_campaign"]) == [KR.NO_CAMPAIGN], st
+    assert st["all_flights"]["missing"] == 3 and st["kpi_grade"]["runs"] == 0, st
+    assert "### Stack revisions by campaign" not in KR.render_markdown(KR.json_safe(rep))
+    assert KR.stack_section([], None) is None
+    assert KR.stack_section([{"id": "s", "kind": "stored-table"}], None) is None
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

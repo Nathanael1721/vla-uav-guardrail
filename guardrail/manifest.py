@@ -1559,7 +1559,9 @@ def is_kpi_grade(manifest: dict, metrics: dict,
 #   2  manifest.json (unchanged) + stack_revisions.json beside it.
 #
 # The record is EVIDENCE, not a gate: is_kpi_grade is unchanged, so no run's
-# grade moves because of it.
+# grade moves because of it. Since 2026-11-21 tools/kpi_report.py reads it
+# (stack_summary) and reports single_sha true / false / pending / missing
+# per campaign and over the KPI-grade runs - reported, never gated.
 
 STACK_FILE = "stack_revisions.json"
 STACK_SCHEMA = "vlaguard-stack-revisions/1"
@@ -1972,6 +1974,74 @@ def revisions_by_host(loaded: dict) -> dict[str, str | None]:
         return {"manifest": loaded["manifest"].get("code_revision")}
     return {role: (rec or {}).get("code_revision")
             for role, rec in (stack.get("hosts") or {}).items()}
+
+
+# What stack_summary() calls each single_sha value, and the two states a run
+# without a usable record is in. "missing" is every run written before
+# 2026-11-17 (or by a writer that predates the record); "unreadable" is a
+# record that is not JSON, of another schema, or carries no single_sha.
+STACK_STATES = ("true", "false", "pending", "missing", "unreadable")
+
+
+def stack_summary(run_dir: str | Path) -> dict[str, Any]:
+    """One run's stack record as a KPI report quotes it (ARCH-31; read by
+    tools/kpi_report.py since 2026-11-21, until then nothing read the
+    record). `state` is "true" / "false" / "pending" for single_sha True /
+    False / None AS WRITTEN, "missing" when the run has no
+    stack_revisions.json, "unreadable" when it is not JSON, is of another
+    schema or has no single_sha key (`why` says which). Beside it the
+    revisions the record names: `companion` and `desktop` (each host of that
+    base role, a second claimant "desktop#2" included), `components`
+    ({"desktop/wsl_helper": revision}, another checkout a host runs),
+    `autopilot` (the firmware as it named itself, None when it never
+    answered) and `problems` as written.
+
+    Read only: the record is never rewritten and single_sha is never
+    recomputed here - a report says what the run recorded. is_kpi_grade does
+    not read it either (the record is evidence, not a gate): a gate keyed on
+    single_sha would regrade every run flown since 2026-11-17, whose records
+    already carry the field."""
+    p = Path(run_dir) / STACK_FILE
+    out: dict[str, Any] = {"state": "missing", "single_sha": None,
+                           "companion": [], "desktop": [], "components": {},
+                           "autopilot": None, "problems": []}
+    if not p.is_file():
+        out["why"] = f"no {STACK_FILE} beside the manifest"
+        return out
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return dict(out, state="unreadable",
+                    why=f"{STACK_FILE} is not readable JSON ({type(e).__name__})")
+    if not isinstance(doc, dict) or doc.get("schema") != STACK_SCHEMA:
+        got = doc.get("schema") if isinstance(doc, dict) else type(doc).__name__
+        return dict(out, state="unreadable",
+                    why=f"{STACK_FILE} schema {got!r}, not {STACK_SCHEMA!r}")
+    if "single_sha" not in doc or doc["single_sha"] not in (True, False, None):
+        return dict(out, state="unreadable",
+                    why=f"{STACK_FILE} carries no single_sha verdict "
+                        f"({doc.get('single_sha')!r})")
+    ss = doc["single_sha"]
+    out.update(state={True: "true", False: "false", None: "pending"}[ss],
+               single_sha=ss)
+    by_role: dict[str, set] = {ROLE_COMPANION: set(), ROLE_DESKTOP: set()}
+    hosts = doc.get("hosts") if isinstance(doc.get("hosts"), dict) else {}
+    for key, rec in sorted(hosts.items()):
+        rec = rec if isinstance(rec, dict) else {}
+        by_role.setdefault(_base_role(key), set()).add(str(rec.get("code_revision")))
+        comps = rec.get("components") if isinstance(rec.get("components"), dict) else {}
+        for name, comp in sorted(comps.items()):
+            out["components"][f"{key}/{name}"] = (comp or {}).get("code_revision")
+    out["companion"] = sorted(by_role.pop(ROLE_COMPANION))
+    out["desktop"] = sorted(by_role.pop(ROLE_DESKTOP))
+    if any(by_role.values()):
+        # A role no topology needs (never written by this repository's
+        # writers): kept, under its own name, never dropped.
+        out["other_hosts"] = {r: sorted(v) for r, v in sorted(by_role.items()) if v}
+    auto = doc.get("autopilot")
+    out["autopilot"] = (auto.get("firmware") if isinstance(auto, dict) else None)
+    out["problems"] = list(doc.get("problems") or [])
+    return out
 
 
 def policy_source_record(kind: str, path: str | None, policy_hash: str,

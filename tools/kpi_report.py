@@ -195,6 +195,25 @@ profile's, so the report keeps it apart: its runs' rows end in
 (`campaign_max_s_add`) name the length, and a campaign, supplement or
 re-score table of another length is refused (campaign_merge, load_rescores,
 build_report). It is reported on its own, beside the KPI campaign.
+
+SINCE 2026-11-21: ONE SHA ACROSS THE STACK, REPORTED (ARCH-31)
+
+Every hil run writes stack_revisions.json beside its manifest (since
+2026-11-17, guardrail.manifest STACK_FILE): each host's revision and
+`single_sha`, true only when every host the topology needs ran the
+manifest's commit on a clean tree. Nothing read it until now. load_run
+keeps each flight's record as written (guardrail.manifest.stack_summary,
+the episode's `stack_revisions`), and stack_section counts, per campaign
+(`by_campaign`), over the KPI-grade episodes (`kpi_grade`) and over every
+flight read (`all_flights`), the runs whose single_sha is true / false /
+pending (None: a host the topology needs never reported) / missing (no
+record: flown before 2026-11-17) / unreadable, with the distinct companion,
+desktop, component and autopilot revisions their records name. JSON:
+`stack_revisions`, and `single_sha` on every `kpi_grade_episodes` entry;
+Markdown: "Stack revisions by campaign" under Campaign and a line under the
+KPI-grade table. REPORT ONLY: is_kpi_grade does not read the record, so no
+run's grade moves - a gate keyed on the field would regrade every run flown
+since 2026-11-17, whose records already carry it.
 """
 from __future__ import annotations
 
@@ -218,7 +237,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from guardrail import kpi as K                                     # noqa: E402
 from guardrail.delivery import with_stored_delivery                # noqa: E402
-from guardrail.manifest import code_revision, is_kpi_grade         # noqa: E402
+from guardrail.manifest import (STACK_FILE, STACK_STATES,           # noqa: E402
+                                code_revision, is_kpi_grade, stack_summary)
 import rescore_kpis as R                                           # noqa: E402
 
 DEFAULT_RUNS = ["demo/out/*", "sitl/out/*", "demo/out/stress_*/episode-*"]
@@ -837,6 +857,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
         "time_to_safe_basis": basis,
         "priority_fields_from": priority_source,
         "code_revision": manifest.get("code_revision"),
+        # The run's stack record (stack_revisions.json, ARCH-31), as written:
+        # single_sha and the revisions it names (2026-11-21; reported per
+        # campaign and over the KPI-grade runs by stack_section, never a gate).
+        "stack_revisions": stack_summary(run),
         "policy_resolved_by": how, "policy_note": note, "policy_id": pid,
         "reconstruction": recon,
         "params": {"policy_id": pid, "seed": manifest.get("random_seed"),
@@ -2011,6 +2035,109 @@ def revisions_on_head(revs: set[str]) -> dict[str, bool | None]:
         except (OSError, subprocess.SubprocessError):
             out[rev] = None
     return out
+
+
+# Since when a run writes its stack record (guardrail.manifest STACK_FILE).
+STACK_SINCE = "2026-11-17"
+NO_CAMPAIGN = "(no --campaign)"
+
+
+def stack_tally(eps: list[dict]) -> dict:
+    """How many of `eps` (flown episodes carrying `stack_revisions`, load_run)
+    have single_sha true / false / pending (None as written) / missing (no
+    stack_revisions.json) / unreadable, the runs behind every state but
+    "true" and "missing" (missing is every run flown before 2026-11-17, so
+    it is counted, not listed), and the distinct companion, desktop,
+    component and autopilot revisions their records name. Since 2026-11-21
+    (ARCH-31): until then nothing read the record."""
+    t: dict = {"runs": len(eps), **{s: 0 for s in STACK_STATES},
+               "false_runs": [], "pending_runs": [], "unreadable_runs": [],
+               "companion_revisions": [], "desktop_revisions": [],
+               "component_revisions": [], "autopilot_revisions": []}
+    comp, desk, parts, auto = set(), set(), set(), set()
+    for e in eps:
+        st = e.get("stack_revisions") or {"state": "missing"}
+        state = st.get("state") if st.get("state") in STACK_STATES else "unreadable"
+        t[state] += 1
+        if state in ("false", "pending", "unreadable"):
+            t[f"{state}_runs"].append(e["id"])
+        comp.update(st.get("companion") or [])
+        desk.update(st.get("desktop") or [])
+        parts.update(f"{k}={v}" for k, v in (st.get("components") or {}).items())
+        if st.get("autopilot"):
+            auto.add(st["autopilot"])
+    t.update(companion_revisions=sorted(comp), desktop_revisions=sorted(desk),
+             component_revisions=sorted(parts), autopilot_revisions=sorted(auto))
+    return t
+
+
+def stack_campaign_of(e: dict, camp: dict | None) -> str:
+    """The campaign an episode is tallied under: the one campaign_gate named
+    (a merged campaign's), else the campaign given, else NO_CAMPAIGN. A run
+    the campaign does not list is still a run read for it (the store's)."""
+    if e.get("campaign"):
+        return str(e["campaign"])
+    return _campaign_name(camp) if camp is not None else NO_CAMPAIGN
+
+
+def stack_section(episodes: list[dict], camp: dict | None) -> dict | None:
+    """single_sha across the stack, per campaign and over the KPI-grade
+    episodes (ARCH-31, 2026-11-21): stack_tally over the flown episodes of
+    each campaign (stack_campaign_of), over the KPI-grade ones (today's
+    grade, the campaign's acceptance and the evidence check included) and
+    over every flight read. REPORT ONLY: is_kpi_grade does not read the
+    record, so no grade here moves because of it. None when no flight was
+    read (a report of stress bundles or sweep JSON alone)."""
+    flights = [e for e in episodes if e.get("kind") == "flight"]
+    if not flights:
+        return None
+    by: dict[str, list] = {}
+    for e in flights:
+        by.setdefault(stack_campaign_of(e, camp), []).append(e)
+    return {"record": STACK_FILE, "written_since": STACK_SINCE,
+            "gate": "report only: guardrail.manifest.is_kpi_grade does not read "
+                    "the record, so no run's grade moves because of it",
+            "by_campaign": {name: stack_tally(eps) for name, eps in sorted(by.items())},
+            "kpi_grade": stack_tally([e for e in flights if e.get("kpi_grade")]),
+            "all_flights": stack_tally(flights)}
+
+
+def _stack_line(t: dict) -> str:
+    """One tally (stack_tally) in words."""
+    def revs(key):
+        return ", ".join(f"`{r}`" for r in t[key]) or "none recorded"
+    s = (f"{t['runs']} run(s): single_sha true {t['true']}, false {t['false']}, "
+         f"pending {t['pending']}, missing {t['missing']}"
+         + (f", unreadable {t['unreadable']}" if t["unreadable"] else "")
+         + f"; companion {revs('companion_revisions')}; desktop "
+           f"{revs('desktop_revisions')}; autopilot {revs('autopilot_revisions')}")
+    if t["component_revisions"]:
+        s += f"; components {revs('component_revisions')}"
+    for state in ("false", "pending", "unreadable"):
+        ids = t[f"{state}_runs"]
+        if ids:
+            s += (f". {state}: " + ", ".join(f"`{i}`" for i in ids[:8])
+                  + (f" and {len(ids) - 8} more" if len(ids) > 8 else ""))
+    return s + "."
+
+
+def _render_stack(sec: dict | None, *, campaigns: bool) -> list[str]:
+    """The stack record's lines: per campaign (`campaigns`, under Campaign)
+    or over the KPI-grade episodes (under Inputs)."""
+    if not sec:
+        return []
+    note = (f"`{sec['record']}` (ARCH-31, written beside the manifest since "
+            f"{sec['written_since']}; missing = a run flown before it, or by a "
+            f"writer that predates it). {sec['gate'][0].upper()}{sec['gate'][1:]}.")
+    if campaigns:
+        L = ["### Stack revisions by campaign", "",
+             f"Whether every host the topology needs ran the manifest's commit on a "
+             f"clean tree (`single_sha`), from each run's {note}", ""]
+        for name, t in sec["by_campaign"].items():
+            L.append(f"- `{name}`: {_stack_line(t)}")
+        return L + [""]
+    return [f"Stack revisions of the KPI-grade episodes, from each run's {note} "
+            f"{_stack_line(sec['kpi_grade'])}", ""]
 
 
 # --------------------------------------------------------------------------- #
@@ -3950,6 +4077,8 @@ def render_markdown(rep: dict) -> str:
     # and the fail-safe readings behind the adopted one.
     L += _render_kpi_summary(rep)
     L += _render_campaign(rep.get("campaign"), rep.get("episodes") or [])
+    if rep.get("campaign"):
+        L += _render_stack(rep.get("stack_revisions"), campaigns=True)
     L += _render_failsafe_readings(rep.get("failsafe_readings"))
 
     if rep.get("headline"):
@@ -4000,6 +4129,7 @@ def render_markdown(rep: dict) -> str:
         L += ["", "\"On HEAD?\" is informational: a revision that is not an "
               "ancestor of HEAD cannot be checked out from this branch to "
               "reproduce the run. `is_kpi_grade` does not test it.", ""]
+        L += _render_stack(rep.get("stack_revisions"), campaigns=False)
 
     L += ["## Definitions, denominators and nulls", ""]
     for name, d in rep["definitions"].items():
@@ -4987,10 +5117,16 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                                 "kpi_grade": e.get("kpi_grade"),
                                 "kpi_grade_at_flight": e.get("kpi_grade_at_flight"),
                                 "kpi_grade_reasons": e.get("kpi_grade_reasons"),
+                                # The run's stack record's verdict (stack_summary
+                                # `state`, 2026-11-21); None: not a flown run.
+                                "single_sha": (e.get("stack_revisions") or {}).get("state"),
                                 **({"campaign": e["campaign"]} if e.get("campaign")
                                    else {})}
                                for e in graded + at_flight],
         "revisions_on_head": revs,
+        # single_sha per campaign and over the KPI-grade runs (ARCH-31,
+        # 2026-11-21): reported, never a gate (stack_section).
+        "stack_revisions": stack_section(episodes, camp),
         "families": {"kpi_grade": fams(graded), "kpi_grade_at_flight_only": fams(at_flight),
                      "other": fams(other)},
         "top_k": top_k,
@@ -5134,6 +5270,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{name} {n}" for name, n in ch["counted_by_campaign"].items())
             + f"; {len(ch['from_supplements'])} taken from a supplement, "
               f"{len(ch['superseded'])} superseded")
+    st = (rep.get("stack_revisions") or {}).get("kpi_grade")
+    if st and st["runs"]:
+        print(f"single_sha over the KPI-grade flights (report only): true {st['true']}, "
+              f"false {st['false']}, pending {st['pending']}, missing {st['missing']}"
+              + (f", unreadable {st['unreadable']}" if st["unreadable"] else ""))
     s = rep.get("kpi_summary") or {}
     p0 = (s.get("p0") or {}).get("shield_on")
     if p0:
