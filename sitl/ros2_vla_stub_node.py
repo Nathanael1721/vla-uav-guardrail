@@ -44,6 +44,18 @@ needs none (constant). The entrypoint's mission role hands this node every
 argument it hands the Shield node, so both read one --start, --target and
 --speed; each ignores the other's flags (parse_known_args).
 
+THE GOTO LAW OVER A DECLARED GROUND (2026-11-21, X-11). `--terrain-feed on`
+(with `--pilot goto` and a `--ground` DEM; `--ground-home-msl`, the Shield
+node's flag, is the home's elevation) flies the goto law with
+guardrail.vla_stub.TerrainFeed: the target's altitude is a height above the
+ground, the pose's height above home is converted to one, and the climb
+adds the ground's rise ahead. Without it the law held its target height
+above home, level in MSL, and over the msl-dem-zone-ridge crest the
+Shield's AGL-band repair was over the FSM's vertical theta on every tick
+(Loiter, then RTL). The stress harness sends it to a goto cell that
+declares a ground only; the identity's pilot record then carries
+`terrain_feed`. Default off: every other mission flies as it did.
+
 THE PREFIX ARM (2026-11-16, audit card WP4-15). `--prefix on|off` flies the
 chosen law through guardrail.prefix_consumer.PrefixConsumer, the grant's
 default action-set adapter: `on` with the Prefix Compiler's CSP - compiled
@@ -89,7 +101,7 @@ from guardrail.compiler import ConstraintCompiler              # noqa: E402
 from guardrail.frames import to_body                           # noqa: E402
 from guardrail.manifest import collect_host_evidence           # noqa: E402
 from guardrail.vla_stub import (APPROACH_ACCEL_MPS2, MODEL_IDS,  # noqa: E402
-                                ConstantPilot, GotoPilot, StubVLA)
+                                ConstantPilot, GotoPilot, StubVLA, TerrainFeed)
 from mavlink_adapter_node import (XYArgumentParser,            # noqa: E402
                                   heading_deg_from_enu_quaternion)
 
@@ -148,6 +160,44 @@ def mission_from_args(args, mission):
     return (mission.model_copy(update=upd) if upd else mission), tgt, start
 
 
+def terrain_feed_from_args(args, kind: str) -> TerrainFeed | None:
+    """The goto law's terrain feed-forward (guardrail.vla_stub.TerrainFeed,
+    2026-11-21, X-11) for `--terrain-feed on`, None otherwise (the default:
+    every mission flown before this date). The ground is the one --ground
+    names (and --ground-sha256 pins), placed in the frame of the policy this
+    node flies, as stub_policy reads it; this node's pose is a height above
+    HOME (MAVROS local z), so the feed converts it with the home's elevation
+    (--ground-home-msl, else the DEM's own elevation at home, as the Shield
+    node does) at the policy-frame home --start names. Refused (ValueError,
+    before anything flies): --terrain-feed on for a law other than goto,
+    without --ground, or over a ground that is not a DEM.
+
+    Why: before this the goto law held its target height above home - level
+    in MSL - and over the msl-dem-zone-ridge crest the Shield's AGL-band
+    repair was over the FSM's vertical theta every tick (Loiter, then RTL,
+    the pad never reached). The stress harness sends --terrain-feed=on to a
+    goto cell that declares a ground (sweep_scenarios.rail_terrain_feed)."""
+    if getattr(args, "terrain_feed", None) != "on":
+        return None
+    if kind != "goto":
+        raise ValueError(f"--terrain-feed on is the goto law's; --pilot {kind} has none")
+    if not getattr(args, "ground", None):
+        raise ValueError("--terrain-feed on needs the --ground it flies over")
+    from guardrail.terrain import ground_from_args, is_dem
+    yaml_path = args.policy or (None if args.bundle else
+                                ROOT / "policies" / "sim_demo_policy.yaml")
+    ground = ground_from_args(args, args.bundle, yaml_path, root=ROOT)[0]
+    if not is_dem(ground):
+        raise ValueError(f"--terrain-feed on over {ground!r}: a flat ground has no "
+                         f"rise to feed forward")
+    start = parse_floats(getattr(args, "start", None), (2, 3), "--start")
+    home_xy = (0.0, 0.0) if start is None else (start[0], start[1])
+    hmsl = getattr(args, "ground_home_msl", None)
+    if hmsl is None:
+        hmsl = ground.elevation_at(*home_xy)
+    return TerrainFeed(ground, home_msl_m=float(hmsl), home_xy=home_xy)
+
+
 def pilot_from_args(args, mission, target) -> tuple[object, dict]:
     """(pilot, its record) for --pilot: StubVLA on the mission, the goto law
     on the target (at the mission's speed, slowing at APPROACH_ACCEL_MPS2) or
@@ -163,16 +213,24 @@ def pilot_from_args(args, mission, target) -> tuple[object, dict]:
         raise ValueError(f"--action is the constant pilot's; --pilot {kind} flies to "
                          f"its target")
     rec = {"type": kind, "model_id": MODEL_IDS[kind]}
+    # --terrain-feed on (2026-11-21): the goto law's only; refused for another.
+    feed = terrain_feed_from_args(args, kind)
     if kind == "stub_vla":
         return StubVLA(mission), dict(rec, speed_mps=mission.speed_pref_mps,
                                       cruise_alt_m=mission.cruise_alt_m)
     if kind == "goto":
         up = target[2] if target is not None and len(target) == 3 else None
         pilot = GotoPilot((mission.target_x, mission.target_y, up),
-                          mission.speed_pref_mps, approach_accel=APPROACH_ACCEL_MPS2)
-        return pilot, dict(rec, speed_mps=pilot.speed, target_up=up,
-                           approach_accel_mps2=pilot.approach_accel,
-                           goal_tol_m=pilot.goal_tol_m)
+                          mission.speed_pref_mps, approach_accel=APPROACH_ACCEL_MPS2,
+                          terrain=feed)
+        rec = dict(rec, speed_mps=pilot.speed, target_up=up,
+                   approach_accel_mps2=pilot.approach_accel,
+                   goal_tol_m=pilot.goal_tol_m)
+        if feed is not None:
+            # Only with --terrain-feed on: every other goto record is the
+            # one it was, key for key.
+            rec["terrain_feed"] = feed.record()
+        return pilot, rec
     act = parse_floats(getattr(args, "action", None), (3, 4), "--action")
     if act is None:
         raise ValueError("--pilot constant needs --action VX,VY,VZ[,YAW] (world frame)")
@@ -316,6 +374,19 @@ def make_parser() -> argparse.ArgumentParser:
                          "Default: none, as before 2026-11-18")
     ap.add_argument("--ground-sha256", default=None, metavar="HEX",
                     help="the sha256 of the --ground file; it must hash to it")
+    # The goto law's terrain feed-forward (2026-11-21, X-11,
+    # terrain_feed_from_args). --ground-home-msl is the Shield node's flag
+    # too (both nodes get every argument); this node reads it only for
+    # --terrain-feed on.
+    ap.add_argument("--terrain-feed", choices=("on", "off"), default=None,
+                    help="--pilot goto over a --ground DEM: on reads the target's "
+                         "altitude as a height above the ground and adds the ground's "
+                         "rise to the climb (guardrail.vla_stub.TerrainFeed). Default: "
+                         "off, the law as it flew before 2026-11-21")
+    ap.add_argument("--ground-home-msl", type=float, default=None, metavar="M",
+                    help="--terrain-feed on: the elevation (m MSL) of the autopilot's "
+                         "home, as the Shield node reads it; default the DEM's own "
+                         "elevation at home (--start)")
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
     ap.add_argument("--target", default=None, metavar="X,Y[,UP]",
                     help="the target in the policy frame (metres North, East), with "

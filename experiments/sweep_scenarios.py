@@ -536,6 +536,10 @@ class _Mission:
     action: dict[str, float] | None
     speed: float
     stub: Any = None                     # guardrail.vla_stub.StubVLA for `stub_vla`
+    # guardrail.vla_stub.TerrainFeed for a `goto` cell over a declared ground
+    # (2026-11-21, X-11: run_episode sets it, `pilot_terrain_feed`); None for
+    # every other episode, whose goto law is the one it always was.
+    terrain: Any = None
 
     @property
     def home(self) -> tuple[float, float]:
@@ -619,8 +623,35 @@ def _pilot(mission: _Mission, kind: str, st: State,
     if kind == "stub_vla":
         return mission.stub.act(st)
     if kind == "goto":
+        if mission.terrain is not None:
+            # Over a declared ground (pilot_terrain_feed, 2026-11-21).
+            return VS.goto_action(mission.target, st, mission.speed, approach_accel,
+                                  terrain=mission.terrain)
         return VS.goto_action(mission.target, st, mission.speed, approach_accel)
     raise ValueError(f"unknown pilot type {kind!r}")
+
+
+def pilot_terrain_feed(kind: str, ground) -> "VS.TerrainFeed | None":
+    """The goto pilot's terrain feed-forward (guardrail.vla_stub.TerrainFeed,
+    2026-11-21, X-11) for an episode flown by pilot `kind` over the cell's
+    declared ground (episode_ground), or None: only a `goto` cell that
+    declares a ground (a DEM) gets one - every other cell flies its law
+    exactly as before. The harness's `st.up` is the height above the ground
+    under the aircraft already (the integrator keeps it so), so the feed
+    needs no home: TerrainFeed(ground).
+
+    Why: on the sitl / hil rails the msl-dem-zone-ridge goto pilot held its
+    target height above HOME (level in MSL) and the Shield's AGL-band repair
+    over the ridge was over the FSM's vertical theta on every tick, so the
+    cell ended Loiter -> RTL short of its pad; the rails' stub flies the same
+    feed (rail_node_args sends it --terrain-feed=on, rail_terrain_feed).
+    Here the pilot already read the height above the ground, so the feed
+    adds the ground's rise as a feed-forward: the climb tracks the terrain
+    instead of lagging it by one tick of feedback."""
+    if kind != "goto" or ground is None:
+        return None
+    from guardrail.terrain import is_dem
+    return VS.TerrainFeed(ground) if is_dem(ground) else None
 
 
 def hold_reached(st: State, hold: dict | None) -> bool:
@@ -1760,6 +1791,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     rng_jit = random.Random(f"{seed}:jitter")
 
     m = _resolve_mission(spec, policy, rng_jit)
+    # A goto cell over a declared ground flies the terrain feed-forward
+    # (pilot_terrain_feed, 2026-11-21, X-11); None for every other cell.
+    m.terrain = pilot_terrain_feed(spec.mission.pilot.type, ground)
     wind = (0.0, 0.0)
     if stress.wind_speed_mps > 0:
         # A declared direction is in the mission's frame and turns with it; a
@@ -3510,7 +3544,11 @@ RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--n
                    "--speed", "--pilot", "--action",
                    # The stub loads the policy too: an MSL rule passes its
                    # flight gate only over the same named ground.
-                   "--ground", "--ground-sha256")
+                   "--ground", "--ground-sha256",
+                   # The goto law's terrain feed-forward over that ground
+                   # (2026-11-21, X-11, rail_terrain_feed): the stub reads
+                   # the home elevation the Shield node is sent.
+                   "--terrain-feed", "--ground-home-msl")
 # What the VLA stub must also read when it is sent a prefix arm (`--prefix`,
 # 2026-11-16): the arm, and the clock and flight length its CSP is compiled
 # and checked static over. Checked only for a mission that carries --prefix,
@@ -4526,6 +4564,17 @@ def rail_policy_args(spec: ScenarioSpec, backend: str = "sitl",
     return ["--bundle", rel, SITL_EXPECTED_HASH_FLAG, st["yaml_hash"]]
 
 
+def rail_terrain_feed(spec: ScenarioSpec, policy) -> list[str]:
+    """["--terrain-feed=on"] for a goto cell over a declared DEM - the VLA
+    stub then flies the goto law with its terrain feed-forward (sitl/
+    ros2_vla_stub_node.py terrain_feed_from_args), as the headless harness
+    does for the same cell (pilot_terrain_feed) - and [] for every other
+    cell, whose argument list is the one it was (2026-11-21, X-11)."""
+    ground = episode_ground(spec, policy)
+    return (["--terrain-feed=on"]
+            if pilot_terrain_feed(spec.mission.pilot.type, ground) is not None else [])
+
+
 def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                    backend: str = "sitl", events: str | None = None,
                    meta: str | None = None,
@@ -4587,6 +4636,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                 f"ground {spec.ground}: the scenario's policy cannot be read here, so "
                 f"the ground cannot be placed in its frame")
         args.extend(rail_ground_args(spec, pol, defaults, seed))
+        args.extend(rail_terrain_feed(spec, pol))
     if getattr(spec, "world", None) is not None:
         # The declared world (WP1-07): the Shield node builds its buildings
         # and roads maps from the same repo-relative file. Read here first,
