@@ -648,7 +648,16 @@
 # three venvs running side by side; test_paraphraser and
 # test_profile_shield_tick about 10 s each, test_build_public_site 7 s in a
 # git checkout), and the claims scan 2-3 s.
-# The steps together fit the 30-minute timeout. The requirements are pinned
+# The job's timeout was 30 minutes until 2026-11-22, when every job of
+# master 59e19a5 hit it inside the "Standalone test files" step: the loop has
+# grown since these figures were taken (the X-11 MSL, world-map, people,
+# frame-boundary and hold files of November among them) and no longer fits
+# 30 minutes on a GitHub runner. It is 90 now: about three times the old
+# budget, still far under GitHub's 6-hour job cap (which
+# tests/test_harnesstruth_ci.py checks), so a hung test still ends the job
+# instead of holding a runner for hours. No step sets a timeout of its own;
+# the job's is the only one in this file (nightly.yml has its own, 300).
+# The requirements are pinned
 # (shapely, numpy by interpreter) since the same day. The nightly profile is
 # defined in .github/workflows/nightly.yml, not here, and has not run: GitHub
 # schedules only the default branch's workflows, which is `main` on GitHub,
@@ -686,7 +695,9 @@ jobs:
     # `no_skip` renamed the job (and broke any check keyed on its name).
     name: guardrail (${{ matrix.python }}${{ matrix.extras == '' && ', requirements only' || ', extras' }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 90, not 30: the standalone loop outgrew 30 minutes on GitHub runners
+    # (every job of 59e19a5 timed out in it); see the header's timing notes.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
