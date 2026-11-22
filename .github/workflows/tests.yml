@@ -101,8 +101,9 @@
 #          trajectory and the KPI fields its topics carry rebuilt from the
 #          rosbag2 alone and compared with the flight log and kpi.json,
 #          tools/replay_from_bag.py; on a stand-in for the bag reader, so it
-#          needs no rosbags; its round trip through a real rosbag2 SKIPs
-#          here, where no job installs rosbags; also the manifest fields a
+#          needs no rosbags; its round trips through a real rosbag2 run on
+#          the 3.11 extras job, which installs rosbags, and SKIP on the
+#          other two; also the manifest fields a
 #          launch passes into the bag's metadata, sitl/bag_custom_data.py,
 #          and their comparison with manifest.json),
 #          test_replay_q3 (2026-11-17, WP4-11: a stored rail run's logged
@@ -432,11 +433,15 @@
 #          2026-10-20); the 3.10 and requirements-only jobs still run only
 #          the absent-pyarrow paths (the SKIP line, the stale-file removal,
 #          exit 3), which is what proves the JSONL needs no optional package.
-#        - rosbags (optional, in no job's install; the lab's vla-real
-#          environment has 0.10.11): test_replay_from_bag's round trip
-#          through a real rosbag2, 1 of its 22 tests, SKIPs on every job
-#          (22/22 on the lab desktop on 2026-11-16; 21 passed and 1 skipped
-#          there with the package blocked).
+#        - rosbags (pinned to vla-real's 0.10.11; 3.11 extras only):
+#          test_wp4outputs_exporters' round trip through a real rosbag2
+#          (test_a_real_rosbag2_is_read_with_rosbags, since 2026-11-02) and
+#          test_replay_from_bag's round trips through one. The exporters file
+#          is that job's `no_skip`, so until 2026-11-22 its rosbags test
+#          SKIPped there and failed the job (run 44991484912): the job said
+#          it installed everything the file imports and did not. On the 3.10
+#          and requirements-only jobs those tests still SKIP, and the
+#          flight-log fallback without rosbags is what runs.
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
 #          checks and test_manifest's fork check against the reference
 #          repository (kuanting-vla-uav-guardrail is a separate checkout, not
@@ -710,12 +715,13 @@ jobs:
           # guardrail/api.py reaches into uvicorn.config / uvicorn.importer,
           # which are not a stable interface. pyarrow too (the version the
           # Parquet writer was built and read back with); 26.0.0 has no
-          # Python 3.10 wheel, so the 3.10 job does without it.
+          # Python 3.10 wheel, so the 3.10 job does without it. rosbags is
+          # pinned to vla-real's 0.10.11, the reader the exporter was built on.
           - python: "3.10"
             extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
             no_skip: "tests/test_harness_service.py tests/test_paraphraser_service.py"
           - python: "3.11"
-            extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0 pyarrow==26.0.0"
+            extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0 pyarrow==26.0.0 rosbags==0.10.11"
             no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_pas_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_paraphraser_service.py tests/test_wp4outputs_exporters.py"
           - python: "3.11"
             extras: ""
@@ -736,8 +742,9 @@ jobs:
       # fastapi does not pull in (until 2026-10-19 no job had it). grpcio and
       # protobuf (pyproject's `harness` extra) and grpcio-tools go to the two
       # jobs with cryptography, for tests/test_harness_service.py. pyarrow
-      # (pyproject's `export` extra) goes to the 3.11 extras job only, for
-      # tests/test_wp4outputs_exporters.py's Parquet tests.
+      # (pyproject's `export` extra) and rosbags go to the 3.11 extras job
+      # only, for tests/test_wp4outputs_exporters.py's Parquet and rosbag2
+      # tests.
       - name: Install the guardrail's dependencies
         run: python -m pip install -r requirements.txt ${{ matrix.extras }}
 

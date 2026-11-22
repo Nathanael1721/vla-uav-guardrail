@@ -31,8 +31,8 @@ What is pinned here:
 
 The bag is a stand-in for `read_streams` in most tests, so they run without
 `rosbags`. The round trip through a real rosbag2 written and read with
-`rosbags` SKIPs where it is not installed (no CI job installs it; the lab's
-vla-real environment has rosbags 0.10.11).
+`rosbags` SKIPs where it is not installed (the 3.11 extras CI job and the
+lab's vla-real environment have rosbags 0.10.11; the other CI jobs do not).
 """
 from __future__ import annotations
 

@@ -778,9 +778,9 @@ def _write_rosbag(bag_dir: Path, sent: list, poses: list) -> None:
 def test_a_real_rosbag2_is_read_with_rosbags():
     """The same six ticks through a rosbag2 written and read with `rosbags`
     (the reader the exporter uses), in a run folder and in its replay
-    bundle. SKIPPED where rosbags is not installed: it is not in vla-real.
-    Run it with `pip install "rosbags>=0.10"` in a scratch environment, or
-    in WSL (see CHANGELOG 2026-11-02)."""
+    bundle. SKIPPED where rosbags is not installed; vla-real has 0.10.11
+    since 2026-11-06, and so does the 3.11 extras CI job, which lists this
+    file in `no_skip`."""
     if not X.have_rosbags():
         print(f"      SKIP: rosbags is not installed ({X.ROSBAGS_INSTALL_HINT})")
         return SKIP

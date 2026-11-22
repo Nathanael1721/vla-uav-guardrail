@@ -512,6 +512,22 @@ def test_the_parquet_tests_run_on_the_job_that_installs_pyarrow():
     assert "import pyarrow" in src, "the file no longer imports pyarrow: re-check the job"
 
 
+def test_the_rosbag2_tests_run_on_the_job_that_lists_the_exporters_in_no_skip():
+    """Run 44991484912 (2026-11-22): test_wp4outputs_exporters gained a round
+    trip through a real rosbag2 on 2026-11-02 that SKIPs without `rosbags`,
+    while the 3.11 extras job, which lists the file in `no_skip`, did not
+    install rosbags, so that job failed on the SKIP line. A job that lists
+    the file in `no_skip` must install rosbags, pinned to vla-real's version."""
+    jobs = _matrix_jobs()
+    strict = [j for j in jobs
+              if "tests/test_wp4outputs_exporters.py" in str(j.get("no_skip", "")).split()]
+    assert strict, "no job lists test_wp4outputs_exporters.py in no_skip"
+    for j in strict:
+        assert re.search(r"(^|\s)rosbags==0\.10\.11(\s|$)", j["extras"]), j["extras"]
+    src = (ROOT / "tests" / "test_wp4outputs_exporters.py").read_text(encoding="utf-8")
+    assert "have_rosbags()" in src, "the file no longer reads rosbags: re-check the job"
+
+
 def test_the_job_name_does_not_carry_the_matrix_lists():
     """docs-ci P8: without a `name`, GitHub names each job after every matrix
     value, so adding a file to `no_skip` renamed the job and would break any

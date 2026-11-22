@@ -2143,11 +2143,17 @@ def test_the_int8_attempt_records_its_refusal_with_stage_and_cause():
     out = _tmp() / "int8.json"
     real = V.load_openvla_int8wo
     V.load_openvla_int8wo = lambda d, **k: real(d, quantizer=lambda m: None, load=no_weights)
+    # The command reads the committed protocol frames with Pillow before it
+    # loads the model; what is checked here is the load's failure, so it gets
+    # the fake frames, as the calls above do (no CI loop job installs Pillow).
+    real_frames = V._protocol_frames
+    V._protocol_frames = lambda: _FRAMES
     try:
         rc = V.main(["measure", "--backend", "openvla_7b_int8wo", "--topology", "dev",
                      "--allow-gpu", "--model-root", "/nowhere", "--out", str(out)])
     finally:
         V.load_openvla_int8wo = real
+        V._protocol_frames = real_frames
     assert rc == 1 and not out.exists(), rc
     # a quantised model that cannot answer: stage inference; a bf16 one just raises
     def broken():
