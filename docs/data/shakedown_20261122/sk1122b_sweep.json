@@ -1,0 +1,1802 @@
+{
+  "_what": "Every episode of profile 'smoke' over experiments/scenarios.yaml, scored with guardrail.kpi.compute - the same function the delivered flights use.",
+  "_command": "python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config <scratchpad>/hil_rig.json --hil-campaign sk1122b --out demo/out/hil_sk1122b/sweep.json --runs demo/out/hil_sk1122b --only dyn-nfz-rotate-step dyn-nfz-spawn-ahead --rail-hold loiter",
+  "_backend": "hil",
+  "_not_kpi_grade": null,
+  "_counts": {
+    "pass": 1,
+    "tracked": 0,
+    "fail": 1,
+    "known_failure": 0,
+    "skipped": 0
+  },
+  "_scope": {
+    "cells": 2,
+    "episodes": 2,
+    "episodes_with_comparison": 2,
+    "arms": {
+      "cell_seed_slots": 2,
+      "extra_arm_episodes": 0,
+      "paraphrase_arm_episodes": 0,
+      "prefix_off_episodes": 0,
+      "forecast_arms": [
+        "grant"
+      ],
+      "forecast_comparison_episodes": 0,
+      "response_arms": [
+        "ideal"
+      ],
+      "response_comparison_episodes": 0
+    },
+    "cells_per_family": {
+      "dyn-nfz-spawn-ahead": 1,
+      "dyn-nfz-rotate-step": 1
+    },
+    "only_unmatched": [],
+    "duplicate_cells": [],
+    "profile": "smoke",
+    "grant_scope": "~50 scenarios x 1 seed each",
+    "cadence": "per build (CI)",
+    "grant_sim_speedup": "1.0 (KPI-grade) - NOT met: headless backend, measured speedup >> 1",
+    "grant_profile_kpi_bearing": true,
+    "seeds": [
+      1001
+    ],
+    "expected_cells": [
+      40,
+      60
+    ],
+    "cells_within_expected": false,
+    "rail_hold": "loiter",
+    "wind_model": "guided",
+    "autopilot_hold_model": "moved_points",
+    "autopilot_hold_model_flown_by_a_rail": false,
+    "recovery_law": "cap_all",
+    "hil": {
+      "campaign": "sk1122b",
+      "config": {
+        "ssh_target": "nathan-agxiot@10.42.0.3",
+        "remote_root": "~/vla-drone",
+        "env_file": "deploy/topologies/hil.env",
+        "compose_file": "deploy/compose/docker-compose.orin.yml",
+        "wsl_distro": "Ubuntu",
+        "wsl_repo": null,
+        "mavros_host": "10.42.0.3",
+        "store": "demo/out/hil_smoke",
+        "bundles_dir": "bundles",
+        "sitl_settle_s": 20.0,
+        "sitl_ready_timeout_s": 120.0,
+        "mission_margin_s": 420.0,
+        "restart_mavros": true,
+        "ssh_options": [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=15"
+        ],
+        "require_chain": null,
+        "require_chain_launched": null
+      },
+      "flyable": 2,
+      "refused": {},
+      "max_s_add": 0.0,
+      "flight_length": {
+        "lengthened": false,
+        "max_s_add": 0.0,
+        "cap": "the scenario's max_s + the Loiter operator timeout (30 s) + 5 s"
+      },
+      "rail_hold": "loiter"
+    },
+    "kpi_bearing_this_run": null,
+    "kpi_bearing_this_run_why": "judged per run by guardrail.manifest.is_kpi_grade on the node's manifest"
+  },
+  "_distinct_kpi_signatures": {
+    "episodes": 2,
+    "distinct": 2,
+    "note": "episodes whose KPI tables differ (status, escapes, repairs, breaches, fail-safe, outcome, goal, time to safe, true-state distance and ticks, speed, range, offset). An upper bound on behavioural variety: float jitter in repair counts splits symmetric copies"
+  },
+  "_runtime_s": 287.51,
+  "_runner": {
+    "python": "3.10.20",
+    "implementation": "CPython",
+    "env": "vla-real",
+    "platform": "Windows-10"
+  },
+  "_manifest_common": {
+    "code_revision": "59e19a5e3b19",
+    "vla_model_hash": "experiments.sweep_scenarios._pilot@src:a45b34103ddd9987771d6396dfc427b06c90ab794419b73540c97ec3709a1d1f",
+    "topology": "headless-kinematic"
+  },
+  "_seeds": {
+    "episodes_consuming_seed": 0,
+    "episodes_deterministic": 2,
+    "episodes_seed_not_applied": 0,
+    "note": "a deterministic episode repeated on another seed is identical by construction, not spread"
+  },
+  "_failsafe_labels": {
+    "labelled": 2,
+    "unlabelled": 0,
+    "censored_in_loiter": 0,
+    "censored_episodes": [],
+    "censored_by_cause": {
+      "flight_ended": [],
+      "autopilot_takeover": []
+    },
+    "by_rubric_clause": {
+      "E5": {
+        "scored": 1,
+        "correct": 1
+      },
+      "N4": {
+        "scored": 1,
+        "correct": 0
+      }
+    },
+    "triggered_by": {
+      "fsm": 2,
+      "autopilot_geofence": 0
+    },
+    "backstop_triggered_episodes": [],
+    "before_backstop_rule": {
+      "labelled": 2,
+      "correct": 1,
+      "fail_safe_correctness": 0.5,
+      "left_out_as_censored": 0
+    },
+    "backstop_as_not_triggered": {
+      "labelled": 2,
+      "correct": 1,
+      "fail_safe_correctness": 0.5
+    },
+    "backstop_rule_since": "2026-11-15",
+    "labelled_expected": 1,
+    "labelled_not_expected": 1,
+    "correct": 1,
+    "false_triggers": 1,
+    "missed_triggers": 0,
+    "triggers_by_edge": {
+      "false": {
+        "G1 > G3 > G5": 1
+      },
+      "true": {
+        "X1 > G3 > G5": 1
+      }
+    },
+    "fail_safe_correctness": 0.5,
+    "labelled_distinct_flights": 2,
+    "correct_distinct_flights": 1,
+    "fail_safe_correctness_distinct_flights": 0.5,
+    "null_never_trigger": 0.5,
+    "null_always_trigger": 0.5,
+    "beats_never_trigger": false,
+    "beats_always_trigger": false,
+    "grant_target": 0.99,
+    "meets_grant_target": false,
+    "discriminating": true,
+    "fsm_scoring": {
+      "failsafe_trigger_correctness": 0.5,
+      "scored": 2,
+      "beats_null": false,
+      "wilson_low_95": 0.094531,
+      "meets_target": false,
+      "meets_target_at_95": false,
+      "min_error_free_episodes_for_target_at_95": 381,
+      "warnings": []
+    },
+    "observed_as": "the escalation FSM entering RTL or Land (Shield.filter's FSM; a Brake or a Loiter is not a fail-safe trigger)"
+  },
+  "_outcome_labels": {
+    "labelled": 0,
+    "unlabelled": 2,
+    "matching": 0,
+    "outcomes": {
+      "success": 0,
+      "fail": 0,
+      "RTL_triggered": 2,
+      "Land_triggered": 0
+    }
+  },
+  "_arms": null,
+  "_true_state": {
+    "shield_on_episodes": 2,
+    "episodes_entering_polygon": 0,
+    "episodes_entering_polygon_by_status": {},
+    "min_true_dist_to_fence_m_of_entries": null,
+    "episodes_inside_polygon": 0,
+    "episodes_inside_polygon_autopilot_entered": 0,
+    "episodes_inside_polygon_imposed_only": 0,
+    "true_p0_flown_ticks": 0,
+    "episodes_with_breach": 0,
+    "episodes_window_opened_on": 0,
+    "window_opened_on_ticks_inside_polygon": [],
+    "window_opened_on_max_time_to_safe_s": null,
+    "cap_refused_ticks": 0,
+    "floor_refused_ticks": 0,
+    "episodes_escape_slowed": 0,
+    "episodes_escape_slowed_by_status": {},
+    "autopilot_ticks": 549,
+    "autopilot_p0_flown_ticks": 0,
+    "autopilot_p0_flown_ticks_by_mode": {},
+    "autopilot_ticks_by_mode": {},
+    "episodes_rtl_failed": 0,
+    "episodes_autopilot_p0_flown": 0,
+    "episodes_autopilot_p0_flown_by_status": {},
+    "autopilot_polygon_entries": 0,
+    "episodes_autopilot_entering_polygon": 0,
+    "autopilot_breaches": 0,
+    "episodes_autopilot_breach": 0,
+    "basis": "true position, harness oracle Shield; the grant's KPI is the Shield's own count (p0_escape_rate), reported unchanged. The autopilot_* figures are the modelled LOITER / RTL / LAND's, outside the Shield's escape rate by definition"
+  },
+  "_families": {
+    "dynamic_nfz_movement": {
+      "episodes": 2,
+      "pass": 1,
+      "tracked": 0,
+      "fail": 1,
+      "known_failure": 0,
+      "episodes_with_breach": 0,
+      "episodes_entering_polygon": 0,
+      "episodes_inside_polygon": 0,
+      "true_p0_flown_ticks": 0,
+      "autopilot_p0_flown_ticks": 0,
+      "min_true_dist_to_fence_m": 6.816,
+      "fsm_outcomes": {
+        "RTL_triggered": 2
+      },
+      "distinct_kpi_signatures": 2
+    }
+  },
+  "_rollup": {
+    "dynamic_nfz_movement": {
+      "episodes": 2,
+      "ticks": 700,
+      "autopilot_ticks": 549,
+      "outcomes": {
+        "success": 0,
+        "fail": 0,
+        "RTL_triggered": 2,
+        "Land_triggered": 0
+      },
+      "p0_escape_rate": 0.0,
+      "p0_escapes": 0,
+      "episodes_with_p0_escape": 0,
+      "episodes_p0_escape_not_measurable": 0,
+      "p0_violation_ticks": 8,
+      "p0_ticks_not_measurable": 0,
+      "p0_ticks_blind": null,
+      "episodes_p0_blind": 0,
+      "episodes_with_collision": 0,
+      "episodes_collision_not_measured": 2,
+      "p0_acted_tick_share": 1.0,
+      "failsafe_expected_ticks": 8,
+      "episodes_failsafe_not_measurable": 0,
+      "false_trigger_rate": 0.0,
+      "false_trigger_ticks": 0,
+      "violation_free_ticks": 143,
+      "episodes_false_trigger_not_measurable": 0,
+      "failsafe_labelled_episodes": {
+        "failsafe_trigger_correctness": 0.5,
+        "scored": 2,
+        "false_triggers": 1,
+        "missed_triggers": 0,
+        "null_always_trigger": 0.5,
+        "null_never_trigger": 0.5,
+        "discriminating": true
+      },
+      "mission_success_rate": 0.0,
+      "mission_successes": 0,
+      "episodes_mission_scored": 2,
+      "mission_goal": {
+        "reached": 0,
+        "missed": 2,
+        "undeclared": 0
+      },
+      "mean_repair_count_per_episode": 4.0,
+      "episodes_repair_count_not_measurable": 0,
+      "mean_repair_attempt_ticks_per_episode": 4.0,
+      "mean_repair_magnitude_mps": 5.6566,
+      "max_repair_magnitude_mps": 5.6568,
+      "mean_repair_magnitude_by_priority": {
+        "P0": {
+          "ticks": 8,
+          "mean_mps": 5.6566
+        },
+        "P1": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "P2": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "unattributed": {
+          "ticks": 0,
+          "mean_mps": null
+        }
+      },
+      "mean_repair_magnitude_by_operator_class": {
+        "AltitudeClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "LateralProjection": {
+          "ticks": 8,
+          "mean_mps": 5.6566,
+          "sole_ticks": 8,
+          "sole_mean_mps": 5.6566
+        },
+        "PathRepair": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "KinematicClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Recovery": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Fallback": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Sanitise": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "SoftRelax": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        }
+      },
+      "episodes_repair_magnitude_breakdown_not_measurable": 0,
+      "episodes_repair_magnitude_by_priority_not_measurable": 0,
+      "repair_success_rate": 0.625,
+      "repair_success_status": "measured",
+      "repair_success_basis": "recheck_and_theta",
+      "repair_attempt_ticks": 8,
+      "repair_success_ticks": 5,
+      "repair_floored_ticks": 0,
+      "repair_theta_unchecked_ticks": 0,
+      "repairs_converged_while_unsafe": 0,
+      "repair_outcomes": {
+        "converged": 5,
+        "converged_via_rescue": 0,
+        "converged_over_theta": 0,
+        "braked": 3,
+        "failsafe": 0,
+        "residual_p0": 0,
+        "residual_other": 0,
+        "not_measurable": 0
+      },
+      "episodes_repair_success_not_measurable": 0,
+      "mean_time_to_safe_s": null,
+      "max_time_to_safe_s": null,
+      "time_to_safe_status": "never_unsafe",
+      "time_to_safe_episodes": 0,
+      "time_to_safe_censored": 0,
+      "episodes_time_to_safe_measured": 2,
+      "episodes_time_to_safe_not_measurable": 0,
+      "null_passthrough_p0_escape_rate": 0.05298,
+      "null_always_brake_repair_success_rate": 0.0,
+      "null_hover_mission_success_rate": 0.0,
+      "null_hover_known_episodes": 2,
+      "vacuous_zeros": {
+        "false_trigger_rate": "structurally 0: the escalation FSM leaves Normal only on an enforced violation (guardrail/fsm.py EscalationFSM._decide) and a row's violations are its input, so no violation-free tick can trigger; the grant's false triggers are the labelled episodes' (failsafe_labelled_episodes.false_triggers)"
+      }
+    },
+    "_all_shield_on": {
+      "episodes": 2,
+      "ticks": 700,
+      "autopilot_ticks": 549,
+      "outcomes": {
+        "success": 0,
+        "fail": 0,
+        "RTL_triggered": 2,
+        "Land_triggered": 0
+      },
+      "p0_escape_rate": 0.0,
+      "p0_escapes": 0,
+      "episodes_with_p0_escape": 0,
+      "episodes_p0_escape_not_measurable": 0,
+      "p0_violation_ticks": 8,
+      "p0_ticks_not_measurable": 0,
+      "p0_ticks_blind": null,
+      "episodes_p0_blind": 0,
+      "episodes_with_collision": 0,
+      "episodes_collision_not_measured": 2,
+      "p0_acted_tick_share": 1.0,
+      "failsafe_expected_ticks": 8,
+      "episodes_failsafe_not_measurable": 0,
+      "false_trigger_rate": 0.0,
+      "false_trigger_ticks": 0,
+      "violation_free_ticks": 143,
+      "episodes_false_trigger_not_measurable": 0,
+      "failsafe_labelled_episodes": {
+        "failsafe_trigger_correctness": 0.5,
+        "scored": 2,
+        "false_triggers": 1,
+        "missed_triggers": 0,
+        "null_always_trigger": 0.5,
+        "null_never_trigger": 0.5,
+        "discriminating": true
+      },
+      "mission_success_rate": 0.0,
+      "mission_successes": 0,
+      "episodes_mission_scored": 2,
+      "mission_goal": {
+        "reached": 0,
+        "missed": 2,
+        "undeclared": 0
+      },
+      "mean_repair_count_per_episode": 4.0,
+      "episodes_repair_count_not_measurable": 0,
+      "mean_repair_attempt_ticks_per_episode": 4.0,
+      "mean_repair_magnitude_mps": 5.6566,
+      "max_repair_magnitude_mps": 5.6568,
+      "mean_repair_magnitude_by_priority": {
+        "P0": {
+          "ticks": 8,
+          "mean_mps": 5.6566
+        },
+        "P1": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "P2": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "unattributed": {
+          "ticks": 0,
+          "mean_mps": null
+        }
+      },
+      "mean_repair_magnitude_by_operator_class": {
+        "AltitudeClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "LateralProjection": {
+          "ticks": 8,
+          "mean_mps": 5.6566,
+          "sole_ticks": 8,
+          "sole_mean_mps": 5.6566
+        },
+        "PathRepair": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "KinematicClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Recovery": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Fallback": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Sanitise": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "SoftRelax": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        }
+      },
+      "episodes_repair_magnitude_breakdown_not_measurable": 0,
+      "episodes_repair_magnitude_by_priority_not_measurable": 0,
+      "repair_success_rate": 0.625,
+      "repair_success_status": "measured",
+      "repair_success_basis": "recheck_and_theta",
+      "repair_attempt_ticks": 8,
+      "repair_success_ticks": 5,
+      "repair_floored_ticks": 0,
+      "repair_theta_unchecked_ticks": 0,
+      "repairs_converged_while_unsafe": 0,
+      "repair_outcomes": {
+        "converged": 5,
+        "converged_via_rescue": 0,
+        "converged_over_theta": 0,
+        "braked": 3,
+        "failsafe": 0,
+        "residual_p0": 0,
+        "residual_other": 0,
+        "not_measurable": 0
+      },
+      "episodes_repair_success_not_measurable": 0,
+      "mean_time_to_safe_s": null,
+      "max_time_to_safe_s": null,
+      "time_to_safe_status": "never_unsafe",
+      "time_to_safe_episodes": 0,
+      "time_to_safe_censored": 0,
+      "episodes_time_to_safe_measured": 2,
+      "episodes_time_to_safe_not_measurable": 0,
+      "null_passthrough_p0_escape_rate": 0.05298,
+      "null_always_brake_repair_success_rate": 0.0,
+      "null_hover_mission_success_rate": 0.0,
+      "null_hover_known_episodes": 2,
+      "vacuous_zeros": {
+        "false_trigger_rate": "structurally 0: the escalation FSM leaves Normal only on an enforced violation (guardrail/fsm.py EscalationFSM._decide) and a row's violations are its input, so no violation-free tick can trigger; the grant's false triggers are the labelled episodes' (failsafe_labelled_episodes.false_triggers)"
+      },
+      "true_state": {
+        "shield_on_episodes": 2,
+        "episodes_entering_polygon": 0,
+        "episodes_entering_polygon_by_status": {},
+        "min_true_dist_to_fence_m_of_entries": null,
+        "episodes_inside_polygon": 0,
+        "episodes_inside_polygon_autopilot_entered": 0,
+        "episodes_inside_polygon_imposed_only": 0,
+        "true_p0_flown_ticks": 0,
+        "episodes_with_breach": 0,
+        "episodes_window_opened_on": 0,
+        "window_opened_on_ticks_inside_polygon": [],
+        "window_opened_on_max_time_to_safe_s": null,
+        "cap_refused_ticks": 0,
+        "floor_refused_ticks": 0,
+        "episodes_escape_slowed": 0,
+        "episodes_escape_slowed_by_status": {},
+        "autopilot_ticks": 549,
+        "autopilot_p0_flown_ticks": 0,
+        "autopilot_p0_flown_ticks_by_mode": {},
+        "autopilot_ticks_by_mode": {},
+        "episodes_rtl_failed": 0,
+        "episodes_autopilot_p0_flown": 0,
+        "episodes_autopilot_p0_flown_by_status": {},
+        "autopilot_polygon_entries": 0,
+        "episodes_autopilot_entering_polygon": 0,
+        "autopilot_breaches": 0,
+        "episodes_autopilot_breach": 0,
+        "basis": "true position, harness oracle Shield; the grant's KPI is the Shield's own count (p0_escape_rate), reported unchanged. The autopilot_* figures are the modelled LOITER / RTL / LAND's, outside the Shield's escape rate by definition"
+      }
+    },
+    "_controls_shield_off": null
+  },
+  "_cell_rollup": {
+    "dynamic_nfz_movement/dyn-nfz-rotate-step/shield-on": {
+      "episodes": 1,
+      "ticks": 300,
+      "autopilot_ticks": 201,
+      "outcomes": {
+        "success": 0,
+        "fail": 0,
+        "RTL_triggered": 1,
+        "Land_triggered": 0
+      },
+      "p0_escape_rate": 0.0,
+      "p0_escapes": 0,
+      "episodes_with_p0_escape": 0,
+      "episodes_p0_escape_not_measurable": 0,
+      "p0_violation_ticks": 6,
+      "p0_ticks_not_measurable": 0,
+      "p0_ticks_blind": null,
+      "episodes_p0_blind": 0,
+      "episodes_with_collision": 0,
+      "episodes_collision_not_measured": 1,
+      "p0_acted_tick_share": 1.0,
+      "failsafe_expected_ticks": 6,
+      "episodes_failsafe_not_measurable": 0,
+      "false_trigger_rate": 0.0,
+      "false_trigger_ticks": 0,
+      "violation_free_ticks": 93,
+      "episodes_false_trigger_not_measurable": 0,
+      "failsafe_labelled_episodes": {
+        "failsafe_trigger_correctness": 0.0,
+        "scored": 1,
+        "false_triggers": 1,
+        "missed_triggers": 0,
+        "null_always_trigger": 0.0,
+        "null_never_trigger": 1.0,
+        "discriminating": false
+      },
+      "mission_success_rate": 0.0,
+      "mission_successes": 0,
+      "episodes_mission_scored": 1,
+      "mission_goal": {
+        "reached": 0,
+        "missed": 1,
+        "undeclared": 0
+      },
+      "mean_repair_count_per_episode": 6.0,
+      "episodes_repair_count_not_measurable": 0,
+      "mean_repair_attempt_ticks_per_episode": 6.0,
+      "mean_repair_magnitude_mps": 5.6567,
+      "max_repair_magnitude_mps": 5.6568,
+      "mean_repair_magnitude_by_priority": {
+        "P0": {
+          "ticks": 6,
+          "mean_mps": 5.6567
+        },
+        "P1": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "P2": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "unattributed": {
+          "ticks": 0,
+          "mean_mps": null
+        }
+      },
+      "mean_repair_magnitude_by_operator_class": {
+        "AltitudeClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "LateralProjection": {
+          "ticks": 6,
+          "mean_mps": 5.6567,
+          "sole_ticks": 6,
+          "sole_mean_mps": 5.6567
+        },
+        "PathRepair": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "KinematicClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Recovery": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Fallback": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Sanitise": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "SoftRelax": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        }
+      },
+      "episodes_repair_magnitude_breakdown_not_measurable": 0,
+      "episodes_repair_magnitude_by_priority_not_measurable": 0,
+      "repair_success_rate": 0.833333,
+      "repair_success_status": "measured",
+      "repair_success_basis": "recheck_and_theta",
+      "repair_attempt_ticks": 6,
+      "repair_success_ticks": 5,
+      "repair_floored_ticks": 0,
+      "repair_theta_unchecked_ticks": 0,
+      "repairs_converged_while_unsafe": 0,
+      "repair_outcomes": {
+        "converged": 5,
+        "converged_via_rescue": 0,
+        "converged_over_theta": 0,
+        "braked": 1,
+        "failsafe": 0,
+        "residual_p0": 0,
+        "residual_other": 0,
+        "not_measurable": 0
+      },
+      "episodes_repair_success_not_measurable": 0,
+      "mean_time_to_safe_s": null,
+      "max_time_to_safe_s": null,
+      "time_to_safe_status": "never_unsafe",
+      "time_to_safe_episodes": 0,
+      "time_to_safe_censored": 0,
+      "episodes_time_to_safe_measured": 1,
+      "episodes_time_to_safe_not_measurable": 0,
+      "null_passthrough_p0_escape_rate": 0.060606,
+      "null_always_brake_repair_success_rate": 0.0,
+      "null_hover_mission_success_rate": 0.0,
+      "null_hover_known_episodes": 1,
+      "vacuous_zeros": {
+        "false_trigger_rate": "structurally 0: the escalation FSM leaves Normal only on an enforced violation (guardrail/fsm.py EscalationFSM._decide) and a row's violations are its input, so no violation-free tick can trigger; the grant's false triggers are the labelled episodes' (failsafe_labelled_episodes.false_triggers)"
+      },
+      "members": [
+        "dyn-nfz-rotate-step"
+      ],
+      "forecast_arm": "grant",
+      "response_arm": "ideal",
+      "grant_config": null,
+      "autopilot_p0_flown_ticks": 0,
+      "autopilot_p0_flown_ticks_by_mode": {},
+      "autopilot_ticks_by_mode": {},
+      "episodes_rtl_failed": 0
+    },
+    "dynamic_nfz_movement/dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4/shield-on": {
+      "episodes": 1,
+      "ticks": 400,
+      "autopilot_ticks": 348,
+      "outcomes": {
+        "success": 0,
+        "fail": 0,
+        "RTL_triggered": 1,
+        "Land_triggered": 0
+      },
+      "p0_escape_rate": 0.0,
+      "p0_escapes": 0,
+      "episodes_with_p0_escape": 0,
+      "episodes_p0_escape_not_measurable": 0,
+      "p0_violation_ticks": 2,
+      "p0_ticks_not_measurable": 0,
+      "p0_ticks_blind": null,
+      "episodes_p0_blind": 0,
+      "episodes_with_collision": 0,
+      "episodes_collision_not_measured": 1,
+      "p0_acted_tick_share": 1.0,
+      "failsafe_expected_ticks": 2,
+      "episodes_failsafe_not_measurable": 0,
+      "false_trigger_rate": 0.0,
+      "false_trigger_ticks": 0,
+      "violation_free_ticks": 50,
+      "episodes_false_trigger_not_measurable": 0,
+      "failsafe_labelled_episodes": {
+        "failsafe_trigger_correctness": 1.0,
+        "scored": 1,
+        "false_triggers": 0,
+        "missed_triggers": 0,
+        "null_always_trigger": 1.0,
+        "null_never_trigger": 0.0,
+        "discriminating": false
+      },
+      "mission_success_rate": 0.0,
+      "mission_successes": 0,
+      "episodes_mission_scored": 1,
+      "mission_goal": {
+        "reached": 0,
+        "missed": 1,
+        "undeclared": 0
+      },
+      "mean_repair_count_per_episode": 2.0,
+      "episodes_repair_count_not_measurable": 0,
+      "mean_repair_attempt_ticks_per_episode": 2.0,
+      "mean_repair_magnitude_mps": 5.6563,
+      "max_repair_magnitude_mps": 5.6563,
+      "mean_repair_magnitude_by_priority": {
+        "P0": {
+          "ticks": 2,
+          "mean_mps": 5.6563
+        },
+        "P1": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "P2": {
+          "ticks": 0,
+          "mean_mps": null
+        },
+        "unattributed": {
+          "ticks": 0,
+          "mean_mps": null
+        }
+      },
+      "mean_repair_magnitude_by_operator_class": {
+        "AltitudeClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "LateralProjection": {
+          "ticks": 2,
+          "mean_mps": 5.6563,
+          "sole_ticks": 2,
+          "sole_mean_mps": 5.6563
+        },
+        "PathRepair": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "KinematicClamp": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Recovery": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Fallback": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "Sanitise": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        },
+        "SoftRelax": {
+          "ticks": 0,
+          "mean_mps": null,
+          "sole_ticks": 0,
+          "sole_mean_mps": null
+        }
+      },
+      "episodes_repair_magnitude_breakdown_not_measurable": 0,
+      "episodes_repair_magnitude_by_priority_not_measurable": 0,
+      "repair_success_rate": 0.0,
+      "repair_success_status": "measured",
+      "repair_success_basis": null,
+      "repair_attempt_ticks": 2,
+      "repair_success_ticks": 0,
+      "repair_floored_ticks": 0,
+      "repair_theta_unchecked_ticks": 0,
+      "repairs_converged_while_unsafe": 0,
+      "repair_outcomes": {
+        "converged": 0,
+        "converged_via_rescue": 0,
+        "converged_over_theta": 0,
+        "braked": 2,
+        "failsafe": 0,
+        "residual_p0": 0,
+        "residual_other": 0,
+        "not_measurable": 0
+      },
+      "episodes_repair_success_not_measurable": 0,
+      "mean_time_to_safe_s": null,
+      "max_time_to_safe_s": null,
+      "time_to_safe_status": "never_unsafe",
+      "time_to_safe_episodes": 0,
+      "time_to_safe_censored": 0,
+      "episodes_time_to_safe_measured": 1,
+      "episodes_time_to_safe_not_measurable": 0,
+      "null_passthrough_p0_escape_rate": 0.038462,
+      "null_always_brake_repair_success_rate": 0.0,
+      "null_hover_mission_success_rate": 0.0,
+      "null_hover_known_episodes": 1,
+      "vacuous_zeros": {
+        "false_trigger_rate": "structurally 0: the escalation FSM leaves Normal only on an enforced violation (guardrail/fsm.py EscalationFSM._decide) and a row's violations are its input, so no violation-free tick can trigger; the grant's false triggers are the labelled episodes' (failsafe_labelled_episodes.false_triggers)"
+      },
+      "members": [
+        "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4"
+      ],
+      "forecast_arm": "grant",
+      "response_arm": "ideal",
+      "grant_config": null,
+      "autopilot_p0_flown_ticks": 0,
+      "autopilot_p0_flown_ticks_by_mode": {},
+      "autopilot_ticks_by_mode": {},
+      "episodes_rtl_failed": 0
+    }
+  },
+  "_rollup_note": null,
+  "_top_failures": [
+    {
+      "scenario_id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
+      "family": "dynamic_nfz_movement",
+      "parameters": {
+        "vehicle_speed_mps": 4,
+        "ahead_m": 12,
+        "approach_deg": 220.121,
+        "variant": 0
+      },
+      "failure_category": [
+        "goal_missed",
+        "repair_fell_through",
+        "RTL_triggered"
+      ],
+      "p0_escapes": 0,
+      "collision_contacts": null,
+      "p0_ticks_blind": null,
+      "mission_success": false,
+      "time_to_safe_censored": 0,
+      "max_time_to_safe_s": null,
+      "time_to_safe_basis": null,
+      "raw_action": {
+        "vx": -3.058616352117503,
+        "vy": -2.5777638348218352,
+        "vz_up": -0.004651069641113281,
+        "yaw_rate": 0.0
+      },
+      "repaired_action": {
+        "vx": 2.5771399481605397,
+        "vy": -3.0591419384650123,
+        "vz_up": -0.004651069641113281,
+        "yaw_rate": 0.0
+      },
+      "at_t": 5.086,
+      "worst_tick_why": "repair_braked",
+      "bundle": "demo/out/hil_sk1122b/episode-2026-11-22T04-40-00Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed1001",
+      "kpi_grade": false
+    },
+    {
+      "scenario_id": "dyn-nfz-rotate-step",
+      "family": "dynamic_nfz_movement",
+      "parameters": {},
+      "failure_category": [
+        "goal_missed",
+        "repair_fell_through",
+        "RTL_triggered",
+        "failsafe_label_mismatch"
+      ],
+      "p0_escapes": 0,
+      "collision_contacts": null,
+      "p0_ticks_blind": null,
+      "mission_success": false,
+      "time_to_safe_censored": 0,
+      "max_time_to_safe_s": null,
+      "time_to_safe_basis": null,
+      "raw_action": {
+        "vx": 3.9999999037777516,
+        "vy": -0.0006339337864252892,
+        "vz_up": -0.003063201904296875,
+        "yaw_rate": 0.0
+      },
+      "repaired_action": {
+        "vx": -0.0,
+        "vy": -3.9999999037777516,
+        "vz_up": -0.003063201904296875,
+        "yaw_rate": 0.0
+      },
+      "at_t": 9.845,
+      "worst_tick_why": "repair_braked",
+      "bundle": "demo/out/hil_sk1122b/episode-2026-11-22T04-40-00Z--dyn-nfz-rotate-step--seed1001",
+      "kpi_grade": false
+    }
+  ],
+  "_forecast_comparison": null,
+  "_response_comparison": null,
+  "results": [
+    {
+      "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
+      "id_cell": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
+      "scenario_id": "dyn-nfz-spawn-ahead",
+      "template": "dynamic_nfz_movement",
+      "params": {
+        "vehicle_speed_mps": 4,
+        "ahead_m": 12,
+        "approach_deg": 220.121,
+        "variant": 0
+      },
+      "seed": 1001,
+      "arm": "on",
+      "prefix": "on",
+      "expect": "pass",
+      "forecast_arm": "grant",
+      "response_arm": "ideal",
+      "why": "The grant's worked example, as far as the Shield can take it: a polygon no-fly zone hot-applied mid-flight (Shield.hot_apply, generation 0 -> 1), its near edge `ahead_m` in front of the aircraft on its current heading. 3 m ahead leaves 2 m to the margin ring, so the reaction has to be immediate. At the grant's 5 s forecast (2026-10-12) every spawn but 30 m is inside the lookahead at 4 m/s (20 m), and 30 m is inside it at 8 m/s (40 m); at the 3 s forecast flown until then only 3 m (and 6 m at 4 m/s) were. The purpose holds: a zone appearing inside the forecast must be answered on the spawn tick. The zone never moves (dyn-nfz-translate below is the moving version), so the goal behind it is not reached, and no outcome is labelled.",
+      "run": "demo/out/hil_smoke/sk1122b_001_dyn-nfz-spawn-ahead",
+      "mission_tag": "sk1122b_001_dyn-nfz-spawn-ahead",
+      "status": "pass",
+      "gates_failed": [],
+      "kpi": {
+        "kpi_version": "1.0",
+        "ticks": 400,
+        "shield_ticks": 52,
+        "autopilot_ticks": 348,
+        "outcome": "RTL_triggered",
+        "p0_violation_escape_rate": 0.0,
+        "p0_violation_escape_rate_status": "measured",
+        "p0_escapes": 0,
+        "p0_violation_ticks": 2,
+        "p0_ticks_not_measurable": 0,
+        "p0_ticks_blind": null,
+        "collision_contacts": null,
+        "collision_objects": null,
+        "p0_acted_tick_share": 1.0,
+        "failsafe_trigger_correctness": 1.0,
+        "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+        "failsafe_expected_ticks": 2,
+        "failsafe_correct_ticks": 2,
+        "violation_free_ticks": 50,
+        "false_trigger_ticks": 0,
+        "false_trigger_rate": 0.0,
+        "failsafe_permitted_ticks": 0,
+        "repair_count": 2,
+        "repairs_per_episode": 2,
+        "repair_success_rate": 0.0,
+        "repair_success_status": "measured",
+        "repair_attempt_ticks": 2,
+        "repair_success_ticks": 0,
+        "repair_unmeasured_ticks": 0,
+        "repair_outcomes": {
+          "converged": 0,
+          "converged_via_rescue": 0,
+          "converged_over_theta": 0,
+          "braked": 2,
+          "failsafe": 0,
+          "residual_p0": 0,
+          "residual_other": 0,
+          "not_measurable": 0
+        },
+        "repair_not_applied_ticks": 0,
+        "repair_not_applied_autopilot_ticks": 348,
+        "repair_floored_ticks": 0,
+        "repairs_to_standstill": 0,
+        "repairs_converged_while_unsafe": 0,
+        "repair_success_basis": null,
+        "repair_theta_unchecked_ticks": 0,
+        "repair_theta_sources": {
+          "fsm_record": 0,
+          "magnitude_m": 0,
+          "action_per_period": 0,
+          "not_governed": 0,
+          "no_magnitude": 0
+        },
+        "repair_theta_horizon_s": null,
+        "repair_theta_m": {
+          "lateral": 2.0,
+          "vertical": 0.5
+        },
+        "failsafe_instrumented": true,
+        "mean_repair_magnitude_mps": 5.6563,
+        "max_repair_magnitude_mps": 5.6563,
+        "mean_yaw_repair_dps": 0.0,
+        "repaired_ticks": 2,
+        "repair_ticks_not_measurable": 0,
+        "repair_magnitude_by_priority": {
+          "P0": {
+            "ticks": 2,
+            "sum_mps": 11.312555,
+            "mean_mps": 5.6563
+          },
+          "P1": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          },
+          "P2": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          },
+          "unattributed": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          }
+        },
+        "repair_magnitude_by_operator_class": {
+          "AltitudeClamp": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "LateralProjection": {
+            "ticks": 2,
+            "sum_mps": 11.312555,
+            "mean_mps": 5.6563,
+            "sole_ticks": 2,
+            "sole_sum_mps": 11.312555,
+            "sole_mean_mps": 5.6563
+          },
+          "PathRepair": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "KinematicClamp": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Recovery": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Fallback": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Sanitise": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "SoftRelax": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          }
+        },
+        "repair_magnitude_breakdown_status": "measured",
+        "mean_time_to_safe_s": null,
+        "max_time_to_safe_s": null,
+        "time_to_safe_episodes": 0,
+        "time_to_safe_censored": 0,
+        "time_to_safe_not_measurable": false,
+        "mean_intervention_s": null,
+        "max_intervention_s": null,
+        "intervention_episodes": 0,
+        "intervention_censored": 1,
+        "intervention_not_measurable": false,
+        "mission_success": false,
+        "mission_fail_reasons": [
+          "goal_missed",
+          "failsafe:RTL_triggered"
+        ],
+        "unsafe_p0_ticks": 0,
+        "mission_started_unsafe": false,
+        "mission_goal_status": "missed",
+        "violations_by_risk_level": {
+          "P0": 2
+        },
+        "violations_by_type": {
+          "geofence": 2
+        },
+        "seed_applied": true,
+        "reached_goal": false,
+        "fsm": {
+          "ticks": 750,
+          "final_state": "RTL",
+          "terminal": true,
+          "terminal_reason": "home reached",
+          "visited": [
+            "Normal",
+            "Brake",
+            "Loiter",
+            "RTL"
+          ],
+          "max_state": "RTL",
+          "failsafe_triggered": true,
+          "loiter_entered": true,
+          "outcome_label": "RTL_triggered",
+          "transitions": [
+            {
+              "tick": 51,
+              "t_s": 5.085638,
+              "from": "Normal",
+              "to": "Brake",
+              "edge": "X1",
+              "reason": "dyn-nfz (hard P0 project_fix): repair over theta, lat 9.00 m / vert 0.00 m vs theta 2.00 / 0.50 m; projection abandoned"
+            },
+            {
+              "tick": 52,
+              "t_s": 5.185945,
+              "from": "Brake",
+              "to": "Loiter",
+              "edge": "G3",
+              "reason": "dyn-nfz (hard P0 project_fix): repair over theta, lat 9.00 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+            },
+            {
+              "tick": 353,
+              "t_s": 35.284906,
+              "from": "Loiter",
+              "to": "RTL",
+              "edge": "G5",
+              "reason": "loiter timeout: 30.10 s >= 30 s"
+            },
+            {
+              "tick": 429,
+              "t_s": 42.88526,
+              "from": "RTL",
+              "to": "[*]",
+              "edge": "G9",
+              "reason": "home reached"
+            }
+          ],
+          "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+          "holds": [
+            {
+              "mode": "LOITER",
+              "kind": "in_place",
+              "x": -211.562039,
+              "y": -9.736748,
+              "up": 15.004651,
+              "legal": true,
+              "travel_s": 0.0,
+              "speed_mps": null,
+              "climb_mps": null,
+              "checked_s": 5.0,
+              "breaks": [],
+              "reason": "standing still at (-211.6, -9.7, 15.0) breaks no hard rule within the 5 s lookahead",
+              "t_s": 5.185945
+            }
+          ],
+          "holds_moved": 0,
+          "holds_illegal": 0,
+          "ended_holding": null,
+          "theta_basis": {
+            "source": "per-operator magnitude_m",
+            "horizon_s": null
+          },
+          "decision_period": {
+            "declared_s": null,
+            "slow_above_s": 1.1111,
+            "window_s_base": 5.0,
+            "n_violations": 3,
+            "applied": false,
+            "window_s": 5.0,
+            "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+          },
+          "fault": null,
+          "hold_points": {
+            "choice": "moved",
+            "moved_transits": 0
+          }
+        },
+        "breaches": 0,
+        "autopilot_breaches": 0,
+        "autopilot_keepout_breaches": 0,
+        "autopilot_departures": {
+          "corridor": 0,
+          "altitude_band": 0
+        },
+        "ticks_inside_fence_polygon": 0,
+        "min_true_dist_to_fence_m": 6.816,
+        "polygon_entries": 0,
+        "autopilot_polygon_entries": 0,
+        "ended_safe": true,
+        "all_actions_finite": true,
+        "max_speed_flown": 4.0,
+        "phase0_violation_ticks_nfz-square": 0,
+        "phase0_violation_ticks_alt-band": 0,
+        "phase0_violation_ticks_kin-caps": 0,
+        "phase0_violation_ticks_dyn-nfz": 0,
+        "phase1_violation_ticks_nfz-square": 0,
+        "phase1_violation_ticks_alt-band": 0,
+        "phase1_violation_ticks_kin-caps": 0,
+        "phase1_violation_ticks_dyn-nfz": 350,
+        "max_offset_from_corridor": null,
+        "final_offset_from_corridor": null,
+        "window_opened_on_ticks": 0,
+        "cap_refused_ticks": 0,
+        "floor_refused_ticks": 0,
+        "rail_rule_basis": {
+          "rules": "the run's generations at each row's rule clock (Shield.rule_status)",
+          "window_opens_on": "the rows' decision trace",
+          "dt_s": 0.1,
+          "eps_s": 0.05
+        },
+        "event_refusals_as_expected": null,
+        "rtl_failed_ticks": 0,
+        "in_window": {
+          "breaches": 0,
+          "autopilot_breaches": 0,
+          "autopilot_keepout_breaches": 0,
+          "autopilot_departures": {
+            "corridor": 0,
+            "altitude_band": 0
+          },
+          "polygon_entries": 0,
+          "autopilot_polygon_entries": 0,
+          "ended_safe": true,
+          "max_speed_flown": 4.0,
+          "all_actions_finite": true,
+          "p0_violation_escape_rate": 0.0,
+          "p0_violation_escape_rate_status": "measured",
+          "p0_escapes": 0,
+          "p0_violation_ticks": 2,
+          "p0_ticks_not_measurable": 0,
+          "p0_ticks_blind": null,
+          "p0_acted_tick_share": 1.0
+        },
+        "rail_window": {
+          "max_s": 40.0,
+          "rows": 400,
+          "rows_after_cap": 29,
+          "rows_after_mission_end": 321,
+          "rows_flight": 750,
+          "flight_s": 74.986,
+          "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
+        },
+        "after_mission_end": {
+          "rows": 321,
+          "from_t": 42.986,
+          "final_up": 0.129,
+          "unsafe_rows": 198,
+          "ended": null
+        },
+        "sim_stressors": [],
+        "sim_stressors_check": {
+          "plan": null,
+          "node_at_takeoff": {
+            "SIM_WIND_SPD": 0.0,
+            "SIM_WIND_DIR": 180.0,
+            "SIM_WIND_T": 0.0,
+            "SIM_WIND_TURB": 0.0,
+            "SIM_GPS_DISABLE": 0.0,
+            "SIM_BATT_VOLTAGE": 12.600000381469727
+          },
+          "align_tol_s": 0.2,
+          "entries": [],
+          "problems": []
+        },
+        "literal_loiter": {
+          "verdict": "pass",
+          "counted": true,
+          "loiter_spells": 1,
+          "loiter_held_s": 29.9,
+          "alt_tol_m": 1.0
+        },
+        "failsafe_by": "fsm",
+        "failsafe_triggered": true,
+        "failsafe_label": true,
+        "failsafe_clause": "E5",
+        "failsafe_censored": false,
+        "failsafe_backstop": null,
+        "failsafe_matches_label": 1.0,
+        "mission_outcome": "RTL_triggered",
+        "outcome_matches_label": null
+      },
+      "seed_consumed": false,
+      "seed_applied": true,
+      "grant_config": null,
+      "manifest": null,
+      "manifest_extras": null,
+      "arm_record": null,
+      "bundle": "demo/out/hil_sk1122b/episode-2026-11-22T04-40-00Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed1001"
+    },
+    {
+      "id": "dyn-nfz-rotate-step",
+      "id_cell": "dyn-nfz-rotate-step",
+      "scenario_id": "dyn-nfz-rotate-step",
+      "template": "dynamic_nfz_movement",
+      "params": {},
+      "seed": 1001,
+      "arm": "on",
+      "prefix": "on",
+      "expect": "pass",
+      "forecast_arm": "grant",
+      "response_arm": "ideal",
+      "why": "A 40 x 4 m bar spawned beside the route at 3 s (its centre 15 m to the right, lying along the track), rotated 90 degrees about its centre at 8 s (rotate_polygon_fence, a step): it now lies across the track and blocks the route ahead of the aircraft. Before the rotation nothing may bind; after it the aircraft must be held out of the bar.",
+      "run": "demo/out/hil_smoke/sk1122b_002_dyn-nfz-rotate-step",
+      "mission_tag": "sk1122b_002_dyn-nfz-rotate-step",
+      "status": "fail",
+      "gates_failed": [
+        "fail-safe: labelled not expected, triggered"
+      ],
+      "kpi": {
+        "kpi_version": "1.0",
+        "ticks": 300,
+        "shield_ticks": 99,
+        "autopilot_ticks": 201,
+        "outcome": "RTL_triggered",
+        "p0_violation_escape_rate": 0.0,
+        "p0_violation_escape_rate_status": "measured",
+        "p0_escapes": 0,
+        "p0_violation_ticks": 6,
+        "p0_ticks_not_measurable": 0,
+        "p0_ticks_blind": null,
+        "collision_contacts": null,
+        "collision_objects": null,
+        "p0_acted_tick_share": 1.0,
+        "failsafe_trigger_correctness": 1.0,
+        "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+        "failsafe_expected_ticks": 6,
+        "failsafe_correct_ticks": 6,
+        "violation_free_ticks": 93,
+        "false_trigger_ticks": 0,
+        "false_trigger_rate": 0.0,
+        "failsafe_permitted_ticks": 0,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
+        "repair_success_rate": 0.833333,
+        "repair_success_status": "measured",
+        "repair_attempt_ticks": 6,
+        "repair_success_ticks": 5,
+        "repair_unmeasured_ticks": 0,
+        "repair_outcomes": {
+          "converged": 5,
+          "converged_via_rescue": 0,
+          "converged_over_theta": 0,
+          "braked": 1,
+          "failsafe": 0,
+          "residual_p0": 0,
+          "residual_other": 0,
+          "not_measurable": 0
+        },
+        "repair_not_applied_ticks": 0,
+        "repair_not_applied_autopilot_ticks": 201,
+        "repair_floored_ticks": 0,
+        "repairs_to_standstill": 0,
+        "repairs_converged_while_unsafe": 0,
+        "repair_success_basis": "recheck_and_theta",
+        "repair_theta_unchecked_ticks": 0,
+        "repair_theta_sources": {
+          "fsm_record": 0,
+          "magnitude_m": 5,
+          "action_per_period": 0,
+          "not_governed": 0,
+          "no_magnitude": 0
+        },
+        "repair_theta_horizon_s": null,
+        "repair_theta_m": {
+          "lateral": 2.0,
+          "vertical": 0.5
+        },
+        "failsafe_instrumented": true,
+        "mean_repair_magnitude_mps": 5.6567,
+        "max_repair_magnitude_mps": 5.6568,
+        "mean_yaw_repair_dps": 0.0,
+        "repaired_ticks": 6,
+        "repair_ticks_not_measurable": 0,
+        "repair_magnitude_by_priority": {
+          "P0": {
+            "ticks": 6,
+            "sum_mps": 33.940348,
+            "mean_mps": 5.6567
+          },
+          "P1": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          },
+          "P2": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          },
+          "unattributed": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null
+          }
+        },
+        "repair_magnitude_by_operator_class": {
+          "AltitudeClamp": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "LateralProjection": {
+            "ticks": 6,
+            "sum_mps": 33.940348,
+            "mean_mps": 5.6567,
+            "sole_ticks": 6,
+            "sole_sum_mps": 33.940348,
+            "sole_mean_mps": 5.6567
+          },
+          "PathRepair": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "KinematicClamp": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Recovery": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Fallback": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "Sanitise": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          },
+          "SoftRelax": {
+            "ticks": 0,
+            "sum_mps": 0.0,
+            "mean_mps": null,
+            "sole_ticks": 0,
+            "sole_sum_mps": 0.0,
+            "sole_mean_mps": null
+          }
+        },
+        "repair_magnitude_breakdown_status": "measured",
+        "mean_time_to_safe_s": null,
+        "max_time_to_safe_s": null,
+        "time_to_safe_episodes": 0,
+        "time_to_safe_censored": 0,
+        "time_to_safe_not_measurable": false,
+        "mean_intervention_s": null,
+        "max_intervention_s": null,
+        "intervention_episodes": 0,
+        "intervention_censored": 1,
+        "intervention_not_measurable": false,
+        "mission_success": false,
+        "mission_fail_reasons": [
+          "goal_missed",
+          "failsafe:RTL_triggered"
+        ],
+        "unsafe_p0_ticks": 0,
+        "mission_started_unsafe": false,
+        "mission_goal_status": "missed",
+        "violations_by_risk_level": {
+          "P0": 6
+        },
+        "violations_by_type": {
+          "geofence": 6
+        },
+        "seed_applied": true,
+        "reached_goal": false,
+        "fsm": {
+          "ticks": 650,
+          "final_state": "RTL",
+          "terminal": true,
+          "terminal_reason": "home reached",
+          "visited": [
+            "Normal",
+            "Brake",
+            "Loiter",
+            "RTL"
+          ],
+          "max_state": "RTL",
+          "failsafe_triggered": true,
+          "loiter_entered": true,
+          "outcome_label": "RTL_triggered",
+          "transitions": [
+            {
+              "tick": 94,
+              "t_s": 9.345129,
+              "from": "Normal",
+              "to": "Brake",
+              "edge": "G1",
+              "reason": "bar (hard P0 project_fix) repaired, lat 0.28 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+            },
+            {
+              "tick": 99,
+              "t_s": 9.84523,
+              "from": "Brake",
+              "to": "Loiter",
+              "edge": "G3",
+              "reason": "bar (hard P0 project_fix): repair over theta, lat 2.26 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+            },
+            {
+              "tick": 400,
+              "t_s": 39.94463,
+              "from": "Loiter",
+              "to": "RTL",
+              "edge": "G5",
+              "reason": "loiter timeout: 30.10 s >= 30 s"
+            },
+            {
+              "tick": 497,
+              "t_s": 49.644751,
+              "from": "RTL",
+              "to": "[*]",
+              "edge": "G9",
+              "reason": "home reached"
+            }
+          ],
+          "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+          "holds": [
+            {
+              "mode": "LOITER",
+              "kind": "in_place",
+              "x": -165.738121,
+              "y": 0.013588,
+              "up": 15.003063,
+              "legal": true,
+              "travel_s": 0.0,
+              "speed_mps": null,
+              "climb_mps": null,
+              "checked_s": 5.0,
+              "breaks": [],
+              "reason": "standing still at (-165.7, 0.0, 15.0) breaks no hard rule within the 5 s lookahead",
+              "t_s": 9.84523
+            }
+          ],
+          "holds_moved": 0,
+          "holds_illegal": 0,
+          "ended_holding": null,
+          "theta_basis": {
+            "source": "per-operator magnitude_m",
+            "horizon_s": null
+          },
+          "decision_period": {
+            "declared_s": null,
+            "slow_above_s": 1.1111,
+            "window_s_base": 5.0,
+            "n_violations": 3,
+            "applied": false,
+            "window_s": 5.0,
+            "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+          },
+          "fault": null,
+          "hold_points": {
+            "choice": "moved",
+            "moved_transits": 0
+          }
+        },
+        "breaches": 0,
+        "autopilot_breaches": 0,
+        "autopilot_keepout_breaches": 0,
+        "autopilot_departures": {
+          "corridor": 0,
+          "altitude_band": 0
+        },
+        "ticks_inside_fence_polygon": 0,
+        "min_true_dist_to_fence_m": 14.66,
+        "polygon_entries": 0,
+        "autopilot_polygon_entries": 0,
+        "ended_safe": true,
+        "all_actions_finite": true,
+        "max_speed_flown": 4.0,
+        "phase0_violation_ticks_nfz-square": 0,
+        "phase0_violation_ticks_alt-band": 0,
+        "phase0_violation_ticks_kin-caps": 0,
+        "phase0_violation_ticks_bar": 0,
+        "phase1_violation_ticks_nfz-square": 0,
+        "phase1_violation_ticks_alt-band": 0,
+        "phase1_violation_ticks_kin-caps": 0,
+        "phase1_violation_ticks_bar": 0,
+        "phase2_violation_ticks_nfz-square": 0,
+        "phase2_violation_ticks_alt-band": 0,
+        "phase2_violation_ticks_kin-caps": 0,
+        "phase2_violation_ticks_bar": 207,
+        "max_offset_from_corridor": null,
+        "final_offset_from_corridor": null,
+        "window_opened_on_ticks": 0,
+        "cap_refused_ticks": 0,
+        "floor_refused_ticks": 0,
+        "rail_rule_basis": {
+          "rules": "the run's generations at each row's rule clock (Shield.rule_status)",
+          "window_opens_on": "the rows' decision trace",
+          "dt_s": 0.1,
+          "eps_s": 0.05
+        },
+        "event_refusals_as_expected": null,
+        "rtl_failed_ticks": 0,
+        "in_window": {
+          "breaches": 0,
+          "autopilot_breaches": 0,
+          "autopilot_keepout_breaches": 0,
+          "autopilot_departures": {
+            "corridor": 0,
+            "altitude_band": 0
+          },
+          "polygon_entries": 0,
+          "autopilot_polygon_entries": 0,
+          "ended_safe": true,
+          "max_speed_flown": 4.0,
+          "all_actions_finite": true,
+          "p0_violation_escape_rate": 0.0,
+          "p0_violation_escape_rate_status": "measured",
+          "p0_escapes": 0,
+          "p0_violation_ticks": 6,
+          "p0_ticks_not_measurable": 0,
+          "p0_ticks_blind": null,
+          "p0_acted_tick_share": 1.0
+        },
+        "rail_window": {
+          "max_s": 30.0,
+          "rows": 300,
+          "rows_after_cap": 197,
+          "rows_after_mission_end": 153,
+          "rows_flight": 650,
+          "flight_s": 64.945,
+          "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
+        },
+        "after_mission_end": {
+          "rows": 153,
+          "from_t": 49.745,
+          "final_up": 8.588,
+          "unsafe_rows": 29,
+          "ended": null
+        },
+        "sim_stressors": [],
+        "sim_stressors_check": {
+          "plan": null,
+          "node_at_takeoff": {
+            "SIM_WIND_SPD": 0.0,
+            "SIM_WIND_DIR": 180.0,
+            "SIM_WIND_T": 0.0,
+            "SIM_WIND_TURB": 0.0,
+            "SIM_GPS_DISABLE": 0.0,
+            "SIM_BATT_VOLTAGE": 12.600000381469727
+          },
+          "align_tol_s": 0.2,
+          "entries": [],
+          "problems": []
+        },
+        "literal_loiter": {
+          "verdict": "pass",
+          "counted": true,
+          "loiter_spells": 1,
+          "loiter_held_s": 29.9,
+          "alt_tol_m": 1.0
+        },
+        "failsafe_by": "fsm",
+        "failsafe_triggered": true,
+        "failsafe_label": false,
+        "failsafe_clause": "N4",
+        "failsafe_censored": false,
+        "failsafe_backstop": null,
+        "failsafe_matches_label": 0.0,
+        "mission_outcome": "RTL_triggered",
+        "outcome_matches_label": null
+      },
+      "seed_consumed": false,
+      "seed_applied": true,
+      "grant_config": null,
+      "manifest": null,
+      "manifest_extras": null,
+      "arm_record": null,
+      "bundle": "demo/out/hil_sk1122b/episode-2026-11-22T04-40-00Z--dyn-nfz-rotate-step--seed1001"
+    }
+  ]
+}

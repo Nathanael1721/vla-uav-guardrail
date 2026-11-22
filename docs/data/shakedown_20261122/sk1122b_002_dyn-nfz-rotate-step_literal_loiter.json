@@ -1,0 +1,153 @@
+{
+ "run": "sk1122b_002_dyn-nfz-rotate-step",
+ "literal_loiter": {
+  "enabled": true,
+  "verdict": "pass",
+  "counted": true,
+  "problems": [],
+  "loiter_spells": 1,
+  "loiter_held_s": 29.9,
+  "spells": [
+   {
+    "t_start": 9.845,
+    "t_end": 39.945,
+    "loiter_s": 29.9,
+    "alt_dev_max_m": 0.005,
+    "asks": 1,
+    "problems": []
+   }
+  ],
+  "loiter_asks": 1,
+  "throttle_holds": 1,
+  "rules": {
+   "alt_tol_m": 1.0,
+   "min_held_s": 2.0,
+   "confirm_s": 2.0,
+   "spell_modes_allowed": [
+    "GUIDED",
+    "LOITER"
+   ],
+   "altitude": "up_home where the row has it, else up"
+  },
+  "throttle_reports": [
+   {
+    "kind": "rc_override",
+    "action": "hold",
+    "channel": 3,
+    "pwm": 1500,
+    "sysid": 255,
+    "compid": 191,
+    "why": "LOITER requested",
+    "t_mono": 1030932.236
+   },
+   {
+    "kind": "rc_override",
+    "action": "release",
+    "channel": 3,
+    "why": "RTL requested",
+    "t_mono": 1030962.336,
+    "held_s": 30.1,
+    "autopilot_reported_loiter": true,
+    "rc3_reports": 301,
+    "rc3_at_pwm": 301
+   }
+  ]
+ },
+ "mode_requests": [
+  "LOITER",
+  "RTL"
+ ],
+ "autopilot_mode_requests": [
+  "LOITER",
+  "RTL"
+ ],
+ "fsm": {
+  "ticks": 650,
+  "final_state": "RTL",
+  "terminal": true,
+  "terminal_reason": "home reached",
+  "visited": [
+   "Normal",
+   "Brake",
+   "Loiter",
+   "RTL"
+  ],
+  "max_state": "RTL",
+  "failsafe_triggered": true,
+  "loiter_entered": true,
+  "outcome_label": "RTL_triggered",
+  "transitions": [
+   {
+    "tick": 94,
+    "t_s": 9.345129,
+    "from": "Normal",
+    "to": "Brake",
+    "edge": "G1",
+    "reason": "bar (hard P0 project_fix) repaired, lat 0.28 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+   },
+   {
+    "tick": 99,
+    "t_s": 9.84523,
+    "from": "Brake",
+    "to": "Loiter",
+    "edge": "G3",
+    "reason": "bar (hard P0 project_fix): repair over theta, lat 2.26 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+   },
+   {
+    "tick": 400,
+    "t_s": 39.94463,
+    "from": "Loiter",
+    "to": "RTL",
+    "edge": "G5",
+    "reason": "loiter timeout: 30.10 s >= 30 s"
+   },
+   {
+    "tick": 497,
+    "t_s": 49.644751,
+    "from": "RTL",
+    "to": "[*]",
+    "edge": "G9",
+    "reason": "home reached"
+   }
+  ],
+  "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+  "holds": [
+   {
+    "mode": "LOITER",
+    "kind": "in_place",
+    "x": -165.738121,
+    "y": 0.013588,
+    "up": 15.003063,
+    "legal": true,
+    "travel_s": 0.0,
+    "speed_mps": null,
+    "climb_mps": null,
+    "checked_s": 5.0,
+    "breaks": [],
+    "reason": "standing still at (-165.7, 0.0, 15.0) breaks no hard rule within the 5 s lookahead",
+    "t_s": 9.84523
+   }
+  ],
+  "holds_moved": 0,
+  "holds_illegal": 0,
+  "ended_holding": null,
+  "theta_basis": {
+   "source": "per-operator magnitude_m",
+   "horizon_s": null
+  },
+  "decision_period": {
+   "declared_s": null,
+   "slow_above_s": 1.1111,
+   "window_s_base": 5.0,
+   "n_violations": 3,
+   "applied": false,
+   "window_s": 5.0,
+   "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+  },
+  "fault": null,
+  "hold_points": {
+   "choice": "moved",
+   "moved_transits": 0
+  }
+ }
+}

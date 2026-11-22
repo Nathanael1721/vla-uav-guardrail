@@ -1,0 +1,81 @@
+[1/72] identical      sk1122a_001_corridor-along
+[2/72] identical      sk1122a_002_corridor-along
+[3/72] identical      sk1122a_003_corridor-along
+[4/72] identical      sk1122a_004_dyn-nfz-rotate-spin
+[5/72] identical      sk1122a_005_dyn-nfz-rotate-spin
+[6/72] identical      sk1122a_006_dyn-nfz-rotate-spin
+[7/72] identical      sk1122a_007_dyn-nfz-rotate-spin
+[8/72] identical      sk1122a_008_dyn-nfz-rotate-spin
+[9/72] identical      sk1122a_009_dyn-nfz-rotate-spin
+[10/72] identical      sk1122a_010_dyn-nfz-rotate-spin
+[11/72] identical      sk1122a_011_dyn-nfz-rotate-spin
+[12/72] identical      sk1122a_012_dyn-nfz-rotate-spin
+[13/72] identical      sk1122a_013_gps-noise-within-margin
+[14/72] identical      sk1122a_014_gps-noise-within-margin
+[15/72] identical      sk1122a_015_gps-noise-within-margin
+[16/72] identical      sk1122a_016_gps-noise-within-margin
+[17/72] identical      sk1122a_017_gps-noise-within-margin
+[18/72] identical      sk1122a_018_gps-noise-within-margin
+[19/72] identical      sk1122a_019_gps-noise-within-margin
+[20/72] identical      sk1122a_020_gps-noise-within-margin
+[21/72] identical      sk1122a_021_gps-noise-within-margin
+[22/72] identical      sk1122a_022_gps-noise-within-margin
+[23/72] identical      sk1122a_023_gps-noise-within-margin
+[24/72] identical      sk1122a_024_gps-noise-within-margin
+[25/72] identical      sk1122a_025_gps-noise-within-margin
+[26/72] identical      sk1122a_026_gps-noise-within-margin
+[27/72] identical      sk1122a_027_gps-noise-within-margin
+[28/72] identical      sk1122a_028_gps-noise-within-margin
+[29/72] identical      sk1122a_029_gps-noise-within-margin
+[30/72] identical      sk1122a_030_gps-noise-within-margin
+[31/72] identical      sk1122a_031_gps-noise-within-margin
+[32/72] identical      sk1122a_032_gps-noise-within-margin
+[33/72] identical      sk1122a_033_gps-noise-within-margin
+[34/72] identical      sk1122a_034_gps-noise-within-margin
+[35/72] identical      sk1122a_035_gps-noise-within-margin
+[36/72] identical      sk1122a_036_gps-noise-within-margin
+[37/72] identical      sk1122a_037_gps-noise-within-margin
+[38/72] identical      sk1122a_038_gps-noise-within-margin
+[39/72] identical      sk1122a_039_gps-noise-within-margin
+[40/72] identical      sk1122a_040_gps-noise-within-margin
+[41/72] identical      sk1122a_041_gps-noise-within-margin
+[42/72] identical      sk1122a_042_gps-noise-within-margin
+[43/72] identical      sk1122a_043_gps-noise-within-margin
+[44/72] identical      sk1122a_044_gps-noise-within-margin
+[45/72] identical      sk1122a_045_gps-noise-within-margin
+[46/72] identical      sk1122a_046_gps-noise-within-margin
+[47/72] identical      sk1122a_047_gps-noise-within-margin
+[48/72] identical      sk1122a_048_gps-noise-within-margin
+[49/72] differs        sk1122a_049_gps-noise-beyond-margin: first at ticks.setpoint, tick 51
+[50/72] differs        sk1122a_050_gps-noise-beyond-margin: first at ticks.setpoint, tick 56
+[51/72] differs        sk1122a_051_gps-noise-beyond-margin: first at ticks.setpoint, tick 53
+[52/72] differs        sk1122a_052_gps-noise-beyond-margin: first at ticks.setpoint, tick 59
+[53/72] differs        sk1122a_053_gps-noise-beyond-margin: first at ticks.setpoint, tick 57
+[54/72] differs        sk1122a_054_gps-noise-beyond-margin: first at ticks.setpoint, tick 59
+[55/72] differs        sk1122a_055_gps-noise-beyond-margin: first at ticks.setpoint, tick 33
+[56/72] differs        sk1122a_056_gps-noise-beyond-margin: first at ticks.setpoint, tick 44
+[57/72] differs        sk1122a_057_gps-noise-beyond-margin: first at ticks.setpoint, tick 44
+[58/72] differs        sk1122a_058_gps-noise-beyond-margin: first at ticks.setpoint, tick 51
+[59/72] differs        sk1122a_059_gps-noise-beyond-margin: first at ticks.setpoint, tick 46
+[60/72] differs        sk1122a_060_gps-noise-beyond-margin: first at ticks.setpoint, tick 50
+[61/72] differs        sk1122a_061_gps-noise-beyond-margin: first at ticks.setpoint, tick 54
+[62/72] differs        sk1122a_062_gps-noise-beyond-margin: first at ticks.setpoint, tick 56
+[63/72] differs        sk1122a_063_gps-noise-beyond-margin: first at ticks.setpoint, tick 53
+[64/72] differs        sk1122a_064_gps-noise-beyond-margin: first at ticks.setpoint, tick 58
+[65/72] differs        sk1122a_065_gps-noise-beyond-margin: first at ticks.setpoint, tick 57
+[66/72] differs        sk1122a_066_gps-noise-beyond-margin: first at ticks.setpoint, tick 59
+[67/72] differs        sk1122a_067_gps-noise-beyond-margin: first at ticks.setpoint, tick 33
+[68/72] differs        sk1122a_068_gps-noise-beyond-margin: first at ticks.setpoint, tick 44
+[69/72] differs        sk1122a_069_gps-noise-beyond-margin: first at ticks.setpoint, tick 44
+[70/72] differs        sk1122a_070_gps-noise-beyond-margin: first at ticks.setpoint, tick 51
+[71/72] differs        sk1122a_071_gps-noise-beyond-margin: first at ticks.setpoint, tick 46
+[72/72] differs        sk1122a_072_gps-noise-beyond-margin: first at ticks.setpoint, tick 50
+
+72 run(s): 24 differs, 48 identical
+  scope: every run 1 campaign(s) accepted
+  ticks: 24 differs, 48 identical
+  trajectory: 72 identical
+  kpi: 24 differs, 48 identical
+  manifest_in_the_bag: 72 absent
+  manifest_in_bag: 72 identical
+  written to <scratchpad>/rfb_sk1122a
