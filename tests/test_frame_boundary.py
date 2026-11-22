@@ -830,6 +830,10 @@ WORLD_ENTRY_CALLERS = {
         "the harness's oracle: the hindsight verdict",
     ("experiments/sweep_scenarios.py", "_episode", "vjudge"):
         "the harness's vehicle judge: the vehicle's velocity, re-checked",
+    ("docs/data/bitvla_loader_20261122/shield_check.py", "main", "sh"):
+        "offline conformance check of recorded BitVLA answers, at heading 0",
+    ("docs/data/bitvla_loader_20261122/tcp_client_agx.py", "main", "sh"):
+        "offline conformance client on the Orin (no adapter, no flight), at heading 0",
     ("experiments/verify_shield_yaw.py", "replay", "shield"): "offline replay of a log",
     ("guardrail/compiler.py", "cost_map_agreement", "sh"): "offline cost-map agreement",
     ("guardrail/repair.py", "repair", "sh"):
