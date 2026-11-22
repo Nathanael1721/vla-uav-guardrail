@@ -247,8 +247,12 @@ def test_off_by_default_and_the_flight_unchanged_when_off():
     assert isinstance(tgt, ast.Tuple) and [e.id for e in tgt.elts] == ["flown_in", "hier_rec"]
     pcall = _calls(fly, "perturber", "apply")[0]
     dcall = _calls(fly, "decider", "apply")[0]
+    # ast.unparse writes a tuple target as "(d, _, e_body) = ..." up to Python
+    # 3.10 and as "d, _, e_body = ..." from 3.11 on: compare against the same
+    # statement unparsed by the running interpreter, not a literal of one.
+    want = ast.unparse(ast.parse("d, _, e_body = filter_world_as_body(shield, state, flown_in)").body[0])
     shield = next(n for n in ast.walk(fly) if isinstance(n, ast.Assign)
-                  and ast.unparse(n) == "(d, _, e_body) = filter_world_as_body(shield, state, flown_in)")
+                  and ast.unparse(n) == want)
     assert pcall.lineno < dcall.lineno < c.lineno < shield.lineno
     assert src.count("d, _, e_body = filter_world_as_body(shield, state, flown_in)") == 1, "the loop's Shield call moved"
     # The limiter never sees what the VLA flies: its state stays the controller's.
