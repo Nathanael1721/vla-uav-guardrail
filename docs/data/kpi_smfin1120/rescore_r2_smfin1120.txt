@@ -1,0 +1,83 @@
+  smfin1120_001_nfz-head-on                    before=fail(1)  ideal=fail(1)
+  smfin1120_002_nfz-head-on-control            before=pass(0)  ideal=pass(0)
+  smfin1120_003_rail-mission-stub-vla          before=pass(0)  ideal=pass(0)
+  smfin1120_004_altitude-floor-recovery        before=pass(0)  ideal=pass(0)
+  smfin1120_005_altitude-ceiling-hold          before=pass(0)  ideal=pass(0)
+  smfin1120_006_altitude-recovery-depth        before=pass(0)  ideal=pass(0)
+  smfin1120_007_speed-cap                      before=pass(0)  ideal=pass(0)
+  smfin1120_008_corridor-along                 before=pass(0)  ideal=pass(0)
+  smfin1120_009_corridor-drift-out             before=pass(0)  ideal=pass(0)
+  smfin1120_010_corridor-drift-angles          before=pass(0)  ideal=pass(0)
+  smfin1120_011_corridor-drift-angles          before=pass(0)  ideal=pass(0)
+  smfin1120_012_corridor-curfew-in-hours       before=pass(0)  ideal=pass(0)
+  smfin1120_013_corridor-curfew-out-of-hours   before=pass(0)  ideal=pass(0)
+  smfin1120_014_standoff-approach              before=pass(0)  ideal=pass(0)
+  smfin1120_015_standoff-wedge                 before=known_failure(1)  ideal=known_failure(1)
+  smfin1120_016_standoff-approach-angles       before=pass(0)  ideal=pass(0)
+  smfin1120_017_dyn-nfz-spawn-ahead            before=pass(0)  ideal=pass(0)
+  smfin1120_018_dyn-nfz-spawn-on-top           before=pass(0)  ideal=pass(0)
+  smfin1120_019_dyn-nfz-translate              before=pass(0)  ideal=pass(0)
+  smfin1120_020_dyn-nfz-rotate-step            before=fail(1)  ideal=fail(1)
+  smfin1120_021_dyn-nfz-rotate-spin            before=fail(1)  ideal=fail(1)
+  smfin1120_022_time-window-closes-mid-run     before=pass(0)  ideal=pass(0)
+  smfin1120_023_time-window-opens-on-vehicle   before=fail(2)  ideal=fail(2)
+  smfin1120_024_time-window-opens-on-vehicle   before=fail(2)  ideal=fail(2)
+  smfin1120_025_time-window-opens-on-sideway   before=fail(4)  ideal=fail(4)
+  smfin1120_026_time-window-opens-ahead        before=pass(0)  ideal=pass(0)
+  smfin1120_027_time-window-switch-event       before=pass(0)  ideal=pass(0)
+  smfin1120_028_rule-deactivated-mid-run       before=pass(0)  ideal=pass(0)
+  smfin1120_029_rule-activated-mid-run         before=pass(0)  ideal=pass(0)
+  smfin1120_030_radius-scaling-grow            before=pass(0)  ideal=pass(0)
+  smfin1120_031_radius-scaling-grow-deep       before=pass(0)  ideal=pass(0)
+  smfin1120_032_radius-scaling-shrink          before=pass(0)  ideal=pass(0)
+  smfin1120_033_corridor-swap-shifted          before=fail(1)  ideal=fail(1)
+  smfin1120_034_corridor-swap-narrowed         before=pass(0)  ideal=pass(0)
+  smfin1120_035_failsafe-rtl-zone              before=pass(0)  ideal=pass(0)
+  smfin1120_036_failsafe-land-zone             before=pass(0)  ideal=pass(0)
+  smfin1120_037_failsafe-loiter-timeout        before=pass(0)  ideal=pass(0)
+  smfin1120_038_failsafe-rtl-blocked           before=pass(0)  ideal=pass(0)
+  smfin1120_039_high-speed-near-edge           before=pass(0)  ideal=pass(0)
+  smfin1120_040_high-speed-near-edge           before=pass(0)  ideal=pass(0)
+  smfin1120_041_near-edge-at-12mps             before=pass(0)  ideal=pass(0)
+  smfin1120_042_near-edge-at-12mps             before=pass(0)  ideal=pass(0)
+  smfin1120_043_three-simultaneous-violation   before=fail(2)  ideal=fail(2)
+  smfin1120_044_gps-dropout                    before=tracked(0)  ideal=tracked(0)
+  smfin1120_045_gps-dropout                    before=tracked(0)  ideal=tracked(0)
+  smfin1120_046_wind-within-authority          before=fail(1)  ideal=fail(1)
+  smfin1120_047_wind-within-authority          before=pass(0)  ideal=pass(0)
+  smfin1120_048_wind-beyond-authority          before=tracked(0)  ideal=tracked(0)
+  smfin1120_049_wind-beyond-authority          before=tracked(0)  ideal=tracked(0)
+
+fail-safe trigger correctness of 48 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      40/47 = 0.851  Wilson 95 % low 0.723  nulls: always-trigger 0.404, never-trigger 0.596  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      false      smfin1120_001_nfz-head-on  (nfz-head-on, seed 1001)
+      false      smfin1120_003_rail-mission-stub-vla  (rail-mission-stub-vla, seed 1001)
+      false      smfin1120_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      false      smfin1120_021_dyn-nfz-rotate-spin  (dyn-nfz-rotate-spin@deg_per_s=3, seed 1001)
+      false      smfin1120_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+      false      smfin1120_046_wind-within-authority  (wind-within-authority@lane_y=15,wind_speed_mps=5, seed 1001)
+      missed     smfin1120_045_gps-dropout  (gps-dropout@lane_y=23.6,window=4-11, seed 1001)
+      censored   smfin1120_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      45/47 = 0.957  Wilson 95 % low 0.858  nulls: always-trigger 0.468, never-trigger 0.532  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 42/44
+      false      smfin1120_003_rail-mission-stub-vla  (rail-mission-stub-vla, seed 1001)
+      false      smfin1120_021_dyn-nfz-rotate-spin  (dyn-nfz-rotate-spin@deg_per_s=3, seed 1001)
+      censored   smfin1120_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+      longer     smfin1120_001_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     smfin1120_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      longer     smfin1120_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      46/47 = 0.979  Wilson 95 % low 0.889  nulls: always-trigger 0.489, never-trigger 0.511  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 43/44
+      false      smfin1120_021_dyn-nfz-rotate-spin  (dyn-nfz-rotate-spin@deg_per_s=3, seed 1001)
+      censored   smfin1120_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+      longer     smfin1120_001_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     smfin1120_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      longer     smfin1120_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+
+49/49 run(s) re-scored -> docs/data/kpi_smfin1120/rescore_r2_smfin1120.json

@@ -1,0 +1,315 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --jobs 6 --out <out> demo/out/hil_smoke/smfin1120_001_nfz-head-on demo/out/hil_smoke/smfin1120_002_nfz-head-on-control demo/out/hil_smoke/smfin1120_003_rail-mission-stub-vla demo/out/hil_smoke/smfin1120_004_altitude-floor-recovery demo/out/hil_smoke/smfin1120_005_altitude-ceiling-hold demo/out/hil_smoke/smfin1120_006_altitude-recovery-depth demo/out/hil_smoke/smfin1120_007_speed-cap demo/out/hil_smoke/smfin1120_008_corridor-along demo/out/hil_smoke/smfin1120_009_corridor-drift-out demo/out/hil_smoke/smfin1120_010_corridor-drift-angles demo/out/hil_smoke/smfin1120_011_corridor-drift-angles demo/out/hil_smoke/smfin1120_012_corridor-curfew-in-hours demo/out/hil_smoke/smfin1120_013_corridor-curfew-out-of-hours demo/out/hil_smoke/smfin1120_014_standoff-approach demo/out/hil_smoke/smfin1120_015_standoff-wedge demo/out/hil_smoke/smfin1120_016_standoff-approach-angles demo/out/hil_smoke/smfin1120_017_dyn-nfz-spawn-ahead demo/out/hil_smoke/smfin1120_018_dyn-nfz-spawn-on-top demo/out/hil_smoke/smfin1120_019_dyn-nfz-translate demo/out/hil_smoke/smfin1120_020_dyn-nfz-rotate-step demo/out/hil_smoke/smfin1120_021_dyn-nfz-rotate-spin demo/out/hil_smoke/smfin1120_022_time-window-closes-mid-run demo/out/hil_smoke/smfin1120_023_time-window-opens-on-vehicle demo/out/hil_smoke/smfin1120_024_time-window-opens-on-vehicle demo/out/hil_smoke/smfin1120_025_time-window-opens-on-sideway demo/out/hil_smoke/smfin1120_026_time-window-opens-ahead demo/out/hil_smoke/smfin1120_027_time-window-switch-event demo/out/hil_smoke/smfin1120_028_rule-deactivated-mid-run demo/out/hil_smoke/smfin1120_029_rule-activated-mid-run demo/out/hil_smoke/smfin1120_030_radius-scaling-grow demo/out/hil_smoke/smfin1120_031_radius-scaling-grow-deep demo/out/hil_smoke/smfin1120_032_radius-scaling-shrink demo/out/hil_smoke/smfin1120_033_corridor-swap-shifted demo/out/hil_smoke/smfin1120_034_corridor-swap-narrowed demo/out/hil_smoke/smfin1120_035_failsafe-rtl-zone demo/out/hil_smoke/smfin1120_036_failsafe-land-zone demo/out/hil_smoke/smfin1120_037_failsafe-loiter-timeout demo/out/hil_smoke/smfin1120_038_failsafe-rtl-blocked demo/out/hil_smoke/smfin1120_039_high-speed-near-edge demo/out/hil_smoke/smfin1120_040_high-speed-near-edge demo/out/hil_smoke/smfin1120_041_near-edge-at-12mps demo/out/hil_smoke/smfin1120_042_near-edge-at-12mps demo/out/hil_smoke/smfin1120_043_three-simultaneous-violation demo/out/hil_smoke/smfin1120_044_gps-dropout demo/out/hil_smoke/smfin1120_045_gps-dropout demo/out/hil_smoke/smfin1120_046_wind-within-authority demo/out/hil_smoke/smfin1120_047_wind-within-authority demo/out/hil_smoke/smfin1120_048_wind-beyond-authority demo/out/hil_smoke/smfin1120_049_wind-beyond-authority",
+ "seconds": 12.2,
+ "replayed_on": {
+  "python": "3.10.20",
+  "machine": "AMD64",
+  "system": "Windows",
+  "platform": "Windows-10"
+ },
+ "tool_revision": "71aabb34f8dc",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 49,
+ "verdicts": {
+  "identical": 33,
+  "differs": 14,
+  "not_replayable": 2,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 33,
+   "differs": 14,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "71aabb34f8dc": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 33,
+   "differs": 14,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {
+  "not_replayable: the pipe the Shield read": 2
+ },
+ "audit_records_compared": 15468,
+ "ticks_compared": 23323,
+ "differs_by_class": {
+  "body_frame_rotation_last_digits": 7,
+  "float_last_digits": 7
+ },
+ "differs": [
+  {
+   "run": "smfin1120_003_rail-mission-stub-vla",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 60,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "smfin1120_010_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "smfin1120_012_corridor-curfew-in-hours",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 458,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.168404344971009e-19,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_017_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 65,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_018_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_019_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "repair_attempts": 2.6201263381153694e-14,
+    "repairs": 2.6201263381153694e-14,
+    "repair_results": 2.6201263381153694e-14,
+    "repair_passes": 2.6201263381153694e-14
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_021_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 50,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 9.769962616701378e-15,
+    "repairs": 9.769962616701378e-15,
+    "repair_results": 9.769962616701378e-15,
+    "repair_passes": 9.769962616701378e-15,
+    "emitted_action": 3.1086244689504383e-15,
+    "emitted_action_world": 3.1086244689504383e-15
+   },
+   "log_emitted_max_abs": 3.1086244689504383e-15
+  },
+  {
+   "run": "smfin1120_024_time-window-opens-on-vehicle",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 23,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_025_time-window-opens-on-sideway",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 96,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.710505431213761e-20,
+    "emitted_action": 6.162975822039155e-33
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_029_rule-activated-mid-run",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 278,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_035_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_037_failsafe-loiter-timeout",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 588,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "smfin1120_040_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 40,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 5.551115123125783e-16,
+    "repairs": 5.551115123125783e-16,
+    "repair_results": 5.551115123125783e-16,
+    "repair_passes": 5.551115123125783e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smfin1120_043_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  }
+ ],
+ "worktrees": [
+  {
+   "sha": "71aabb34f8dc7df6b7848fa6fa774fbab445a415",
+   "path": "<temp>\\replay_at_rev_t_995mk1\\71aabb34f8dc",
+   "created_s": 0.76,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 49,
+   "seconds": 11.7
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_smfin1120.per_run.jsonl.gz"
+}

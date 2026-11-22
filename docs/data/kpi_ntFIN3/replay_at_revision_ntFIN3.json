@@ -1,0 +1,5000 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --root demo/out/hil_smoke --only ntFIN3_ --jobs 4 --out <out>",
+ "seconds": 217.8,
+ "replayed_on": {
+  "python": "3.10.20",
+  "machine": "AMD64",
+  "system": "Windows",
+  "platform": "Windows-10"
+ },
+ "tool_revision": "71aabb34f8dc",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 594,
+ "verdicts": {
+  "identical": 277,
+  "differs": 293,
+  "not_replayable": 24,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 277,
+   "differs": 293,
+   "not_replayable": 24,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "71aabb34f8dc": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 277,
+   "differs": 293,
+   "not_replayable": 24,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {
+  "not_replayable: the pipe the Shield read": 24
+ },
+ "audit_records_compared": 185468,
+ "ticks_compared": 270622,
+ "differs_by_class": {
+  "body_frame_rotation_last_digits": 181,
+  "decision": 1,
+  "float_last_digits": 111
+ },
+ "differs": [
+  {
+   "run": "ntFIN3_007_rail-mission-stub-vla",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 490,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15,
+    "repair_attempts": 3.552713678800501e-15,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_008_rail-mission-stub-vla",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_040_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 110,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_041_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 107,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_042_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 133,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_043_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_044_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 22,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_045_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_046_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 190,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_047_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 188,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_048_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 201,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_049_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_050_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_051_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 11,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_054_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 70,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.0389678347315804e-28
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_058_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 36,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_059_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 30,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_060_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 21,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_061_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_062_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_063_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_064_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 66,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_065_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 70,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_066_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 61,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_067_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_068_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 11,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_069_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_070_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 42,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_071_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 35,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_072_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 32,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_073_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_074_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_075_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_088_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 2.220446049250313e-16,
+    "raw_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_089_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_090_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 23,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_091_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_092_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 11,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_093_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_094_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 43,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_095_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_096_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_106_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_107_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16,
+    "raw_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_108_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 7,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 6.661338147750939e-16,
+    "emitted_action_world": 4.440892098500626e-16,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_109_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 7,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.1102230246251565e-15,
+    "emitted_action_world": 8.881784197001252e-16,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_110_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_111_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16,
+    "raw_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_112_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_113_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_114_standoff-approach-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 6.661338147750939e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_142_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 63,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 6.661338147750939e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_143_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_144_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 83,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 6.661338147750939e-16
+   },
+   "log_emitted_max_abs": 6.661338147750939e-16
+  },
+  {
+   "run": "ntFIN3_145_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 182,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.7755575615628914e-17,
+    "emitted_action": 2.7755575615628914e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_146_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 215,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_147_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 158,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.7755575615628914e-17,
+    "emitted_action": 2.7755575615628914e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_148_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 77,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_149_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 61,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_150_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_151_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 59,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_152_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 59,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 6.661338147750939e-16
+   },
+   "log_emitted_max_abs": 6.661338147750939e-16
+  },
+  {
+   "run": "ntFIN3_153_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_154_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 290,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_155_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 181,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.7755575615628914e-17,
+    "emitted_action": 2.7755575615628914e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_156_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_157_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 60,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_158_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 70,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 6.661338147750939e-16
+   },
+   "log_emitted_max_abs": 6.661338147750939e-16
+  },
+  {
+   "run": "ntFIN3_159_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 67,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_160_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_161_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 67,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_162_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 72,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 6.661338147750939e-16
+   },
+   "log_emitted_max_abs": 6.661338147750939e-16
+  },
+  {
+   "run": "ntFIN3_163_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 118,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_164_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 69,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 1.1102230246251565e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_165_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 86,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_166_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 66,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_167_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 66,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_168_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 1.1102230246251565e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_169_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 152,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_170_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 162,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_171_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 150,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 1.1102230246251565e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_172_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 435,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_173_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 172,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.7755575615628914e-17,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_174_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 210,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_175_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 150,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_176_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 163,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_177_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 151,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_178_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 65,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_179_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 55,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_180_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 55,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_183_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 250,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 5.551115123125783e-17,
+    "emitted_action": 5.551115123125783e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_184_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_185_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 82,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_186_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 79,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_187_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 55,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_188_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 51,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_189_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 51,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_190_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 66,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_191_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 686,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 5.551115123125783e-17,
+    "emitted_action": 5.551115123125783e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_192_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 429,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_193_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_194_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_195_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 76,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_196_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_197_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 58,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_198_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 52,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_199_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 191,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_201_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_202_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 61,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_203_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 61,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_204_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 90,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_205_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 76,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_206_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 87,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_207_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_208_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 80,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15,
+    "raw_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_209_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 151,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_210_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 128,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_211_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 80,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_212_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 86,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_213_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 91,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_214_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_215_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_216_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 9,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_217_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 309,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 5.551115123125783e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_218_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 76,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_219_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 41,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_220_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_221_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_222_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 21,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_223_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_224_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_225_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_226_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 641,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_227_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 27,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_228_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 40,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_229_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_230_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 20,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "repair_attempts": 5.329070518200751e-15,
+    "emitted_action_world": 8.881784197001252e-16,
+    "repairs": 5.329070518200751e-15,
+    "repair_results": 5.329070518200751e-15,
+    "repair_passes": 5.329070518200751e-15
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_231_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_232_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_233_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 31,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "repair_attempts": 1.9984014443252818e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 1.9984014443252818e-15,
+    "repair_results": 1.9984014443252818e-15,
+    "repair_passes": 1.9984014443252818e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_234_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 19,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_235_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 228,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_236_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 330,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.1102230246251565e-16,
+    "emitted_action": 5.551115123125783e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_237_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 348,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.6645352591003757e-14,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16,
+    "repairs": 2.6645352591003757e-14,
+    "repair_results": 2.6645352591003757e-14,
+    "repair_passes": 2.6645352591003757e-14,
+    "raw_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_238_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 43,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_239_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_240_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_241_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_242_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 20,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_243_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_244_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 71,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_245_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_246_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 134,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_247_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 16,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_248_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 25,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_249_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_250_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 51,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_251_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 53,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_252_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_256_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 57,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_257_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 67,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_258_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 60,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_259_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 53,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_260_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 66,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_261_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_265_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 76,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "raw_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_266_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 70,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_267_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 52,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_268_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 85,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_269_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 80,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.5757174171303632e-14,
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.7763568394002505e-15,
+    "repairs": 2.5757174171303632e-14,
+    "repair_results": 2.5757174171303632e-14,
+    "repair_passes": 2.5757174171303632e-14,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_270_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 84,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 1.3322676295501878e-15,
+    "repair_attempts": 2.6423307986078726e-14,
+    "emitted_action_world": 1.7763568394002505e-15,
+    "repairs": 2.6423307986078726e-14,
+    "repair_results": 2.6423307986078726e-14,
+    "repair_passes": 2.6423307986078726e-14
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_271_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 7.105427357601002e-15,
+    "repairs": 7.105427357601002e-15,
+    "repair_results": 7.105427357601002e-15,
+    "repair_passes": 7.105427357601002e-15,
+    "emitted_action": 4.107825191113079e-15,
+    "emitted_action_world": 4.08006961549745e-15
+   },
+   "log_emitted_max_abs": 4.08006961549745e-15
+  },
+  {
+   "run": "ntFIN3_272_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 76,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 3.3029134982598407e-15,
+    "emitted_action_world": 3.1363800445660672e-15,
+    "repair_attempts": 7.105427357601002e-15,
+    "repairs": 7.105427357601002e-15,
+    "repair_results": 7.105427357601002e-15,
+    "repair_passes": 7.105427357601002e-15
+   },
+   "log_emitted_max_abs": 3.1363800445660672e-15
+  },
+  {
+   "run": "ntFIN3_273_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action": 3.2751579226442118e-15,
+    "emitted_action_world": 3.247402347028583e-15,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 3.247402347028583e-15
+  },
+  {
+   "run": "ntFIN3_274_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 77,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-15,
+    "repair_attempts": 6.217248937900877e-15,
+    "emitted_action_world": 3.774758283725532e-15,
+    "repairs": 6.217248937900877e-15,
+    "repair_results": 6.217248937900877e-15,
+    "repair_passes": 6.217248937900877e-15
+   },
+   "log_emitted_max_abs": 3.774758283725532e-15
+  },
+  {
+   "run": "ntFIN3_275_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 77,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.197442310920451e-14,
+    "emitted_action": 4.884981308350689e-15,
+    "emitted_action_world": 4.440892098500626e-15,
+    "repairs": 3.197442310920451e-14,
+    "repair_results": 3.197442310920451e-14,
+    "repair_passes": 3.197442310920451e-14,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-15
+  },
+  {
+   "run": "ntFIN3_276_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 100,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 6.661338147750939e-15,
+    "repairs": 6.661338147750939e-15,
+    "repair_results": 6.661338147750939e-15,
+    "repair_passes": 6.661338147750939e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_277_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 83,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 6.217248937900877e-15,
+    "repair_attempts": 2.5757174171303632e-14,
+    "emitted_action_world": 6.661338147750939e-15,
+    "repairs": 2.5757174171303632e-14,
+    "repair_results": 2.5757174171303632e-14,
+    "repair_passes": 2.5757174171303632e-14
+   },
+   "log_emitted_max_abs": 6.661338147750939e-15
+  },
+  {
+   "run": "ntFIN3_278_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 5.773159728050814e-15,
+    "repairs": 5.773159728050814e-15,
+    "repair_results": 5.773159728050814e-15,
+    "repair_passes": 5.773159728050814e-15,
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_279_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 81,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.6201263381153694e-14,
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15,
+    "repairs": 2.6201263381153694e-14,
+    "repair_results": 2.6201263381153694e-14,
+    "repair_passes": 2.6201263381153694e-14,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_280_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 97,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 1.7763568394002505e-15,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_281_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 95,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 1.7763568394002505e-15,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_282_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 2.0816681711721685e-15,
+    "emitted_action_world": 2.0261570199409107e-15,
+    "repair_attempts": 5.329070518200751e-15,
+    "repairs": 5.329070518200751e-15,
+    "repair_results": 5.329070518200751e-15,
+    "repair_passes": 5.329070518200751e-15
+   },
+   "log_emitted_max_abs": 2.0261570199409107e-15
+  },
+  {
+   "run": "ntFIN3_283_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 6.661338147750939e-15,
+    "repairs": 6.661338147750939e-15,
+    "repair_results": 6.661338147750939e-15,
+    "repair_passes": 6.661338147750939e-15,
+    "emitted_action": 5.10702591327572e-15,
+    "emitted_action_world": 3.9968028886505635e-15,
+    "raw_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 3.9968028886505635e-15
+  },
+  {
+   "run": "ntFIN3_284_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 74,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.552713678800501e-15,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15,
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_285_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 89,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.220446049250313e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_298_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 69,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 4.884981308350689e-15,
+    "repairs": 4.884981308350689e-15,
+    "repair_results": 4.884981308350689e-15,
+    "repair_passes": 4.884981308350689e-15,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_299_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 118,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.220446049250313e-15,
+    "repairs": 2.220446049250313e-15,
+    "repair_results": 2.220446049250313e-15,
+    "repair_passes": 2.220446049250313e-15,
+    "emitted_action": 7.105427357601002e-15,
+    "emitted_action_world": 7.105427357601002e-15
+   },
+   "log_emitted_max_abs": 7.105427357601002e-15
+  },
+  {
+   "run": "ntFIN3_300_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 118,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 5.329070518200751e-15,
+    "emitted_action": 6.661338147750939e-15,
+    "emitted_action_world": 6.661338147750939e-15,
+    "repairs": 5.329070518200751e-15,
+    "repair_results": 5.329070518200751e-15,
+    "repair_passes": 5.329070518200751e-15
+   },
+   "log_emitted_max_abs": 6.661338147750939e-15
+  },
+  {
+   "run": "ntFIN3_301_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 36,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.9976021664879227e-14,
+    "repairs": 2.9976021664879227e-14,
+    "repair_results": 2.9976021664879227e-14,
+    "repair_passes": 2.9976021664879227e-14,
+    "emitted_action": 1.6653345369377348e-15,
+    "emitted_action_world": 1.6653345369377348e-15
+   },
+   "log_emitted_max_abs": 1.6653345369377348e-15
+  },
+  {
+   "run": "ntFIN3_302_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 36,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 5.617728504603292e-14,
+    "emitted_action": 7.993605777301127e-15,
+    "emitted_action_world": 7.993605777301127e-15,
+    "repairs": 5.617728504603292e-14,
+    "repair_results": 5.617728504603292e-14,
+    "repair_passes": 5.617728504603292e-14
+   },
+   "log_emitted_max_abs": 7.993605777301127e-15
+  },
+  {
+   "run": "ntFIN3_303_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 36,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.2862601528904634e-14,
+    "repairs": 3.2862601528904634e-14,
+    "repair_results": 3.2862601528904634e-14,
+    "repair_passes": 3.2862601528904634e-14,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_304_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 41,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.552713678800501e-14,
+    "repairs": 3.552713678800501e-14,
+    "repair_results": 3.552713678800501e-14,
+    "repair_passes": 3.552713678800501e-14,
+    "emitted_action": 2.6645352591003757e-15,
+    "emitted_action_world": 2.6645352591003757e-15
+   },
+   "log_emitted_max_abs": 2.6645352591003757e-15
+  },
+  {
+   "run": "ntFIN3_305_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 35,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.552713678800501e-14,
+    "repairs": 3.552713678800501e-14,
+    "repair_results": 3.552713678800501e-14,
+    "repair_passes": 3.552713678800501e-14,
+    "emitted_action": 3.552713678800501e-15,
+    "emitted_action_world": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 3.552713678800501e-15
+  },
+  {
+   "run": "ntFIN3_306_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "decision",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 35,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": null,
+    "emitted_action": 6.88338275267597e-14,
+    "emitted_action_world": 6.922240558537851e-14,
+    "repairs": null,
+    "repair_results": null,
+    "repair_passes": null
+   },
+   "log_emitted_max_abs": 6.922240558537851e-14
+  },
+  {
+   "run": "ntFIN3_335_time-window-opens-on-vehicle",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 33,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_338_time-window-opens-on-sideway",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 79,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 2.0194839173657902e-28,
+    "raw_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_340_time-window-opens-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 521,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_341_time-window-opens-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 346,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.3877787807814457e-17,
+    "emitted_action": 1.3877787807814457e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_362_radius-scaling-grow",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 146,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_373_corridor-swap-shifted",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 407,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_374_corridor-swap-shifted",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 88,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.3877787807814457e-17
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_382_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 40,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_383_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 34,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_384_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 52,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_385_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 34,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_386_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 32,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_387_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 31,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_388_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 133,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_389_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 31,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_390_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_391_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 90,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_392_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 102,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_393_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 42,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_394_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 37,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_395_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 40,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_396_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 33,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_397_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 41,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_398_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 108,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_399_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 79,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_407_failsafe-rtl-blocked",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 147,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_410_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 147,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_415_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 223,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_417_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 198,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_419_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 28,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_422_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 55,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.3306690738754696e-16,
+    "repairs": 3.3306690738754696e-16,
+    "repair_results": 3.3306690738754696e-16,
+    "repair_passes": 3.3306690738754696e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_431_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 6.522560269672795e-16,
+    "repairs": 6.522560269672795e-16,
+    "repair_results": 6.522560269672795e-16,
+    "repair_passes": 6.522560269672795e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_432_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.608224830031759e-16,
+    "repairs": 3.608224830031759e-16,
+    "repair_results": 3.608224830031759e-16,
+    "repair_passes": 3.608224830031759e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_438_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 237,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.3322676295501878e-15,
+    "emitted_action_world": 1.3322676295501878e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_439_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.8510861166685117e-16,
+    "repairs": 3.8510861166685117e-16,
+    "repair_results": 3.8510861166685117e-16,
+    "repair_passes": 3.8510861166685117e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_440_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 6.106226635438361e-16,
+    "repairs": 6.106226635438361e-16,
+    "repair_results": 6.106226635438361e-16,
+    "repair_passes": 6.106226635438361e-16,
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_441_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 54,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 3.0531133177191805e-16,
+    "repairs": 3.0531133177191805e-16,
+    "repair_results": 3.0531133177191805e-16,
+    "repair_passes": 3.0531133177191805e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_442_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 42,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_443_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 104,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_444_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 237,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_446_high-speed-near-edge",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 141,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_478_near-edge-at-12mps",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 93,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_480_near-edge-at-12mps",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 26,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_487_near-edge-at-12mps",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 1.7763568394002505e-15,
+    "emitted_action_world": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "ntFIN3_499_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 15,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_500_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 11,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_501_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 35,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_502_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 48,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_503_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 39,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_504_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 31,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_505_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 9,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.915134717478395e-15,
+    "emitted_action_world": 1.3322676295501878e-15,
+    "repair_attempts": 1.7763568394002505e-15,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 1.3322676295501878e-15
+  },
+  {
+   "run": "ntFIN3_506_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 2.220446049250313e-16,
+    "raw_action": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_507_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_508_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 24,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_509_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_510_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_511_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 12,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_512_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 19,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16,
+    "emitted_action_world": 2.220446049250313e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15,
+    "raw_action": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 2.220446049250313e-16
+  },
+  {
+   "run": "ntFIN3_513_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 22,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_514_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_515_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_516_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 11,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_517_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_518_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_519_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_520_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_521_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 63,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_522_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 75,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16,
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action_world": 2.220446049250313e-16,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 2.220446049250313e-16
+  },
+  {
+   "run": "ntFIN3_523_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 12,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 3.3306690738754696e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_524_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_525_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 2.220446049250313e-16,
+    "raw_action": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_526_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 17,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 2.6645352591003757e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_527_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_528_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 9,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_529_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 109,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_530_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 133,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_531_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 9,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action_world": 2.220446049250313e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 2.220446049250313e-16
+  },
+  {
+   "run": "ntFIN3_532_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_533_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 3.885780586188048e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_534_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 5.828670879282072e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_535_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 2,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_536_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_537_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 5,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_538_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 29,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_539_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 10,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_540_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_541_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 9.71445146547012e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_542_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 3.0531133177191805e-16,
+    "repair_attempts": 3.552713678800501e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 3.552713678800501e-15,
+    "repair_results": 3.552713678800501e-15,
+    "repair_passes": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_543_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 1.2490009027033011e-15,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "ntFIN3_544_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 6,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action_world": 4.440892098500626e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_545_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_546_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 3,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_547_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 111,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 2.220446049250313e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "emitted_action_world": 2.220446049250313e-16,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 2.220446049250313e-16
+  },
+  {
+   "run": "ntFIN3_548_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 17,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_549_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 21,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 2.220446049250313e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_550_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 1.1102230246251565e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "ntFIN3_551_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 6.106226635438361e-16,
+    "emitted_action_world": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 4.440892098500626e-16
+  },
+  {
+   "run": "ntFIN3_552_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "71aabb34f8dc",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 1,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 3.552713678800501e-15,
+    "emitted_action": 9.159339953157541e-16,
+    "emitted_action_world": 8.881784197001252e-16,
+    "repair_attempts": 1.7763568394002505e-15,
+    "repairs": 1.7763568394002505e-15,
+    "repair_results": 1.7763568394002505e-15,
+    "repair_passes": 1.7763568394002505e-15
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  }
+ ],
+ "worktrees": [
+  {
+   "sha": "71aabb34f8dc7df6b7848fa6fa774fbab445a415",
+   "path": "<temp>\\replay_at_rev_768k7m17\\71aabb34f8dc",
+   "created_s": 13.45,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 594,
+   "seconds": 200.6
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_ntFIN3.per_run.jsonl.gz"
+}
