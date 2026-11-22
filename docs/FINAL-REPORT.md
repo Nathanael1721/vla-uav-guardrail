@@ -1,15 +1,20 @@
 # Final Report
 
 Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs ·
-NTUT AIoT Lab · draft v0.3, 2026-11-14
+NTUT AIoT Lab · draft v0.4, 2026-11-22
 
 > **Status: DRAFT, not signed.** Written from docs/FINAL-REPORT-outline.md at
 > 2f22116; updated 14 Nov for the `hil` runs hs10 and ge1113, the CI on
-> Python 3.12 and the committed KPI report (branch evidence-1114). The grant's final-delivery gate is 2026-11-30 (a signed final
+> Python 3.12 and the committed KPI report (branch evidence-1114); updated
+> 22 Nov at 96eccf1 (integrate/1122) for the KPI-grade nightly ntFIN3 and
+> the final smoke smfin1120, both flown on `hil` at 71aabb3, the revision
+> this report describes (sections 1, 2, 5, 8, 10 and 11, with their
+> cross-references in 3, 4.3, 9 and Appendix A's preamble). The code changes
+> merged after 71aabb3 (CHANGELOG 2026-11-22 (code)) are not flown and are
+> in none of the figures. The grant's final-delivery gate is 2026-11-30 (a signed final
 > report, X-01). The signer and the signing CA are not named yet (PI, 12 Oct,
-> Q5). Places that wait for a later number or a later decision are marked
-> `TODO(...)`; no value is filled in for them. Every number below names the
-> file or run it comes from.
+> Q5). No value is filled in ahead of its evidence. Every number below names
+> the file or run it comes from.
 
 ## 1. Summary
 
@@ -22,23 +27,31 @@ NTUT AIoT Lab · draft v0.3, 2026-11-14
   1 DRIFT, 0 MISSING**. DONE means the code or artefact the grant names
   exists and matches the grant's words; for a KPI row it means a KPI-grade
   value meets them.
-- KPI-grade source: the nightly `hil` campaign ntFIN2 and its supplement
-  ntFIN2s, both at 116214f, flown 12-13 Nov on the AGX Orin rig (section 5;
-  CHANGELOG 2026-11-13 (the KPI-grade hil nightly ntFIN2 and its
-  supplement)).
-  - P0 violation escape rate **0.0**: 0 escapes on 16,760 P0-violation
-    ticks over 586 Shield-on flights. Shield-off control: 0.6375.
-  - Fail-safe trigger correctness **584/585 = 0.998** on the adopted reading
-    (r2), 18 of them triggered by the autopilot's GeoFence backstop (decision
-    14, 15 Nov); Wilson 95 % lower bound 0.990. Before that rule: 566/567.
-    The other readings: (r) 572/585, (a) 513/585.
-  - Shield tick (`tick_ms`): max 74.06 ms, 0 of 173,410 ticks over 100 ms.
-  - Action receipt to setpoint (`e2e_ms`): p99 30.3 ms, max 121.93 ms;
-    13 ticks over 100 ms, all the second tick of a mission. The fix
-    (5f5009c) is on master; at the fixed commit 2f22116 the grant-example
-    campaign ge1113 (36 KPI-grade missions) had 0 of 95,160 ticks over
-    100 ms (max 66.37 ms) and the shakedown hs09 (17 missions) e2e max
-    24.55 ms with P0 escapes 0 (section 5.6).
+- KPI-grade source (the figure of record): the nightly `hil` campaign
+  ntFIN3 at 71aabb3, the revision this report describes, flown 21 Nov on the
+  AGX Orin rig: 594 missions, all KPI-grade (591 Shield on, 3 Shield-off
+  controls) (section 5; docs/data/kpi_ntFIN3/). It replaces the nightly
+  ntFIN2 with its supplement ntFIN2s at 116214f (12-13 Nov; regraded 17 Nov,
+  docs/data/kpi_ntFIN2_20261117_delivery/), which section 2 keeps beside it.
+  - P0 violation escape rate **0.0**: 0 escapes on 17,457 P0-violation
+    ticks over 591 Shield-on flights. Shield-off control: 0.6458.
+  - Fail-safe trigger correctness **587/589 = 0.997** on the adopted reading
+    (r2), 18 of them triggered by the autopilot's GeoFence backstop
+    (decision 14). This meets 99 % as the point estimate, which is the
+    grant's figure. Its Wilson 95 % lower bound is 0.988, which does not
+    clear 0.99: on this campaign 99 % is not shown at 95 % confidence
+    (ntFIN2's 583/584 had a lower bound of 0.990). The two errors are
+    missed triggers on dyn-nfz-spawn-ahead (ntFIN3_164, ntFIN3_168); two
+    runs censored in Loiter are left out (587/591 = 0.993 were both
+    errors). The other readings: (r) 575/589, (a) 516/589.
+  - Shield tick (`tick_ms`) max 74.52 ms and action receipt to setpoint
+    (`e2e_ms`) max 74.62 ms: 0 of 174,186 ticks over 100 ms on either.
+    ntFIN2 had 13 start-up ticks over 100 ms on `e2e_ms`; their fix
+    (5f5009c, section 5.6) is in 71aabb3.
+  - The final smoke at the same revision, smfin1120 (49 KPI-grade missions),
+    had P0 escapes 0 and no tick over 100 ms; its one false trigger
+    (dyn-nfz-rotate-spin) came from the hold-point search's budget, not from
+    a code change (section 8).
 - Every edge of the grant's escalation ladder has flown on `hil`: G2, G4,
   G6, X2 and X3, the edges no rail had taken, in hs10 at 8a473fa on 14 Nov
   (section 4.3; CHANGELOG 2026-11-14 (hs10 ...)). WP3-07 stays PARTIAL:
@@ -67,8 +80,10 @@ NTUT AIoT Lab · draft v0.3, 2026-11-14
   missions, 0 P0 escapes (X-05, ARCH-25, ARCH-01, ARCH-21; section 6).
 - What this report cannot claim: a 7B VLA deciding at 10 Hz (OpenVLA about
   0.98 s per decision on the AGX Orin; ARCH-03), the `flight` topology (ARCH-14),
-  Gazebo sweeps (WP4-04), CI per build or per release (WP3-19, WP4-06,
-  WP4-14).
+  multi-seed Gazebo sweeps (WP4-04), CI per build or per release (WP3-19,
+  WP4-06, WP4-14), fail-safe trigger correctness of 99 % at 95 %
+  confidence on the figure of record (WP3-15), and any flight of the code
+  merged after 71aabb3.
 
 ## 2. Scope and acceptance criteria
 
@@ -78,51 +93,51 @@ replay bundle beside the run verifies and is bound to it, and the campaign
 accepted the flight (tools/kpi_report.py, "Definitions" section of its
 output).
 
-**The KPI-grade source.** Profile `nightly` at 116214f (clean), flown on the
-AGX Orin rig: ArduCopter 4.5.7 SITL and mavlink-router on the desktop;
+**The KPI-grade source (the figure of record since 21 Nov).** Profile
+`nightly` at 71aabb3 (clean), the revision this report describes, flown on
+the AGX Orin rig: ArduCopter 4.5.7 SITL and mavlink-router on the desktop;
 MAVROS 2, the Shield and the stub pilots on the Orin.
 
-- ntFIN2: 744 episodes in the profile; 153 refused by the rail before
-  flight (69 paraphrase / prefix arms the stub cannot read, 69 stressors SITL
-  cannot realise, 15 others, among them an RTL that fails); 591 missions
-  planned, 583 run folders, 580 KPI-grade episodes, 69,706 s of flying
-  (demo/out/hil_ntFIN2/sweep.json; runs demo/out/hil_smoke/ntFIN2_*).
-- The last 8 missions (wind-beyond-authority) never flew: the desktop ran
-  out of commit memory (WinError 1455 / 1450). 3 gps-dropout flights were
-  not accepted: the GPS denial was not applied in time (CHANGELOG
-  2026-11-13).
-- ntFIN2s re-flew the affected cells on all 3 seeds at the same commit and
-  profile: 15 missions, 11 accepted; 4 superseded by an accepted ntFIN2
-  flight of the same episode (demo/out/hil_ntFIN2s/sweep.json).
-- Merged by one episode choice (`tools/kpi_report.py --campaign
-  demo/out/hil_ntFIN2 --campaign demo/out/hil_ntFIN2s --rescore-rail
-  <ntFIN2 table> --rescore-rail <ntFIN2s table>`): 594 episodes, 589
-  KPI-grade (580 from ntFIN2, 9 from ntFIN2s; 586 Shield on, 3 Shield-off
-  controls). Two cell-seeds have no accepted flight in either campaign:
-  gps-dropout lane 15, window 6-13 s, seeds 1002 and 1003 (the denial's end
-  applied 0.29-0.60 s late).
+- ntFIN3: launched 21 Nov 01:04 with `--hil-controls` from a detached
+  worktree at 71aabb3; 72,478.6 s (20.1 h). 744 episodes in the profile;
+  150 refused by the rail before take-off (69 paraphrase / prefix arms the
+  stub cannot read, 69 stressors the rail cannot realise, 12 others: starts
+  at 0.5 m and at 30 m, a non-finite pilot action, a relabel schedule);
+  594 missions flown, all 594 KPI-grade: 591 Shield on, 3 Shield-off
+  controls (demo/out/hil_ntFIN3/sweep.json; runs
+  demo/out/hil_smoke/ntFIN3_*).
+- It replaces, as the figure of record, the nightly ntFIN2 and its
+  supplement ntFIN2s at 116214f (12-13 Nov), merged by one episode choice
+  and regraded on 17 Nov for setpoint delivery: 588 KPI-grade episodes, 585
+  Shield on (docs/data/kpi_ntFIN2_20261117_delivery/). Since 116214f the
+  ROS 2 rail gained the start-up fix (5f5009c, section 5.6), the RTL watch
+  (14 Nov), PathRepair in the default chain (17 Nov), the clearance horizon
+  a lagging vehicle needs and the body-frame hand-over (19 Nov); ntFIN3
+  measures the code that is delivered.
 
-| KPI (grant) | Target | KPI-grade result (ntFIN2 + ntFIN2s) | Verdict |
-|---|---|---|---|
-| P0 violation escape rate (WP3-14) | 0 | 0.0000: 0 escapes on 16,760 P0-violation ticks, 586 Shield-on flights; Shield-off control 0.6375 (153 of 153 P0 ticks, 3 flights); passthrough null 0.2122 | meets |
-| Fail-safe trigger correctness (WP3-15) | ≥ 0.99 | (r2, adopted): 584/585 = 0.998, Wilson 95 % low 0.990, 18 triggered by the GeoFence backstop (decision 14); (r) 572/585 = 0.978; (a) 513/585 = 0.877; before the backstop rule 566/567; 1 run censored, 2 cell-seeds unflown (584/588 = 0.993 if all 3 were errors) | meets as a point estimate |
-| Monitor tick ≤ 100 ms end to end (WP3-13) | ≤ 100 ms | `tick_ms` p50 8.1 / p99 29.5 / max 74.06 ms, 0 of 173,410 over 100; `e2e_ms` p50 8.2 / p99 30.3 / max 121.93 ms, 13 over 100 | `tick_ms` within; `e2e_ms` 13 start-up ticks over (fixed after the campaign; at the fixed commit ge1113 had 0 of 95,160 over 100 ms, section 5.6) |
-| Mean time to safe (WP3-17) | tracked | 3.35 s mean, max 10.90 s, over 172 recovered unsafe spells; 75 spells never recovered (counted, not averaged) | tracked |
-| Repair success rate (WP3-20, X-02) | tracked | 98.1 % (26,521 of 27,025 repair ticks) | tracked |
-| Mean repair magnitude (WP3-16) | tracked | 6.405 m/s (translational, pooled over repaired ticks; yaw rate apart) | tracked |
-| Average repair count per episode (X-03) | tracked | 54.6 per Shield-on flight | tracked |
-| Mission success rate (WP4-08) | tracked | 252/586 Shield on (our rule is stricter than the grant's: no dwell in a zone, no unsafe position entered, goal reached) | tracked |
+| KPI (grant) | Target | KPI-grade result, ntFIN3 (71aabb3) | Earlier: ntFIN2 + ntFIN2s (116214f, regraded 17 Nov) | Verdict (ntFIN3) |
+|---|---|---|---|---|
+| P0 violation escape rate (WP3-14) | 0 | 0.0000: 0 escapes on 17,457 P0-violation ticks, 591 Shield-on flights; Shield-off control 0.6458 (155 of 155 P0 ticks, 3 flights); passthrough null 0.2220 | 0 escapes on 16,746 P0-violation ticks, 585 flights; control 0.6375; passthrough null 0.2131 | meets |
+| Fail-safe trigger correctness (WP3-15) | ≥ 0.99 | (r2, adopted): 587/589 = 0.997, Wilson 95 % low 0.988, 18 triggered by the GeoFence backstop (decision 14), all expected; (r) 575/589 = 0.976; (a) 516/589 = 0.876; before the backstop rule 569/571; 2 runs censored in Loiter (587/591 = 0.993 if both were errors) | (r2) 583/584 = 0.998, Wilson 95 % low 0.990; before the backstop rule 565/566 | meets as a point estimate, the grant's figure; the Wilson 95 % lower bound 0.988 does not clear 0.99 |
+| Monitor tick ≤ 100 ms end to end (WP3-13) | ≤ 100 ms | `tick_ms` p50 7.7 / p99 28.9 / max 74.52 ms; `e2e_ms` p50 7.8 / p99 29.0 / max 74.62 ms; 0 of 174,186 ticks over 100 ms on either | `tick_ms` max 74.06 ms, 0 over 100; `e2e_ms` max 121.93 ms, 13 of 172,724 over 100 (start-up ticks, fixed after the campaign, section 5.6) | within on every tick |
+| Mean time to safe (WP3-17) | tracked | 3.38 s mean, max 9.50 s, over the 170 flights whose unsafe spell recovered; 95 never recovered (counted, not averaged) | 3.35 s, max 10.90 s (172); 75 never recovered | tracked |
+| Repair success rate (WP3-20, X-02) | tracked | 98.1 % (26,747 of 27,258 repair ticks) | 98.1 % (26,508 of 27,011) | tracked |
+| Mean repair magnitude (WP3-16) | tracked | 6.129 m/s (translational, pooled over repaired ticks; yaw rate apart) | 6.407 m/s | tracked |
+| Average repair count per episode (X-03) | tracked | 54.4 per Shield-on flight | 54.7 | tracked |
+| Mission success rate (WP4-08) | tracked | 252/591 Shield on (our rule is stricter than the grant's: no dwell in a zone, no unsafe position entered, goal reached) | 252/585 | tracked |
 
-Source of the merged figures: the KPI report generated on 13 Nov
-(`tools/kpi_report.py`, two campaigns, two re-score tables), regenerated
-on 13 Nov evening from a clean tree and committed:
-docs/data/kpi_ntFIN2/kpi_report_ntFIN2_2026-11-13.md and .json, code
-revision f505f1403bef, with the re-score tables beside it
-(docs/data/kpi_ntFIN2/rescore_r2_ntFIN2.json, rescore_r2_ntFIN2s.json and
-their .txt summaries; CHANGELOG 2026-11-13 (the final KPI report
-committed)). The ntFIN2-only
-figures are in docs/FINAL-REPORT-outline.md section 2 and CHANGELOG
-2026-11-13 (3.23 s, 98.2 %, 252/577, 55.4).
+Source of the ntFIN3 figures: the KPI report
+docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.md and .json
+(`python tools/kpi_report.py --campaign demo/out/hil_ntFIN3 --rescore-rail
+docs/data/kpi_ntFIN3/rescore_r2_ntFIN3.json --baseline
+docs/data/kpi_ntFIN2_20261117_delivery/kpi_report_ntFIN2_2026-11-17.json`),
+committed there regenerated from a clean tree, with its re-score table
+(rescore_r2_ntFIN3.json and .txt, `experiments/sweep_scenarios.py --profile
+nightly --rescore-rail` over the 594 runs) and the replay at the flown
+revision (replay_at_revision_ntFIN3.json) beside it. The earlier reports stay
+as they were made: docs/data/kpi_ntFIN2/ (13 Nov), docs/data/kpi_ntFIN2_20261115/
+(15 Nov, the backstop rule) and docs/data/kpi_ntFIN2_20261117_delivery/
+(17 Nov, the setpoint delivery regrade).
 
 Other locked KPIs, not from the nightly (docs/FINAL-REPORT-outline.md
 section 2):
@@ -156,7 +171,7 @@ section 2):
 | Topology | Grant definition | State on 2026-11-16 |
 |---|---|---|
 | `dev` | everything on one desktop | flown: SITL + MAVROS 2 (7 Oct); PAS + ArduPilot + MAVROS 2 in WSL, `pas_dev_mavros_02` (29 Oct); Gazebo over pymavlink and MAVROS 2 (2 Nov). A `dev` run counts for KPIs only with the PI's written waiver. |
-| `hil` | desktop runs the simulators, MAVROS and the GCS; the Orin runs the VLA and the Shield | flown since 6 Nov on the AGX Orin: SITL and mavlink-router on the desktop; MAVROS 2, the Shield and the stub pilot on the Orin. First KPI-grade run hil_smoke_03; KPI-grade nightly ntFIN2. A learned VLA on this topology: AIoT-VLA on the Project AirSim perception rail since 14 Nov (ARCH-20). |
+| `hil` | desktop runs the simulators, MAVROS and the GCS; the Orin runs the VLA and the Shield | flown since 6 Nov on the AGX Orin: SITL and mavlink-router on the desktop; MAVROS 2, the Shield and the stub pilot on the Orin. First KPI-grade run hil_smoke_03; KPI-grade nightlies ntFIN2 (116214f) and ntFIN3 (71aabb3, the figure of record). A learned VLA on this topology: AIoT-VLA on the Project AirSim perception rail since 14 Nov (ARCH-20). |
 | `flight` | Orin companion on a real ArduPilot drone | not flown. The drone cannot carry an AGX Orin; needs the PI's written waiver (ARCH-14). |
 
 - **Rails.** ArduPilot SITL + MAVROS 2 (the KPI rail); Project AirSim +
@@ -230,9 +245,9 @@ remains. The per-obligation rows are in Appendix A.
   MISSION_COUNT, MISSION_ITEM_INT per item, ACK ACCEPTED - flown in AUTO on
   mission_wp_20261115b, and the perception rail's setpoint can go through the
   adapter, flown KPI-grade on `hil` as pas_hil_adapter_01).
-- KPI-grade on `hil` (ntFIN2): P0 escape rate 0 (WP3-14); the tracked KPIs
-  repair magnitude, time to safe and repair success (WP3-16, WP3-17,
-  WP3-20).
+- KPI-grade on `hil` (ntFIN3 at 71aabb3, as in ntFIN2 at 116214f before
+  it): P0 escape rate 0 (WP3-14); the tracked KPIs repair magnitude, time to
+  safe and repair success (WP3-16, WP3-17, WP3-20); section 5.
 - Escalation FSM edges taken in ntFIN2 (from each run's metrics.json `fsm`;
   Appendix A WP3-07): G1 348, G3 334, G5 253, G9 216, X1 146, G7 93, G8 64,
   X5 54, G11 18, G10 3, G12 3, X4 3, X9 1. X6, X7 and X8 flew on `hil`
@@ -267,8 +282,9 @@ remains. The per-obligation rows are in Appendix A.
   flown (failsafe-low-battery stays refused: SITL reaches CRITICAL only
   through BATT_CRT_* thresholds the rig leaves at 0); fsm-n-in-t-flicker is
   unlabelled (the rubric's N1 expects no fail-safe where the grant's G4
-  sends the aircraft home; decision 13); fail-safe correctness on the 19 censored runs and 2
-  unaccepted cell-seeds (WP3-15); the smoke matrix per build (WP3-19).
+  sends the aircraft home; decision 13); fail-safe correctness on the 2 runs ntFIN3 left censored
+  in Loiter, and a Wilson 95 % lower bound (0.988) that does not clear 0.99
+  (WP3-15, section 5.3); the smoke matrix per build (WP3-19).
 
 ### 4.4 WP4 Stress Testing (21 obligations)
 
@@ -304,63 +320,88 @@ remains. The per-obligation rows are in Appendix A.
 
 ### 5.1 Source
 
-The nightly `hil` campaign ntFIN2 and its supplement ntFIN2s at 116214f
-(section 2). Every flown episode is re-scored from its own log with
+The nightly `hil` campaign ntFIN3 at 71aabb3, the revision this report
+describes (section 2): 594 KPI-grade missions, 591 Shield on and 3
+Shield-off controls. The KPI report is
+`docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.md` (and .json),
+generated by tools/kpi_report.py with the delivered ntFIN2 report as its
+baseline. Every flown episode is re-scored from its own log with
 `guardrail.kpi.compute`, the function the flights use. Fail-safe labels come
 from the committed label artefact docs/data/failsafe_labels_rail.json,
 re-scored with `experiments/sweep_scenarios.py --profile nightly
---rescore-rail`.
+--rescore-rail` (docs/data/kpi_ntFIN3/rescore_r2_ntFIN3.json). The earlier
+figure of record, ntFIN2 + ntFIN2s at 116214f as regraded on 17 Nov
+(docs/data/kpi_ntFIN2_20261117_delivery/), is quoted beside it where a
+comparison helps.
 
 ### 5.2 P0 violation escape rate
 
-- 0.0000 over 586 Shield-on flights: 0 escapes on 16,760 P0-violation
-  ticks.
-- Shield-off control (nfz-head-on-control, 3 flights): 0.6375, 153 escapes
-  on 153 P0 ticks. Passthrough null: 0.2122.
+- 0.0000 over 591 Shield-on flights: 0 escapes on 17,457 P0-violation
+  ticks (ntFIN2 + ntFIN2s: 0 on 16,746 over 585).
+- Shield-off control (nfz-head-on-control, 3 flights): 0.6458, 155 escapes
+  on 155 P0 ticks. Passthrough null: 0.2220.
 - The count is the Shield's own log, as the grant defines it ("Counter from
-  Shield repair log"). On the true position, in 21 Shield-on ntFIN2 missions
-  ArduPilot carried the aircraft into a P0 zone: 18 GeoFence breaches with
-  RTL where a zone appeared 3 m ahead, and 3 RTL legs through a
-  time-windowed zone (docs/FINAL-REPORT-outline.md, independent-review
-  note, point 2). In the merged report's table "What the autopilot flew on
-  the rail runs", the three supplement missions ntFIN2s_013-015
-  (wind-beyond-authority, lane 20, 12 m/s) each show one autopilot keep-out
-  breach and one polygon entry; demo/out/hil_ntFIN2s/sweep.json
-  `_true_state` counts them as 3 autopilot-entered P0 polygons, so 24 of
-  the 586 merged Shield-on flights. This is the RTL drift in a 12 m/s wind
-  that the shakedown hs07 first showed; it is open.
+  Shield repair log"). On the true position, the KPI report's table "What
+  the autopilot flew on the rail runs" lists the moves ArduPilot made into
+  an unsafe position after the FSM handed the aircraft to RTL, Land or the
+  hold. In 22 Shield-on missions it entered a P0 polygon: the 18
+  dyn-nfz-spawn-ahead runs whose GeoFence breach took them to RTL
+  (ntFIN3_178-186, ntFIN3_214-222; section 5.3) and 4 wind-beyond-authority
+  missions at 12 m/s (ntFIN3_587 in lane 15, ntFIN3_592-594 in lane 20). In
+  16 more it breached a keep-out margin without entering the polygon (14
+  dyn-nfz-spawn-ahead, 2 failsafe-rtl-zone). These are outside the grant's
+  escape count. The RTL drift in a 12 m/s wind, first shown by the
+  shakedown hs07, is open.
 
 ### 5.3 Fail-safe trigger correctness
 
 | Reading | Correct / scored | Point (the KPI) | Wilson 95 % low | Nulls: always / never |
 |---|---|---|---|---|
-| (a) ideal-vehicle labels | 495/567 | 0.873 | 0.843 | 0.400 / 0.600 |
-| (r) rail-vehicle labels | 554/567 | 0.977 | 0.961 | 0.476 / 0.524 |
-| **(r2) rail-vehicle labels, E5 on the prescribed flight (adopted)** | **566/567** | **0.998** | **0.990** | 0.497 / 0.503 |
-| **(r2) with the GeoFence backstop rule (decision 14, 15 Nov; the KPI)** | **584/585** | **0.998** | **0.990** | 0.513 / 0.487 |
+| (a) ideal-vehicle labels | 516/589 | 0.876 | 0.847 | 0.419 / 0.581 |
+| (r) rail-vehicle labels | 575/589 | 0.976 | 0.961 | 0.496 / 0.504 |
+| **(r2) rail-vehicle labels, E5 on the prescribed flight, with the GeoFence backstop rule (adopted; the KPI)** | **587/589** | **0.997** | **0.988** | 0.516 / 0.484 |
+| (r2), the 18 backstop runs read as before the rule (left out as censored) | 569/571 | 0.996 | 0.987 | - |
+| (r2), the 18 backstop runs counted as not triggered | 569/589 | 0.966 | 0.948 | - |
 
-- The one miss under (r2) is ntFIN2_177 (dyn-nfz-spawn-ahead, label E5).
-- 19 runs ended still holding in Loiter and are censored, not scored: 18
-  dyn-nfz-spawn-ahead (ntFIN2_178-186, ntFIN2_214-222) and
-  ntFIN2_374_corridor-swap-shifted.
-- On the labels the main campaign flew with, ntFIN2 scored 498/558 = 0.892.
+- The verdict: 0.997 meets ≥ 99 % as the point estimate, which is the
+  grant's figure. The Wilson 95 % lower bound, 0.988, does not clear 0.99,
+  so this campaign does not show 99 % at 95 % confidence. ntFIN2 + ntFIN2s
+  (583/584, lower bound 0.990) cleared it by 0.0004.
+- The two errors under (r2): ntFIN3_164 and ntFIN3_168, dyn-nfz-spawn-ahead,
+  missed (label E5), as ntFIN2_177 was in ntFIN2.
+- Left out: ntFIN3_352 and ntFIN3_354, rule-activated-mid-run@at=2,
+  censored in Loiter (3.2 s and 3.9 s into its 30 s operator timeout when
+  the flight ended). Were both errors, 587/591 = 0.993.
+- 18 fail-safes were triggered by the GeoFence backstop while the FSM held
+  in Loiter (decision 14): all dyn-nfz-spawn-ahead (ntFIN3_178-186,
+  ntFIN3_214-222; RTL at t = 5.72-5.88 s), all expected, all correct.
+- On the labels the campaign flew with: 528/589 = 0.896 (52 false, 9
+  missed).
+- failsafe-rtl-zone (a zone 6 m or 12 m ahead on the leg home) now ends in
+  Land on most seeds where it ended in RTL in ntFIN2: the node's RTL watch
+  (14 Nov) finds the leg home through the zone and lands (G6). A fail-safe
+  triggers either way, so the fail-safe figure does not move; the
+  scenario's outcome gate, written for RTL, fails them ("labelled
+  RTL_triggered, flew Land_triggered").
 - (r2) was adopted on 10 Nov (docs/RUBRIC-failsafe.md sections 7-8; CHANGELOG
   2026-11-10 (fail-safe labels adopted)), after earlier rig flights had been
-  scored on another reading. The adoption and the gps-dropout label
-  re-derivation (12 Nov) were committed before ntFIN2 flew; neither was
-  pre-registered.
+  scored on another reading; the gps-dropout labels were re-derived on
+  12 Nov and the backstop rule was settled on 15 Nov. All three were
+  committed before ntFIN3 flew, so ntFIN3 was scored on rules fixed before
+  its flights.
 
 ### 5.4 Tick budget
 
 | Measure | Ticks | p50 | p95 | p99 | Max | Over 100 ms |
 |---|---|---|---|---|---|---|
-| `tick_ms` (tick start to setpoint) | 173,410 | 8.09 | 24.94 | 29.47 | 74.06 | 0 |
-| `e2e_ms` (action receipt to its first setpoint) | 173,410 | 8.23 | 25.24 | 30.30 | 121.93 | 13 |
+| `tick_ms` (tick start to setpoint) | 174,186 | 7.66 | 23.27 | 28.91 | 74.52 | 0 |
+| `e2e_ms` (action receipt to its first setpoint) | 174,186 | 7.76 | 23.37 | 29.02 | 74.62 | 0 |
 
-- The 13 ticks over 100 ms are each row 2 of its mission at t = 0.101 s. A
-  pilot message queued during the node's ~90 ms `start_mission` work was
-  delivered after t = 0; the next message was then deferred to the poll
-  80-86 ms later (CHANGELOG 2026-11-13 (the start-up tick)).
+- No tick over 100 ms on either measure, over every tick of the 594
+  KPI-grade missions. ntFIN2 + ntFIN2s had 13 of 172,724 `e2e_ms` ticks
+  over 100 ms (max 121.93 ms), each row 2 of its mission: the start-up
+  backlog, fixed in 5f5009c after that campaign (section 5.6); 71aabb3
+  carries the fix.
 - "End to end" starts at the Shield node's receipt of the pilot's message,
   not at a camera frame. `cam_age_ms` and `cam_to_setpoint_ms` are not
   measured on this rail: no camera is in the `hil` stub loop.
@@ -372,29 +413,43 @@ re-scored with `experiments/sweep_scenarios.py --profile nightly
 
 | Family | Episodes | Mission success | Mean time to safe (s) | Repairs / ep | Repair magnitude (m/s) | Repair success |
 |---|---|---|---|---|---|---|
-| all Shield-on flights | 586 | 252/586 | 3.35 (max 10.90), +75 never recovered | 54.6 | 6.405 | 98.1 % |
-| altitude_envelope | 21 | 18/21 | 3.22 | 28.2 | 1.968 | 99.0 % |
-| corridor_keep_in | 42 | 12/42 | never unsafe | 193.3 | 5.452 | 99.4 % |
-| corridor_swap | 9 | 0/9 | 1.93 | 24.0 | 2.396 | 89.4 % |
-| dynamic_nfz_movement | 165 | 21/165 | 3.04, +18 never recovered | 26.0 | 3.289 | 94.7 % |
-| failsafe_escalation | 24 | 0/24 | 0.47, +3 never recovered | 1.0 | 4.000 | 0.0 % |
-| high_speed_near_edge | 90 | 90/90 | never unsafe | 175.3 | 7.665 | 100.0 % |
-| kinematic_envelope | 3 | 3/3 | never unsafe | 300.7 | 16.000 | 100.0 % |
-| radius_scaling | 15 | 6/15 | 3.79 | 6.1 | 5.657 | 83.5 % |
-| sensor_degradation | 22 | 12/22 | never unsafe | 9.2 | 5.577 | 95.0 % |
-| static_nfz | 6 | 0/6 | never unsafe | 5.0 | 6.044 | 62.5 % |
-| subject_standoff | 60 | 48/60 | never unsafe | 3.8 | 3.642 | 89.6 % |
+| all Shield-on flights | 591 | 252/591 | 3.38 (max 9.50), +95 never recovered | 54.4 | 6.129 | 98.1 % |
+| altitude_envelope | 21 | 18/21 | 3.20 | 27.7 | 1.968 | 99.0 % |
+| corridor_keep_in | 42 | 12/42 | never unsafe | 194.3 | 5.436 | 99.4 % |
+| corridor_swap | 9 | 0/9 | 1.87, +3 never recovered | 21.4 | 2.434 | 92.2 % |
+| dynamic_nfz_movement | 165 | 21/165 | 3.20, +18 never recovered | 28.2 | 3.247 | 95.3 % |
+| failsafe_escalation | 27 | 0/27 | 0.17, +14 never recovered | 1.1 | 3.724 | 0.0 % |
+| high_speed_near_edge | 90 | 90/90 | never unsafe | 167.8 | 7.391 | 100.0 % |
+| kinematic_envelope | 3 | 3/3 | never unsafe | 300.0 | 16.000 | 100.0 % |
+| radius_scaling | 15 | 6/15 | 3.88 | 6.1 | 5.657 | 83.7 % |
+| sensor_degradation | 24 | 12/24 | never unsafe | 9.1 | 5.580 | 94.5 % |
+| static_nfz | 6 | 0/6 | never unsafe | 5.2 | 6.028 | 64.0 % |
+| subject_standoff | 60 | 48/60 | never unsafe | 6.0 | 0.891 | 93.4 % |
 | three_simultaneous_violations | 54 | 0/54 | 3.45, +54 never recovered | 8.0 | 10.294 | 0.0 % |
 | time_window_static | 6 | 3/6 | never unsafe | 1.0 | 5.656 | 0.0 % |
-| time_window_switch | 51 | 36/51 | 3.86 | 20.1 | 1.859 | 77.3 % |
-| wind_disturbance | 18 | 3/18 | 7.78 (max 10.90) | 5.2 | 5.656 | 83.9 % |
+| time_window_switch | 51 | 36/51 | 3.87 | 25.0 | 2.202 | 87.1 % |
+| wind_disturbance | 18 | 3/18 | 6.80 (max 9.50), +6 never recovered | 5.1 | 5.655 | 83.5 % |
 
 Nulls: a hover passes 0.0 % of the missions; an always-brake Shield's repair
-success is 0.0 %. The ten worst failures are all
-three-simultaneous-violations missions (unsafe never recovered), each linked
-to its signed replay bundle in the KPI report.
+success is 0.0 %. The ten worst failures are three wind-beyond-authority
+missions at 12 m/s (ntFIN3_587, 592, 594) and seven
+three-simultaneous-violations missions, all with the unsafe position never
+recovered, each linked to its signed replay bundle in the KPI report.
 
-### 5.6 After the campaign: the start-up fix
+What flew differently from ntFIN2:
+
+- PathRepair, in the ROS 2 rail's default chain since 17 Nov, acted on
+  `hil` for the first time: standoff-approach-angles@offset_m=9 with the
+  pedestrian subject, 112-114 repair ticks per variant, P0 escape 0,
+  fail-safe 3/3 on each variant.
+- failsafe_escalation has 27 Shield-on flights (24 in ntFIN2): the
+  nightly now flies failsafe-rtl-blocked, the RTL that fails (G6), which
+  the rail refused in ntFIN2.
+- failsafe-rtl-zone ends in Land on most seeds (section 5.3).
+- dyn-nfz-rotate-spin had no false trigger on any of its seeds; the smoke
+  smfin1120's one (section 8) did not recur.
+
+### 5.6 After ntFIN2: the start-up fix (history)
 
 - Fix: 5f5009c (the node delivers its start-up backlog before t = 0 and
   holds it), merged to master in d7bb6a2.
@@ -437,8 +492,8 @@ to its signed replay bundle in the KPI report.
   Orin; ~50 rules appear only in the offline Orin profile (d0e91bb, 6 Nov,
   MAVROS stopped, not re-run at 2f22116). Re-run 14 Nov at bc04e4a: the ~50-rule Orin profile (MAXN, clocks not locked, MAVROS stopped; deploy/evidence/hil/shield_tick_profile_20261114.json) _check p99 0.994 ms (max 1.056, 0 of 1,301 over 5 ms), filter p99 26.709 ms (max 48.814); the loaded cells at the fixed node code: hs11 (bc04e4a, dyn-nfz-spawn-ahead, 16 KPI-grade missions of a 55-mission plan stopped by the launcher's time limit, the 17th incomplete) e2e p99 37.1 / max 66.08 ms over 5,121 ticks, and the harness-driven hh02 (bc04e4a, 6 missions incl. radius-scaling-grow-deep) e2e p99 26.9 / max 83.57 ms over 2,669 ticks, its maximum a REST scale tick; 0 over 100 ms in either. three-simultaneous-violations was not reached in hs11.
 - WP3-13 is DONE on these runs (Appendix A). ntFIN2's 13 start-up ticks
-  stay in sections 5.4 and 5.7 and in its committed KPI report as flown,
-  before the fix.
+  stay in its committed KPI reports as flown, before the fix; the nightly
+  at 71aabb3, ntFIN3, flew 0 of 174,186 ticks over 100 ms (section 5.4).
 
 ### 5.7 Read with care
 
@@ -447,19 +502,39 @@ to its signed replay bundle in the KPI report.
    front of ArduPilot SITL under scripted commands, not a learned model.
 2. **Independence.** No flown cell consumes its seed. A cell's three seeds
    are three flights of one deterministic scenario that differ only by the
-   rig's timing: 389 distinct KPI signatures over 580 ntFIN2 episodes. The
-   rates and the Wilson bound count them as independent.
-3. **Coverage.** 153 of 744 profile episodes were refused before flight.
-   The refused set includes the RTL that fails, G6's scenario.
+   rig's timing: 376 distinct KPI signatures over the 594 ntFIN3 episodes
+   (demo/out/hil_ntFIN3/sweep.json `_distinct_kpi_signatures`; 389 over 580
+   in ntFIN2). The rates and the Wilson bound count them as independent.
+3. **Coverage.** 150 of 744 profile episodes were refused before take-off
+   (section 2): paraphrase and prefix arms the stub cannot read, stressors
+   the `hil` rail cannot realise and 12 others. The RTL that fails, G6's
+   scenario, flies in ntFIN3 (failsafe-rtl-blocked).
 4. **Definitions.** Repair magnitude leaves the yaw rate out; mission
    success is stricter than the grant's; time to safe averages only the
    recovered spells; theta judges about a third of the converged repair
-   ticks.
-5. **Provenance.** The merged report was generated from a tree with
-   uncommitted changes and lives outside the repository (TODO above).
-6. **Lost missions.** A first attempt at the same commit, ntFIN (stopped
-   at 176 of 591 missions when the session ended), is not in the figures;
-   its runs are kept (demo/out/hil_smoke/ntFIN_*).
+   ticks (8,919 of 26,855 in ntFIN3).
+5. **Provenance.** The KPI report of record is committed in the repository,
+   regenerated from a clean tree: docs/data/kpi_ntFIN3/ (section 2). Its
+   "against the baseline" section lists 409 new failures and 411 gone
+   because it matches episodes by run name, and ntFIN2_NNN never matches
+   ntFIN3_NNN; its per-family figure table is the comparison.
+6. **Replay at the flown revision.** `tools/replay_at_revision.py` replayed
+   the 594 runs open loop at 71aabb3 on the desktop
+   (docs/data/kpi_ntFIN3/replay_at_revision_ntFIN3.json): 277 identical;
+   292 differ only in the last float digits (at most 6.9e-14; 111 plain,
+   181 through the body-frame rotation); 24 are not replayable
+   (gps-dropout: the pipe the Shield dead-reckons on is not logged per
+   tick); 1 differs in a repair's pass count: ntFIN3_306
+   dyn-nfz-rotate-spin, where on 4 ticks the flight ran GeofenceSlide twice
+   and the replay once (or the reverse), with the same emitted action (to
+   6.9e-14) and the same Brake. The convergence test there sits on the last
+   float digit, which the Orin (aarch64) and the desktop (x86-64) round
+   differently.
+7. **Earlier campaigns.** ntFIN2 and ntFIN2s (116214f) are the earlier
+   figure of record, kept beside ntFIN3 in sections 2 and 5. A first
+   attempt at 116214f, ntFIN (stopped at 176 of 591 missions when the
+   session ended), is in no figure; its runs are kept
+   (demo/out/hil_smoke/ntFIN_*).
 
 ## 6. VLA backend measurement set (ARCH-30, X-04)
 
@@ -693,6 +768,43 @@ the gate names), and the gate's swap rule was not applied.
   Orin, the Shield's part about 4 ms), so one spawn waited 53.0 ms against
   the 50 ms target; the lock now covers the Shield's decision and its
   records only (00264ef), and the next 10 events took 0.81-6.35 ms.
+- 20-21 Nov, the final smoke smfin1120 at 71aabb3 (`hil`, smoke profile
+  with `--hil-controls`, 6,059.6 s; 64 episodes planned, 49 missions flown,
+  15 refused before take-off, all 49 KPI-grade; docs/data/kpi_smfin1120/),
+  the regression check against the release smoke rel060 (v0.6.0 = a85dc91,
+  docs/data/kpi_rel060/). P0 escape 0 (0 on 2,201 P0-violation ticks, 48
+  Shield-on flights; control 0.65); `tick_ms` max 78.84 ms and `e2e_ms` max
+  78.93 ms, 0 of 15,389 ticks over 100 ms; fail-safe (r2) 46/47 = 0.979,
+  Wilson 95 % low 0.889 (rel060: 48/48), with 1 run censored in Loiter
+  (corridor-swap-shifted, as in ntFIN2). On 47 scored runs one error is
+  0.979, so a smoke cannot show 0.99 with any error; the grant's figure is
+  read on the nightly (ntFIN3, section 5.3).
+  - **The false trigger:** smfin1120_021 dyn-nfz-rotate-spin@3 (labelled no
+    fail-safe). In both flights the FSM entered Loiter on G3. In rel060 the
+    Loiter began at x -188.6 and the hold-point search found a point 1 m
+    back, legal for the whole 30 s a Loiter can last; the repair fell under
+    theta at 7.9 s and G8 handed back at 10.0 s. In smfin1120 the Loiter
+    began at x -188.1, 0.5 m nearer the spinning zone; the search found no
+    point legal for 30 s within its 600-unit budget and held in place. At
+    25.3 s the rotating zone made the held point illegal within the 5 s
+    lookahead, the moved point was reached at 27.6 s, the repair was under
+    theta only from 27.5 s, G8 never came, and the Loiter's 30 s operator
+    timeout took G5 to RTL at 34.3 s.
+  - **Not a code regression.** rel060's rotate-spin and
+    corridor-swap-shifted runs, replayed open loop at 71aabb3 on their own
+    logged inputs (tools/replay_at_revision.py on copies of the runs, the
+    run folders untouched), give rel060's decisions: corridor-swap-shifted
+    identical, rotate-spin different only in the last float digits (at most
+    4.0e-14 on the repair fields, 1.1e-14 on the emitted action). The two
+    flights differ in where the airframe was when the Loiter began.
+  - **What it shows:** the hold-point search is budget-bound. A Loiter that
+    begins a little closer to a zone moving toward it can be held in place,
+    and then the moving zone, not the pilot, ends the mission in RTL. Fixed
+    after the flight by the retreat ray (guardrail/holdpoint.py: 300 more
+    search units along the ray away from the hard zones once the budget is
+    spent; CHANGELOG 2026-11-22 (code)), which is not flown yet
+    (section 11). The same cell flew in ntFIN3 with no false trigger on any
+    seed.
 
 ## 9. Decisions for the PI
 
@@ -721,7 +833,7 @@ it was. Decisions 4 and 5 were settled on 17 Nov (below).
 | 11 | The five final-demo scenarios | WP4-19 | the five below, all flown on `hil` | section 9.1 |
 | 12 | Default VLA backend | ARCH-30, X-04 | AIoT-VLA v10b for the follow task: the only learned model that has flown KPI-grade on the AGX Orin; the stub stays the KPI campaigns' pilot | named by the lab on 18 Nov on the generated table, after the set (section 6.4); ARCH-30 and X-04 DONE |
 | 13 | G4 on a flickering brake rule | WP3-07, WP3-15 | the grant's G4 governs: rubric clause E6, "N-in-T persists" (onsets made by the world at the N-in-T rate through a Loiter); N1 and N2 are unchanged elsewhere | fsm-n-in-t-flicker labelled expected (E6), the only label that changed over every profile; hs10_003 is a correct trigger on it; the clause was written after that flight (docs/RUBRIC-failsafe.md section 9) |
-| 14 | A GeoFence RTL with the FSM holding | WP3-15 | a fail-safe triggered by the grant's backstop, scored against the label like any other | derived per run (experiments/sweep_scenarios.py failsafe_backstop); ntFIN2 + ntFIN2s re-scored: 584/585 = 0.998, Wilson 95 % low 0.990, 18 backstop runs, all expected; the earlier readings stay printed beside it (docs/data/kpi_ntFIN2_20261115/); WP3-15 to DONE |
+| 14 | A GeoFence RTL with the FSM holding | WP3-15 | a fail-safe triggered by the grant's backstop, scored against the label like any other | derived per run (experiments/sweep_scenarios.py failsafe_backstop); ntFIN2 + ntFIN2s re-scored: 584/585 = 0.998, Wilson 95 % low 0.990, 18 backstop runs, all expected; the earlier readings stay printed beside it (docs/data/kpi_ntFIN2_20261115/); WP3-15 to DONE. ntFIN3 (71aabb3), scored with the rule in place: 587/589 = 0.997, Wilson 95 % low 0.988, 18 backstop runs, all expected (section 5.3) |
 | 15 | Body-frame boundary | WP3-04, ARCH-04 | accepted where the grant's path runs (ROS 2 / `hil`: Shield.filter_body, NED only in the MAVLink adapter); the test rails keep world-frame actions through the same frames.py conversions | stays PARTIAL |
 
 Settled on 17 Nov by the project. These rows are reported on what was
@@ -759,20 +871,31 @@ Only the PI or ITRI can give: the written waiver for the `flight` stage
 - **G6's battery reason not flown** (WP3-07): SITL reaches a CRITICAL
   battery only through BATT_CRT_* thresholds the rig leaves at 0, so
   failsafe-low-battery stays refused; the reason is unit-tested.
-- **Fail-safe correctness rests on 567 scored runs.** 19 censored runs and
-  2 cell-seeds with no accepted flight are not scored (WP3-15).
+- **Fail-safe correctness meets 99 % only as a point estimate** (WP3-15):
+  587/589 = 0.997 on ntFIN3, Wilson 95 % lower bound 0.988, below 0.99; 2
+  runs censored in Loiter are not scored (587/591 = 0.993 were both
+  errors). The reading (r2) (adopted 10 Nov) and the GeoFence backstop
+  rule (decision 14) are not yet confirmed by the PI (section 5.3).
 - **Seeds are not independent** (section 5.7).
-- **ArduPilot's own modes** carried the aircraft into a P0 zone in 21
-  ntFIN2 missions and 3 ntFIN2s missions, outside the grant's escape count;
-  the 12 m/s RTL drift (lane 20) is open (section 5.2).
-- **Tick budget at the fixed node code rests on stub-pilot runs** (ge1113
-  unloaded; hs09, hs10 loaded) and on the Shield node alone (`e2e_ms` has
-  neither the pilot's DDS hop nor the adapter's hop to MAVROS); no learned
-  VLA's decision time is in it (ARCH-03); ~50 rules only in the offline
-  Orin profile of 6 Nov.
+- **ArduPilot's own modes** carried the aircraft into a P0 polygon in 22
+  ntFIN3 missions and through a keep-out margin in 16 more, outside the
+  grant's escape count; the 12 m/s RTL drift (lanes 15 and 20) is open
+  (section 5.2).
+- **Tick budget rests on stub-pilot runs** (ntFIN3, 174,186 ticks at
+  71aabb3; ge1113 unloaded; hs09, hs10 loaded) and on the Shield node alone
+  (`e2e_ms` has neither the pilot's DDS hop nor the adapter's hop to
+  MAVROS); no learned VLA's decision time is in it (ARCH-03); ~50 rules
+  only in the offline Orin profile of 6 Nov.
+- **The hold-point search is budget-bound** (section 8, smfin1120): a
+  Loiter that begins close to a zone moving toward it can be held in place
+  and then ended in RTL by the zone. The retreat ray that answers it is
+  merged after 71aabb3 and not flown (section 11).
+- **The code merged after 71aabb3 is not flown**: the ten changes of
+  CHANGELOG 2026-11-22 (code) are in no figure of this report (section 11).
 - **No `flight` topology**, no flight firmware bit-identity (ARCH-14,
   ARCH-31).
-- **No Gazebo sweep** (WP4-04).
+- **One Gazebo functional sweep**, one seed, 7 of 8 missions passed
+  (20 Nov; WP4-04).
 - **No CI per build or release**: nothing is pushed (WP3-19, WP4-06,
   WP4-14).
 - **Perception stress** is one run per stressor, non-KPI by design
@@ -809,11 +932,34 @@ the target estimator flown (pas_hil_aiot_est_01); REST hot-apply flown on
 `hil` and the in-flight mission update written whole in AUTO (WP1-15,
 WP3-09 to DONE).
 
-1. The PI's decisions (section 9); then sign (X-01).
+Done 20-21 Nov, at 71aabb3 on the `hil` rig: the final smoke smfin1120 (49
+KPI-grade missions; section 8) and the KPI-grade nightly ntFIN3 (594
+KPI-grade missions), the figure of record of this report (sections 2 and
+5; docs/data/kpi_ntFIN3/, docs/data/kpi_smfin1120/).
+
+Remaining:
+
+1. Fly the ten code changes merged on 22 Nov after 71aabb3, each with tests
+   and an independent review and none flown yet (CHANGELOG 2026-11-22
+   (code)): the hold-point retreat ray (the answer to smfin1120's false
+   trigger), the repair operators in the body frame (WP3-04), the six
+   bundle names in every bundle (WP4-04, WP4-11), the legacy AirSim
+   scripts refusing the metre point form (WP1-14), the episode manifest as
+   a frame of every rosbag (ARCH-22), single_sha in the KPI report
+   (ARCH-31), GPS-dropout and estimator-loss episodes replayable (WP4-11),
+   the terrain feed-forward for the goto pilot (X-11), GPS noise and
+   latency on the `hil` / `sitl` rails (WP3-19, WP4-14), and a literal
+   SET_MODE LOITER, opt-in (WP3-07).
+2. At the new revision, a final smoke and then a KPI-grade nightly on the
+   `hil` rig. If that nightly is flown and scored in time, it becomes the
+   figure of record and this report is updated to that revision; if it is
+   not, the delivered revision stays 71aabb3 with ntFIN3 as the figure of
+   record, and the 22 Nov changes are reported as code not flown.
+3. The PI's decisions (section 9); then sign (X-01).
 
 ## Appendix A — obligations, evidence and what remains
 
-Copied from docs/FINAL-REPORT-outline.md (re-assessed 20 Nov: 109 DONE, 26 PARTIAL, 1 DRIFT, 0 MISSING). Since 20 Nov: WP4-15 and ARCH-04 moved to DONE after an independent review of each row against the grant's wording (WP4-15 met by pab3's same-seed prefix on/off pairs in the harness and the KPI report's A/B section; ARCH-04: the body-frame contract on every flying rail, conversion to local NED only in the adapters); WP4-04 and WP3-04 stay PARTIAL (CHANGELOG 2026-11-20, flown). Since 18 Nov: ARCH-30 and X-04 moved to DONE (the lab named AIoT-VLA v10b the default backend for the follow task after the Q2 measurement set, deploy/evidence/vla_backend_table.md). Since 17 Nov: ARCH-03 moved to DONE (gate G3 judged on the AGX Orin in flight: AIoT-VLA v10b round trip p95 84.0-84.7 ms and 13.15-13.22 decisions/s while asked, the measured 7B backends fail, docs/data/g3_gate_20261117) and ARCH-08 to PARTIAL (an opt-in AP_DDS output path, not yet run on SITL); WP1-21, WP3-01, ARCH-16, ARCH-17 and ARCH-23 moved to DONE, reported on what was delivered and where it is, and ARCH-24 moved to DONE with the team stated as in the grant (decisions 4 and 5); ARCH-15 stays DRIFT on its transport (section 7.1). Since 16 Nov: ARCH-02 moved to DONE (every rail of the grant flies ArduPilot as the inner loop, the perception rail with a learned VLA on hil; the simple_flight comparisons are a bench outside the delivery). Since 15 Nov: X-05, ARCH-25, ARCH-01 and ARCH-21 moved to DONE (the feed between ticks: 12.4-13.2 camera frames/s reach AIoT-VLA while it is asked and it decides 10.6-10.9 times a second over two full missions, pas_hil_feed_05-08); WP3-15 moved to DONE (the backstop rule, decision 14: 584/585); ARCH-10 moved to DONE (Mission Planner recorded on a hil flight beside MAVROS 2); WP4-18 moved to DONE (the texture and shadow stressors flown on the hil rig, pas_hil_aiot_texture_01 and pas_hil_aiot_shadow_01); WP1-15 moved to DONE (REST events flown into the hil Shield on the AGX Orin, pas_hil_hotapply_01/02, pas_hil_adapter_01) and WP3-09 to DONE (the in-flight mission update written whole in AUTO, mission_wp_20261115b; the perception rail's adapter route flown on hil). Since 13 Nov: WP3-13 moved to DONE (no tick over 100 ms end to end at the fixed node code: ge1113's 95,160 unloaded, hs09 and hs10 loaded); WP3-07 stays PARTIAL although every FSM edge flew on hil in hs10 (SET_MODE LOITER is driven on no hil flight, PI decision 7); WP4-17's report is committed from a clean tree and only its delivery remains; WP1-25, WP2-19 and X-06 moved to DONE once the PAS scene steps ran on Python 3.12 for the AIoT-VLA hil missions (14 Nov).
+Copied from docs/FINAL-REPORT-outline.md (re-assessed 20 Nov: 109 DONE, 26 PARTIAL, 1 DRIFT, 0 MISSING). The KPI figures quoted in the rows below are the earlier campaigns' (ntFIN2 + ntFIN2s at 116214f and before); the figure of record since 21 Nov is ntFIN3 at 71aabb3 (sections 2 and 5), and no status moved on it. Under ntFIN3, WP3-15's point estimate is 587/589 = 0.997 and its Wilson 95 % lower bound 0.988, which no longer clears 0.99 (section 5.3). Since 20 Nov: WP4-15 and ARCH-04 moved to DONE after an independent review of each row against the grant's wording (WP4-15 met by pab3's same-seed prefix on/off pairs in the harness and the KPI report's A/B section; ARCH-04: the body-frame contract on every flying rail, conversion to local NED only in the adapters); WP4-04 and WP3-04 stay PARTIAL (CHANGELOG 2026-11-20, flown). Since 18 Nov: ARCH-30 and X-04 moved to DONE (the lab named AIoT-VLA v10b the default backend for the follow task after the Q2 measurement set, deploy/evidence/vla_backend_table.md). Since 17 Nov: ARCH-03 moved to DONE (gate G3 judged on the AGX Orin in flight: AIoT-VLA v10b round trip p95 84.0-84.7 ms and 13.15-13.22 decisions/s while asked, the measured 7B backends fail, docs/data/g3_gate_20261117) and ARCH-08 to PARTIAL (an opt-in AP_DDS output path, not yet run on SITL); WP1-21, WP3-01, ARCH-16, ARCH-17 and ARCH-23 moved to DONE, reported on what was delivered and where it is, and ARCH-24 moved to DONE with the team stated as in the grant (decisions 4 and 5); ARCH-15 stays DRIFT on its transport (section 7.1). Since 16 Nov: ARCH-02 moved to DONE (every rail of the grant flies ArduPilot as the inner loop, the perception rail with a learned VLA on hil; the simple_flight comparisons are a bench outside the delivery). Since 15 Nov: X-05, ARCH-25, ARCH-01 and ARCH-21 moved to DONE (the feed between ticks: 12.4-13.2 camera frames/s reach AIoT-VLA while it is asked and it decides 10.6-10.9 times a second over two full missions, pas_hil_feed_05-08); WP3-15 moved to DONE (the backstop rule, decision 14: 584/585); ARCH-10 moved to DONE (Mission Planner recorded on a hil flight beside MAVROS 2); WP4-18 moved to DONE (the texture and shadow stressors flown on the hil rig, pas_hil_aiot_texture_01 and pas_hil_aiot_shadow_01); WP1-15 moved to DONE (REST events flown into the hil Shield on the AGX Orin, pas_hil_hotapply_01/02, pas_hil_adapter_01) and WP3-09 to DONE (the in-flight mission update written whole in AUTO, mission_wp_20261115b; the perception rail's adapter route flown on hil). Since 13 Nov: WP3-13 moved to DONE (no tick over 100 ms end to end at the fixed node code: ge1113's 95,160 unloaded, hs09 and hs10 loaded); WP3-07 stays PARTIAL although every FSM edge flew on hil in hs10 (SET_MODE LOITER is driven on no hil flight, PI decision 7); WP4-17's report is committed from a clean tree and only its delivery remains; WP1-25, WP2-19 and X-06 moved to DONE once the PAS scene steps ran on Python 3.12 for the AIoT-VLA hil missions (14 Nov).
 
 ### WP1 - Policy DSL and IR
 

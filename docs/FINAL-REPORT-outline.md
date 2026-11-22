@@ -17,7 +17,13 @@ NTUT AIoT Lab · outline v0, 2026-10-29
 > episodes are counted, and 2 cell-seeds still have no accepted flight in
 > either campaign. The two are merged by one episode choice
 > (tools/kpi_report.py, 13 Nov); the written KPI report (WP4-17) is still
-> to be committed from a clean tree.
+> to be committed from a clean tree. Since 21 Nov the figure of record is
+> the KPI-grade nightly ntFIN3 at 71aabb3, the revision the final report
+> describes (594 KPI-grade missions, 591 Shield on; P0 escape 0 on 17,457
+> P0-violation ticks; fail-safe (r2) 587/589 = 0.997, Wilson 95 % low
+> 0.988; `tick_ms` / `e2e_ms` max 74.52 / 74.62 ms, 0 of 174,186 ticks over
+> 100 ms; docs/data/kpi_ntFIN3/, docs/FINAL-REPORT.md sections 2 and 5).
+> The ntFIN2 figures below are the earlier campaign's.
 
 Every status below is the contract audit's (136 obligations, first done
 2026-10-05, refreshed 2026-10-28, with the 28-29 Oct work applied), then
@@ -80,7 +86,10 @@ Points the summary will carry, each already backed by section 4:
   episode bundles and a KPI report generator (WP4). Six obligations are
   built differently from the grant's words (DRIFT, Appendix A; the
   deviations in section 7) and the report says so.
-- No P0 violation has escaped the Shield on any rail flown. KPI-grade: 0
+- No P0 violation has escaped the Shield on any rail flown. KPI-grade, the
+  figure of record: 0 escapes on 17,457 P0-violation ticks over the 591
+  Shield-on missions of the nightly `hil` campaign ntFIN3 (71aabb3,
+  21 Nov), against 0.6458 for its Shield-off control. Before it: 0
   escapes on 16,703 P0-violation ticks over the 577 Shield-on missions of
   the nightly `hil` campaign ntFIN2, against 0.6375 for its Shield-off
   control (section 2); with the supplement ntFIN2s, 0 on 16,760 ticks over
@@ -95,10 +104,12 @@ Points the summary will carry, each already backed by section 4:
   (7 Nov, AirSimNH, not KPI-grade); on base OpenVLA the CSP's effect on
   repairs is no larger than a rule-free prefix's (WP2-01, WP2-09).
 - What the report cannot claim yet: fail-safe trigger correctness >= 99 %
-  without a qualifier (584/585 = 0.998 on the adopted reading with the
-  GeoFence backstop rule of 15 Nov, settled by the lab and not yet
-  confirmed by the PI; 566/567 before that rule; 1 censored run and 2
-  cell-seeds with no accepted flight unscored, WP3-15), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
+  without a qualifier (on the figure of record ntFIN3, 587/589 = 0.997 on
+  the adopted reading with the GeoFence backstop rule of 15 Nov, settled by
+  the lab and not yet confirmed by the PI: it meets 99 % as the point
+  estimate, but its Wilson 95 % lower bound 0.988 does not clear 0.99;
+  2 runs censored in Loiter unscored; earlier, ntFIN2 + ntFIN2s 584/585 =
+  0.998, 566/567 before that rule, WP3-15), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
   ARCH-20), the Gazebo functional rail (ARCH-16), the `flight` topology
   (ARCH-14).
 
@@ -108,7 +119,19 @@ The locked KPIs and where each stands. "KPI-grade" means `is_kpi_grade`
 accepts the run: `hil` or `flight` topology, sim_speedup 1.0, a clean
 code_revision; tools/kpi_report.py also requires the signed replay bundle bound to the run and the campaign's acceptance.
 
-**The KPI-grade source: the nightly `hil` campaign ntFIN2.** Profile
+**The figure of record since 21 Nov: the nightly `hil` campaign ntFIN3**
+at 71aabb3 (clean), flown 21 Nov in 72,478.6 s on the same rig: 744
+episodes, 150 refused before take-off, 594 missions flown, all KPI-grade
+(591 Shield on, 3 controls). P0 escape rate 0 on 17,457 P0-violation ticks
+(control 0.6458); fail-safe (r2) 587/589 = 0.997, Wilson 95 % low 0.988
+(meets 99 % as the point estimate; the lower bound does not clear 0.99);
+`tick_ms` max 74.52 ms and `e2e_ms` max 74.62 ms, 0 of 174,186 ticks over
+100 ms; mission success 252/591, repair success 98.1 %, mean time to safe
+3.38 s, 54.4 repairs per Shield-on mission
+(docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.md; docs/FINAL-REPORT.md
+sections 2 and 5). The table below keeps the earlier campaign's figures.
+
+**The earlier KPI-grade source: the nightly `hil` campaign ntFIN2.** Profile
 nightly at 116214f (clean), flown 12-13 Nov in 69,706 s on the AGX Orin
 rig (ArduCopter 4.5.7 SITL and mavlink-router on the desktop; MAVROS 2,
 the Shield and the stub pilots of guardrail/vla_stub.py on the Orin). Of
@@ -255,7 +278,9 @@ the subsections are written from.
   analysis code still measures zone geometry of its own (WP3-22). Since
   13 Nov the KPI-grade nightly `hil` campaign ntFIN2 gives the P0 escape
   rate 0 (WP3-14) and the tracked KPIs - repair magnitude, time to safe,
-  repair success (WP3-16, WP3-17, WP3-20) - all DONE. Open:
+  repair success (WP3-16, WP3-17, WP3-20) - all DONE; since 21 Nov the
+  figure of record is the nightly ntFIN3 at 71aabb3 (P0 escape 0 on 17,457
+  ticks; fail-safe (r2) 587/589 = 0.997, Wilson 95 % low 0.988). Open:
   PathRepair's boundary and zone detours opt-in, a measured deviation (WP3-06),
   and, until 15 Nov, fail-safe trigger correctness on the 19 censored
   runs and the 2 cell-seeds with no accepted flight (WP3-15; 566/567 on the
@@ -303,8 +328,14 @@ flights, fail-safe (r2) 566/567), from a tree with uncommitted changes
 (`72dd5357b65b-dirty`). Regenerated from a clean tree on 13 Nov evening
 and committed with its re-score tables: docs/data/kpi_ntFIN2/
 kpi_report_ntFIN2_2026-11-13.md and .json (code revision f505f1403bef);
-docs/FINAL-REPORT.md section 5 is written from it; its delivery is due
-2026-11-30. Nothing in this
+docs/FINAL-REPORT.md section 5 was written from it. Since 22 Nov
+docs/FINAL-REPORT.md section 5 is written from the nightly ntFIN3 at
+71aabb3: docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.md (594
+KPI-grade episodes, P0 escape 0 over 591 Shield-on flights, fail-safe (r2)
+587/589 = 0.997, Wilson 95 % low 0.988, 0 of 174,186 ticks over 100 ms),
+with the 17 Nov regrade of ntFIN2 + ntFIN2s
+(docs/data/kpi_ntFIN2_20261117_delivery/, 583/584) beside it; its delivery
+is due 2026-11-30. Nothing in this
 section may come from a `dev`, pymavlink or simple_flight run unless the PI
 waives it in writing (21 Oct, #4: the dated fallback, unanswered).
 
