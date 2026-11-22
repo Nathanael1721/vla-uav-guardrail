@@ -1,0 +1,664 @@
+{
+ "tracker": "rate execution H 1 s, cruise 4.5 m/s, cap 5 m/s, turn while moving",
+ "policy": "policies/demo_policy.yaml",
+ "frames": [
+  {
+   "frame": "protocol_present_front",
+   "chunk_row0": [
+    -0.20968290849858173,
+    0.025313034872277762,
+    -0.40253382902841306,
+    -0.013150106853333718,
+    -0.010270904526698321,
+    -0.21135602839598788,
+    0.58203125
+   ],
+   "velocity4": {
+    "vx": -0.20968290849858173,
+    "vy": 0.025313034872277762,
+    "vz": -0.40253382902841306,
+    "omega": -0.21135602839598788
+   },
+   "step_text": "00 53 58 49</s>",
+   "bins": [
+    0,
+    53,
+    58,
+    49
+   ],
+   "clipped": [
+    "fwd_m"
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.4081632653061229,
+    "dpsi_rad": 0.2020408163265306,
+    "right_m": 0.0
+   },
+   "client_reader_agrees": true,
+   "action4d": {
+    "vx": 0.0,
+    "vy": 0.0,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.202
+   },
+   "action4d_finite": true,
+   "shield": {
+    "open_air": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": -0.4,
+      "yaw_rate": 0.202
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.40 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": -0.4,
+      "yaw_rate": 0.202
+     }
+    },
+    "south_of_nfz_square_heading_north": {
+     "state": {
+      "x": 4.5,
+      "y": 15.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": -0.4,
+      "yaw_rate": 0.202
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.40 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": -0.4,
+      "yaw_rate": 0.202
+     }
+    },
+    "just_above_alt_band_floor": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 2.2,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": -0.04,
+      "yaw_rate": 0.202
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.04 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": 0.0,
+      "yaw_rate": 0.0
+     }
+    }
+   }
+  },
+  {
+   "frame": "protocol_absent_front",
+   "chunk_row0": [
+    -0.20968290849858173,
+    -0.04750801165245866,
+    -0.2838553269357401,
+    0.010760329894586196,
+    0.034819340025601164,
+    -0.15657087078269072,
+    0.5234375
+   ],
+   "velocity4": {
+    "vx": -0.20968290849858173,
+    "vy": -0.04750801165245866,
+    "vz": -0.2838553269357401,
+    "omega": -0.15657087078269072
+   },
+   "step_text": "00 52 56 50</s>",
+   "bins": [
+    0,
+    52,
+    56,
+    50
+   ],
+   "clipped": [
+    "fwd_m"
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.3061224489795924,
+    "dpsi_rad": 0.15714285714285703,
+    "right_m": 0.05102040816326525
+   },
+   "client_reader_agrees": true,
+   "action4d": {
+    "vx": 0.0,
+    "vy": 0.0504,
+    "vz_up": -0.3061,
+    "yaw_rate": 0.1571
+   },
+   "action4d_finite": true,
+   "shield": {
+    "open_air": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0504,
+      "vz_up": -0.3061,
+      "yaw_rate": 0.1571
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0504,
+      "vz_up": -0.3061,
+      "yaw_rate": 0.1571
+     }
+    },
+    "south_of_nfz_square_heading_north": {
+     "state": {
+      "x": 4.5,
+      "y": 15.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0504,
+      "vz_up": -0.3061,
+      "yaw_rate": 0.1571
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0504,
+      "vz_up": -0.3061,
+      "yaw_rate": 0.1571
+     }
+    },
+    "just_above_alt_band_floor": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 2.2,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": 0.0504,
+      "vz_up": -0.04,
+      "yaw_rate": 0.1571
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.31 -> -0.04 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": 0.0,
+      "yaw_rate": 0.0
+     }
+    }
+   }
+  },
+  {
+   "frame": "citylife_fpv_before",
+   "chunk_row0": [
+    -0.2737805214232875,
+    0.08067955220422951,
+    -0.362365720627816,
+    -0.011243455647141826,
+    -0.027548474869168227,
+    -0.05392926666601336,
+    0.51953125
+   ],
+   "velocity4": {
+    "vx": -0.2737805214232875,
+    "vy": 0.08067955220422951,
+    "vz": -0.362365720627816,
+    "omega": -0.05392926666601336
+   },
+   "step_text": "00 53 51 47</s>",
+   "bins": [
+    0,
+    53,
+    51,
+    47
+   ],
+   "clipped": [
+    "fwd_m"
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.4081632653061229,
+    "dpsi_rad": 0.044897959183673564,
+    "right_m": -0.1020408163265305
+   },
+   "client_reader_agrees": true,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "action4d_finite": true,
+   "shield": {
+    "open_air": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1019,
+      "vz_up": -0.4,
+      "yaw_rate": 0.0
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.40 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.1019,
+      "vz_up": -0.4,
+      "yaw_rate": 0.0
+     }
+    },
+    "south_of_nfz_square_heading_north": {
+     "state": {
+      "x": 4.5,
+      "y": 15.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1019,
+      "vz_up": -0.4,
+      "yaw_rate": 0.0
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.40 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.1019,
+      "vz_up": -0.4,
+      "yaw_rate": 0.0
+     }
+    },
+    "just_above_alt_band_floor": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 2.2,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1019,
+      "vz_up": -0.04,
+      "yaw_rate": 0.0
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.41 -> -0.04 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": 0.0,
+      "yaw_rate": 0.0
+     }
+    }
+   }
+  },
+  {
+   "frame": "citylife_fpv_after",
+   "chunk_row0": [
+    -0.21954407971776724,
+    0.14430412635857393,
+    0.21185564718980898,
+    0.016944063536289633,
+    -0.0872942194680614,
+    -0.11660993228828571,
+    0.251953125
+   ],
+   "velocity4": {
+    "vx": -0.21954407971776724,
+    "vy": 0.14430412635857393,
+    "vz": 0.21185564718980898,
+    "omega": -0.11660993228828571
+   },
+   "step_text": "00 47 54 46</s>",
+   "bins": [
+    0,
+    47,
+    54,
+    46
+   ],
+   "clipped": [
+    "fwd_m"
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": -0.204081632653061,
+    "dpsi_rad": 0.11224489795918347,
+    "right_m": -0.15306122448979576
+   },
+   "client_reader_agrees": true,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.1521,
+    "vz_up": 0.2041,
+    "yaw_rate": 0.1122
+   },
+   "action4d_finite": true,
+   "shield": {
+    "open_air": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     }
+    },
+    "south_of_nfz_square_heading_north": {
+     "state": {
+      "x": 4.5,
+      "y": 15.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     }
+    },
+    "just_above_alt_band_floor": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 2.2,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.1521,
+      "vz_up": 0.2041,
+      "yaw_rate": 0.1122
+     }
+    }
+   }
+  },
+  {
+   "frame": "synthetic_grey",
+   "chunk_row0": [
+    -0.06587416155212622,
+    0.03619865522906829,
+    -0.19712872925263303,
+    -0.022013458406441963,
+    -0.013290967635341433,
+    -0.011470769515708051,
+    0.53515625
+   ],
+   "velocity4": {
+    "vx": -0.06587416155212622,
+    "vy": 0.03619865522906829,
+    "vz": -0.19712872925263303,
+    "omega": -0.011470769515708051
+   },
+   "step_text": "00 51 50 48</s>",
+   "bins": [
+    0,
+    51,
+    50,
+    48
+   ],
+   "clipped": [
+    "fwd_m"
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.204081632653061,
+    "dpsi_rad": 0.022448979591836782,
+    "right_m": -0.05102040816326525
+   },
+   "client_reader_agrees": true,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.051,
+    "vz_up": -0.2041,
+    "yaw_rate": 0.0
+   },
+   "action4d_finite": true,
+   "shield": {
+    "open_air": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.051,
+      "vz_up": -0.2041,
+      "yaw_rate": 0.0
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.051,
+      "vz_up": -0.2041,
+      "yaw_rate": 0.0
+     }
+    },
+    "south_of_nfz_square_heading_north": {
+     "state": {
+      "x": 4.5,
+      "y": 15.0,
+      "up": 4.0,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.051,
+      "vz_up": -0.2041,
+      "yaw_rate": 0.0
+     },
+     "violations": [],
+     "repairs": [],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Normal"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": -0.051,
+      "vz_up": -0.2041,
+      "yaw_rate": 0.0
+     }
+    },
+    "just_above_alt_band_floor": {
+     "state": {
+      "x": -20.0,
+      "y": -20.0,
+      "up": 2.2,
+      "yaw_deg": 0.0
+     },
+     "emitted": {
+      "vx": 0.0,
+      "vy": -0.051,
+      "vz_up": -0.04,
+      "yaw_rate": 0.0
+     },
+     "violations": [
+      "alt-band"
+     ],
+     "repairs": [
+      "AltitudeFix: vz -0.20 -> -0.04 (floor 2.0m)"
+     ],
+     "braked": false,
+     "fsm": [
+      "Normal",
+      "Brake"
+     ],
+     "command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "vz_up": 0.0,
+      "yaw_rate": 0.0
+     }
+    }
+   }
+  }
+ ],
+ "all_conform": true
+}
