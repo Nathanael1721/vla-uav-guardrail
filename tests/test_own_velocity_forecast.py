@@ -12,8 +12,10 @@ then braked at under 3 m/s^2.
 This file holds:
 
   * the IDENTITY proof: with no measured velocity (the default, and every rail
-    that does not pass one) every filter() decision is byte-identical to the
-    code before the change. The digests in tests/fixtures/
+    that does not pass one) every filter() decision is identical to the code
+    before the change: every field exactly, every float to 1e-9 (since
+    2026-11-22; to the last bit before, which held only on the platform that
+    made the fixture, IDENTITY_QUANTUM_DECIMALS). The digests in tests/fixtures/
     own_velocity_identity_digests.json were computed on c77c77d, before a line
     of the change existed (with the escalation FSM's hold-point fields left
     out of each dump, HOLD_POINT_FIELDS: they came with the hold points, a
@@ -112,6 +114,50 @@ C77_LOITER_LAW = dict(loiter_clear="violation_free", loiter_x67="request",
                       untrusted_owner="projected", hold_horizon="lookahead",
                       handback_request="as_held", hold_kept="off")
 LOITER_LAW_FIELDS = ("cleared_loiter_s",)
+# Every float a decision dumps is rounded to 10^-IDENTITY_QUANTUM_DECIMALS
+# (absolute, round(v, 9)) before it is hashed; everything else (rule ids,
+# operators, FSM states and edges, reason text, counts, booleans, key sets,
+# list lengths) is hashed exactly.
+#
+# Why: until 2026-11-22 the digests hashed each double's shortest repr, so
+# they were a property of the C library as much as of the Shield. GitHub's
+# Linux jobs failed both identity tests on the four follow_car_citylife* and
+# the two follow_car_gap streams (6 of 12; reproduced in WSL Ubuntu at 71aabb3
+# and 59e19a5) while the Windows desktop passed: those streams fly at
+# non-zero headings, and glibc's sin/cos/atan2 differ from MSVC's in the last
+# place. Measured on 59e19a5 at 500 decisions per stream: 15 of 52,202 dumped
+# floats differed, at most 8.9e-16 apart (one ulp), and no other field did.
+#
+# Why 1e-9: the dumps hold metres, m/s, seconds, degrees and rad/s, below 1e3
+# in magnitude, where one ulp is at most 1.1e-13, so libm noise (a few ulp,
+# not amplified: the measured worst was one) sits four or more orders of
+# magnitude under the quantum. It moves a digest only when a value lies
+# within that noise of a rounding boundary: odds of the difference over the
+# quantum, 1e-7 to 1e-4 per differing value by its magnitude, 1e-5 in all for
+# the 15 measured (each under 5 in magnitude). Rounded, the Linux and Windows
+# dumps were identical: follow_car_citylife, follow_car_gap and
+# corridor_survey, with and without the FSM, at 500 decisions, and
+# follow_car_citylife (no FSM) and follow_car_citylife_nfz (FSM) at 1500,
+# where 15 dumps differed unrounded (WSL Ubuntu, Python 3.12.3, numpy 1.26.4,
+# against the desktop's vla-real environment). Any change of 1e-9 or more in
+# any value always moves the digest, and so does any change of a non-float
+# field (test_the_identity_digest_is_blind_to_ulps_and_sees_any_decision_change);
+# no Shield decision turns on a billionth of a metre. -0.0 is hashed as 0.0:
+# the sign of a rounded-away residue is not a decision.
+IDENTITY_QUANTUM_DECIMALS = 9
+IDENTITY_DIGEST_FORM = ("sha256 over JSON lines, floats rounded with "
+                        f"round(v, {IDENTITY_QUANTUM_DECIMALS}), -0.0 as 0.0")
+
+
+def _canonical(o):
+    """`o` with every finite float rounded to the identity quantum."""
+    if isinstance(o, float):
+        return round(o, IDENTITY_QUANTUM_DECIMALS) + 0.0 if math.isfinite(o) else o
+    if isinstance(o, dict):
+        return {k: _canonical(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_canonical(v) for v in o]
+    return o
 
 
 def _city_map():
@@ -120,8 +166,41 @@ def _city_map():
                 "oy": float(z["oy"])}
 
 
+# True only in the copy regenerate_identity runs on a git archive of
+# IDENTITY_BASE (`--emit-digests`).
+AT_BASE = "--emit-digests" in sys.argv
+
+
+def _at_base(fn, kw: dict) -> dict:
+    """`kw`, less, on the base tree only, the keywords `fn` does not take there.
+
+    The knobs above that pin c77c77d's behaviour (recovery_law, path_repair,
+    the Loiter law's fields) came after c77c77d, which flies the pinned value
+    as its only behaviour and refuses the keyword: without this the base run
+    of `--regenerate` died on recovery_law (found 2026-11-22). Checked that
+    day: with the old raw-repr digest form, the base run reproduced all 24
+    committed digests (ci and full), so dropping the keywords there is the
+    base's own flight. On the checked-out code nothing is dropped: a knob it
+    stopped taking is a TypeError, never a silent change."""
+    import inspect
+    if not AT_BASE:
+        return kw
+    params = inspect.signature(fn).parameters
+    if any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return kw
+    return {k: v for k, v in kw.items() if k in params}
+
+
 def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "none"):
-    """`n` seeded filter() decisions on policy `name`, one JSON line each.
+    """`n` seeded filter() decisions on policy `name`, one JSON line each, in
+    the form the identity digests hash (`_identity_line`)."""
+    return [_identity_line(d) for d in
+            _identity_dumps(name, n, escalation=escalation, velocity=velocity)]
+
+
+def _identity_dumps(name: str, n: int, *, escalation: bool, velocity: str = "none"):
+    """`n` seeded filter() decisions on policy `name`, each the dict its
+    model_dump gives (less the fields the proof leaves out), floats unrounded.
 
     The sampling IS the fixture: change it and every digest changes.
     `velocity`: "none" builds every State without a velocity (the only form
@@ -138,9 +217,11 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
     # the Shield's own, not of the velocity this proof is about. PathRepair
     # off for the same reason: c77c77d had none (default chain 2026-11-17).
     from guardrail.fsm import FSMConfig
-    sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=smap,
-                escalation=FSMConfig(**C77_LOITER_LAW) if escalation else False,
-                recovery_law="lookahead", path_repair=False, **kw)
+    fsm_kw = _at_base(FSMConfig, C77_LOITER_LAW)
+    sh = Shield(pol, **_at_base(Shield, dict(
+        lookahead_s=5.0, dt=0.1, obstacle_map=smap,
+        escalation=FSMConfig(**fsm_kw) if escalation else False,
+        recovery_law="lookahead", path_repair=False, **kw)))
     rng = random.Random(f"{IDENTITY_SEED}:{name}:{escalation}")
     out = []
     t = 0.0
@@ -169,8 +250,17 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
         if isinstance(dump.get("fsm_record"), dict):
             for k in HOLD_POINT_FIELDS + LOITER_LAW_FIELDS:
                 dump["fsm_record"].pop(k, None)
-        out.append(json.dumps(dump, sort_keys=True, separators=(",", ":")))
+        out.append(dump)
     return out
+
+
+def _identity_line(dump: dict) -> str:
+    """One decision's dump as the line the identity digests hash."""
+    return json.dumps(_canonical(dump), sort_keys=True, separators=(",", ":"))
+
+
+def _digest(lines) -> str:
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
 def _identity_digests(n: int, velocity: str = "none") -> dict:
@@ -178,8 +268,7 @@ def _identity_digests(n: int, velocity: str = "none") -> dict:
     for name in IDENTITY_POLICIES:
         for esc in (False, True):
             lines = _identity_lines(name, n, escalation=esc, velocity=velocity)
-            got[f"{name}|escalation={esc}"] = hashlib.sha256(
-                "\n".join(lines).encode()).hexdigest()
+            got[f"{name}|escalation={esc}"] = _digest(lines)
     return got
 
 
@@ -191,6 +280,11 @@ def _check_identity(n_key: str, velocity: str):
     assert str(spec.get("computed_on", "")).startswith(IDENTITY_BASE), (
         f"the identity fixture says computed_on={spec.get('computed_on')!r}, not "
         f"{IDENTITY_BASE}: regenerate it with --regenerate")
+    # Digests of another form (the raw-repr ones before 2026-11-22) can only
+    # mismatch: say so rather than report every stream as moved.
+    assert spec.get("digest_form") == IDENTITY_DIGEST_FORM, (
+        f"the identity fixture's digest_form is {spec.get('digest_form')!r}, this "
+        f"file hashes {IDENTITY_DIGEST_FORM!r}: regenerate it with --regenerate")
     want = spec[n_key]
     got = _identity_digests(spec[n_key + "_n"], velocity=velocity)
     moved = sorted(k for k in want if got.get(k) != want[k])
@@ -199,13 +293,65 @@ def _check_identity(n_key: str, velocity: str):
     return sum(1 for _ in want) * spec[n_key + "_n"]
 
 
-def test_decisions_without_a_velocity_are_byte_identical_to_c77c77d():
+def test_decisions_without_a_velocity_are_identical_to_c77c77d():
     """6000 seeded filter() decisions (12 streams of 500: six policies, with
     and without the Shield's own escalation FSM) hash exactly as they did on
-    c77c77d, the commit before State had a velocity. `--full` runs the
-    18,000-decision version of the same proof (1500 per stream)."""
+    c77c77d, the commit before State had a velocity: every field the same,
+    every float the same to 1e-9 (IDENTITY_QUANTUM_DECIMALS; until 2026-11-22
+    the floats were hashed to the last bit, which held only on the platform
+    the fixture was made on). `--full` runs the 18,000-decision version of the
+    same proof (1500 per stream)."""
     n = _check_identity("ci", "none")
     assert n == 6000, n
+
+
+def test_the_identity_digest_is_blind_to_ulps_and_sees_any_decision_change():
+    """The digest form keeps the proof's power. On a real stream (the city
+    follow with its escalation FSM, the streams that differed between glibc
+    and MSVC): moving every dumped float by up to 4 ulp (more than the 1 ulp
+    the two C libraries were measured apart) leaves the digest; a 1e-6 change
+    in one emitted value, a 1e-9 one, a different repair operator, another FSM
+    state or one repair fewer each move it."""
+    import copy
+    dumps = _identity_dumps("follow_car_citylife.yaml", 200, escalation=True)
+    base = _digest(_identity_line(d) for d in dumps)
+    rng = random.Random(f"{IDENTITY_SEED}:ulp")
+
+    def jitter(o):
+        if isinstance(o, float) and math.isfinite(o):
+            toward = math.inf if rng.random() < 0.5 else -math.inf
+            for _ in range(rng.randint(1, 4)):
+                o = math.nextafter(o, toward)
+            return o
+        if isinstance(o, dict):
+            return {k: jitter(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [jitter(v) for v in o]
+        return o
+    noisy = [jitter(d) for d in dumps]
+    n_moved = sum(1 for a, b in zip(dumps, noisy) if a != b)
+    assert n_moved > 0.9 * len(dumps), n_moved          # the jitter did reach the dumps
+    assert _digest(_identity_line(d) for d in noisy) == base
+
+    def planted(edit):
+        ds = copy.deepcopy(dumps)
+        edit(ds)
+        return _digest(_identity_line(d) for d in ds)
+    i_rep = next(i for i, d in enumerate(dumps) if d["repairs"])
+    i_fsm = next(i for i, d in enumerate(dumps) if d.get("fsm_state_after"))
+    edits = {
+        "emitted vx + 1e-6": lambda ds: ds[57]["emitted"].__setitem__(
+            "vx", ds[57]["emitted"]["vx"] + 1e-6),
+        "emitted vy + 1e-9": lambda ds: ds[123]["emitted"].__setitem__(
+            "vy", ds[123]["emitted"]["vy"] + 1e-9),
+        "another repair operator": lambda ds: ds[i_rep]["repairs"][0].__setitem__(
+            "operator", ds[i_rep]["repairs"][0]["operator"] + "X"),
+        "another FSM state": lambda ds: ds[i_fsm].__setitem__(
+            "fsm_state_after", ds[i_fsm]["fsm_state_after"] + "X"),
+        "one repair fewer": lambda ds: ds[i_rep]["repairs"].pop(),
+    }
+    for what, edit in edits.items():
+        assert planted(edit) != base, what
 
 
 def test_an_explicit_none_and_an_ignored_velocity_change_nothing():
@@ -1507,7 +1653,7 @@ def regenerate_identity() -> None:
                      "computed by `--regenerate` on a git archive of the commit before "
                      "State had a velocity (computed_on); see "
                      "tests/test_own_velocity_forecast.py"),
-            "computed_on": base,
+            "computed_on": base, "digest_form": IDENTITY_DIGEST_FORM,
             "seed": IDENTITY_SEED, "policies": list(IDENTITY_POLICIES),
             "ci_n": N_CI, "full_n": N_FULL, "ci": dig["ci"], "full": dig["full"]}
     with open(IDENTITY, "w", encoding="utf-8", newline="\n") as fh:
@@ -1555,6 +1701,12 @@ if __name__ == "__main__":
         print(f"wrote {p.relative_to(ROOT)} ({p.stat().st_size} bytes)")
         sys.exit(0)
     if "--full" in sys.argv:
+        # Open on 2026-11-22, on Windows and Linux alike and on master 59e19a5
+        # with the old digests too (not the digest form): at 1500 decisions,
+        # follow_car_citylife (no FSM) and follow_car_citylife_nfz (FSM) each
+        # move on ONE decision (997 and 805), where the current Shield emits
+        # another action with fewer repairs than c77c77d did - a change of
+        # the Shield's own after c77c77d, not yet traced. CI runs the 500.
         for v in ("none", "explicit_none", "ignored"):
             n = _check_identity("full", v)
             print(f"PASS  full identity, velocity={v}: {n} decisions")
