@@ -199,6 +199,61 @@ def test_bitvla_flies_the_first_row_of_its_chunk():
     assert m["geometry"]["rows_not_flown"] == 7 and m["geometry"]["unused"]["6"] == 1.0
 
 
+def _evaluator_user_text(task_label: str, n_images: int) -> str:
+    """BitVLA's evaluator, transcribed (github.com/ustcwhy/BitVLA@a8d62df
+    openvla-oft/experiments/robot/bitnet_utils.get_bitnet_vla_action: the
+    human turn; bitvla/dataset/bitvla_transform.replace_image_tokens, applied
+    by llava_to_openai; bitvla/constants.py's two image tokens)."""
+    import re
+    value = "<image>\n" * n_images + "<proprio_pad>" + \
+        f"What action should the robot take to {task_label.lower()}?"
+    return re.sub(r"\n?" + re.escape("<image>") + r"\n?", "<|image_pad|>", value)
+
+
+def test_bitvla_asks_in_its_evaluators_words_not_openvlas():
+    """First real load, 2026-11-22: the remote code's predict_action counts the
+    prompt's image tokens against the image features and refuses a mismatch,
+    so OpenVLA's "In: ... Out:" prompt (no image token) cannot run. The user
+    turn is the evaluator's, with one image token per camera slot."""
+    fam = _bit_family()
+    ins = fam.inputs(_req(), None, [])
+    assert ins["n_images"] == F.BITVLA_N_IMAGES == 2
+    assert ins["prompt"] == _evaluator_user_text("fly to the red car", 2), ins["prompt"]
+    assert ins["prompt"] == ("<|image_pad|><|image_pad|><proprio_pad>What action should the "
+                             "robot take to fly to the red car?")
+    assert fam.describe()["prompt"] == F.BITVLA_USER_TEXT
+    # each image token becomes one per patch, after the chat template
+    t = F.bitvla_expand_images("User: " + ins["prompt"] + "<|eot_id|>Assistant: ", 256, 2)
+    assert t.count("<|image_pad|>") == 512 and t.endswith("Assistant: ")
+    for bad in (1, 3):
+        try:
+            F.bitvla_expand_images(ins["prompt"], 256, bad)
+            raise AssertionError(f"{bad} images accepted for a prompt holding 2")
+        except ValueError:
+            pass
+    # the evaluator's token ids (bitvla/constants.py BITNET_*), for set_constant
+    assert F.BITVLA_TOKEN_IDS == {"image_token_idx": 128010, "proprio_pad_idx": 128011,
+                                  "ignore_idx": -100, "action_token_begin_idx": 128011,
+                                  "stop_index": 128001}
+
+
+def test_bitvla_frame_is_resized_and_centre_cropped_as_its_evaluator_does():
+    try:
+        from PIL import Image
+    except ImportError:
+        return SKIP
+    img = Image.new("RGB", (640, 480), (0, 0, 0))
+    img.paste((255, 255, 255), (0, 0, 640, 24))           # a white band at the top
+    out = F.bitvla_prepare_image(img)
+    assert out.size == (224, 224) and out.mode == "RGB"
+    # the 0.9-area centre crop cuts ~2.6 % off each side: the band (5 % of the
+    # height) shrinks to ~2.5 % of it, its first row still white
+    top = [out.getpixel((112, y))[0] for y in range(12)]
+    assert top[0] > 200 and top[-1] < 50, top
+    same = F.bitvla_prepare_image(Image.new("L", (224, 224), 77))
+    assert same.size == (224, 224) and same.getpixel((5, 5)) == (77, 77, 77)
+
+
 def test_malformed_native_outputs_are_refused_never_read_as_motion():
     cd, bit = _cd_family(4), _bit_family()
     for raw in ([1, 2, 3], [1.0, 2, 3, 4], "junk", None, [_tok(1)] * 7):
@@ -389,10 +444,11 @@ def test_the_model_flag_switches_the_family_in_the_slot():
         w = _download(Path(d), "bitvla")
         fam = F.build_family(_args("bitvla", w), w)
         assert isinstance(fam, F.BitVLAFamily) and fam.unnorm_key == "cd_set"
-        # the identity digest pins the remote code and config that run, too
-        assert [p.name for p in F.weight_files("bitvla", w)][-4:] == [
-            "dataset_statistics.json", "action_head--10000_checkpoint.pt", "config.json",
-            "bitvla_for_action_prediction.py"]
+        # the identity digest pins the config and the action head too; not the
+        # checkpoint's stale model file, which does not run (BitVLAModel: the
+        # repository's class runs, its sha256 is in the identity's facts)
+        assert [p.name for p in F.weight_files("bitvla", w)][-3:] == [
+            "dataset_statistics.json", "action_head--10000_checkpoint.pt", "config.json"]
         # BitVLA's chunk rows are 7 wide: 4-D statistics are refused
         _stats(Path(d), 4)
         try:

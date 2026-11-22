@@ -1,0 +1,62 @@
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+You are using a model of type openvla to instantiate a model of type bitvla. This is not supported for all configurations of models and can yield errors.
+Using LIBERO constants:
+  NUM_ACTIONS_CHUNK = 8
+  ACTION_DIM = 7
+  PROPRIO_DIM = 8
+  ACTION_PROPRIO_NORMALIZATION_TYPE = NormalizationType.BOUNDS_Q99
+If needed, manually set the correct constants in `prismatic/vla/constants.py`!
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip attention, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+siglip mlp, weight bits: 1, weight quant method: absmean, act bits: 8, act quant method: absmax_per_token
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:00<00:00,  6.71it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 12.40it/s]
+[vla-foreign] protocol v2 on 127.0.0.1:8797 model bitvla/bitvla-libero-spatial@38604209 (bf16/sdpa), front vla (VLAFront), mapping bitvla_chunk_velocity4/1, log ~/bitvla-run/out/serve_requests.jsonl

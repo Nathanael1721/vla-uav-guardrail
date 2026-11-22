@@ -1,0 +1,302 @@
+{
+ "identity": {
+  "id": "bitvla/bitvla-libero-spatial@38604209",
+  "base": "bitvla-libero-spatial@df6d27c4",
+  "weights_sha256": "386042090e8c40c43489e861db7bcc7e6d61db7cb90e527638b38d82bb10cefc",
+  "precision": "bf16",
+  "attn": "sdpa",
+  "variant": "foreign"
+ },
+ "family": "bitvla",
+ "seconds": 20.0,
+ "ticks": 188,
+ "all_finite": true,
+ "distinct_action4d": [
+  "{\"vx\": 0.0, \"vy\": -0.1019, \"vz_up\": -0.4082, \"yaw_rate\": 0.0}",
+  "{\"vx\": 0.0, \"vy\": 0.0, \"vz_up\": -0.4082, \"yaw_rate\": 0.0}",
+  "{\"vx\": 0.0, \"vy\": 0.0, \"vz_up\": 0.0, \"yaw_rate\": 0.0}"
+ ],
+ "violations_seen": [
+  "alt-band"
+ ],
+ "backend_stats": {
+  "cadence": "pipelined",
+  "csp_mode": "off",
+  "decisions_accepted": 12,
+  "decision_hz": 0.5974250306993587,
+  "answers": {
+   "step": 12
+  },
+  "parse_fail": 0,
+  "parse_fail_hz": 0.0,
+  "server_error": 0,
+  "server_error_hz": 0.0,
+  "link_failure": 0,
+  "link_failure_hz": 0.0,
+  "request_errors": 0,
+  "last_request_error": null,
+  "drain_errors": 0,
+  "last_drain_error": null,
+  "log_written": null,
+  "log_errors": null,
+  "last_log_error": null,
+  "log_pending": null,
+  "alt_band": {
+   "band": null,
+   "source": "none",
+   "configured": null,
+   "policy": null,
+   "envelopes": [],
+   "skipped_msl": []
+  },
+  "tracker": {
+   "accepted": 12,
+   "kind_step": 12,
+   "rate_steps": 12,
+   "rate_ticks": 134,
+   "completed_rate_horizon": 11,
+   "end_superseded": 11
+  },
+  "ticks_by_author": {
+   "none": 30,
+   "vla_step": 134,
+   "hold": 24
+  },
+  "requests": {
+   "no_capture": 0,
+   "no_hint": 0,
+   "requests": 13,
+   "request_errors": 0,
+   "drain_errors": 0,
+   "alt_band_disjoint": 0,
+   "submit_hook_errors": 0
+  },
+  "link": {
+   "connects": 1,
+   "sent": 13,
+   "replies": 12
+  },
+  "last_link_failure": null,
+  "last_submit_hook_error": null,
+  "feed": null,
+  "late_replies": [],
+  "identity": {
+   "id": "bitvla/bitvla-libero-spatial@38604209",
+   "base": "bitvla-libero-spatial@df6d27c4",
+   "weights_sha256": "386042090e8c40c43489e861db7bcc7e6d61db7cb90e527638b38d82bb10cefc",
+   "precision": "bf16",
+   "attn": "sdpa",
+   "merged": false,
+   "agreement": null,
+   "variant": "foreign",
+   "foreign": {
+    "family": "bitvla",
+    "model": "bitvla-libero-spatial",
+    "upstream": {
+     "model": "hongyuw/ft-bitvla-bitsiglipL-224px-<libero suite>-bf16",
+     "revision": null,
+     "base_model": "hongyuw/bitvla-bitsiglipL-224px-bf16 (BitNet b1.58 2B4T + ternary SigLIP-L)",
+     "license": "MIT",
+     "paper": "arXiv 2506.07530",
+     "code": "github.com/ustcwhy/BitVLA (openvla-oft fork, bitvla_for_action_prediction.py in the checkpoint)"
+    },
+    "bottom_tile": "none",
+    "speed_words": null,
+    "front_source": "vla",
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "native_output": "an action chunk, NUM_ACTIONS_CHUNK rows of 7 un-normalised floats (predict_action with its L1 action head); row 0 flown: a[0..2], a[5]",
+    "mapping": "bitvla_chunk_velocity4/1",
+    "config": {
+     "instruction": "fly to {target}",
+     "prompt": "{images}<proprio_pad>What action should the robot take to {instruction}?",
+     "n_images": 2,
+     "unnorm_key": "libero_spatial_no_noops",
+     "horizon_s": 1.0,
+     "gains": {
+      "xy": 1.0,
+      "z": 1.0,
+      "yaw": 1.0
+     },
+     "row_flown": 0,
+     "history_gap_s": 5.0,
+     "attn": "n/a (not applied: BitVLA's model class picks its own attention)",
+     "code": {
+      "dir": "~/bitvla-src/BitVLA/openvla-oft",
+      "model_file": "bitvla/model/bitvla_for_action_prediction.py",
+      "model_file_sha256": "f4b5e55b0e01a09a92173b561bd2f1d3636243cf61fbcd594bb011e7380e1ef8"
+     },
+     "image_pipeline": {
+      "n_images": 2,
+      "size": 224,
+      "crop_area": 0.9,
+      "tokens_per_image": 256,
+      "processor": "SiglipImageProcessor",
+      "proprio": null
+     },
+     "checkpoint": "action_head--10000_checkpoint.pt"
+    }
+   },
+   "load": {
+    "processor_s": 1.9953895300859585,
+    "model_s": 4.092277480987832,
+    "head_s": 0.40151287498883903,
+    "load_total_s": 6.489180718082935
+   },
+   "digest": {
+    "source": "sidecar",
+    "sidecar": "~/bitvla-run/out/digest_sidecar.json",
+    "key": "b78fd50bb5b145208b0a8c2d93ded3251f02766a5b30ba4103214f5820db7c96",
+    "computed_utc": "2026-11-22T00:07:45Z"
+   },
+   "weight_files": [
+    "~/models/bitvla-libero-spatial/model-00001-of-00002.safetensors",
+    "~/models/bitvla-libero-spatial/model-00002-of-00002.safetensors",
+    "~/models/bitvla-libero-spatial/dataset_statistics.json",
+    "~/models/bitvla-libero-spatial/action_head--10000_checkpoint.pt",
+    "~/models/bitvla-libero-spatial/config.json"
+   ],
+   "libraries": {
+    "python": "3.12.3",
+    "torch": "2.14.1+cu132",
+    "transformers": "4.51.0.dev0",
+    "peft": "0.11.1",
+    "bitsandbytes": null,
+    "torchao": null,
+    "accelerate": "0.32.1",
+    "PIL": "13.0.0",
+    "cuda": "13.2",
+    "gpu": "Orin"
+   },
+   "protocol": 2,
+   "server": "demo/vla_server_foreign.py",
+   "host": {
+    "host_arch": "aarch64",
+    "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+    "l4t_release": "R39.2.1",
+    "jetpack": null,
+    "hostname": "localhost.localdomain"
+   },
+   "health": {
+    "counts": {
+     "requests": 1,
+     "infer": 0,
+     "refused": 0,
+     "parse_fail": 0,
+     "land": 0,
+     "inference_error": 0,
+     "internal_error": 0,
+     "log_failures": 0
+    },
+    "t_now": 1795306321.7581253,
+    "uptime_s": 1.827,
+    "t_last_ok_infer": null,
+    "s_since_last_ok_infer": null,
+    "t_last_inference_error": null,
+    "in_flight_since": null,
+    "in_flight_s": null,
+    "liveness": "a recent ok infer (t_last_ok_infer), not an answered hello"
+   }
+  }
+ },
+ "last_ticks": [
+  {
+   "t": 1795306341.337082,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "emitted": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4,
+    "yaw_rate": 0.0
+   },
+   "violations": [
+    "alt-band"
+   ],
+   "finite": true
+  },
+  {
+   "t": 1795306341.4446504,
+   "action4d": {
+    "vx": 0.0,
+    "vy": 0.0,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "emitted": {
+    "vx": 0.0,
+    "vy": 0.0,
+    "vz_up": -0.4,
+    "yaw_rate": 0.0
+   },
+   "violations": [
+    "alt-band"
+   ],
+   "finite": true
+  },
+  {
+   "t": 1795306341.5520463,
+   "action4d": {
+    "vx": 0.0,
+    "vy": 0.0,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "emitted": {
+    "vx": 0.0,
+    "vy": 0.0,
+    "vz_up": -0.4,
+    "yaw_rate": 0.0
+   },
+   "violations": [
+    "alt-band"
+   ],
+   "finite": true
+  },
+  {
+   "t": 1795306341.6684694,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "emitted": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4,
+    "yaw_rate": 0.0
+   },
+   "violations": [
+    "alt-band"
+   ],
+   "finite": true
+  },
+  {
+   "t": 1795306341.7764692,
+   "action4d": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4082,
+    "yaw_rate": 0.0
+   },
+   "emitted": {
+    "vx": 0.0,
+    "vy": -0.1019,
+    "vz_up": -0.4,
+    "yaw_rate": 0.0
+   },
+   "violations": [
+    "alt-band"
+   ],
+   "finite": true
+  }
+ ]
+}

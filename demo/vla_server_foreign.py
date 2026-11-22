@@ -185,8 +185,8 @@ COGNITIVEDRONE AND BITVLA (2026-11-17, ARCH-06; written before any weights)
 --------------------------------------------------------------------------
 The grant's switchable backends (architecture-constraints.md: "CognitiveDrone,
 OpenVLA generic, BitVLA, in-house stubs"). Both adapters are tested on
-scripted native outputs only; neither model has run here and neither has
-flown. Without the download, serve refuses before anything loads, naming
+scripted native outputs only; neither model had run when they were written
+(BitVLA's first load: below) and neither has flown. Without the download, serve refuses before anything loads, naming
 the files that are missing (REQUIRED_FILES).
   CognitiveDrone (Skoltech, arXiv 2503.01378): an OpenVLA-7B fine-tune that
 answers "a four-component control signal (Vx, Vy, Vz, omega)" at 10 Hz.
@@ -223,6 +223,11 @@ a[3], a[4], a[6] and the other rows are recorded, not flown. With a LIBERO
 checkpoint that is a conformance shell (an arm's delta flown as a velocity),
 not a drone pilot: a drone fine-tune of BitVLA (its released fine-tuning
 code) is what would make it one.
+  First real load, 2026-11-22, on the AGX Orin (docs/data/
+bitvla_loader_20261122): the LIBERO-Spatial checkpoint through BitVLAModel
+in its own environment (its transformers fork), the protocol core and the
+CLI server on loopback; the 2026-11-17 loader could not have run and was
+rewritten to its evaluator's (BitVLAModel). Not flown.
 
 IMPORTS. No torch, transformers or Pillow at module level. The dronecats
 env has no pydantic or shapely, which guardrail/__init__ (the Shield)
@@ -324,8 +329,9 @@ UPSTREAM = {
                "revision": None, "base_model": "hongyuw/bitvla-bitsiglipL-224px-bf16 "
                "(BitNet b1.58 2B4T + ternary SigLIP-L)", "license": "MIT",
                "paper": "arXiv 2506.07530",
-               "code": "github.com/ustcwhy/BitVLA (openvla-oft fork, bitvla_for_action_"
-                       "prediction.py in the checkpoint)"},
+               "code": "github.com/ustcwhy/BitVLA@a8d62df (openvla-oft fork: "
+                       "bitvla/model/bitvla_for_action_prediction.py, the class its evaluator "
+                       "runs; not the checkpoint's stale copy)"},
 }
 # What a family's download must hold before serve loads anything (module
 # docstring, COGNITIVEDRONE AND BITVLA): its absence is "weights not
@@ -336,9 +342,10 @@ REQUIRED_FILES = {
     "bitvla": ("config.json", "model.safetensors.index.json", "dataset_statistics.json",
                "bitvla_for_action_prediction.py", "action_head--*.pt"),
 }
-# BitVLA's code and config, run via trust_remote_code: in its identity digest
-# (weight_files) so the identity pins the code that runs, not only the weights
-BITVLA_CODE_FILES = ("config.json", "bitvla_for_action_prediction.py")
+# BitVLA's config: in its identity digest (weight_files). The model code that
+# runs is BitVLA's repository's, not the checkpoint's stale copy (BitVLAModel):
+# its sha256 is in the identity's facts (`code`), not in this digest
+BITVLA_CODE_FILES = ("config.json",)
 # --fake-native (a scripted stand-in, no GPU) needs only the statistics the
 # family's reader is built from, as RaceVLA's stand-in does
 FAKE_REQUIRED_FILES = ("dataset_statistics.json",)
@@ -971,6 +978,65 @@ class AIOTVLAFamily:
 # --------------------------------------------------------------------------- #
 COGNITIVEDRONE_INSTRUCTION = "navigate to {target}"   # the paper's "Navigate to the gate ..."
 BITVLA_INSTRUCTION = "fly to {target}"
+# BitVLA's own input, as its LIBERO evaluator builds it (2026-11-22, first
+# real load on the AGX Orin; github.com/ustcwhy/BitVLA@a8d62df openvla-oft/
+# experiments/robot/bitnet_utils.get_bitnet_vla_action, bitvla/constants.py,
+# ft_script/ft_bitvla_libero_*.sh). The user turn after llava_to_openai: one
+# image token per camera, the proprio slot, the question; then the
+# tokenizer's chat template, and each image token repeated once per patch
+# ((224 / 14)^2 = 256). NOT OpenVLA's "In: ... Out:" prompt, which carries no
+# image token, so the remote code's image/token count check refuses it.
+BITVLA_IMAGE_TOKEN = "<|image_pad|>"
+BITVLA_USER_TEXT = "{images}<proprio_pad>What action should the robot take to {instruction}?"
+# the LIBERO fine-tunes take two cameras (--num_images_in_input 2: third
+# person + wrist); a drone has one, so its frame fills both slots
+BITVLA_N_IMAGES = 2
+BITVLA_IMAGE_SIZE = 224
+# prepare_images_for_vla: resize to 224 (lanczos), then centre crop of 0.9
+# of the area resized back to 224 (--image_aug True at training: the
+# evaluator's center_crop), done here with Pillow instead of TensorFlow
+BITVLA_CROP_AREA = 0.9
+# bitvla/constants.py BITNET_*: what the evaluator passes to set_constant
+BITVLA_TOKEN_IDS = {"image_token_idx": 128010, "proprio_pad_idx": 128011, "ignore_idx": -100,
+                    "action_token_begin_idx": 128011, "stop_index": 128001}
+
+
+def bitvla_user_text(instruction: str, n_images: int = BITVLA_N_IMAGES) -> str:
+    """The user turn BitVLA's evaluator sends (before the chat template):
+    "<image>\\n" per camera, which llava_to_openai turns into one
+    BITVLA_IMAGE_TOKEN each, the proprio slot and the question, lower case."""
+    if not (isinstance(n_images, int) and n_images >= 1):
+        raise ValueError(f"n_images {n_images!r} must be a positive integer")
+    return BITVLA_USER_TEXT.format(images=BITVLA_IMAGE_TOKEN * n_images,
+                                   instruction=str(instruction).lower())
+
+
+def bitvla_expand_images(templated: str, per_image: int, n_images: int) -> str:
+    """Each of the first n_images image tokens in the templated prompt ->
+    per_image of them (get_bitnet_vla_action's placeholder loop). ValueError
+    when the prompt does not hold exactly n_images of them."""
+    found = templated.count(BITVLA_IMAGE_TOKEN)
+    if found != n_images:
+        raise ValueError(f"{found} image tokens in the prompt, not {n_images}")
+    return templated.replace(BITVLA_IMAGE_TOKEN, BITVLA_IMAGE_TOKEN * int(per_image))
+
+
+def bitvla_prepare_image(img, size: int = BITVLA_IMAGE_SIZE,
+                         crop_area: float = BITVLA_CROP_AREA):
+    """prepare_images_for_vla without TensorFlow: RGB, resized to size x size
+    (lanczos), then the centre crop of crop_area of the area (side
+    sqrt(crop_area)) resized back to size x size (bilinear, as
+    tf.image.crop_and_resize). A Pillow image in, a Pillow image out."""
+    from PIL import Image
+    img = img.convert("RGB")
+    if img.size != (size, size):
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
+    side = size * math.sqrt(float(crop_area))
+    off = (size - side) / 2.0
+    return img.resize((size, size), Image.Resampling.BILINEAR,
+                      box=(off, off, off + side, off + side))
+
+
 VELOCITY4_GAINS = {"xy": 1.0, "z": 1.0, "yaw": 1.0}
 COGNITIVEDRONE_DIMS = (4, ACTION_DIM)
 # the action-vector slots read as (vx, vy, vz, omega), by the statistics' dimension
@@ -1066,8 +1132,8 @@ class BitVLAFamily:
 
     def inputs(self, req: dict, intr: dict, history: list[dict]) -> dict:
         ins = command_text(req["object"], self.instruction, allow_fixed=True)
-        return {"prompt": RACEVLA_PROMPT.format(instruction=ins), "instruction": ins,
-                "unnorm_key": self.unnorm_key}
+        return {"prompt": bitvla_user_text(ins, BITVLA_N_IMAGES), "instruction": ins,
+                "unnorm_key": self.unnorm_key, "n_images": BITVLA_N_IMAGES}
 
     def parse(self, g: dict) -> dict:
         raw = g.get("raw")
@@ -1093,9 +1159,9 @@ class BitVLAFamily:
         return {"horizon_s": self.horizon_s, "gains": dict(self.gains)}
 
     def describe(self) -> dict:
-        return {"instruction": self.instruction, "prompt": RACEVLA_PROMPT,
-                "unnorm_key": self.unnorm_key, "horizon_s": self.horizon_s,
-                "gains": dict(self.gains), "row_flown": 0}
+        return {"instruction": self.instruction, "prompt": BITVLA_USER_TEXT,
+                "n_images": BITVLA_N_IMAGES, "unnorm_key": self.unnorm_key,
+                "horizon_s": self.horizon_s, "gains": dict(self.gains), "row_flown": 0}
 
 
 # --------------------------------------------------------------------------- #
@@ -1264,48 +1330,133 @@ class RaceVLAModel:
                 "model_s": time.perf_counter() - t0}
 
 
-class BitVLAModel:
-    """BitVLA's checkpoint (trust_remote_code: bitvla_for_action_prediction.py)
-    with its L1 regression action head, in the environment its repository
-    builds (github.com/ustcwhy/BitVLA: torch 2.5, its transformers fork and
-    openvla-oft's `prismatic`, whose constants fix ACTION_DIM and
-    NUM_ACTIONS_CHUNK). NOT YET RUN: written on 2026-11-17 from the remote
-    code's predict_action and openvla-oft's loader before any download; the
-    first serve on the AGX is its test. No proprio is given (a drone has no
-    gripper state; the LIBERO checkpoints were trained with one, which is one
-    more reason their output is a conformance shell, module docstring)."""
+def import_bitvla(code_dir: str | Path) -> dict:
+    """BitVLA's model class and openvla-oft's L1 action head, from BitVLA's
+    repository folder `code_dir` (github.com/ustcwhy/BitVLA openvla-oft/): what
+    its README's `pip install -e openvla-oft` and `-e openvla-oft/bitvla` put
+    on the path (the folder, for `bitvla` and `prismatic`; its bitvla/ folder,
+    for the bare `configuration_bit_vla` import of the model file). prismatic's
+    package __init__ files import its training stack (TensorFlow, RLDS,
+    draccus, rich), which inference never runs and which has no aarch64
+    Python 3.12 build here, so the packages the loader reads are registered by
+    path without running their __init__ (as _import_codec does for guardrail)."""
+    import types
+    d = Path(code_dir).expanduser()
+    if not (d / "bitvla" / "model" / "bitvla_for_action_prediction.py").is_file() or \
+            not (d / "prismatic" / "models" / "action_heads.py").is_file():
+        raise ImportError(f"{d}: not BitVLA's openvla-oft folder (no bitvla/model/"
+                          f"bitvla_for_action_prediction.py or prismatic/models/action_heads.py)")
+    for p in (d / "bitvla", d):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    for name in ("prismatic", "prismatic.vla", "prismatic.training", "prismatic.models",
+                 "bitvla"):
+        if name not in sys.modules:
+            m = types.ModuleType(name)
+            m.__path__ = [str(d.joinpath(*name.split(".")))]
+            m.__doc__ = f"{name}, registered by path by demo/vla_server_foreign.import_bitvla"
+            sys.modules[name] = m
+    from prismatic.vla import constants as pc
+    from prismatic.models.action_heads import L1RegressionActionHead
+    from bitvla.model.bitvla_for_action_prediction import BitVLAForActionPrediction
+    if (pc.ACTION_DIM, pc.NUM_ACTIONS_CHUNK) != (ACTION_DIM, 8):
+        raise ImportError(f"prismatic picked ACTION_DIM {pc.ACTION_DIM}, NUM_ACTIONS_CHUNK "
+                          f"{pc.NUM_ACTIONS_CHUNK}: not the LIBERO constants (7, 8)")
+    code = d / "bitvla" / "model" / "bitvla_for_action_prediction.py"
+    return {"model_class": BitVLAForActionPrediction, "head_class": L1RegressionActionHead,
+            "num_actions_chunk": int(pc.NUM_ACTIONS_CHUNK), "action_dim": int(pc.ACTION_DIM),
+            "code": {"dir": str(d), "model_file": "bitvla/model/bitvla_for_action_prediction.py",
+                     "model_file_sha256": hashlib.sha256(code.read_bytes()).hexdigest()}}
 
-    def __init__(self, weights_dir: str | Path, *, device: str = "cuda:0"):
+
+class BitVLAModel:
+    """BitVLA's checkpoint loaded as its LIBERO evaluator loads it
+    (openvla-oft/experiments/robot/bitnet_utils.get_bitnet_vla and
+    run_libero_eval_bitnet.initialize_model), in an environment with its
+    transformers fork (4.51.0.dev0: the BitNet text model and the ternary
+    SigLIP in models/llava). First run on the AGX Orin on 2026-11-22
+    (docs/data/bitvla_loader_20261122); the version written on 2026-11-17
+    before any download could not have run (no set_constant, norm_stats None,
+    OpenVLA's prompt with no image token, 4-D pixel values).
+      The model class is the one in BitVLA's repository, not the checkpoint's
+    bitvla_for_action_prediction.py: the evaluator overwrites the checkpoint's
+    copy with the repository's (check_model_logic_mismatch), and they differ -
+    the repository's passes use_bi_attn=True (OFT's bidirectional attention
+    for parallel decoding, as trained), the checkpoint's runs causal attention.
+    Its sha256 is in `code`. dataset_statistics.json goes into norm_stats (the
+    config's is null); set_constant gets bitvla/constants.py's token ids.
+      Input: two copies of the frame (the checkpoint's two cameras, the drone's
+    one; BITVLA_N_IMAGES), each through bitvla_prepare_image and the
+    checkpoint's SigLIP processor, as pixel values (1, n_images, 3, 224, 224);
+    the chat-templated prompt with each image token expanded to one per
+    patch. No proprio: a drone has no gripper state (the LIBERO fine-tunes
+    were trained with one, one more reason their output is a conformance
+    shell, module docstring). Output: the un-normalised chunk,
+    NUM_ACTIONS_CHUNK rows of 7."""
+
+    def __init__(self, weights_dir: str | Path, *, device: str = "cuda:0",
+                 code_dir: str | Path | None = None):
+        import os
         import torch
-        from transformers import AutoModelForVision2Seq, AutoProcessor
-        try:
-            from prismatic.models.action_heads import L1RegressionActionHead
-        except ImportError as exc:
-            raise ImportError("BitVLA needs openvla-oft's `prismatic` (pip install -e "
-                              "openvla-oft in BitVLA's repository)") from exc
+        from transformers import AutoProcessor
+        code_dir = code_dir or os.environ.get("BITVLA_OFT_DIR")
+        if not code_dir:
+            raise ImportError("BitVLA needs its repository's openvla-oft folder (--bitvla-code "
+                              "DIR or BITVLA_OFT_DIR; github.com/ustcwhy/BitVLA)")
+        b = import_bitvla(code_dir)
         self.torch, self.device = torch, device
+        self.chunk_rows = b["num_actions_chunk"]
         t0 = time.perf_counter()
         d = Path(weights_dir)
         self.processor = AutoProcessor.from_pretrained(str(d), trust_remote_code=True)
-        self.model = AutoModelForVision2Seq.from_pretrained(
-            str(d), torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True,
-            device_map={"": device}).eval()
-        hidden = int(getattr(self.model, "llm_dim", 0) or
-                     self.model.config.text_config.hidden_size)
+        t1 = time.perf_counter()
+        self.model = b["model_class"].from_pretrained(
+            str(d), torch_dtype=torch.bfloat16, low_cpu_mem_usage=True).eval().to(device)
+        self.model.norm_stats = json.loads((d / "dataset_statistics.json").read_text(
+            encoding="utf-8"))
+        self.model.set_constant(**BITVLA_TOKEN_IDS)
+        t2 = time.perf_counter()
+        hidden = int(self.model.config.text_config.hidden_size)
         head_pt = sorted(d.glob("action_head--*.pt"))[-1]
-        self.head = L1RegressionActionHead(input_dim=hidden, hidden_dim=hidden,
-                                           action_dim=ACTION_DIM)
-        sd = torch.load(str(head_pt), map_location="cpu")
+        self.head = b["head_class"](input_dim=hidden, hidden_dim=hidden, action_dim=ACTION_DIM)
+        sd = torch.load(str(head_pt), map_location="cpu", weights_only=True)
         self.head.load_state_dict({k.removeprefix("module."): v for k, v in sd.items()})
         self.head = self.head.to(device, dtype=torch.bfloat16).eval()
-        self.checkpoint = head_pt.name
-        self.timing = {"load_total_s": time.perf_counter() - t0}
+        _sync(torch, device)
+        self.checkpoint, self.code = head_pt.name, b["code"]
+        ip = self.processor.image_processor
+        self.per_image = (BITVLA_IMAGE_SIZE // int(self.processor.patch_size)) ** 2 + int(
+            getattr(self.processor, "num_additional_image_tokens", 0) or 0)
+        self.image_pipeline = {"n_images": BITVLA_N_IMAGES, "size": BITVLA_IMAGE_SIZE,
+                               "crop_area": BITVLA_CROP_AREA, "tokens_per_image": self.per_image,
+                               "processor": type(ip).__name__, "proprio": None}
+        self.timing = {"processor_s": t1 - t0, "model_s": t2 - t1,
+                       "head_s": time.perf_counter() - t2, "load_total_s": time.perf_counter() - t0}
+
+    def encode(self, image, inputs: dict) -> dict:
+        """The evaluator's input for one frame: input_ids, attention_mask and
+        pixel values (1, n_images, 3, 224, 224) on the device, and the text."""
+        torch = self.torch
+        n = int(inputs.get("n_images", BITVLA_N_IMAGES))
+        frame = bitvla_prepare_image(image)
+        pv = [self.processor.image_processor.preprocess(frame, return_tensors="pt")
+              ["pixel_values"][0] for _ in range(n)]
+        text = self.processor.tokenizer.apply_chat_template(
+            [{"role": "user", "content": inputs["prompt"]}], tokenize=False,
+            add_generation_prompt=True)
+        text = bitvla_expand_images(text, self.per_image, n)
+        ids = torch.tensor(self.processor.tokenizer(text, add_special_tokens=True).input_ids)
+        ids = ids.unsqueeze(0)
+        return {"input_ids": ids.to(self.device, dtype=torch.long),
+                "attention_mask": torch.ones(ids.shape, dtype=torch.long).to(self.device),
+                "pixel_values": torch.stack(pv, dim=0).unsqueeze(0).to(
+                    self.device, dtype=torch.bfloat16), "text": text}
 
     def generate(self, image, inputs: dict) -> dict:
         torch = self.torch
         t0 = time.perf_counter()
-        enc = self.processor(inputs["prompt"], image, return_tensors="pt").to(
-            self.device, dtype=torch.bfloat16)
+        enc = self.encode(image, inputs)
+        text = enc.pop("text")
         t1 = time.perf_counter()
         with torch.inference_mode():
             actions, _ = self.model.predict_action(**enc, unnorm_key=inputs["unnorm_key"],
@@ -1314,9 +1465,10 @@ class BitVLAModel:
         _sync(torch, self.device)
         t2 = time.perf_counter()
         return {"raw": [[float(v) for v in row] for row in actions.tolist()],
-                "prompt_text": inputs["prompt"], "new_tokens": None,
-                "prompt_tokens": int(enc["input_ids"].shape[1]), "pre_s": t1 - t0,
-                "gen_s": t2 - t1, "model_s": time.perf_counter() - t0}
+                "prompt_text": text.replace(BITVLA_IMAGE_TOKEN * self.per_image,
+                                            f"{BITVLA_IMAGE_TOKEN}x{self.per_image}"),
+                "new_tokens": None, "prompt_tokens": int(enc["input_ids"].shape[1]),
+                "pre_s": t1 - t0, "gen_s": t2 - t1, "model_s": time.perf_counter() - t0}
 
 
 AIOTVLA_CSP_PLACEMENT = ("in front of the object words, one space between: AIoT-VLA's "
@@ -1498,9 +1650,9 @@ class AIOTVLAModel:
 def weight_files(family: str, weights_dir: str | Path) -> list[Path]:
     """What weights_sha256 covers: the shards model.safetensors.index.json
     names (vla_server_v2.base_weight_files), and for RaceVLA its
-    dataset_statistics.json, which changes every action. For BitVLA also the
-    code that runs (trust_remote_code: bitvla_for_action_prediction.py), its
-    config.json and the action head."""
+    dataset_statistics.json, which changes every action. For BitVLA also its
+    config.json and the action head (the model code that runs is pinned by
+    BitVLAModel.code, in the identity's facts)."""
     if family == "aiotvla":
         return [Path(weights_dir) / "head.pt"]
     files = S.base_weight_files(weights_dir)
@@ -1790,7 +1942,7 @@ def build_real(args, family, weights: Path):
                              f"is {model.horizon_s:g} s (fly with --step-as-rate "
                              f"{model.horizon_s:g})")
     elif args.model == "bitvla":
-        model = BitVLAModel(weights, device=args.device)
+        model = BitVLAModel(weights, device=args.device, code_dir=args.bitvla_code)
     else:
         # RaceVLA and CognitiveDrone: OpenVLA-7B checkpoints, the same loader
         model = RaceVLAModel(weights, precision=args.precision, attn=args.attn,
@@ -1801,10 +1953,12 @@ def build_real(args, family, weights: Path):
                              f"{family.n_bins}): the token reading would be wrong")
     cfg = {**family.describe(), "history_gap_s": args.history_gap_s}
     if args.model == "bitvla":
-        # BitVLAModel never passes --attn on (its remote code picks its own);
-        # the identity's attn field stays (the protocol allows eager / sdpa
-        # only, vla_link.ATTN_IMPLS), and this says it was not applied
-        cfg["attn"] = "n/a (not applied: BitVLA's remote code picks its own attention)"
+        # BitVLAModel never passes --attn on (its model class picks its own:
+        # bidirectional, use_bi_attn); the identity's attn field stays (the
+        # protocol allows eager / sdpa only, vla_link.ATTN_IMPLS), and this
+        # says it was not applied
+        cfg["attn"] = "n/a (not applied: BitVLA's model class picks its own attention)"
+        cfg["code"], cfg["image_pipeline"] = model.code, model.image_pipeline
     if getattr(model, "checkpoint", None) is not None:
         cfg["checkpoint"] = model.checkpoint
     if getattr(family, "csp_slot", False) and hasattr(model, "csp_slot"):
@@ -1885,6 +2039,10 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
                    help="RaceVLA, CognitiveDrone, BitVLA: the velocities' step horizon (fly "
                         "with --step-as-rate H); "
                         "aiotvla: must be its checkpoint's label horizon (0.5)")
+    p.add_argument("--bitvla-code", default=None, metavar="DIR",
+                   help="BitVLA: its repository's openvla-oft folder (github.com/ustcwhy/"
+                        "BitVLA), whose model class and action head the loader runs "
+                        "(default $BITVLA_OFT_DIR)")
     p.add_argument("--keep-color", action="store_true",
                    help="RaceVLA: send the frame in colour (default grey, as its T265)")
     p.add_argument("--digest-sidecar", default=str(S.SIDECAR_DEFAULT))
