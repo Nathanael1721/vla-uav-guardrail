@@ -1,6 +1,7 @@
 {
   "note": "sha256 of the JSON dumps of seeded Shield.filter() decisions, computed by `--regenerate` on a git archive of the commit before State had a velocity (computed_on); see tests/test_own_velocity_forecast.py",
   "computed_on": "c77c77d0ad04d5aba5561c82a9df0a607ea2962a",
+  "digest_form": "sha256 over JSON lines, floats rounded with round(v, 9), -0.0 as 0.0",
   "seed": 20261019,
   "policies": [
     "follow_car_citylife.yaml",
@@ -13,31 +14,31 @@
   "ci_n": 500,
   "full_n": 1500,
   "ci": {
-    "follow_car_citylife.yaml|escalation=False": "c9d637778358a97aad756431a909bbf59b214e77446ea76537ea30e5f892638b",
-    "follow_car_citylife.yaml|escalation=True": "9a1a5a4a2106826b4b07a1a2ee9dcb9ec88d49f33cf5d5bfbc065c8413919034",
-    "follow_car_citylife_nfz.yaml|escalation=False": "e7b576b375ad8c6379411ad8697c1704487ba53b8d38f643170913bff15c5cdb",
-    "follow_car_citylife_nfz.yaml|escalation=True": "0c6d635b715056a983242226ba404b203588bc164a7e9914af7eec47a50a9572",
-    "corridor_survey.yaml|escalation=False": "ca75201a58d927af8eb39c3af29a5c03a89361d277ea225b58f73d2af0daf406",
-    "corridor_survey.yaml|escalation=True": "f0cc3c274d12d1c43d56fcde41adbcef7fd2ce2680cdaa9019ff62c9a940a2f7",
-    "sitl_pedestrian.yaml|escalation=False": "f8ebd0a3f75922b3b7a0dc379eaac12ef8d513e6b589e5e7b1a9b3930741e021",
-    "sitl_pedestrian.yaml|escalation=True": "09cebaeb7cf1b8df1648acad1bac1e15753897192b6b3d136b1aa879c81ed0d8",
-    "follow_car_gap.yaml|escalation=False": "ad19377a48202e8c6de6e9cb75ac1f2b32afe4e05a2bc6dae304c20d3f424fc6",
-    "follow_car_gap.yaml|escalation=True": "0a29f8708153ba60d5041609496dc36ab444ce727aae6d233dbca8c7cd1228b5",
-    "hard_21.yaml|escalation=False": "41a41e88f5fee712def6305764e8086528a67c929c9a42c7c7af743cf0dd0fa3",
-    "hard_21.yaml|escalation=True": "4e48c5f649e384bc05fb3687509d17f9d20db73cb11a8ed51e605dbbdeb01ea1"
+    "follow_car_citylife.yaml|escalation=False": "2181e11e6330f3b756204de1d4c200b7b545c3d2ccf7f8b4cfa170d56d4d9251",
+    "follow_car_citylife.yaml|escalation=True": "4d4982503320709740233a39247fcae6b3896914d7fe2c19707108ba38d08ae6",
+    "follow_car_citylife_nfz.yaml|escalation=False": "ea3ff10e2ee91c5e34f60603f65fbc79aa93a4730914a677d244dd37ac02fb17",
+    "follow_car_citylife_nfz.yaml|escalation=True": "cf7d1643ae2aeb39957a0f4a586d542d2bdb6503b5954b06e0e0cba71bc0ae05",
+    "corridor_survey.yaml|escalation=False": "993a5d396a951f4aeffbb0d80c3cbbeb996a89db5f5b0690bc87fafbb35f2879",
+    "corridor_survey.yaml|escalation=True": "fa5bf34c01338786f21fff02c76ccff2bf908abf7af90c75b6b01959f97d20a2",
+    "sitl_pedestrian.yaml|escalation=False": "366d86cabaecba784587044ebe3936428f79e6273e9511f2e889e13f7580077c",
+    "sitl_pedestrian.yaml|escalation=True": "3fab23a15aeb430b9f5b8a4688b55e7a82f2b0add2f67c8d66f5c890f1ff7d35",
+    "follow_car_gap.yaml|escalation=False": "e01ae325b67418690946f3fbbeb9dbae994bb71c46e1c58cf23e2d187c021e76",
+    "follow_car_gap.yaml|escalation=True": "296aa25b0d377a91c4724ef98cf97dfaef5af70b68938e7a8d1750c611531ccf",
+    "hard_21.yaml|escalation=False": "e08cd226b44e5a58b830d40cdea71211b606b8d64b28abdf66c925cfc1a63d9a",
+    "hard_21.yaml|escalation=True": "1ae374ea8a87b89e06358137b93d7a4cbb8c62ae862a431a4457eaf3fa906abb"
   },
   "full": {
-    "follow_car_citylife.yaml|escalation=False": "31c6f23589d5758cc91e894e269a5cdf1c2b23061b1b953d8daf3d9f630dece6",
-    "follow_car_citylife.yaml|escalation=True": "289cc1960225bd4c328dcb8e3929928ed7c9a9689e17742cc7a65a0d3fc54edc",
-    "follow_car_citylife_nfz.yaml|escalation=False": "9c1a05553240238aa3e285a29e27ac4eabd268c89dae4f4b99cf175dcb01cbef",
-    "follow_car_citylife_nfz.yaml|escalation=True": "62b7081eadf8c31a8b22a06530c5e77e35caec6b5c0734a9d2d1fe7642a703fd",
-    "corridor_survey.yaml|escalation=False": "a9d67df46caf3ceec5d9cc41864ff59d8514e4765ee00507815c5393024522e5",
-    "corridor_survey.yaml|escalation=True": "abac100107f46432fd58096f80721003705428da844c9d920cffa777f3f3d015",
-    "sitl_pedestrian.yaml|escalation=False": "a43b2662bddb72218bc0585e9a5c7b3678602b45385e60f3365e38f55a893576",
-    "sitl_pedestrian.yaml|escalation=True": "d1d43228a500089ff39c2bb2665a9742c6ab16da737468b15122010547a1a2dd",
-    "follow_car_gap.yaml|escalation=False": "6616b26412d6d01da16cd65a743544dc6c114532473890cd985e54c6ec736bc1",
-    "follow_car_gap.yaml|escalation=True": "396a98a22525c5f911b7daa01d7f48c0e9662465c43576c49f30c77c1acf1bc0",
-    "hard_21.yaml|escalation=False": "98ca37e6e537400cefd16e3a44585132bc25f7c7fcc1508cdc6d9da3da6c63ac",
-    "hard_21.yaml|escalation=True": "47427a0f3087c06493dae0b218f3fcb9db6a80c56770693e8f271072102b1604"
+    "follow_car_citylife.yaml|escalation=False": "8c424e58119ae36ae198b25f3def6e5da2162de0940ed33d8c79f6c5cc1ec4d9",
+    "follow_car_citylife.yaml|escalation=True": "0528c81d802d0f2d7c2c95512ed3f453e680d1c4ee25dcdf522fb9bb05c267ae",
+    "follow_car_citylife_nfz.yaml|escalation=False": "77d89e2d53ac0e39dde085895c88bfb35593a9be1fb5a6afe8b6de40d931ebd0",
+    "follow_car_citylife_nfz.yaml|escalation=True": "f6a13e0b0b8d24c1b8daa984d26178c8ce2b600c06522857d6cbae091e11eeb6",
+    "corridor_survey.yaml|escalation=False": "a5238e18b9a221f0fd196a43f08e63ee8cd8c553bbe4a17970cf7b39082594c1",
+    "corridor_survey.yaml|escalation=True": "49018a954403b8e118aafc5bac61225ce23771993e920aa2107e58868b05ee39",
+    "sitl_pedestrian.yaml|escalation=False": "85249d61ff301afecde0ebfac31fbd58efd0e3ea2d5517934029e6c65d1b051a",
+    "sitl_pedestrian.yaml|escalation=True": "16e00c08616e1d614dacc5fcd831e53962f22addb0dab95676d328037a6c44e1",
+    "follow_car_gap.yaml|escalation=False": "ab83b78bbbc29ba743b38d8d521e14f5b15fc9482802b2e56923509a156d8111",
+    "follow_car_gap.yaml|escalation=True": "78956f7184c7f45fbdb1a90258a5ae5a3de8589ff035db8972e0e0ebb9751b17",
+    "hard_21.yaml|escalation=False": "e35e71485f6e3aa1418f60307685e87fef860a1502570cdabfa3cc9965db83fb",
+    "hard_21.yaml|escalation=True": "71c37d87b29333c4a63f0b5d354f911d30ee24a19369e10139fc5e77fb9a0838"
   }
 }
