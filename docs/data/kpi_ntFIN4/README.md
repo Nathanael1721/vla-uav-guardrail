@@ -70,7 +70,7 @@ executor queue), not a stall before the tick. The code path is older than
 71aabb3; ntFIN3's slowest tick was 74.5 ms. The timeline is from the run's bag,
 events.jsonl and flight_log.jsonl.
 
-A fix followed the flight and is not in this campaign: the generation write, the CSP
+A fix followed the flight and is not in this campaign (CHANGELOG 2026-11-23 (code), 7e6aae2): the generation write, the CSP
 compile and the fence publication move after the setpoint, the templates are
 compiled at bring-up, and each row carries per-phase tick stamps (CHANGELOG
 2026-11-23).
