@@ -54,7 +54,11 @@ converts first with `terrain_relative_up`. Since 2026-11-18 two rails do,
 opt-in: the headless harness (a scenario's `ground`; its vehicle holds its
 MSL height and its `up` is kept above the DEM) and the ROS 2 Shield node
 (--ground, --ground-home-msl: `TerrainReference`). Neither has flown on
-SITL, hil or PAS. THE FORECAST OVER A DEM (2026-11-18, wf20): until then
+SITL, hil or PAS. Since 2026-11-23 (X-11b) the readers that measure height
+above their home over a flat world declare a FLAT ground explicitly
+(`declared_home_ground`): the Project AirSim rails `--ground scene` (the
+scene's own, `scene_ground`), the in-process SITL rail `--ground sitl|FILE`;
+they refuse a DEM. THE FORECAST OVER A DEM (2026-11-18, wf20): until then
 the Shield's forecast held the ground under the aircraft flat over its
 lookahead, so an AGL band over a DEM let a level command over rising ground
 down onto its floor before the violation was seen (the first SITL flight,
@@ -713,6 +717,143 @@ def ground_from_args(args, bundle=None, yaml_path=None, *, root=None):
     rec = ground_file(path, root=root, sha256=sha)
     rec["pinned"] = sha is not None
     return load_ground(path, policy_file_frame_origin(bundle, yaml_path), root=root), rec
+
+
+# ---------------------------------------------------------------------------
+# The readers that measure height above their HOME (2026-11-23, X-11b)
+# ---------------------------------------------------------------------------
+#
+# The grant's DSL makes MSL "an opt-in field on geometry primitives"
+# (02-implementation/policy-dsl.md). Until this date only the ROS 2 / SITL-hil
+# rails could declare a ground; the Project AirSim readers (demo/follow_vlm.py,
+# demo/vla_fly.py, demo/pas_ardupilot/perception_node.py) and the in-process
+# SITL rail that sitl/run_gazebo_demo.sh flies (sitl/run_sitl_demo.py) called
+# bundle.load_for_flight with no ground, so every MSL policy was refused
+# there, whatever the world. `declared_home_ground` is how each of them now
+# declares one, explicitly:
+#
+#   * a Project AirSim rail: `--ground scene` - the flat ground of the scene
+#     it loads (`scene_ground`, the scene's home-geo-point altitude: 40 m in
+#     every demo/pas_config scene and in the PAS + ArduPilot scene). Its
+#     height `up` is above the scene's origin, which stands on that ground,
+#     so nothing is converted per tick. A ground FILE is refused there: the
+#     renderer's world is the scene's, and a file would name another;
+#   * the in-process SITL rail: `--ground sitl` (SITL_CMAC, the --home
+#     altitude both its launchers boot SITL at) or `--ground FILE` (a flat
+#     ground file, `--ground-sha256` pinning it as on the ROS 2 rail), which
+#     must stand at the rail's home elevation.
+#
+# A DEM is refused on all of them: each measures height above its home and
+# none converts it over a varying ground (TerrainReference, which the ROS 2
+# Shield node runs); a DEM is flown there. No --ground: no ground, and an MSL
+# rule is refused before take-off by the flight loader, as on the ROS 2 rail
+# without --ground; an AGL policy flies exactly as before.
+
+SCENE_GROUND = "scene"
+SITL_GROUND = "sitl"
+# How far a flat ground may stand from the rail's home elevation (m): the
+# ROS 2 node's own test (--ground-home-msl against a flat --ground).
+FLAT_HOME_TOL_M = 1e-6
+
+
+def _repo_relative(path, root) -> str:
+    p = Path(path)
+    if root is not None:
+        try:
+            return p.resolve().relative_to(Path(root).resolve()).as_posix()
+        except ValueError:
+            pass
+    return str(path)
+
+
+def declared_home_ground(value, *, scene=None, sha256: str | None = None,
+                         home_msl_m: float | None = None, bundle=None,
+                         yaml_path=None, root=None, rail: str = "this rail"):
+    """(ground, file record) a reader that measures height above its home
+    declares (module section above; 2026-11-23, X-11b), or (None, None)
+    without one (`value` None or "": the default, every flight before).
+
+    `scene`: the path of the Project AirSim scene the rail loads (a PAS rail:
+    only `value` "scene" is accepted, the scene's flat ground); None for the
+    SITL rail ("sitl", or a ground file named by path, `sha256` pinning it).
+    `home_msl_m`: the elevation of the rail's home (m MSL); a flat ground
+    that stands elsewhere is refused. ValueError, before anything starts,
+    for: a hash without a file, a keyword the rail has not, a scene rail
+    with no scene, a file on a scene rail, a DEM, a ground off the home."""
+    if value is None or str(value) == "":
+        if sha256:
+            raise ValueError("--ground-sha256 is the hash of a --ground file, and no "
+                             "--ground was given")
+        return None, None
+    v = str(value)
+    file_rec = None
+    if scene is not None:
+        if v != SCENE_GROUND:
+            raise ValueError(
+                f"--ground {v}: {rail} flies a Project AirSim scene, whose ground is "
+                f"the scene's own (--ground {SCENE_GROUND}: its home-geo-point "
+                f"altitude); a ground file would name another ground than the one "
+                f"the simulator renders")
+        if sha256:
+            raise ValueError(f"--ground-sha256 names a ground FILE; --ground "
+                             f"{SCENE_GROUND} is the scene's own")
+        g = scene_ground(scene)
+        g = FlatGround(g.elevation_msl_m,
+                       f"home-geo-point altitude of {_repo_relative(scene, root)}")
+    elif v == SCENE_GROUND:
+        raise ValueError(f"--ground {SCENE_GROUND}: {rail} loads no Project AirSim "
+                         f"scene; name a ground file or --ground {SITL_GROUND}")
+    elif v == SITL_GROUND:
+        if sha256:
+            raise ValueError(f"--ground-sha256 names a ground FILE; --ground "
+                             f"{SITL_GROUND} is the rail's stated ground")
+        g = SITL_CMAC
+    else:
+        file_rec = ground_file(v, root=root, sha256=sha256)
+        file_rec["pinned"] = sha256 is not None
+        g = load_ground(v, policy_file_frame_origin(bundle, yaml_path), root=root)
+    if is_dem(g):
+        raise ValueError(
+            f"--ground {v} is a DEM ({g!r}): {rail} measures height above its home "
+            f"and does not convert it over a ground that varies with position "
+            f"(terrain.TerrainReference); a DEM is flown on the ROS 2 rail "
+            f"(sitl/ros2_shield_node.py --ground)")
+    if home_msl_m is not None:
+        e = float(g.elevation_at())
+        if abs(e - float(home_msl_m)) > FLAT_HOME_TOL_M:
+            raise ValueError(
+                f"--ground {v}: the ground stands at {e:g} m MSL and {rail}'s home "
+                f"at {float(home_msl_m):g} m MSL; the rail measures height above its "
+                f"home, so an MSL rule would be judged {abs(e - float(home_msl_m)):g} m "
+                f"{'low' if e > float(home_msl_m) else 'high'}")
+    return g, file_rec
+
+
+def home_ground_record(ground, file_rec: dict | None = None,
+                       declared: str | None = None) -> dict | None:
+    """metrics.json `ground` of a reader that measures height above its home
+    over a declared flat ground (2026-11-23, X-11b), the ROS 2 node's shape
+    for a flat --ground (`{"ground": ..., "up_ref": "home"}`, plus `file`
+    when a file named it), so guardrail.replay.run_ground_ref reads it the
+    same way; `declared` the option as given. None without a ground."""
+    if ground is None:
+        return None
+    rec = {"ground": ground.record(), "up_ref": "home"}
+    if declared is not None:
+        rec["declared"] = str(declared)
+    if file_rec is not None:
+        rec["file"] = dict(file_rec)
+    return rec
+
+
+def agl_rules(rules, ground) -> list:
+    """`rules` with every MSL band as its AGL band over `ground` (agl_rule;
+    copies, the declared rules unchanged), for what a reader reads off a
+    rule's band beside the Shield: the obstacle map's altitude band, the
+    end-of-flight altitude count (2026-11-23, X-11b). An AGL rule is the
+    same object, so a reader without a ground reads exactly what it read;
+    an MSL rule without a ground raises (agl_rule), never read as AGL."""
+    return [agl_rule(r, ground) for r in rules]
 
 
 class TerrainReference:

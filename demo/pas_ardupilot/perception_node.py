@@ -478,6 +478,7 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from guardrail import response as vresp                               # noqa: E402
+from guardrail import terrain                                         # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, altitude_out_of_band,  # noqa: E402
                               clearance_breached, standoff_breached, standoff_ring_m,
                               standoff_rules)
@@ -3276,13 +3277,15 @@ class ProjectAirSimCamera:
 # Helpers
 # --------------------------------------------------------------------------- #
 
-def load_obstacle_map(policy, citymap: Path):
+def load_obstacle_map(policy, citymap: Path, ground=None):
     """The CityLife occupancy map for the policy's altitude band, as follow_vlm
     loads it; None (ObstacleClearance INERT, said out loud) when unavailable.
     Loaded for an obstacle_clearance rule and, since 2026-11-17, for a
     distance_envelope over buildings (WP1-07), which is measured on the same
     map; without it the Shield refuses such a policy (never inert), and the
-    note says so instead of "INERT"."""
+    note says so instead of "INERT". `ground` (--ground scene, 2026-11-23,
+    X-11b): an MSL envelope's band is read above that ground (the map's
+    bands are heights above it); None, an AGL band as it always was."""
     de_b = [c.id for c in policy.by_type(DistanceEnvelope) if c.object_class == "buildings"]
     if not (policy.by_type(ObstacleClearance) or de_b):
         return None, "policy has no obstacle_clearance rule"
@@ -3300,7 +3303,7 @@ def load_obstacle_map(policy, citymap: Path):
     except Exception as exc:                                  # noqa: BLE001
         return None, f"map loaders unavailable ({exc}): {without}"
     cmap = city_planner.load_occ(str(citymap))
-    alt = policy.by_type(AltitudeEnvelope)
+    alt = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     if alt:
         sel = occ_bands.select_for_band(Path(citymap).parent, alt[0].alt_min_m,
                                         alt[0].alt_max_m)
@@ -3337,7 +3340,18 @@ def rt_factor_ok(rt: float | None) -> bool:
     return rt is not None and RT_FACTOR_BAND[0] <= rt <= RT_FACTOR_BAND[1]
 
 
-def autopilot_fence_record(link, policy, cruise_alt_m: float) -> dict | None:
+def fence_ground_kw(ground) -> dict:
+    """The fence exporter's ground keywords (fence_export.policy_zones,
+    mavlink_adapter_node.policy_ceiling_m) over a declared --ground scene
+    (2026-11-23, X-11b): the ground, and home's elevation - the scene's
+    home-geo-point altitude, which is ArduPilot's --home here (rail.sitl_home)
+    and so the ground's own. {} without a ground: the calls as before."""
+    if ground is None:
+        return {}
+    return {"ground": ground, "home_msl_m": float(ground.elevation_at())}
+
+
+def autopilot_fence_record(link, policy, cruise_alt_m: float, ground=None) -> dict | None:
     """The autopilot's GeoFence as it holds it, judged by the rule both SITL
     rails apply (sitl/mavlink_adapter_node.fence_alt_plan): its altitude
     fence must sit above every altitude the policy allows, or the backstop
@@ -3347,11 +3361,12 @@ def autopilot_fence_record(link, policy, cruise_alt_m: float) -> dict | None:
     which covers the uploaded exclusion circles too - is recorded beside
     them. None when the link cannot read parameters; a value the autopilot
     did not answer stays None, so an unread fence is never reported as off
-    or as fine."""
+    or as fine. `ground` (2026-11-23, X-11b): the declared --ground scene,
+    so an MSL ceiling is read above home (fence_ground_kw)."""
     if not hasattr(link, "autopilot_fence"):
         return None
     vals = link.autopilot_fence()
-    ceiling, ceiling_src = policy_ceiling_m(policy, cruise_alt_m)
+    ceiling, ceiling_src = policy_ceiling_m(policy, cruise_alt_m, **fence_ground_kw(ground))
     alt_max, enabled = vals.get("FENCE_ALT_MAX"), vals.get("FENCE_ENABLE")
     ftype = vals.get("FENCE_TYPE")
     plan = fence_alt_plan(ceiling, alt_max)
@@ -3394,6 +3409,44 @@ def resolve_policy(args, default_bundle=None) -> tuple[str | None, str | None, d
         default_yaml=DEFAULT_POLICY,
         default_bundle=(flight_bundle_path(DEFAULT_POLICY) if default_bundle is None
                         else default_bundle))
+
+
+# The ground a --ground scene declares on this rail (2026-11-23, X-11b): the
+# home-geo-point altitude of the scene template every run renders its scene
+# from (rail.write_sim_configs / write_attach_configs), which is also
+# ArduPilot's --home altitude here (rail.sitl_home). run() checks the scene it
+# renders against it.
+GROUND_SCENE = rail.SCENE_TEMPLATE
+GROUND_RAIL = "the Project AirSim + ArduPilot rail"
+
+
+def flight_policy(args, default_bundle=None):
+    """`(policy, policy_source, ground, ground_record)` this run flies, before
+    anything starts (2026-11-23, X-11b).
+
+    `--ground scene` declares the scene's flat ground (terrain.
+    declared_home_ground over GROUND_SCENE): the policy is loaded over it, so
+    an MSL rule (the grant's opt-in, 02-implementation/policy-dsl.md) passes
+    the flight gate, and the Shield, the CSPs, the fence export and the
+    end-of-flight altitude count convert it over the same ground;
+    `ground_record` is metrics.json `ground`. Without --ground (the default)
+    the ground is None, an MSL rule is refused here by the flight loader
+    exactly as on the ROS 2 rail without --ground, and an AGL policy loads as
+    it always did. A refused choice or ground is SystemExit."""
+    try:
+        bundle, yaml_path, choice = resolve_policy(args, default_bundle)
+        given = getattr(args, "ground", None)
+        ground, gfile = terrain.declared_home_ground(
+            given, scene=GROUND_SCENE, root=ROOT, rail=GROUND_RAIL)
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
+    policy, policy_source = load_for_flight(
+        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle,
+        **({} if ground is None else {"ground": ground}))
+    policy_source.update(choice)
+    return (policy, policy_source, ground,
+            terrain.home_ground_record(ground, gfile, None if ground is None
+                                       else f"--ground {given}"))
 
 
 def _field(obj, key):
@@ -4531,10 +4584,14 @@ class FenceBackstop:
         phase, and its cost against the 100 ms tick is recorded."""
 
     def __init__(self, policy, link, rec, anchor, ap_fence: dict | None, *,
-                 now=None, enabled: bool = True, home_xy=None) -> None:
+                 now=None, enabled: bool = True, home_xy=None, ground=None) -> None:
         self.policy, self.link, self.rec, self.anchor = policy, link, rec, anchor
         self.now = now
         self.enabled = enabled
+        # The declared --ground scene (2026-11-23, X-11b): each zone's band is
+        # read above home before the column test (fence_ground_kw); None, as
+        # before.
+        self.ground_kw = fence_ground_kw(ground)
         ap_fence = ap_fence or {}
         self.column_m = ap_fence.get("FENCE_ALT_MAX")
         margin = ap_fence.get("FENCE_MARGIN")
@@ -4571,7 +4628,7 @@ class FenceBackstop:
         gen, gen_hash = self.policy.generation, self.policy.policy_hash
         zones, skipped = policy_zones(self.policy,
                                       now=self.now() if self.now else None,
-                                      column_m=self.column_m)
+                                      column_m=self.column_m, **self.ground_kw)
         self.zones = zones
         if position is None:
             now_z, held = [], [{"id": z["id"], "deferred": True,
@@ -5182,6 +5239,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "development run, recorded as such and never KPI-grade")
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--ground", default=None, metavar=terrain.SCENE_GROUND,
+                    help="declare the ground MSL heights stand on (X-11b): 'scene', "
+                         "the scene's home-geo-point altitude (40 m), the only ground "
+                         "this rail accepts. Without it a policy with an "
+                         "altitude_ref: MSL rule is refused before take-off; an AGL "
+                         "policy flies as before")
     ap.add_argument("--clock-start", default=None, metavar="ISO8601",
                     help="script the rule clock: it reads this at mission start and "
                          "advances with the mission time. Without it the wall clock "
@@ -7030,15 +7093,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     np.random.seed(args.seed % (2 ** 32))
 
     # The signed bundle (given, or the default policy's); a YAML only under
-    # --dev-yaml, recorded so. Refused here, before anything starts.
-    try:
-        bundle, yaml_path, choice = resolve_policy(args)
-    except ValueError as exc:
-        raise SystemExit(f"[policy] {exc}") from None
-    policy, policy_source = load_for_flight(
-        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
-    policy_source.update(choice)
-    smap, map_note = load_obstacle_map(policy, Path(args.citymap))
+    # --dev-yaml, recorded so. Refused here, before anything starts. The
+    # declared ground (--ground scene, 2026-11-23, X-11b; flight_policy):
+    # None without it, and then every call below is the one flown before.
+    policy, policy_source, ground, ground_rec = flight_policy(args)
+    gkw = {} if ground is None else {"ground": ground}
+    if ground is not None:
+        print(f"[ground] {ground!r}: MSL rules are judged above it")
+    smap, map_note = load_obstacle_map(policy, Path(args.citymap), ground)
     # The road map of a distance_envelope over roads (WP1-07, 2026-11-17):
     # the street mask beside --citymap. None for a policy without one, so
     # every policy flown before that date builds the Shield it built.
@@ -7085,8 +7147,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                          obstacle_map=smap, road_map=rmap, clock=rule_now,
                          velocity_response=vresp.ARDUCOPTER_GUIDED,
                          pipe_clock=clock, path_repair=FOLLOW_RAIL_PATH_REPAIR,
-                         **({} if people_source is None
-                            else {"people_source": people_source}))
+                         **gkw, **({} if people_source is None
+                                   else {"people_source": people_source}))
     shield_on = args.shield == "on"
     # The own-velocity forecast and the hold that stops clear (OWN_VELOCITY_
     # DEFAULT). Off: the Shield's State carries no velocity, so its decisions
@@ -7150,6 +7212,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     if sim_cfg is not None:
         scene_path = Path(sim_cfg["dir"]) / sim_cfg["scene"]
         scene = rail.load_jsonc(scene_path)
+        if ground is not None:
+            # The scene this run renders must stand on the declared ground
+            # (--ground scene, 2026-11-23, X-11b): a scene whose
+            # home-geo-point moved would put home, and every MSL height,
+            # elsewhere. Refused before anything flies.
+            got = terrain.scene_ground(scene).elevation_msl_m
+            if abs(got - float(ground.elevation_at())) > terrain.FLAT_HOME_TOL_M:
+                raise SystemExit(f"[ground] REFUSED: the rendered scene {scene_path} "
+                                 f"stands at {got:g} m MSL, the declared ground at "
+                                 f"{float(ground.elevation_at()):g} m MSL")
         if plan is not None:
             print(f"[sim]    configs rendered to {sim_cfg['dir']} "
                   f"({plan.mode}: sim binds {plan.sim_bind_ip}:{rail.SIM_SERVO_PORT}, "
@@ -7178,10 +7250,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # aside and writes generation 0's policy and CSP, at the rule clock's
     # reading.
     rec = EpisodeRecord(out, policy, mission, lookahead_s=LOOKAHEAD_S,
-                        clock=rule_now, clock_record=clock_record)
+                        clock=rule_now, clock_record=clock_record, **gkw)
     rec.event("mission", **mission_rec)
     try:
-        (out / "prompt.yaml").write_text(ConstraintCompiler(policy).build_prompt(mission),
+        (out / "prompt.yaml").write_text(ConstraintCompiler(policy, **gkw).build_prompt(mission),
                                          encoding="utf-8")
     except Exception as exc:                                  # noqa: BLE001
         rec.event("prompt_failed", error=f"{type(exc).__name__}: {exc}")
@@ -7416,7 +7488,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 anchor = FrameAnchor(s.lat, s.lon, s.alt_msl,
                                      "ekf.first-fix (no policy origin, no scene)")
             print(f"[frame]  scene frame anchored at {anchor.to_dict()}")
-            ap_fence = autopilot_fence_record(link, policy, args.cruise_alt)
+            ap_fence = autopilot_fence_record(link, policy, args.cruise_alt, ground)
             if ap_fence is not None:
                 rec.event("autopilot_fence", **ap_fence)
                 print(f"[fence]  ENABLE {ap_fence['FENCE_ENABLE']}  ALT_MAX "
@@ -7431,7 +7503,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             pos0 = None if st0 is None else (st0.x, st0.y)
             backstop = FenceBackstop(policy, link, rec, anchor, ap_fence, now=rule_now,
                                      enabled=not getattr(args, "no_fence_upload", False),
-                                     home_xy=pos0)
+                                     home_xy=pos0, ground=ground)
             backstop.publish(pos0, phase)
             if phase == "before arming":
                 # THE DETECTOR'S FIRST INFERENCE, ON THE GROUND (review
@@ -8893,7 +8965,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         if dwell["nfz_moving_not_counted"]:
             print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
                   f"in nfz_s: the end-of-flight count has no per-tick position")
-        env = policy.by_type(AltitudeEnvelope)
+        # An MSL envelope read above the declared ground (terrain.agl_rules,
+        # 2026-11-23, X-11b): `up` is above home, which stands on it. An AGL
+        # envelope is the same object, the count as before.
+        env = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
         alt_out = [(p, w) for p, w in zip(traj, traj_s) for e in env
                    if altitude_out_of_band(e, p["up"])]
         alt_ticks, alt_s = len(alt_out), sum(w for _, w in alt_out)
@@ -9242,6 +9317,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # call's own duration, and those answered too late to use.
             "sim_rpc": rpc.summary(),
         }
+        if ground_rec is not None:
+            # The ground the Shield converted MSL rules over (--ground scene,
+            # 2026-11-23, X-11b), in the ROS 2 node's shape. Absent without
+            # --ground, as every run before.
+            metrics["ground"] = ground_rec
         metrics["params"].update({k: getattr(args, k, None) for k in (
             "start_when_seen", "start_max_range_m", "start_timeout_s",
             "start_timeout_action", "negative_query", "identity", "lock_gate",
