@@ -627,8 +627,7 @@ What flew differently from ntFIN3:
    GeofenceSlide once against twice on a convergence test that sits on the
    last float digit, with the same emitted action to 6.9e-14, as ntFIN3_306
    in ntFIN3. The Orin (aarch64) and the desktop (x86-64) round that digit
-   differently. The campaign README and the CHANGELOG print "305 identical";
-   the JSON's verdicts say 355, which with 298 + 0 + 1 makes the 654.
+   differently.
 7. **Earlier campaigns.** ntFIN3 (71aabb3) is the earlier figure of
    record, kept beside ntFIN4 in sections 2 and 5; ntFIN2 and ntFIN2s
    (116214f) before it. A first attempt at 116214f, ntFIN (stopped at 176

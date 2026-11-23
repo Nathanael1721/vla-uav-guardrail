@@ -77,7 +77,7 @@ compiled at bring-up, and each row carries per-phase tick stamps (CHANGELOG
 
 ## Replay at the flown revision
 
-654 runs: 305 identical, 298 last float digits (112 plain, 186 through the
+654 runs: 355 identical, 298 last float digits (112 plain, 186 through the
 body-frame rotation; at most 6.9e-14), 0 not replayable (the 24 GPS-dropout
 runs replay since WP4-11's logged pipe clock), 1 differs in a repair's pass
 count (`ntFIN4_304_dyn-nfz-rotate-spin`: GeofenceSlide once vs twice on a

@@ -26,7 +26,7 @@ shipped change and recorded as one.
   - Fail-safe trigger correctness (r2) **648/648 = 1.000, Wilson 95 % low 0.994** (meets 99 % at the point and at 95 % confidence); 18 triggered by the GeoFence backstop, all expected; 630/630 as before the backstop rule, 630/648 with those counted as not triggered; (r) 636/648, (a) 573/648. Left out: ntFIN4_374 and ntFIN4_375 corridor-swap-shifted, censored in Loiter.
   - `tick_ms` p99 28.4 ms, `e2e_ms` p99 28.5 ms; **1 of 183,909 ticks over 100 ms**: ntFIN4_236 dyn-nfz-spawn-ahead, 105.5 ms on the tick that hot-applied the zone, whose generation write and CSP compile ran before the setpoint (87 ms of it; shield_ms 10.6). The code path predates 71aabb3.
   - Tracked: mission success 287/650, repair success 98.1 % (27,097/27,615 ticks), mean time to safe 3.39 s (169 spells; 95 never recovered), 50.2 repairs per Shield-on mission; single_sha 653/653.
-  - Replay at the flown revision: 305 identical, 298 last float digits, 0 not replayable (the GPS-dropout runs replay), 1 repair-pass-count difference on a float tie (ntFIN4_304, as ntFIN3_306).
+  - Replay at the flown revision: 355 identical, 298 last float digits, 0 not replayable (the GPS-dropout runs replay), 1 repair-pass-count difference on a float tie (ntFIN4_304, as ntFIN3_306).
 - Track videos for every smFIN2 and ntFIN4 run.
 
 ### 2026-11-22 (code: retreat ray, operators in the body frame, BitVLA loaded on the Orin, six bundle names, legacy loaders, manifest frame in the bag, single_sha, dropout replay, terrain feed-forward, GPS noise on the rail, literal LOITER) — eleven changes for open contract rows, each with tests and a review; none flown yet
