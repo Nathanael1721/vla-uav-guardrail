@@ -166,6 +166,7 @@ for _p in (ROOT, ROOT / "demo"):
 from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.frames import body_to_local_ned, filter_world_as_body  # noqa: E402
 from guardrail import people as people_feed                         # noqa: E402
+from guardrail import terrain                                       # noqa: E402
 
 import vla_mission as VM                                             # noqa: E402
 
@@ -413,6 +414,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--dev-yaml", action="store_true",
                     help="fly a YAML policy (unsigned), recorded as a development run")
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--ground", default=None, metavar=terrain.SCENE_GROUND,
+                    help="declare the ground MSL heights stand on (X-11b): 'scene', "
+                         "the mission scene's home-geo-point altitude (40 m), the only "
+                         "ground this rail accepts. Without it a policy with an "
+                         "altitude_ref: MSL rule is refused before take-off; an AGL "
+                         "policy flies as before")
     ap.add_argument("--citymap", default=str(DEFAULT_CITYMAP))
     # -- the VLA server -----------------------------------------------------
     ap.add_argument("--vla-server", default=None, metavar="HOST:PORT",
@@ -1601,14 +1608,47 @@ def people_source_vla(policy, args) -> str | None:
             f">= {LEVEL_TRUTH_PERIOD_S:g} s)")
 
 
+def vla_flight_policy(args):
+    """`(policy, policy_source, ground, ground_record)` this flight flies,
+    before anything starts (2026-11-23, X-11b).
+
+    The signed bundle by default (the SITL rails' rule, flight_policy_choice).
+    `--ground scene` declares the flat ground of the scene the mission loads
+    (SCENES; terrain.declared_home_ground: its home-geo-point altitude, 40 m):
+    the policy is loaded over it, so an MSL rule (the grant's opt-in,
+    02-implementation/policy-dsl.md) passes the flight gate, and the Shield,
+    the obstacle map's band and the altitude count convert it over the same
+    ground; the simulator's `up` is above the scene's origin, which stands on
+    it. `ground_record` is metrics.json `ground`. Without --ground (the
+    default) the ground is None, an MSL rule is refused here by the flight
+    loader exactly as on the ROS 2 rail without --ground, and an AGL policy
+    loads as it always did. A refused choice or ground is SystemExit."""
+    from guardrail.bundle import load_for_flight
+    from guardrail.manifest import flight_bundle_path, flight_policy_choice
+    try:
+        bundle, yaml_path, choice = flight_policy_choice(
+            args.bundle, args.policy, dev_yaml=args.dev_yaml, default_yaml=DEFAULT_POLICY,
+            default_bundle=flight_bundle_path(DEFAULT_POLICY))
+        given = getattr(args, "ground", None)
+        ground, gfile = terrain.declared_home_ground(
+            given, scene=SIM_CONFIG_DIR / SCENES[args.mission], root=ROOT,
+            rail="the VLA flight rail (Project AirSim)")
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
+    policy, policy_source = load_for_flight(
+        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle,
+        **({} if ground is None else {"ground": ground}))
+    return (policy, {**policy_source, **choice}, ground,
+            terrain.home_ground_record(ground, gfile, None if ground is None
+                                       else f"--ground {given}"))
+
+
 async def _fly(args, holder: dict) -> int:
     from projectairsim import Drone, EnvActor, ProjectAirSimClient, World
 
     import follow_vlm as FV
     from guardrail import AuditLogger, State
     from guardrail.audit import AUDIT_FILE
-    from guardrail.bundle import load_for_flight
-    from guardrail.manifest import flight_bundle_path, flight_policy_choice
     from guardrail.models import (Action4D, AltitudeEnvelope, DistanceEnvelope,
                                   ObstacleClearance, SubjectStandoff)
     from guardrail.replay import rail_shield, verify_replay, write_replay
@@ -1628,12 +1668,12 @@ async def _fly(args, holder: dict) -> int:
     shield_on = args.shield == "on"
 
     # ---- the policy: the signed bundle by default (the SITL rails' rule) --
-    bundle, yaml_path, choice = flight_policy_choice(
-        args.bundle, args.policy, dev_yaml=args.dev_yaml, default_yaml=DEFAULT_POLICY,
-        default_bundle=flight_bundle_path(DEFAULT_POLICY))
-    policy, policy_source = load_for_flight(bundle, yaml_path,
-                                            allow_unverified=args.allow_unverified_bundle)
-    policy_source = {**policy_source, **choice}
+    # The declared ground (--ground scene, 2026-11-23, X-11b;
+    # vla_flight_policy): None without it, and then every call below is the
+    # one flown before.
+    policy, policy_source, ground, ground_rec = vla_flight_policy(args)
+    if ground is not None:
+        print(f"[ground] {ground!r}: MSL rules are judged above it")
 
     out = Path(args.out_dir) if args.out_dir else ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -1641,7 +1681,9 @@ async def _fly(args, holder: dict) -> int:
 
     # ---- the obstacle map for the policy's band (follow_vlm's rule) --------
     cmap = city_planner.load_occ(args.citymap)
-    alt = policy.by_type(AltitudeEnvelope)
+    # An MSL envelope's band above the declared ground (terrain.agl_rules,
+    # 2026-11-23, X-11b); an AGL one as it is.
+    alt = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     occ_report = []
     # The obstacle map serves an obstacle_clearance rule and, since
     # 2026-11-17, a distance_envelope over buildings (WP1-07): the same map.
@@ -1698,6 +1740,7 @@ async def _fly(args, holder: dict) -> int:
               "this policy has none, so nothing is polled")
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap,
                          road_map=rmap, path_repair=FOLLOW_RAIL_PATH_REPAIR,
+                         **({} if ground is None else {"ground": ground}),
                          **({} if people_source is None
                             else {"people_source": people_source}))
     # The people handed to the Shield each tick: those within the range this
@@ -2456,7 +2499,9 @@ async def _fly(args, holder: dict) -> int:
     stats = stats_at_end if stats_at_end is not None else guard("backend.stats", backend.stats, {})
     records = list(backend.records)
     dwell = guard("zone_dwell", lambda: zone_dwell(shield, traj, TICK), {}) or {}
-    band = policy.by_type(AltitudeEnvelope)
+    # An MSL envelope read above the declared ground (terrain.agl_rules,
+    # 2026-11-23, X-11b); an AGL one is the same object, the count as before.
+    band = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     alt_bad = (sum(1 for p in traj if any(altitude_outside(band[0], p["up"])))
                if band else 0)
     goal = args.goal if args.mission == "goto" else None
@@ -2583,6 +2628,10 @@ async def _fly(args, holder: dict) -> int:
                    "vla_adapter": args.vla_adapter,
                    "citymap": str(args.citymap), "seed": args.seed},
     }
+    if ground_rec is not None:
+        # The ground the Shield converted MSL rules over (--ground scene,
+        # 2026-11-23, X-11b), in the ROS 2 node's shape. Absent without it.
+        metrics["ground"] = ground_rec
     metrics["pilot"] = guard("pilot_entry", lambda: VM.pilot_entry(
         identity, stats, records, rows, server=server_rec,
         reported_by=f"{server.host}:{server.port}", weight_paths=weight_paths,

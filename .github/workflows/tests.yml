@@ -40,7 +40,10 @@
 #          test_msl_readers (2026-11-18, X-11: every reader takes a named
 #          ground - harness rails, mission node, GCS, bundle_origin, bag
 #          custom data; the replay carries the DEM; the RTL leg along the
-#          ground; the MSL-capped backstop; the msl_dem profile).
+#          ground; the MSL-capped backstop; the msl_dem profile),
+#          test_msl_primitives (2026-11-23, X-11b: MSL on every primitive
+#          with altitude_ref; the PAS readers' --ground scene and the SITL
+#          rail's --ground sitl|FILE, refused without one).
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
 #          test_prefix_eval, test_paraphraser, test_paraphraser_service (its
 #          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
@@ -835,6 +838,7 @@ jobs:
               tests/test_msl_rail.py \
               tests/test_terrain_forecast.py \
               tests/test_msl_readers.py \
+              tests/test_msl_primitives.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
               tests/test_vla_link.py \

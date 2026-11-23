@@ -85,6 +85,7 @@ from guardrail.manifest import (                                    # noqa: E402
     is_kpi_grade, model_hash, pilot_record,
 )
 from guardrail.replay import EpisodeRecord, verify_replay, write_replay  # noqa: E402
+from guardrail import terrain                                       # noqa: E402
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S,           # noqa: E402
                               altitude_outside)
 from guardrail.models import (                                      # noqa: E402
@@ -201,6 +202,38 @@ def city_policy_choice(args, bundles_dir=None) -> tuple:
     rec["bundle_of"] = (shown.relative_to(ROOT).as_posix()
                         if shown.is_relative_to(ROOT) else shown.as_posix())
     return b, y, rec
+
+
+def city_flight_policy(args, bundles_dir=None):
+    """`(policy, policy_source, ground, ground_record)` this flight flies,
+    before anything starts (2026-11-23, X-11b).
+
+    `--ground scene` declares the flat ground of the scene this flight loads
+    (flight_scene; terrain.declared_home_ground: its home-geo-point
+    altitude, 40 m): the policy is loaded over it, so an MSL rule (the
+    grant's opt-in, 02-implementation/policy-dsl.md) passes the flight gate,
+    and the Shield, the fence guard's Shield, the CSPs, the obstacle map's
+    band and the altitude count convert it over the same ground; the
+    simulator's `up` is above the scene's origin, which stands on it.
+    `ground_record` is metrics.json `ground`. Without --ground (the default)
+    the ground is None, an MSL rule is refused here by the flight loader
+    exactly as on the ROS 2 rail without --ground, and an AGL policy loads as
+    it always did. A refused choice or ground is SystemExit."""
+    try:
+        _bundle, _yaml, _choice = city_policy_choice(args, bundles_dir)
+        given = getattr(args, "ground", None)
+        ground, gfile = terrain.declared_home_ground(
+            given, scene=ROOT / "demo" / "pas_config" / flight_scene(args), root=ROOT,
+            rail="the city follow rail (Project AirSim)")
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
+    policy, policy_source = load_for_flight(
+        _bundle, _yaml, allow_unverified=args.allow_unverified_bundle,
+        **({} if ground is None else {"ground": ground}))
+    policy_source.update(_choice)
+    return (policy, policy_source, ground,
+            terrain.home_ground_record(ground, gfile, None if ground is None
+                                       else f"--ground {given}"))
 
 
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
@@ -4768,13 +4801,15 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 # FSM off, as the --grant-forecast runs before then flew.
 def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
                   legacy_forecast: bool = False, road_map: dict | None = None,
-                  people_source: str | None = None):
+                  people_source: str | None = None, ground=None):
     """The flight's Shield: the grant's 5 s / 0.1 s with the escalation FSM
     (the default since 2026-11-03), 3 s / 0.5 s with the FSM (legacy), or the
     grant's forecast with the FSM off (--grant-forecast). `road_map`: the
     street mask, for a distance_envelope over roads (WP1-07);
     `people_source`: sim_people_source's, for one over people (None: no
-    such rule, and the keyword is not passed)."""
+    such rule, and the keyword is not passed); `ground`: the declared
+    --ground scene (2026-11-23, X-11b), over which an MSL rule is converted
+    (None: not passed, the Shield every flight before built)."""
     if legacy_forecast and grant_forecast:
         raise ValueError("--legacy-forecast and --grant-forecast are two different "
                          "Shields; give one")
@@ -4782,6 +4817,8 @@ def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
     # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
     from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR as pr
     ppl = {} if people_source is None else {"people_source": people_source}
+    if ground is not None:
+        ppl["ground"] = ground
     if legacy_forecast:
         return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map,
                       road_map=road_map, path_repair=pr, **ppl)
@@ -4820,7 +4857,7 @@ def flight_manifest(policy_hash: str, seed: int, sim_address: str | None = None)
 
 
 def city_episode(out: Path, policy, lookahead_s: float, start_xy, object_text: str,
-                 cruise_alt: float, speed_max: float) -> EpisodeRecord:
+                 cruise_alt: float, speed_max: float, ground=None) -> EpisodeRecord:
     """The city rail's episode record (guardrail.replay.EpisodeRecord), as the
     SITL and perception rails write theirs: events.jsonl from episode_start to
     mission_end, policy_g0.json and the typed CSP csp_g0.json. Until
@@ -4835,13 +4872,16 @@ def city_episode(out: Path, policy, lookahead_s: float, start_xy, object_text: s
     No rule clock: this rail's Shield has none, so the record says
     {"kind": "none"} (every scheduled rule in force), which is what flew.
     `rotate=False`: the flight has already written into `out` (fly() clears
-    the previous flight's episode files itself, CITY_EPISODE_FILES)."""
+    the previous flight's episode files itself, CITY_EPISODE_FILES).
+    `ground` (2026-11-23, X-11b): the declared --ground scene, over which
+    every generation's CSP compiles an MSL rule; None, as before."""
     from guardrail.compiler import Mission
     sx, sy = float(start_xy[0]), float(start_xy[1])
     mission = Mission(task_text=f"follow {object_text}", target_x=sx, target_y=sy,
                       cruise_alt_m=float(cruise_alt), speed_pref_mps=float(speed_max),
                       start_x=sx, start_y=sy)
-    rec = EpisodeRecord(out, policy, mission, lookahead_s=float(lookahead_s), rotate=False)
+    rec = EpisodeRecord(out, policy, mission, lookahead_s=float(lookahead_s), rotate=False,
+                        **({} if ground is None else {"ground": ground}))
     rec.event("mission", task_text=mission.task_text, start=[round(sx, 2), round(sy, 2)],
               target_proxy="start", cruise_alt_m=mission.cruise_alt_m,
               speed_pref_mps=mission.speed_pref_mps)
@@ -5600,13 +5640,12 @@ async def fly(args) -> int:
     # with --policy) used to delete the previous run's flight log first and
     # leave its manifest, kpi.json and metrics.json describing a log that was
     # gone (2026-10-06 review).
-    try:
-        _bundle, _yaml, _choice = city_policy_choice(args)
-    except ValueError as exc:
-        raise SystemExit(f"[policy] {exc}") from None
-    policy, policy_source = load_for_flight(
-        _bundle, _yaml, allow_unverified=args.allow_unverified_bundle)
-    policy_source.update(_choice)
+    # The declared ground (--ground scene, 2026-11-23, X-11b;
+    # city_flight_policy): None without it, and then every call below is the
+    # one flown before.
+    policy, policy_source, ground, ground_rec = city_flight_policy(args)
+    if ground is not None:
+        print(f"[ground] {ground!r}: MSL rules are judged above it")
 
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -5720,7 +5759,9 @@ async def fly(args) -> int:
     # was being checked against a map of the 6-14 m band. But it is a behaviour
     # change on flights the tutorial runs, so it is stated here rather than
     # asserted away.
-    _alt = policy.by_type(AltitudeEnvelope)
+    # An MSL envelope's band above the declared ground (terrain.agl_rules,
+    # 2026-11-23, X-11b); an AGL one as it is.
+    _alt = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     if policy.by_type(ObstacleClearance) and _alt:
         _sel = occ_bands.select_for_band(Path(args.citymap).parent,
                                          _alt[0].alt_min_m, _alt[0].alt_max_m)
@@ -5771,7 +5812,7 @@ async def fly(args) -> int:
               f"{people_mem.stale_s:g} s is dropped")
     shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast,
                            legacy_forecast=args.legacy_forecast, road_map=rmap,
-                           people_source=people_source)
+                           ground=ground, people_source=people_source)
     # The people handed to the Shield each tick: those within the range this
     # policy and forecast can reach (people.cull_range_m, the pilot's
     # --speed-max as the raw action's bound).
@@ -6670,7 +6711,8 @@ async def fly(args) -> int:
         try:
             _p0 = drone.get_ground_truth_kinematics()["pose"]["position"]
             episode = city_episode(out, policy, shield.lookahead_s, (_p0["x"], _p0["y"]),
-                                   args.object, args.cruise_alt, args.speed_max)
+                                   args.object, args.cruise_alt, args.speed_max,
+                                   ground=ground)
             _g0 = episode.generations[0]
             print(f"[episode] {episode.episode_id}: policy_g0.json, "
                   f"{'csp_g0.json' if _g0['csp'] else '*** no CSP (see events.jsonl)'}")
@@ -8270,7 +8312,9 @@ async def fly(args) -> int:
     if moving_zones:
         print(f"[nfz] moving zone(s) {moving_zones} are NOT in nfz_s: the end-of-"
               f"flight count has no per-tick position for them")
-    band = policy.by_type(AltitudeEnvelope)
+    # An MSL envelope read above the declared ground (terrain.agl_rules,
+    # 2026-11-23, X-11b); an AGL one is the same object, the count as before.
+    band = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     # The altitude check's own comparison (guardrail/shield.py
     # altitude_outside, 1e-9 m of slack; this compared the band itself until
     # 2026-11-18, WP3-22 / X-13).
@@ -8562,6 +8606,10 @@ async def fly(args) -> int:
         # grant's six fields and stays so.
         "policy_source": policy_source,
     }
+    if ground_rec is not None:
+        # The ground the Shield converted MSL rules over (--ground scene,
+        # 2026-11-23, X-11b), in the ROS 2 node's shape. Absent without it.
+        metrics["ground"] = ground_rec
     if vla_record_stats is not None:
         # --record-vla only: which scene and robot config flew (the variant
         # with AerialVLA's cameras) and what was recorded (record.json in the
@@ -8808,6 +8856,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "or a key the trust store does not list), recorded as "
                          "unverified; a bad or stripped signature is refused "
                          "regardless")
+    ap.add_argument("--ground", default=None, metavar=terrain.SCENE_GROUND,
+                    help="declare the ground MSL heights stand on (X-11b): 'scene', "
+                         "the loaded scene's home-geo-point altitude (40 m), the only "
+                         "ground this rail accepts. Without it a policy with an "
+                         "altitude_ref: MSL rule is refused before take-off; an AGL "
+                         "policy flies as before")
     ap.add_argument("--citymap", default=str(ROOT / "demo" / "out" / "citymap" / "occ_day.npz"))
     ap.add_argument("--tag", default="vlmfollow")
     ap.add_argument("--max-s", type=float, default=120.0)

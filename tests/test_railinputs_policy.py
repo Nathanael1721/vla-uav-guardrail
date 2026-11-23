@@ -339,8 +339,13 @@ def test_the_city_rail_wires_the_choice_and_a_dev_yaml_run_is_not_kpi_grade():
     a = fv.build_arg_parser().parse_args(["--object", "a red car", "--dev-yaml"])
     assert a.dev_yaml is True
     src = (ROOT / "demo" / "follow_vlm.py").read_text(encoding="utf-8")
-    main_src = src[src.index("def fly("):] if "def fly(" in src else src
-    assert main_src.index("city_policy_choice(args)") < main_src.index("load_for_flight(")
+    # Since 2026-11-23 (X-11b) fly() loads its policy through
+    # city_flight_policy (the choice, then the declared ground, then the load),
+    # before the output folder is touched.
+    fly_src = src[src.index("def fly("):]
+    assert fly_src.index("city_flight_policy(args)") < fly_src.index("out.mkdir(")
+    main_src = src[src.index("def city_flight_policy("):]
+    assert main_src.index("city_policy_choice(args") < main_src.index("load_for_flight(")
     assert "policy_source.update(_choice)" in src
     assert "if policy_source.get(\"dev_yaml\"):" in src
     T = _tool()

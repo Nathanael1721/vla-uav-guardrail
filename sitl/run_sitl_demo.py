@@ -114,6 +114,7 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
 from guardrail.shield import (altitude_out_of_band, standoff_breached,  # noqa: E402
                               standoff_ring_m, standoff_rules)
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
+from guardrail import terrain                                          # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
                                   ModeRequests, XYArgumentParser,
                                   autopilot_mode, fence_alt_plan,
@@ -242,12 +243,17 @@ class MavlinkAdapter:
         time.sleep(0.5)
         return self.read_param(name)
 
-    def autopilot_fence(self, policy, cruise_alt_m: float) -> dict:
+    def autopilot_fence(self, policy, cruise_alt_m: float, ground=None) -> dict:
         """The GeoFence backstop as the autopilot holds it; FENCE_ALT_MAX is
         raised above the policy's ceiling if it sits below it (the same rule
-        as the ROS 2 rail, sitl/mavlink_adapter_node.fence_alt_plan)."""
+        as the ROS 2 rail, sitl/mavlink_adapter_node.fence_alt_plan).
+        `ground` (--ground, 2026-11-23, X-11b): an MSL ceiling is read above
+        home, which stands on that ground (flight_ground); None, as before."""
         vals = {n: self.read_param(n) for n in FENCE_PARAMS}
-        ceiling, src = policy_ceiling_m(policy, cruise_alt_m)
+        ceiling, src = policy_ceiling_m(
+            policy, cruise_alt_m,
+            **({} if ground is None else
+               {"ground": ground, "home_msl_m": float(ground.elevation_at())}))
         plan = fence_alt_plan(ceiling, vals["FENCE_ALT_MAX"])
         raised_from = None
         # SITL only (SIM_SPEEDUP answers): a hardware autopilot's GeoFence is
@@ -434,6 +440,42 @@ class MavlinkAdapter:
         print("[mavlink]  LAND")
 
 
+# The elevation of this rail's home (m MSL): the --home altitude both its
+# launchers boot SITL at (sitl/start_sitl.sh, sitl/run_gazebo_demo.sh: CMAC,
+# 584 m; terrain.SITL_CMAC). --ground-home-msl overrides it for a SITL booted
+# elsewhere.
+SITL_HOME_MSL_M = terrain.SITL_CMAC.elevation_msl_m
+
+
+def flight_ground(args, bundle=None, yaml_path=None):
+    """`(ground, ground_record)` this flight declares (2026-11-23, X-11b), or
+    (None, None) without --ground: the default, every flight before.
+
+    Until this date this rail - the in-process pymavlink rail that
+    sitl/run_gazebo_demo.sh flies on Gazebo's physics - loaded its policy with
+    no ground, so a policy with an MSL rule (the grant's opt-in,
+    02-implementation/policy-dsl.md) was refused whatever the world. Now
+    `--ground sitl` (terrain.SITL_CMAC, the launchers' --home altitude) or
+    `--ground FILE` (a flat ground file, `--ground-sha256` pinning it, as on
+    the ROS 2 rail) declares one (terrain.declared_home_ground). This rail
+    measures height above its home (LOCAL_POSITION_NED), so the ground must
+    stand at the home's elevation (`--ground-home-msl`, default
+    SITL_HOME_MSL_M) and a DEM is refused: it is flown on the ROS 2 rail,
+    which converts the height over it. Without --ground an MSL rule is
+    refused by the flight loader, exactly as on the ROS 2 rail without
+    --ground. ValueError for a ground refused; `ground_record` is
+    metrics.json `ground`."""
+    given = getattr(args, "ground", None)
+    home = getattr(args, "ground_home_msl", None)
+    ground, gfile = terrain.declared_home_ground(
+        given, sha256=getattr(args, "ground_sha256", None),
+        home_msl_m=SITL_HOME_MSL_M if home is None else float(home),
+        bundle=bundle, yaml_path=yaml_path, root=ROOT,
+        rail="the ArduPilot SITL rail (run_sitl_demo.py)")
+    return ground, terrain.home_ground_record(
+        ground, gfile, None if ground is None else f"--ground {given}")
+
+
 def main() -> int:
     # `--subject -5.5,3` (a subject south of home) parses as a value instead
     # of exiting with status 2 (mavlink_adapter_node.join_negative_xy).
@@ -454,6 +496,19 @@ def main() -> int:
                          "or a key the trust store does not list), recorded as "
                          "unverified; a bad or stripped signature is refused "
                          "regardless")
+    ap.add_argument("--ground", default=None, metavar="sitl|FILE",
+                    help="declare the ground MSL heights stand on (X-11b): 'sitl', "
+                         "the launchers' --home altitude (584 m, CMAC), or a flat "
+                         "ground file at the home's elevation (a DEM is flown on "
+                         "the ROS 2 rail). Without it a policy with an "
+                         "altitude_ref: MSL rule is refused before take-off; an AGL "
+                         "policy flies as before")
+    ap.add_argument("--ground-sha256", default=None, metavar="HEX",
+                    help="the sha256 the --ground FILE must hash to, checked before "
+                         "it is read")
+    ap.add_argument("--ground-home-msl", type=float, default=None, metavar="M",
+                    help="the elevation of SITL's home, m MSL (default 584, the "
+                         "launchers' --home); the --ground must stand there")
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--subject", default=None, metavar="X,Y",
@@ -554,9 +609,18 @@ def main() -> int:
         args.bundle, args.policy, dev_yaml=args.dev_yaml,
         default_yaml=DEFAULT_POLICY_YAML,
         default_bundle=flight_bundle_path(DEFAULT_POLICY_YAML))
+    # The declared ground (--ground, 2026-11-23, X-11b; flight_ground): None
+    # without it, and then every call below is the one flown before.
+    try:
+        ground, ground_rec = flight_ground(args, bundle, yaml_path)
+    except ValueError as exc:
+        ap.error(str(exc))
+    gkw = {} if ground is None else {"ground": ground}
     policy, policy_source = load_for_flight(
-        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
+        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle, **gkw)
     policy_source.update(choice)
+    if ground is not None:
+        print(f"[ground]   {ground!r}: MSL rules are judged above it")
     # The rule clock: one callable for the Shield and every generation's CSP
     # (guardrail.replay.rule_clock), refused here, before anything is written,
     # if --clock-start or --clock-tz cannot be read. Mission time is None
@@ -568,13 +632,13 @@ def main() -> int:
                          else time.time() - mission_t0[0]))
     out = ROOT / "demo" / "out" / tag
     out.mkdir(parents=True, exist_ok=True)
-    compiler = ConstraintCompiler(policy)
+    compiler = ConstraintCompiler(policy, **gkw)
     mission = compiler.parse_command(args.command)
     # The episode record FIRST: it moves an earlier run's audit and
     # generation files aside, and writes generation 0's policy and CSP.
     rec = EpisodeRecord(out, policy, mission, lookahead_s=LOOKAHEAD_S,
                         cost_map=args.cost_map, clock=clock,
-                        clock_record=clock_record)
+                        clock_record=clock_record, **gkw)
     try:
         (out / "prompt.yaml").write_text(compiler.build_prompt(mission),
                                          encoding="utf-8")
@@ -613,7 +677,7 @@ def main() -> int:
     from guardrail.response import ARDUCOPTER_GUIDED
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          clock=clock, pipe_clock=lambda: time.time(),
-                         clear_response=ARDUCOPTER_GUIDED,
+                         clear_response=ARDUCOPTER_GUIDED, **gkw,
                          path_repair=FOLLOW_RAIL_PATH_REPAIR, **ppl_kw)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
@@ -665,7 +729,8 @@ def main() -> int:
     print(f"[mavlink]  autopilot: "
           f"{autopilot['ardupilot_version'] if autopilot else 'NOT READ'}")
     rec.event("autopilot_version", **(autopilot or {"ardupilot_version": None}))
-    ap_fence = link.autopilot_fence(policy, mission.cruise_alt_m)
+    ap_fence = link.autopilot_fence(policy, mission.cruise_alt_m,
+                                    **({} if ground is None else {"ground": ground}))
     rec.event("autopilot_fence", **ap_fence)
     print(f"[fence]    ENABLE {ap_fence['FENCE_ENABLE']}  ALT_MAX "
           f"{ap_fence['FENCE_ALT_MAX']}"
@@ -1046,7 +1111,10 @@ def main() -> int:
 
     # Seconds outside the altitude envelope, on the same footing as NFZ time so
     # both rails report the same quantities under the same names.
-    envelopes = policy.by_type(AltitudeEnvelope)
+    # An MSL envelope read above the declared ground (terrain.agl_rules,
+    # 2026-11-23, X-11b): `up` is above home, which stands on it. An AGL
+    # envelope is the same object, the count as before.
+    envelopes = terrain.agl_rules(policy.by_type(AltitudeEnvelope), ground)
     alt_bad = sum(1 for p in traj for e in envelopes
                   if altitude_out_of_band(e, p["up"]))
     alt_seconds = alt_bad * TICK
@@ -1151,6 +1219,10 @@ def main() -> int:
         # Beside the manifest, which is the grant's six fields and stays so.
         "policy_source": policy_source,
     }
+    if ground_rec is not None:
+        # The ground the Shield converted MSL rules over (--ground, 2026-11-23,
+        # X-11b), in the ROS 2 node's shape. Absent without it.
+        metrics["ground"] = ground_rec
     (out / "flight_log.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
