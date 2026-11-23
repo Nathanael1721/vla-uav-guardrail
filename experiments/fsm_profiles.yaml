@@ -1,0 +1,31 @@
+# Escalation FSM thresholds with per-mission-profile overlays (2026-11-21,
+# WP3-07b). The grant makes N, T, theta and T_recover "config-file
+# overridable per mission profile" (Safety Shield PDF p4); this file is the
+# form guardrail.fsm.FSMConfig.from_mapping reads, and the one a rail flies
+# with
+#
+#     --fsm-config experiments/fsm_profiles.yaml [--fsm-profile NAME]
+#
+# (sitl/ros2_shield_node.py, sitl/run_sitl_demo.py,
+# demo/pas_ardupilot/perception_node.py), or a campaign with
+#
+#     experiments/sweep_scenarios.py --backend sitl|hil \
+#         --rail-fsm-config experiments/fsm_profiles.yaml --rail-fsm-profile NAME
+#
+# The base below is the grant's defaults, so the file with no profile, and
+# its `grant` profile, fly exactly FSMConfig() (same fsm_config_hash;
+# tests/test_fsm.py pins this). `example_night` illustrates an overlay
+# written with the grant's symbols; it is NOT a decided mission profile and
+# no KPI campaign flies it. An unknown profile name is refused before
+# anything flies (guardrail.fsm.load_fsm_config).
+escalation:
+  N: 3
+  T: 5.0
+  theta_lateral: 2.0
+  theta_vertical: 0.5
+  T_recover: 2.0
+  profiles:
+    grant: {}
+    example_night:
+      T_recover: 3.0
+      theta_lateral: 1.5
