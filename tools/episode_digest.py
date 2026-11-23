@@ -28,7 +28,8 @@ import sys
 import time
 from pathlib import Path
 
-WALL = {"wall_s", "wall_ms", "wall_ns", "shield_ms", "tick_ms", "elapsed_ms", "ts"}
+WALL = {"wall_s", "wall_ms", "wall_ns", "shield_ms", "tick_ms", "elapsed_ms", "ts",
+        "tick_phases_ms"}
 FIELDS = ("rows", "events", "extra", "audit", "extras_record", "generations")
 
 
