@@ -76,7 +76,15 @@ a single boundary in the codebase." In this codebase:
     from, not to a re-rotation of it), so the decisions are those of the
     world-frame stack bit for bit, at every heading. Until 2026-11-21 the
     operators were handed the world action and the Shield turned once
-    around the whole stack (`filter_body`). Neither side sees local NED
+    around the whole stack (`filter_body`). Since 2026-11-23 (WP3-04b) the
+    Shield's two last resorts act through the same pair: ClearanceEscape
+    (`Shield._rescue`, the heading flown when the chain did not converge)
+    and the slowed GeofenceEscape from a zone that opened on the aircraft
+    (`Shield._slower_opened_escape`) are operators (repair.ClearanceEscape,
+    repair.OpenedEscape) handed the body action and handing one back; until
+    then `Shield._decide` called both on the world action outside the
+    interface, with the same decisions. So every repair that can change the
+    flown action acts on the frame the VLA emits in. Neither side sees local NED
     (ours is North / East / up, the reference's East / North / up). That the
     repair is the body-frame one - the same body action in a scene that
     turns with the aircraft gets the same emitted body action - is pinned
