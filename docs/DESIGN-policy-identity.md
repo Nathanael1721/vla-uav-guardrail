@@ -292,7 +292,14 @@ metres — authored lat/lon is projected by `load_policy` first).
 
 * No GeoJSON/KML converter and no REST ingest (WP1-16's other parts).
 * No `layers_merged` (there is no layer merge to record) and no generated
-  changelog diff; `changelog` is still free text.
+  changelog diff; `changelog` is still free text. (Since closed: the diff
+  against the previous version, `changelog_diff`, from 2026-10-29 (X-10) in
+  `write_bundle(previous=...)`, and in every flight bundle from 2026-11-21
+  (X-10b): `tools/build_flight_bundles.py` diffs each policy against its
+  highest lower published version in `bundles/` and its `--check` flags a
+  bundle without the diff. The bundles in `bundles/` predate it; rebuild with
+  `python tools/build_flight_bundles.py` once the signing authority is
+  settled.)
 * `sitl/ros2_vla_stub_node.py` and `sitl/run_ros2_demo.sh` still read their own
   YAML (WP1-23's stub side); they are outside this unit.
 * No flight was re-flown from a bundle; that needs the simulator. The

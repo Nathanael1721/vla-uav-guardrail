@@ -2443,6 +2443,126 @@ def test_the_prompt_keeps_the_shorthands_the_demos_already_read():
     assert cons["summary_pack"]["n_rules"] == len(load_policy(DEMO).constraints)
 
 
+def _drill_versions(*specs):
+    """Policy files of one throw-away policy id at several versions (version,
+    alt_max_m), copied from the demo policy, in a fresh folder: an id the
+    version lock does not know, so every version may be released."""
+    text = DEMO.read_text(encoding="utf-8").replace(
+        "policy_id: fase3-sim-demo", "policy_id: x10b-drill")
+    assert "policy_id: x10b-drill" in text and "version: 0.1.4" in text
+    assert "alt_max_m: 20\n" in text
+    d = Path(tempfile.mkdtemp(prefix="x10b_"))
+    out = []
+    for version, alt_max in specs:
+        f = d / f"drill_{version.replace('.', '_')}.yaml"
+        f.write_text(text.replace("version: 0.1.4", f"version: {version}")
+                     .replace("alt_max_m: 20\n", f"alt_max_m: {alt_max}\n"), encoding="utf-8")
+        out.append(f)
+    return out
+
+
+def test_flight_bundles_carry_the_diff_against_their_previous_version():
+    """X-10b (2026-11-21). The grant's changelog is a "Human-readable diff vs
+    the previous version"; write_bundle could record one (`previous=`), but
+    tools/build_flight_bundles.py never passed it, so every flight bundle
+    said "flight bundle of <file>" and carried no changelog_diff. Built here
+    with a throw-away key, trust store and folders: the first version says
+    it is one; the next is diffed against the highest LOWER version in the
+    folder (not a higher one, not the replay packs); --previous names one
+    explicitly; an untrusted predecessor stops the build instead of being
+    skipped; and --check flags a bundle with a predecessor but no diff, or a
+    diff against another version."""
+    T = _build_flight_bundles_tool()
+    signer, trust = _test_key()
+    v010, v011, v020, v030 = _drill_versions(("0.1.0", 20), ("0.1.1", 25),
+                                             ("0.2.0", 30), ("0.3.0", 35))
+    out = Path(tempfile.mkdtemp(prefix="x10b_out_"))
+    kw = dict(signer=signer, trust_store=trust, issued_at=ISSUED)
+
+    def manifest(row):
+        return json.loads(_members(Path(row["bundle"]))[MANIFEST_NAME])
+
+    # A higher version on disk is not a predecessor, nor is a replay pack.
+    T.build([str(v030)], out, **kw)
+    (out / "x10b-drill-v0.0.9.replay.tar.gz").write_bytes(b"not a policy bundle")
+    [first] = T.build([str(v010)], out, **kw)
+    m = manifest(first)
+    assert first["ok"] and first["previous_version"] is None, first
+    assert "changelog_diff" not in m and m["changelog"].startswith(T.FIRST_VERSION), m
+    assert "x10b-drill" in m["changelog"], m["changelog"]
+
+    T.build([str(v011)], out, **kw)
+    [row] = T.build([str(v020)], out, **kw)
+    m = manifest(row)
+    old = load_policy(v011, runtime=False)
+    assert row["ok"] and row["previous_version"] == "x10b-drill-v0.1.1.tar.gz", row
+    diff = m["changelog_diff"]
+    assert diff["against"] == {"policy_id": "x10b-drill", "version": "0.1.1",
+                               "policy_hash": old.policy_hash}, diff
+    assert diff["changed"] == {"alt-band": ["alt_max_m"]} and diff["policy_fields"] == ["version"]
+    assert m["changelog"] == B.diff_text(diff), m["changelog"]
+    assert m["changelog"].startswith("against x10b-drill 0.1.1 (")
+    assert check_bundle(Path(row["bundle"]), trust).verified
+    assert T.check_one(str(v020), out, trust)["ok"]
+
+    # --check: the bundle the tool used to write (free text, no diff) is BAD
+    # once a previous version exists; a first version without one is fine.
+    legacy = Path(tempfile.mkdtemp(prefix="x10b_legacy_"))
+    for f in (v011, v020):
+        pol = load_policy(f, runtime=False)
+        B.write_bundle(pol, legacy / f"{pol.policy_id}-v{pol.version}.tar.gz",
+                       f"flight bundle of {f.name}", issued_at=ISSUED, signer=signer)
+    assert T.check_one(str(v011), legacy, trust)["ok"]
+    bad = T.check_one(str(v020), legacy, trust)
+    assert not bad["ok"] and "no changelog_diff" in bad["why"], bad
+    assert "x10b-drill-v0.1.1.tar.gz" in bad["why"], bad["why"]
+
+    # --previous NAME=FILE wins over the folder, and --check follows it.
+    other = Path(tempfile.mkdtemp(prefix="x10b_map_"))
+    for f in (v011, v020):
+        pol = load_policy(f, runtime=False)
+        B.write_bundle(pol, other / f"{pol.policy_id}-v{pol.version}.tar.gz",
+                       "x", issued_at=ISSUED, signer=signer)
+    [mapped] = T.build([str(v020)], other, previous={"x10b-drill": str(v010)}, **kw)
+    assert mapped["previous_version"] == v010.name, mapped
+    assert manifest(mapped)["changelog_diff"]["against"]["version"] == "0.1.0"
+    assert T.check_one(str(v020), other, trust, previous={"x10b-drill": str(v010)})["ok"]
+    wrong = T.check_one(str(v020), other, trust)
+    assert not wrong["ok"] and "against 0.1.0" in wrong["why"] and "0.1.1" in wrong["why"], wrong
+    try:
+        T.build([str(v020)], other, previous={v020.stem: str(v030)}, **kw)
+    except ValueError as e:
+        assert "is not below 0.2.0" in str(e), e
+    else:
+        raise AssertionError("a newer version was taken as the previous one")
+
+    # An unsigned predecessor stops the build: never "first version" over it.
+    unsigned = Path(tempfile.mkdtemp(prefix="x10b_unsigned_"))
+    pol = load_policy(v011, runtime=False)
+    B.write_bundle(pol, unsigned / "x10b-drill-v0.1.1.tar.gz", "x",
+                   issued_at=ISSUED, signer=None)
+    try:
+        T.build([str(v020)], unsigned, **kw)
+    except ValueError as e:
+        assert "x10b-drill-v0.1.1.tar.gz" in str(e) and "unsigned" in str(e), e
+    else:
+        raise AssertionError("built over an unsigned predecessor")
+    assert not (unsigned / "x10b-drill-v0.2.0.tar.gz").exists()
+
+    # The command line: --previous parses, and --check exits 1 on the BAD one.
+    with _env(VLAGUARD_TRUST_STORE=str(trust)):
+        assert T.main([str(v020), "--check", "--out-dir", str(legacy)]) == 1
+        assert T.main([str(v020), "--check", "--out-dir", str(out)]) == 0
+        assert T.main([str(v020), "--check", "--out-dir", str(other),
+                       "--previous", f"x10b-drill={v010}"]) == 0
+        try:
+            T.main([str(v020), "--check", "--previous", "no-equals-sign"])
+        except SystemExit as e:
+            assert e.code == 2
+        else:
+            raise AssertionError("--previous without NAME=FILE was accepted")
+
+
 if __name__ == "__main__":
     # A test that cannot run here (no `cryptography`) prints SKIP, never PASS.
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
