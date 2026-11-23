@@ -31,6 +31,13 @@ What is pinned here:
     `identical`, the Shield's X8 verdict compared per tick; the same rows
     without it keep the old refusal word for word; a changed setpoint sent
     reads `differs` at position_lost;
+  * a run under the ROS 2 node's GPS noise / latency (PerceptionStress,
+    rows with `shield_pose`, 2026-11-21) replays `identical` on the pose
+    the Shield was handed, rebuilt to the node's own doubles; with that
+    record taken off (the true pose, the replay before 2026-11-23) it reads
+    class `decision`; shield_pose on some rows only is refused; without
+    trajectory.json the rows' 0.1 mm shield_pose is handed on with a limit;
+    the node's own stressed run folder replays identical in process;
   * a subject_standoff run with a DECLARED subject that metrics.json records
     replays identical (set_subject as the node set it); with no record of
     the subject's class it is not_replayable;
@@ -92,6 +99,9 @@ _CACHE: dict = {}
 # a valid fix, and those with the autopilot's estimator declared lost.
 DROPOUT_FIX = (24, 52)
 DROPOUT_EST = (44, 47)
+# The synthetic perception stressors (_rail_run perception=): sigma (m),
+# latency (ticks), seed.
+PERCEPTION = (1.5, 2, 1001)
 
 
 def _tmp(prefix: str) -> Path:
@@ -128,7 +138,7 @@ def _head_holds_this_code() -> str | None:
 def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
               subject: tuple | None = None, record_subject: bool = True,
               two_edits: bool = False, clear_response: dict | None = None,
-              dropout: bool = False) -> None:
+              dropout: bool = False, perception: tuple | None = None) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
     inside), its audit written by AuditLogger as the rail writes it.
     `subject` (x, y, class): a DECLARED subject set once before the first
@@ -145,7 +155,11 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     the rest the Shield's answer) on a jittered real-time pipe clock read
     through guardrail.replay.PipeRecorder, and every row logs fix_ok,
     estimator_ok, position_lost and the pipe (`note_flown`), as the ROS 2
-    node does."""
+    node does. `perception` (sigma, latency_ticks, seed): the ROS 2 node's
+    perception stressors (2026-11-21, WP3-19), the Shield handed the pose
+    the node's own PerceptionStress makes of the true one each tick, every
+    row logging `shield_pose` and `pos_sigma_m` and metrics.json
+    `perception_stress`, as the node writes them."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
@@ -165,6 +179,7 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
         sh = rail_shield(pol, lookahead_s=5.0, dt=0.1, **kw)
     if subject:
         sh.set_subject(*subject)
+    ps = _node_module().PerceptionStress(*perception) if perception else None
     (run / "policy_g0.json").write_bytes(sh.policy.canonical_bytes())
     logger = AuditLogger.in_memory(sh.policy, episode_id="1234")
     rows, traj, audit = [], [], []
@@ -201,8 +216,13 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
             wall[0] = 1000.0 + 1 / 3 + 0.1 * k + 0.013 * math.sin(k)
             pipe.begin_tick()
             wall[0] += 0.021 + 0.004 * math.cos(k)
-        d = sh.filter(State(x=hx, y=hy, up=up, yaw_deg=yaw,
-                            **{q: v for q, v in quality.items() if v is not None}), raw)
+        seen = None
+        if ps is not None:
+            seen = ps.apply(State(x=hx, y=hy, up=up, yaw_deg=yaw))
+            d = sh.filter(seen, raw)
+        else:
+            d = sh.filter(State(x=hx, y=hy, up=up, yaw_deg=yaw,
+                                **{q: v for q, v in quality.items() if v is not None}), raw)
         if dropout:
             reads = pipe.end_tick()
             wall[0] += 0.017 + 0.003 * (k % 3)
@@ -226,7 +246,7 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
                      "touched": bool(d.touched), "braked": bool(d.braked),
                      "generation": sh.policy.generation, "policy_hash": sh.policy.policy_hash,
                      **({"tgt_x": subject[0], "tgt_y": subject[1]} if subject else {}),
-                     **quality})
+                     **quality, **(ps.row_fields(seen) if seen is not None else {})})
         traj.append({"t": round(k * 0.1, 2), "x": hx, "y": hy, "up": up})
         x, y, up = x + 0.1 * d.emitted.vx, y + 0.1 * d.emitted.vy, up + 0.1 * d.emitted.vz_up
     with (run / "flight_log.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
@@ -241,12 +261,41 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
                                else {})},
         **({"subject": {"class": subject[2], "x": subject[0], "y": subject[1],
                         "position_source": "declared"}} if subject and record_subject
-           else {})}), encoding="utf-8")
+           else {}),
+        **({"perception_stress": ps.summary()} if ps is not None else {})}),
+        encoding="utf-8")
     (run / "manifest.json").write_text(json.dumps({
         "code_revision": rev, "policy_hash": pol.policy_hash, "random_seed": 0,
         "sim_speedup": 1.0, "topology": "dev"}), encoding="utf-8")
     assert len(audit) > 10 and {r["generation"] for r in rows} == (
         {0, 2} if two_edits else {0, 1}), "the synthetic flight gave the Shield nothing to audit"
+
+
+def _node_module():
+    """sitl/ros2_shield_node.py (its PerceptionStress), as tests/test_sweep.py
+    imports it."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as N
+    return N
+
+
+def _strip_perception(run: Path, rows: range | None = None) -> None:
+    """Take the perception stressors' record off `run` (every row's
+    shield_pose and pos_sigma_m, and metrics.json perception_stress) - what
+    the replay before 2026-11-23 read: the true pose - or, given `rows`, only
+    those rows' shield_pose."""
+    p = run / "flight_log.jsonl"
+    lines = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    for i, r in enumerate(lines):
+        if rows is None or i in rows:
+            r.pop("shield_pose", None)
+            if rows is None:
+                r.pop("pos_sigma_m", None)
+    p.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    if rows is None:
+        m = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+        m.pop("perception_stress")
+        (run / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
 
 
 def _headless_bundle(ep_dir: Path, rev: str, sid: str = "nfz-head-on") -> None:
@@ -332,6 +381,17 @@ def _replayed() -> dict | str:
     shutil.copytree(root / "rail_dropout", root / "rail_dropout_sent_edit")
     _edit_jsonl(root / "rail_dropout_sent_edit" / "flight_log.jsonl", DROPOUT_FIX[0] + 5,
                 lambda r: r["note_flown"].__setitem__("vx", r["note_flown"]["vx"] + 2.0))
+    # GPS noise and latency on the pose the Shield was handed (the ROS 2
+    # node's perception stressors, 2026-11-21); the same run with the record
+    # taken off (the replay before 2026-11-23: the true pose); with one row's
+    # shield_pose missing; with no trajectory.json (the log's 1 mm)
+    _rail_run(root / "rail_gps_noise", rev, perception=PERCEPTION)
+    shutil.copytree(root / "rail_gps_noise", root / "rail_gps_noise_true_pose")
+    _strip_perception(root / "rail_gps_noise_true_pose")
+    shutil.copytree(root / "rail_gps_noise", root / "rail_gps_noise_one_row")
+    _strip_perception(root / "rail_gps_noise_one_row", range(40, 41))
+    shutil.copytree(root / "rail_gps_noise", root / "rail_gps_noise_no_traj")
+    (root / "rail_gps_noise_no_traj" / "trajectory.json").unlink()
     # the replay bundle alone: a folder holding nothing but <run>.replay.tar.gz
     from guardrail.replay import last_generation_policy, write_replay
     (root / "tar_only").mkdir()
@@ -681,6 +741,117 @@ def test_the_ros2_nodes_own_dropout_run_replays_identical_on_the_pipe_it_logged(
         assert str(e) == OLD_PIPE_REFUSAL.format(35, 0), str(e)
     else:
         raise AssertionError("rows without note_flown were replayed, not refused")
+
+
+def test_a_gps_noise_run_replays_identical_on_the_pose_the_shield_was_handed():
+    """WP3-19 / WP4-11 (2026-11-23): under the ROS 2 node's perception
+    stressors (--gps-noise-m / --latency-ticks, PerceptionStress) the Shield
+    judged a degraded pose, logged per row as `shield_pose` beside the true
+    x, y, up. The replay hands the Shield that pose - the doubles rebuilt
+    from trajectory.json and the recorded seed, sigma and latency, as the
+    node drew them, with its pos_sigma_m and the current heading - and the
+    run replays `identical`. The same run with the record taken off (what
+    the replay read before: the true pose) differs in the Shield's decisions
+    (class `decision`, as all 60 gps-noise runs of ntFIN4 did); a run with
+    shield_pose on some rows only is refused; with no trajectory.json the
+    rows' shield_pose itself (0.1 mm) is handed on, and a limit says so."""
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    rows = [json.loads(x) for x in (_CACHE["root"] / "rail_gps_noise" / "flight_log.jsonl")
+            .read_text(encoding="utf-8").splitlines()]
+    off = max(math.hypot(r["shield_pose"][0] - r["x"], r["shield_pose"][1] - r["y"])
+              for r in rows)
+    assert off > 1.0 and all(r["pos_sigma_m"] == PERCEPTION[0] for r in rows), off
+    r = out["rail_gps_noise"]
+    assert r["verdict"] == "identical" and r["kind"] == "open_loop", r.get("first_difference")
+    assert r["state_source"].startswith("rebuilt as the node built it"), r["state_source"]
+    assert r["shield"]["perception_stress"]["seed"] == PERCEPTION[2], r["shield"]
+    assert r["audit"]["n_replayed"] == r["audit"]["n_stored"] > 10, r["audit"]
+    assert "perception_stress" not in out["rail_ok"]["shield"], out["rail_ok"]["shield"]
+    t = out["rail_gps_noise_true_pose"]
+    assert t["verdict"] == "differs" and t["difference_class"] == "decision", t
+    o = out["rail_gps_noise_one_row"]
+    assert o["verdict"] == "not_replayable", o
+    assert o["why"] == ("the pose the Shield judged is not logged on every row: 79 of 80 "
+                        "row(s) carry a shield_pose and metrics.json perception_stress says "
+                        "it was applied"), o["why"]
+    n = out["rail_gps_noise_no_traj"]
+    assert n["state_source"].startswith("the rows' shield_pose (rounded to 0.1 mm)"), n
+    assert any(x.startswith("the pose the Shield was handed is the rows' shield_pose, "
+                            "rounded to 0.1 mm") for x in n["limits"]), n["limits"]
+
+
+def test_the_ros2_nodes_own_gps_noise_run_replays_identical_on_its_shield_pose():
+    """sitl/ros2_shield_node.py on the stand-in ROS stack with --gps-noise-m
+    and --latency-ticks, the pilot asking 2 m/s north into nfz-square: the
+    run folder the node wrote (rows with shield_pose and pos_sigma_m,
+    metrics.json perception_stress) replays open loop at this checkout
+    `identical`; with the record taken off it differs, class `decision`."""
+    import test_sitl_stressors as TS
+    R, N = TS._node_module()
+    node, clk, out = TS._node(R, N, ["--gps-noise-m=1.5", "--latency-ticks=2",
+                                     "--seed=1001"])
+    _TMP.append(out)
+    node.start_mission()
+    for k in range(60):
+        node._on_fix(N.NavSatFix(status=R._Msg(status=0)))
+        node._on_pose(R._pose_msg(N, node.state))
+        R._act(N, node, vx=2.0)
+        clk.t += 0.1
+        node._tick()
+        node.state = node.state.model_copy(update={"x": node.state.x + 0.2 + 1e-4 * k})
+    with contextlib.redirect_stdout(io.StringIO()):
+        node._finish("test over")
+    rows = node.rows
+    assert all(isinstance(r.get("shield_pose"), list) for r in rows), rows[0]
+    assert any(r.get("touched") for r in rows), "the Shield never touched: nothing to judge"
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["perception_stress"]["applied"] and m["perception_stress"]["seed"] == 1001
+    rec = RA._open_loop(out, ROOT)
+    assert rec["verdict"] == "identical", rec["first_difference"]
+    assert rec["state_source"].startswith("rebuilt as the node built it"), rec["state_source"]
+    _strip_perception(out)
+    rec = RA._open_loop(out, ROOT)
+    assert rec["verdict"] == "differs" and rec["difference_class"] == "decision", rec
+
+
+def test_the_perceived_pose_is_rebuilt_to_the_nodes_own_doubles():
+    """replay_at_revision.perceived_poses: fed the true poses' doubles and
+    the node's metrics.json record, it gives back exactly the doubles the
+    node's PerceptionStress handed the Shield (noise and latency together,
+    and each alone) and its pos_sigma_m; a run without the record gives
+    None (the true pose, as before); shield_pose on some rows only is
+    refused; positions to 1 mm hand on the rows' shield_pose."""
+    N = _node_module()
+    from guardrail.models import State
+    poses = [State(x=-30.0 + 0.4 * i + 1e-4 * i, y=23.6 + 1 / 3, up=15.0 + 0.01 * i,
+                   yaw_deg=float(i)) for i in range(40)]
+    pos = [(p.x, p.y, p.up) for p in poses]
+    for sigma, lat in ((0.3, 0), (2.0, 5), (0.0, 3)):
+        ps = N.PerceptionStress(sigma, lat, 1001)
+        seen = [ps.apply(p) for p in poses]
+        rows = [{"tick": i + 1, "x": round(p.x, 3), "y": round(p.y, 3), "up": round(p.up, 3),
+                 **ps.row_fields(s)} for i, (p, s) in enumerate(zip(poses, seen))]
+        met = {"perception_stress": ps.summary()}
+        got = RA.perceived_poses(rows, pos, met, True)
+        assert got["poses"] == [(s.x, s.y, s.up) for s in seen], (sigma, lat)
+        assert got["pos_sigma_m"] == [s.pos_sigma_m for s in seen], (sigma, lat)
+        assert got["limits"] == [] and got["source"].startswith("rebuilt"), got["limits"]
+        rough = RA.perceived_poses(rows, [(r["x"], r["y"], r["up"]) for r in rows], met, False)
+        assert rough["poses"] == [tuple(r["shield_pose"]) for r in rows]
+        assert rough["limits"] and "1 mm" in rough["limits"][0], rough["limits"]
+        try:
+            RA.perceived_poses([{**r, **({"shield_pose": None} if i == 7 else {})}
+                                for i, r in enumerate(rows)], pos, met, True)
+        except RA.Refused as e:
+            assert "39 of 40 row(s)" in str(e), str(e)
+        else:
+            raise AssertionError("shield_pose on some rows only was replayed")
+    plain = [{"tick": i + 1, "x": p[0], "y": p[1], "up": p[2]} for i, p in enumerate(pos)]
+    assert RA.perceived_poses(plain, pos, {}, True) is None
+    assert RA.perceived_poses(plain, pos, {"perception_stress": {"applied": False}},
+                              True) is None
 
 
 def test_the_pipe_recorder_keeps_the_filters_readings_and_what_was_sent():

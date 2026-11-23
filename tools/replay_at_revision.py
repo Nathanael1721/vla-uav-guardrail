@@ -78,7 +78,16 @@ TWO REPLAYS, BY WHAT THE EPISODE IS
              readings handed to its filter in order, then what the rail
              sent noted at its pipe time (Shield.note_flown), so the dead
              reckoning of a lost fix or estimator and the clearance pipe
-             are rebuilt as flown.
+             are rebuilt as flown. Under the ROS 2 node's perception
+             stressors (--gps-noise-m / --latency-ticks, PerceptionStress,
+             since 2026-11-21: every row logs `shield_pose`, metrics.json
+             `perception_stress`) the Shield judged a degraded pose, not the
+             true one: the replay hands it that pose with the node's
+             pos_sigma_m and the current heading, the doubles rebuilt as
+             the node drew them (trajectory.json's positions, the recorded
+             seed, sigma and latency) when every row's rebuilt pose rounds
+             to its shield_pose, else the rows' shield_pose (0.1 mm, a
+             limit); shield_pose on some rows only is refused.
              Compared:
                shield_audit.jsonl    every record, bit for bit (JSON text),
                                      except `ts` and the `fsm_*` fields: the
@@ -208,6 +217,14 @@ VELOCITY_USED_KEYS = ("velocity_ticks", "shield_velocity_ticks")
 # the tick's filter. Named here, not imported: the driver runs older
 # revisions that have no such constant.
 PIPE_ROW_KEY = "note_flown"
+# The ROS 2 node's perception stressors (sitl/ros2_shield_node.py
+# PerceptionStress, since 2026-11-21): the generator and draw order its
+# metrics.json perception_stress names, and the decimals of a row's
+# `shield_pose`. Named here, not imported: the node module pulls in the
+# whole rail stack, and a run's metrics.json says which generator it drew.
+PERCEPTION_RNG = "random.Random(f'{seed}:gps')"
+PERCEPTION_DRAW_ORDER = ["x", "y", "up"]
+SHIELD_POSE_ROUND = 4
 
 
 class Refused(Exception):
@@ -1111,6 +1128,110 @@ def _flown_on(metrics: dict) -> dict | None:
     return out or None
 
 
+def _finite(v: Any) -> bool:
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and v == v and v not in (float("inf"), float("-inf")))
+
+
+def perceived_poses(rows: list[dict], pos: list[tuple], metrics: dict,
+                    pos_exact: bool) -> dict | None:
+    """The pose the Shield was handed on each row of a run flown under the
+    ROS 2 node's perception stressors (sitl/ros2_shield_node.py
+    PerceptionStress, --gps-noise-m / --latency-ticks, WP3-19, since
+    2026-11-21), or None for a run without them (no row logs `shield_pose`
+    and metrics.json records no perception_stress applied): the replay then
+    hands the Shield the true pose, as before.
+
+    The node hands its Shield, per tick, the true pose of latency_ticks rows
+    ago (the first until the line fills) plus white Gaussian noise of sigma
+    gps_noise_m on x, y and up drawn from random.Random(f"{seed}:gps") in
+    that order, the CURRENT heading, and pos_sigma_m = sigma (None at sigma
+    0); the row logs that pose rounded to 0.1 mm (`shield_pose`) and
+    `pos_sigma_m`. The doubles the Shield read are rebuilt here as the node
+    built them, from the positions' own doubles (`pos`, trajectory.json:
+    `pos_exact`) and metrics.json perception_stress (sigma, latency, seed,
+    the generator and draw order it names), and used only when every row's
+    rebuilt pose rounds to the row's shield_pose; otherwise the rows'
+    shield_pose itself is handed on (0.1 mm, a limit says so). Standard
+    library only: the driver runs this under the flown revision's path.
+
+    Returns {"poses": [(x, y, up)], "pos_sigma_m": [float | None],
+    "source", "record", "limits"}; raises Refused when the record is
+    incomplete (shield_pose on some rows only, or perception_stress applied
+    and no row logs it)."""
+    import random
+    ps = metrics.get("perception_stress")
+    applied = isinstance(ps, dict) and ps.get("applied") is True
+    logged = [r.get("shield_pose") for r in rows]
+    has = [isinstance(p, list) and len(p) == 3 and all(_finite(v) for v in p)
+           for p in logged]
+    if not applied and not any("shield_pose" in r for r in rows):
+        return None
+    if not all(has):
+        raise Refused(f"the pose the Shield judged is not logged on every row: {sum(has)} of "
+                      f"{len(rows)} row(s) carry a shield_pose"
+                      + (" and metrics.json perception_stress says it was applied"
+                         if applied else ""))
+    sigmas: list = []
+    for r in rows:
+        s = r.get("pos_sigma_m") if "pos_sigma_m" in r else (
+            ps.get("pos_sigma_m") if applied else None)
+        if s is not None and not (_finite(s) and s > 0):
+            raise Refused(f"tick {r.get('tick')} logs a pos_sigma_m of {s!r} beside its "
+                          f"shield_pose")
+        sigmas.append(None if s is None else float(s))
+    limits: list[str] = []
+    record: dict = {"applied": applied}
+    poses = None
+    why = None
+    if not applied:
+        why = "metrics.json records no perception_stress applied (no seed to rebuild from)"
+    elif not pos_exact:
+        why = "the positions are the log's 1 mm (no trajectory.json with one point per row)"
+    else:
+        sigma, lat, seed = ps.get("gps_noise_m"), ps.get("latency_ticks"), ps.get("seed")
+        record.update(gps_noise_m=sigma, latency_ticks=lat, seed=seed)
+        if not (_finite(sigma) and sigma >= 0 and isinstance(lat, int)
+                and not isinstance(lat, bool) and lat >= 0
+                and isinstance(seed, int) and not isinstance(seed, bool)):
+            why = (f"metrics.json perception_stress does not say sigma, latency and seed "
+                   f"({sigma!r}, {lat!r}, {seed!r})")
+        elif ps.get("rng", PERCEPTION_RNG) != PERCEPTION_RNG or \
+                list(ps.get("draw_order", PERCEPTION_DRAW_ORDER)) != PERCEPTION_DRAW_ORDER:
+            why = (f"metrics.json perception_stress names another generator or draw order "
+                   f"({ps.get('rng')!r}, {ps.get('draw_order')!r})")
+        else:
+            s = float(sigma)
+            rng = random.Random(f"{seed}:gps")
+            cand = []
+            for i in range(len(rows)):
+                ox, oy, ou = pos[max(0, i - lat)]
+                # The node's order: x, then y, then up; nothing drawn at 0.
+                nx = rng.gauss(0, s) if s else 0.0
+                ny = rng.gauss(0, s) if s else 0.0
+                nu = rng.gauss(0, s) if s else 0.0
+                cand.append((ox + nx, oy + ny, ou + nu))
+            bad = next((i for i, (c, p) in enumerate(zip(cand, logged))
+                        if [round(v, SHIELD_POSE_ROUND) for v in c] != p), None)
+            if bad is None:
+                poses = cand
+            else:
+                why = (f"the pose rebuilt from trajectory.json and the seed does not round to "
+                       f"row {bad}'s shield_pose (tick {rows[bad].get('tick')}: "
+                       f"{[round(v, SHIELD_POSE_ROUND) for v in cand[bad]]} vs {logged[bad]})")
+    if poses is not None:
+        source = ("rebuilt as the node built it (trajectory.json's doubles, the recorded "
+                  "seed, sigma and latency), every row rounding to its shield_pose")
+    else:
+        poses = [(float(p[0]), float(p[1]), float(p[2])) for p in logged]
+        source = "the rows' shield_pose (rounded to 0.1 mm)"
+        limits.append(f"the pose the Shield was handed is the rows' shield_pose, rounded to "
+                      f"0.1 mm, not the doubles it read: {why}")
+    record["shield_pose"] = source
+    return {"poses": poses, "pos_sigma_m": sigmas, "source": source, "record": record,
+            "limits": limits}
+
+
 def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
     import inspect
     from datetime import datetime as _dt
@@ -1401,10 +1522,22 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
             pos.append(got)
     state_source = "trajectory.json (the position's own doubles)" if pos else \
         "flight_log.jsonl (rounded to 1 mm)"
+    pos_exact = pos is not None
     if pos is None:
         pos = [(float(r["x"]), float(r["y"]), float(r["up"])) for r in rows]
         limits.append("positions are the flight log's, rounded to 1 mm (no trajectory.json "
                       "with one point per row)")
+    # The pose the Shield was handed under the node's perception stressors
+    # (GPS noise / latency, since 2026-11-21): the Shield judged that pose,
+    # not the true one the rows and trajectory.json carry.
+    perceived = perceived_poses(rows, pos, metrics, pos_exact)
+    if perceived is not None:
+        limits.extend(perceived["limits"])
+        if any(s is not None for s in perceived["pos_sigma_m"]) and \
+                "pos_sigma_m" not in state_fields:
+            raise Refused("the rows log the pos_sigma_m the Shield was handed, and this "
+                          "revision's State has no pos_sigma_m")
+        state_source = f"{perceived['source']} (the perception stressors' pose)"
 
     arm = str(metrics.get("shield") or "on")
     shield_on = arm != "off"
@@ -1445,7 +1578,15 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
         if stored is not None and isinstance(stored.get("body_yaw_deg"), (int, float)):
             yaw = stored["body_yaw_deg"]
             yaw_exact += 1
-        sk = {"x": pos[i][0], "y": pos[i][1], "up": pos[i][2], "yaw_deg": float(yaw)}
+        if perceived is not None:
+            # As the node built it: the perceived position, the current
+            # heading, the sigma it reported (None: not reported).
+            px, py, pu = perceived["poses"][i]
+            sk = {"x": px, "y": py, "up": pu, "yaw_deg": float(yaw)}
+            if perceived["pos_sigma_m"][i] is not None:
+                sk["pos_sigma_m"] = perceived["pos_sigma_m"][i]
+        else:
+            sk = {"x": pos[i][0], "y": pos[i][1], "up": pos[i][2], "yaw_deg": float(yaw)}
         for k in ("fix_ok", "estimator_ok"):
             if k in state_fields and isinstance(row.get(k), bool):
                 sk[k] = row[k]
@@ -1591,7 +1732,9 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
                 "first_difference": first_log},
         "generations": sorted(set(gens)),
         "arm": arm,
-        "shield": {**cfg, "clock": "pinned per tick" if clocks else "none"},
+        "shield": {**cfg, "clock": "pinned per tick" if clocks else "none",
+                   **({} if perceived is None
+                      else {"perception_stress": perceived["record"]})},
         "state_source": state_source,
         "flown_on": _flown_on(metrics),
         # Each generation change on the rows and how the replay committed
