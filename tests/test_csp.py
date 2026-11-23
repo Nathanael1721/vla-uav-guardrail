@@ -1660,6 +1660,52 @@ def test_a_template_with_a_missing_variable_raises_instead_of_printing_blank():
     raise AssertionError("a template rendered with no variables")
 
 
+def test_prewarm_loads_every_template_and_none_is_read_again():
+    """compiler.prewarm_templates (2026-11-23, THE HOT-APPLY TICK in
+    sitl/ros2_shield_node.py): every .j2 under TEMPLATE_DIR is loaded and
+    compiled at once, and the environment does not re-check a cached
+    template against its file (auto_reload off) - so a CSP compiled
+    mid-flight, for a rule type the take-off policy did not have, reads no
+    template from disk. On ntFIN4 the first spawn's CSP loaded
+    reason/dynamic_nfz.j2 and sentence/dynamic_nfz.j2 cold inside the tick."""
+    _need()
+    names = K.prewarm_templates()
+    on_disk = sorted(p.relative_to(K.TEMPLATE_DIR).as_posix()
+                     for p in K.TEMPLATE_DIR.rglob("*.j2"))
+    assert names == on_disk and len(names) > 30, (names, on_disk)
+    assert {"reason/dynamic_nfz.j2", "sentence/dynamic_nfz.j2",
+            "summary/dynamic_nfz.j2"} <= set(names)
+    env = K._env()
+    assert env.auto_reload is False
+    loader, reads = env.loader, []
+    real = loader.get_source
+
+    def counting(environment, template):
+        reads.append(template)
+        return real(environment, template)
+    loader.get_source = counting
+    try:
+        for n in names:
+            env.get_template(n)
+    finally:
+        loader.get_source = real
+    assert reads == [], f"templates read from disk after the pre-warm: {reads}"
+    # And the CSP of a policy with a dynamic_nfz compiles with no read either.
+    from guardrail.models import DynamicNFZ, XY
+    pol = load_policy(DEMO)
+    pol.constraints = list(pol.constraints) + [DynamicNFZ(
+        id="dyn-warm", type="dynamic_nfz", **HARD_P0, margin_m=1.0,
+        vertices=[XY(x=40, y=40), XY(x=45, y=40), XY(x=45, y=45), XY(x=40, y=45)])]
+    loader.get_source = counting
+    try:
+        c = ConstraintCompiler(pol)
+        csp = c.compile_csp(c.parse_command("go to (30, 30) altitude 15"))
+    finally:
+        loader.get_source = real
+    assert reads == [], reads
+    assert "dyn-warm" in json.dumps(csp, default=str), csp
+
+
 # --------------------------------------------------------------------------- #
 # WP2-16: multi-scale geometry and geometry_ref
 # --------------------------------------------------------------------------- #
