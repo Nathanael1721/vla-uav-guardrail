@@ -1,0 +1,7 @@
+wrote docs/data/kpi_ntFIN4/kpi_report_ntFIN4_2026-11-23.md and docs/data/kpi_ntFIN4/kpi_report_ntFIN4_2026-11-23.json
+654 episodes (653 KPI-grade), 0 inputs skipped
+single_sha over the KPI-grade flights (report only): true 653, false 0, pending 0, missing 0
+P0 escape rate: 0.0 Shield on (0 escapes, 650 flights) vs 0.65 Shield-off control
+fail-safe trigger correctness (adopted reading (r2) of docs/data/kpi_ntFIN4/rescore_r2_ntFIN4.json): 648/648 = 1.0, Wilson 95 % low 0.994107; 18 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (counted since 2026-11-15). The same runs read as before that rule (18 left out as censored): 1.000 (630/630), Wilson 95 % low 0.994; counted as not triggered: 0.972 (630/648), Wilson 95 % low 0.957
+against docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.json: 433 new failures (0 regressions), 0 fixed, 409 gone
+reproduce: python tools/kpi_report.py --campaign demo/out/hil_ntFIN4 --rescore-rail docs/data/kpi_ntFIN4/rescore_r2_ntFIN4.json --out docs/data/kpi_ntFIN4/kpi_report_ntFIN4_2026-11-23 --baseline docs/data/kpi_ntFIN3/kpi_report_ntFIN3_2026-11-21.json

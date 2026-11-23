@@ -16,6 +16,19 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-22 (flown: the 22 Nov code at 59e19a5 - shakedowns, the smoke smFIN2 and the nightly ntFIN4) — the new code on the hil rig: nightly P0 escape 0 over 650 Shield-on flights, fail-safe trigger correctness 648/648 = 1.000 (Wilson 95 % low 0.994) under the adopted reading, the GPS-noise cells flown on the rail, SET_MODE LOITER flown; one tick of 183,909 at 105.5 ms
+
+#### Flown
+- Shakedowns (`docs/data/shakedown_20261122/`): sk1122a (hil, 72 missions): fail-safe 72/72, P0 escape 0; rotate-spin 9/9 without a fail-safe; the 60 GPS-noise / latency cells applied on the companion as their records say (36 within-margin successes, 24 beyond-margin fail-safes, as labelled); empty shield_audit.jsonl on the zero-repair runs; /guardrail/manifest frames identical to manifest.json on 72 of 72 bags. sk1122b (hil, `--rail-hold loiter`, 2 missions): ArduCopter LOITER held 29.9 s on both, altitude within 0.021 m and 0.005 m, the throttle stand-in accepted (301 of 301 RC3 reports at 1500). MSL ridge on the SITL rail: 2 of 2 reached the pad with the goto pilot's terrain feed, no Loiter or RTL.
+- smFIN2 (59e19a5, hil, smoke, `--hil-controls`; 6345.9 s): 52 missions flown, all KPI-grade (`docs/data/kpi_smFIN2/`): P0 escape 0 (2239 P0-violation ticks, 51 flights; control 0.65); fail-safe (r2) 51/51 = 1.000; `tick_ms` max 72.91 ms, 0 of 15,662 ticks over 100 ms.
+- ntFIN4 (59e19a5, hil, nightly, `--hil-controls`; 78,879.2 s): 744 episodes planned, 654 missions flown, 90 refused; 653 KPI-grade (one dyn-nfz-translate run refused by the setpoint-delivery rule: its adapter handed nothing to MAVROS for 25 s). `docs/data/kpi_ntFIN4/`:
+  - P0 violation escape rate **0** (0 on 17,078 P0-violation ticks, 650 Shield-on flights; control 0.6500, passthrough null 0.1935).
+  - Fail-safe trigger correctness (r2) **648/648 = 1.000, Wilson 95 % low 0.994** (meets 99 % at the point and at 95 % confidence); 18 triggered by the GeoFence backstop, all expected; 630/630 as before the backstop rule, 630/648 with those counted as not triggered; (r) 636/648, (a) 573/648. Left out: ntFIN4_374 and ntFIN4_375 corridor-swap-shifted, censored in Loiter.
+  - `tick_ms` p99 28.4 ms, `e2e_ms` p99 28.5 ms; **1 of 183,909 ticks over 100 ms**: ntFIN4_236 dyn-nfz-spawn-ahead, 105.5 ms on the tick that hot-applied the zone, whose generation write and CSP compile ran before the setpoint (87 ms of it; shield_ms 10.6). The code path predates 71aabb3.
+  - Tracked: mission success 287/650, repair success 98.1 % (27,097/27,615 ticks), mean time to safe 3.39 s (169 spells; 95 never recovered), 50.2 repairs per Shield-on mission; single_sha 653/653.
+  - Replay at the flown revision: 305 identical, 298 last float digits, 0 not replayable (the GPS-dropout runs replay), 1 repair-pass-count difference on a float tie (ntFIN4_304, as ntFIN3_306).
+- Track videos for every smFIN2 and ntFIN4 run.
+
 ### 2026-11-22 (code: retreat ray, operators in the body frame, BitVLA loaded on the Orin, six bundle names, legacy loaders, manifest frame in the bag, single_sha, dropout replay, terrain feed-forward, GPS noise on the rail, literal LOITER) — eleven changes for open contract rows, each with tests and a review; none flown yet
 
 #### Changed
