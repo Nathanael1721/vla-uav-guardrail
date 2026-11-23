@@ -348,6 +348,10 @@ def _env():
     autoescape OFF: this is plain text for a model, and HTML escaping would turn
     every quoted rule id into &#39;. StrictUndefined: a template that names a
     variable nobody passed must raise, not print "Keep at least  m away".
+    auto_reload OFF (2026-11-23): the templates ship with the package and
+    nothing edits them while a process runs, so a cached template is not
+    re-checked against its file (an os.stat per get_template) - a rail
+    compiles a generation's CSP mid-flight (prewarm_templates).
     Imported lazily so `parse_command` keeps working where jinja2 is absent
     (it is present in vla-real, vla-drone and the WSL ROS 2 Python).
     """
@@ -363,12 +367,26 @@ def _env():
         env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
             autoescape=False, undefined=jinja2.StrictUndefined,
-            keep_trailing_newline=False)
+            keep_trailing_newline=False, auto_reload=False)
         env.filters["g"] = _fmt_g
         env.filters["m"] = _fmt_m
         env.filters["rate"] = _fmt_rate
         _ENV = env
     return _ENV
+
+
+def prewarm_templates() -> list[str]:
+    """Load and compile every template of the environment now, so none is
+    read from disk and compiled the first time a rule type is rendered.
+    The rails call it at bring-up (2026-11-23): the first mid-flight
+    generation's CSP otherwise loaded its dynamic_nfz templates cold, inside
+    the hil nightly's spawn ticks. The names loaded, sorted. Raises
+    ImportError where jinja2 is absent, as _env() does."""
+    env = _env()
+    names = sorted(n for n in env.list_templates() if n.endswith(".j2"))
+    for n in names:
+        env.get_template(n)
+    return names
 
 
 def render_template(name: str, ctx: dict) -> str:

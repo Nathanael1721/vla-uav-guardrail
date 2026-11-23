@@ -2170,6 +2170,150 @@ def test_scenario_events_reach_the_flying_shield_and_every_record():
     assert met["scenario_family"] == meta["family"]
 
 
+def _slow_generation_writes(node, clk, ms=30.0):
+    """Each generation write (policy file, CSP compile) takes `ms` on the
+    node's clock, as a CSP compile does on the rig."""
+    real = node.rec.write_generation
+
+    def slow(*a, **kw):
+        clk.t += ms / 1000.0
+        return real(*a, **kw)
+    node.rec.write_generation = slow
+
+
+def _hot_kinds(events):
+    """The hot-apply bookkeeping's events, as (kind, generation / reason)."""
+    out = []
+    for e in events:
+        k = e["kind"]
+        if k == "policy_generation" and e["generation"] >= 1:
+            out.append((k, e["generation"]))
+        elif k == "scenario_event":
+            out.append((k, e.get("rule_id")))
+        elif k == "fences_published" and not e["reason"].startswith(("take-off", "fence")):
+            out.append((k, e["generation"]))
+        elif k == "mission_end":
+            out.append((k, None))
+    return out
+
+
+def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_written():
+    """THE HOT-APPLY TICK (2026-11-23; ntFIN4 row 50, 105.5 ms, a spawn's
+    tick). Two scenario spawns in one tick: the Shield has both zones before
+    its filter (generation 2 when the setpoint goes out), and nothing of the
+    bookkeeping is done yet - no policy_g1/g2, no CSP. It runs after the
+    publication, in the order it ran in the tick (each generation's
+    policy_generation before its scenario_event, the fences last), and each
+    generation is written as it stood (g1 one zone, g2 both). Its time
+    (30 ms per generation here) is out of the row's tick_ms and in its
+    tick_phases_ms (deferred, post_publish), whose phases add up to tick_ms
+    up to the publication. Every template was loaded at bring-up. The
+    episode's bundle holds every generation and re-derives its KPIs."""
+    from guardrail import compiler as K
+    from guardrail.replay import EPISODE, read_replay, verify_replay
+    tmp = Path(tempfile.mkdtemp(prefix="hot_apply_tick_"))
+    evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-a", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 40, "anchor": "center"}},
+           {"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-b", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 60, "anchor": "center"}}]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    RN, N, node, clk, out = _scenario_node(
+        ["--start=-100,0,15", "--target=0,0,15", f"--events={tmp / 'events.json'}"])
+    assert node.templates_prewarmed == len(K.prewarm_templates()) > 30
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    seen = []
+    real_pub = node._publish_body
+
+    def pub(a):
+        seen.append({"row": len(node.rows) + 1, "generation": node.policy.generation,
+                     "files": sorted(p.name for p in out.glob("*_g[12].json"))})
+        real_pub(a)
+    node._publish_body = pub
+    _slow_generation_writes(node, clk)
+    _fly(RN, N, node, clk, 6)
+    k = next(i for i, r in enumerate(node.rows) if r["rule_events"])
+    row = node.rows[k]
+    hit = [x for x in seen if x["row"] == k + 1]
+    assert len(hit) == 1, (k, seen)
+    assert hit[0]["generation"] == 2 and hit[0]["files"] == [], hit
+    assert row["generation"] == 2, row["generation"]
+    # Afterwards, every file, each generation as it stood.
+    ids = {g: [c["id"] for c in json.loads((out / f"policy_g{g}.json").read_text(
+        encoding="utf-8"))["constraints"]] for g in (1, 2)}
+    assert "dyn-a" in ids[1] and "dyn-b" not in ids[1], ids
+    assert {"dyn-a", "dyn-b"} <= set(ids[2]), ids
+    assert (out / "csp_g1.json").is_file() and (out / "csp_g2.json").is_file()
+    ev = RN._events(out)
+    assert _hot_kinds(ev) == [("policy_generation", 1), ("scenario_event", "dyn-a"),
+                              ("policy_generation", 2), ("scenario_event", "dyn-b"),
+                              ("fences_published", 2)], _hot_kinds(ev)
+    assert not [e for e in ev if e["kind"] == "csp_failed"], ev
+    # The time: out of tick_ms, in the phases.
+    ph = row["tick_phases_ms"]
+    assert list(ph) == ["pre_shield", "hot_apply", "shield", "fsm", "hold", "publish",
+                        "post_publish", "deferred", "n_deferred"], ph
+    assert ph["n_deferred"] == 7, ph        # 2 writes, 2 events, 2 lines, the fences
+    assert ph["deferred"] >= 60.0 and ph["post_publish"] >= ph["deferred"], ph
+    assert row["tick_ms"] < 30.0, row["tick_ms"]
+    to_pub = sum(ph[x] for x in ("pre_shield", "hot_apply", "shield", "fsm", "hold",
+                                 "publish"))
+    assert abs(to_pub - row["tick_ms"]) < 0.01, (to_pub, row["tick_ms"])
+    assert all(r["tick_phases_ms"]["n_deferred"] == 0 for r in node.rows if r is not row)
+    assert not node._after_publish
+    # The episode's bundle: every generation, and its KPIs re-derived.
+    node._finish("test")
+    bundle = out / f"{out.name}.replay.tar.gz"
+    members = read_replay(bundle)["index"]["members"]
+    for g in (0, 1, 2):
+        for f in (f"policy_g{g}.json", f"csp_g{g}.json"):
+            assert f"{EPISODE}{f}" in members, (f, sorted(members))
+    ok, why = verify_replay(bundle)
+    assert ok, why
+
+
+def test_a_hot_apply_on_the_tick_that_ends_the_episode_is_still_recorded():
+    """THE HOT-APPLY TICK: the --dynamic zone applied on the tick the target
+    is reached. The tick ends the episode before any publication, so its
+    queued bookkeeping is run by _finish: the generation's files and events
+    and the fences, then mission_end, as when it all ran in the tick; the
+    bundle carries generation 1."""
+    from guardrail.replay import EPISODE, read_replay, verify_replay
+    sys.path.insert(0, str(ROOT / "tests"))
+    import test_railinputs_node as RN
+    N = RN._node_module()
+    N.DYNAMIC_AT_S = 0.3                 # this module copy's only
+    clk = RN._Clock()
+    N.time = clk
+    args, _ = N.make_parser().parse_known_args(
+        ["--policy", str(POLICY), "--dev-yaml", "--dynamic", "--start=-100,0,15",
+         "--target=0,0,15"] + RN.HAND_TICKED)
+    out = Path(tempfile.mkdtemp(prefix="hot_apply_end_"))
+    node = N.ShieldNode(args, out)
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _slow_generation_writes(node, clk)
+    _fly(RN, N, node, clk, 2)
+    assert node.spawn_t is None and node.policy.generation == 0
+    _ekf_pose(RN, N, node, north=100.0)               # at the target
+    RN._act(N, node, vx=0.0)
+    clk.t += 0.1
+    node._tick()
+    assert node.done and node.reached and node.spawn_t is not None
+    assert node.policy.generation == 1 and not node._after_publish
+    assert (out / "policy_g1.json").is_file() and (out / "csp_g1.json").is_file()
+    assert _hot_kinds(RN._events(out)) == [("policy_generation", 1),
+                                          ("fences_published", 1),
+                                          ("mission_end", None)], _hot_kinds(RN._events(out))
+    bundle = out / f"{out.name}.replay.tar.gz"
+    members = read_replay(bundle)["index"]["members"]
+    assert f"{EPISODE}policy_g1.json" in members and f"{EPISODE}csp_g1.json" in members
+    ok, why = verify_replay(bundle)
+    assert ok, why
+
+
 def test_every_row_carries_the_rule_clock_and_the_previous_judgement_reads_its_own():
     """Each row records the rule clock's reading it was judged at, and the
     next tick's judgement of the position under the previous rules pins the

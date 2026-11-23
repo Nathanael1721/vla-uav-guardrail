@@ -1711,6 +1711,10 @@ def audit_tick(audit, tick: int, decision, *, fsm_out=None,
         audit.log(tick, decision)
 
 
+# write_generation's default: read the rule clock at the write.
+_UNREAD = object()
+
+
 class EpisodeRecord:
     """One flight's directory: fresh audit, every generation, the event list.
 
@@ -1841,15 +1845,26 @@ class EpisodeRecord:
                     fh.write("".join(lines))
         return len(lines)
 
-    def write_generation(self, reason: str, t: float | None = None) -> dict:
-        g = self.policy.generation
+    def write_generation(self, reason: str, t: float | None = None, *,
+                         policy: Policy | None = None,
+                         clock_reading: Any = _UNREAD) -> dict:
+        """The generation's policy_g<N>.json and csp_g<N>.json, and its
+        `policy_generation` event (a `csp_failed` / `cost_map_failed` before
+        it when one could not be written). `policy` and `clock_reading`
+        (generation_writer's snapshot) stand in for the live policy and a
+        fresh rule-clock reading; by default both are read now."""
+        pol = self.policy if policy is None else policy
+        g = pol.generation
         pol_file = self.dir / f"policy_g{g}.json"
-        pol_file.write_bytes(self.policy.canonical_bytes())
+        pol_file.write_bytes(pol.canonical_bytes())
         csp_file, err = self.dir / f"csp_g{g}.json", None
         cm_ref = cm_err = None
         # ONE clock reading for the CSP and its map (compile_csp refuses a
         # map drawn at any other instant), recorded with the generation.
-        now = self.clock() if self.clock else None
+        if clock_reading is _UNREAD:
+            now = self.clock() if self.clock else None
+        else:
+            now = clock_reading
         if self.mission is None:
             err = "no mission given, so no CSP can be compiled"
             if self.cost_map:
@@ -1857,8 +1872,8 @@ class EpisodeRecord:
         else:
             try:
                 from .compiler import ConstraintCompiler
-                comp = (ConstraintCompiler(self.policy) if self.ground is None
-                        else ConstraintCompiler(self.policy, ground=self.ground))
+                comp = (ConstraintCompiler(pol) if self.ground is None
+                        else ConstraintCompiler(pol, ground=self.ground))
                 kw = {} if self.lookahead_s is None else {
                     "lookahead_s": self.lookahead_s}
                 cm = None
@@ -1882,7 +1897,7 @@ class EpisodeRecord:
                     comp.write_csp(csp_file, self.mission, now=now, **kw)
             except Exception as exc:                          # noqa: BLE001
                 err = f"{type(exc).__name__}: {exc}"
-        row = {"generation": g, "policy_hash": self.policy.policy_hash,
+        row = {"generation": g, "policy_hash": pol.policy_hash,
                "reason": reason, "csp": err is None}
         if now is not None:
             row["rule_clock_reading"] = now.isoformat(timespec="seconds")
@@ -1897,11 +1912,36 @@ class EpisodeRecord:
         self.event("policy_generation", t=t, **row)
         return row
 
-    def hot_applied(self, rule_id: str, t: float | None = None) -> dict:
-        """Call right after `Shield.hot_apply(...)` bumped the generation."""
-        return self.write_generation(f"hot_apply {rule_id}", t=t)
+    def generation_writer(self, reason: str,
+                          t: float | None = None) -> Callable[[], dict]:
+        """write_generation split in two (2026-11-23, THE HOT-APPLY TICK in
+        sitl/ros2_shield_node.py): the live policy and the rule clock are
+        read NOW, the files and events are written when the returned
+        callable runs - a rail's control tick runs it after its setpoint is
+        published, so the CSP compile and the file writes do not sit
+        between the action and the setpoint. The policy is a shallow copy
+        with its own constraint list: a hot-apply replaces the list (and
+        the rule it changes) and bumps the generation on the live Policy,
+        never edits a rule in place (Shield._commit), so a later hot-apply
+        in the same tick cannot change what this generation writes."""
+        live = self.policy
+        snap = live.model_copy(update={"constraints": list(live.constraints)})
+        now = self.clock() if self.clock else None
+        return lambda: self.write_generation(reason, t=t, policy=snap,
+                                             clock_reading=now)
 
-    def apply_zone(self, shield, fence, t: float | None = None):
+    def hot_applied(self, rule_id: str, t: float | None = None, *,
+                    later: list | None = None) -> dict | None:
+        """Call right after `Shield.hot_apply(...)` bumped the generation.
+        With `later` (a list), the generation's write is appended to it as
+        a callable (generation_writer) instead of run now; None returned."""
+        if later is None:
+            return self.write_generation(f"hot_apply {rule_id}", t=t)
+        later.append(self.generation_writer(f"hot_apply {rule_id}", t=t))
+        return None
+
+    def apply_zone(self, shield, fence, t: float | None = None, *,
+                   later: list | None = None):
         """Hot-apply a keep-out zone mid-flight and record the new generation.
         Returns the rule that was applied.
 
@@ -1911,7 +1951,10 @@ class EpisodeRecord:
         `guardrail.shield.as_dynamic_nfz`) refuses a polygon_fence once the
         mission has begun, so the zone goes in as a dynamic_nfz with the same
         id, vertices, altitude band and margin and no motion. A Shield
-        without it takes the polygon_fence as the rails always sent it."""
+        without it takes the polygon_fence as the rails always sent it.
+
+        `later` (a list): the generation's write is queued on it, as
+        hot_applied(later=...) does; the Shield's hot-apply is not."""
         try:
             from .shield import as_dynamic_nfz
         except ImportError:
@@ -1919,7 +1962,7 @@ class EpisodeRecord:
         else:
             rule = as_dynamic_nfz(fence)
         shield.hot_apply(rule)
-        self.hot_applied(rule.id, t=t)
+        self.hot_applied(rule.id, t=t, later=later)
         # The rule AS STORED in the live policy: since 2026-11-17 (WP1-14) a
         # Shield over a policy with a frame writes the metre points as WGS84
         # (Shield._in_frame), so the rule handed in is not what was applied.

@@ -466,6 +466,22 @@ one, and the first watchdog tick gives a live stream the slack it gives one
 after a message's tick (TickScheduler). The held action is flown only by that
 watchdog, for a quiet stream, under the stale-action rule as every tick.
 
+THE HOT-APPLY TICK (2026-11-23). On the hil nightly ntFIN4 one tick of
+183,909 took 105.5 ms, a scenario spawn's: spawn ticks took ~51 ms (31-59)
+against ~16 ms, because the hot-apply's bookkeeping ran between the action
+and the setpoint - the generation's policy file, its CSP compiled from the
+Jinja2 templates (the first one loading its rule type's templates cold) and
+written, its events, a console line and the fences re-published (the zones
+placed twice, policy_fences). Now only the Shield's hot-apply runs there (this tick's filter judges
+under the new rules); the rest is queued and run on the same thread right
+after the publication (_run_after_publish), in its order (policy_generation,
+then the scenario_event, then fences_published - after this tick's
+fsm_transition / mode lines now), and on every way out of a tick and in
+_finish, so no generation is lost from the replay bundle. Every template is
+loaded at start-up (compiler.prewarm_templates), and each row carries
+`tick_phases_ms`, where its time went (pre_shield, hot_apply, shield, fsm,
+hold, publish, post_publish, and of post_publish the deferred bookkeeping).
+
 CAMERA TO SETPOINT (2026-11-11, WP3-13). With the VLA bridge, each row whose
 setpoint was flown from a camera-backed action carries `camera_age_ms`: the
 age of the camera frame behind it at the setpoint's publication, the
@@ -533,6 +549,7 @@ extended message (the review of 339f23a tightened every point):
 from __future__ import annotations
 
 import argparse
+import functools
 import gc
 import json
 import math
@@ -554,7 +571,7 @@ from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E
 from guardrail import scenario_events as SE                               # noqa: E402
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
-from guardrail.compiler import ConstraintCompiler                         # noqa: E402
+from guardrail.compiler import ConstraintCompiler, prewarm_templates      # noqa: E402
 from guardrail.delivery import (DELIVERY_SHORTFALL_MAX, DeliveryMonitor,  # noqa: E402
                                 SENT_QOS_DEPTH, parse_report)
 from guardrail import holdpoint                                           # noqa: E402
@@ -2968,6 +2985,16 @@ if HAVE_ROS:
                                         else {"ground": self.ground}))
             (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
                                              encoding="utf-8")
+            # Every CSP template loaded and compiled now (THE HOT-APPLY TICK):
+            # a mid-flight generation's CSP otherwise read its rule type's
+            # templates from disk the first time (ntFIN4's first spawn).
+            # Without jinja2 every generation's CSP is a csp_failed event
+            # already (EpisodeRecord); that is no reason to refuse here.
+            try:
+                self.templates_prewarmed = len(prewarm_templates())
+            except ImportError as exc:
+                self.templates_prewarmed = 0
+                self.get_logger().warn(f"CSP templates not pre-loaded: {exc}")
             # No escalation FSM inside the Shield: this node runs THE FSM,
             # because only it sees the autopilot (guardrail.replay.rail_shield).
             # pipe_clock: the setpoints sent (note_flown) are aged on the
@@ -3175,6 +3202,9 @@ if HAVE_ROS:
             self.after_terminal: dict | None = None
             self.traj: list[dict] = []
             self.rows: list[dict] = []
+            # THE HOT-APPLY TICK: a tick's hot-apply bookkeeping, run after
+            # its setpoint is published (_run_after_publish).
+            self._after_publish: list = []
             # Evidence of the topology, gathered from the live system rather
             # than asserted (guardrail.manifest.check_topology_evidence), the
             # same way as the mission-style node (sitl/mavros_evidence.py).
@@ -4599,9 +4629,16 @@ if HAVE_ROS:
             refused (the harness would error the episode) is recorded and
             flown past - the rules stay as they were - and named in
             metrics.json, so the harness refuses to score the flight. Returns
-            one label per event, for the row."""
+            one label per event, for the row.
+
+            THE HOT-APPLY TICK (2026-11-23): only the Shield's hot-apply runs
+            here - this tick's filter must judge under the new rules. The
+            generation's files (policy, CSP compile) and events, the
+            scenario_event, the console line and the fences are queued on
+            _after_publish, in this order, and run after the setpoint."""
             labels: list[str] = []
             accepted: list[str] = []
+            later = self._after_publish
             while self._ev_pending and self._ev_pending[0][1].at_sim_t <= now + 1e-9:
                 idx, ev = self._ev_pending.pop(0)
                 try:
@@ -4622,23 +4659,43 @@ if HAVE_ROS:
                            late_s=round(now - ev.at_sim_t, 3))
                 if not rec.get("refused"):
                     rule = rec.get("rule_id") or rec.get("zone") or rec.get("target")
-                    self.rec.hot_applied(str(rule or ev.type), t=now)
+                    # The policy and rule clock as they stand now; written later.
+                    self.rec.hot_applied(str(rule or ev.type), t=now, later=later)
                     if ev.type == "spawn_polygon_fence" and rec.get("rule_id"):
                         # On the trajectory's 0.01 s grid, as the --dynamic
                         # zone's and a REST zone's (zone_dwell).
                         self._ev_live_from[rec["rule_id"]] = round(now, 2)
                     accepted.append(f"{ev.type} {rule}")
                 self._ev_records.append(rec)
-                self.rec.event("scenario_event", t=now,
-                               **{k: v for k, v in rec.items() if k != "t"})
+                later.append(functools.partial(
+                    self.rec.event, "scenario_event", t=now,
+                    **{k: v for k, v in rec.items() if k != "t"}))
                 labels.append(f"scenario event {idx}: {ev.type}"
                               + (" (refused)" if rec.get("refused") else ""))
-                self.get_logger().info(
+                later.append(functools.partial(
+                    self.get_logger().info,
                     f"scenario event {idx} {ev.type} at t={now:.1f}s -> generation "
-                    f"{self.policy.generation}" + (" REFUSED" if rec.get("refused") else ""))
+                    f"{self.policy.generation}" + (" REFUSED" if rec.get("refused") else "")))
             if accepted:
-                self._publish_fences("scenario event(s): " + "; ".join(accepted))
+                later.append(functools.partial(
+                    self._publish_fences, "scenario event(s): " + "; ".join(accepted)))
             return labels
+
+        def _run_after_publish(self) -> int:
+            """THE HOT-APPLY TICK (2026-11-23): run the hot-apply bookkeeping
+            this tick queued (_after_publish), in its order, on this thread -
+            never a worker thread (the GIL would put it back in the tick).
+            The tick runs it right after its setpoint's publication; the way
+            out of a tick and _finish run it too, so a tick that ends the
+            episode or raises before its publication loses nothing (every
+            generation's files are written before the replay bundle is
+            packed). Each item is taken off the queue before it runs. The
+            number run."""
+            n = 0
+            while self._after_publish:
+                self._after_publish.pop(0)()
+                n += 1
+            return n
 
         def _tick(self) -> None:
             """The 10 Hz timer's tick (--tick-trigger timer)."""
@@ -4677,7 +4734,13 @@ if HAVE_ROS:
                     try:
                         self._tick_locked(tick_ns, trigger)
                     finally:
-                        self.rec.release_events()
+                        # Normally run after the publication already; here
+                        # for a tick that raised before it (THE HOT-APPLY
+                        # TICK).
+                        try:
+                            self._run_after_publish()
+                        finally:
+                            self.rec.release_events()
             finally:
                 self._in_tick = False
 
@@ -4923,6 +4986,8 @@ if HAVE_ROS:
             dyn_due = self.dynamic and self.spawn_t is None and now >= DYNAMIC_AT_S
             prev = self._prev_judgement(st, due or dyn_due or bool(rule_events))
             self._update_event_heading()
+            # THE TICK'S PHASES (tick_phases_ms): monotonic_ns stamps.
+            ph_ha0 = time.monotonic_ns()
             if due:
                 rule_events += self._apply_scenario_events(now, st)
 
@@ -4932,13 +4997,19 @@ if HAVE_ROS:
                 self.dynamic_fence_id = fence.id
                 # As a dynamic_nfz where the Shield enforces the grant's
                 # mid-flight update model (EpisodeRecord.apply_zone).
-                applied = self.rec.apply_zone(self.shield, fence, t=now)
-                self._publish_fences(f"hot_apply {applied.id} ({applied.type})")
+                # The generation's files and events, the fences and the
+                # console line wait for the setpoint (THE HOT-APPLY TICK).
+                applied = self.rec.apply_zone(self.shield, fence, t=now,
+                                              later=self._after_publish)
+                self._after_publish.append(functools.partial(
+                    self._publish_fences, f"hot_apply {applied.id} ({applied.type})"))
                 self.spawn_t, self.spawn_pos = now, (st.x, st.y)
                 rule_events.append(f"dynamic zone {applied.id}")
-                self.get_logger().info(
+                self._after_publish.append(functools.partial(
+                    self.get_logger().info,
                     f"dynamic NFZ applied t={now:.1f}s -> generation "
-                    f"{self.policy.generation}")
+                    f"{self.policy.generation}"))
+            ph_ha1 = time.monotonic_ns()
 
             # The target's reach (--reach-m, REACH_M by default); a mission
             # with no target (--no-target) has none, and flies to its cap.
@@ -5028,12 +5099,15 @@ if HAVE_ROS:
             # next tick's _prev_judgement): read once, right before the
             # Shield reads it.
             clock_reading = self.clock()
+            ph_sh0 = time.monotonic_ns()
             self.pipe_rec.begin_tick()
             try:
                 decision, raw_w, em_w, em_body = shield_step(
                     self.shield, st_sh, body, self.shield_on)
             finally:
                 pipe_reads = self.pipe_rec.end_tick()
+            ph_sh1 = time.monotonic_ns()
+            ph_fsm1 = None
             # X8's input, the Shield's own verdict on the position it was
             # handed (ShieldDecision.position_lost: the autopilot reporting its
             # estimate invalid, or - with no estimator report - fix_ok False
@@ -5154,6 +5228,7 @@ if HAVE_ROS:
                         handback_untrusted=hb_untrusted,
                         hold_off_m=hold_off, hold_reach_m=hold_reach)
                     fsm_out = self.fsm.step(inp)
+                    ph_fsm1 = time.monotonic_ns()
                     if self.moved_holds:
                         # Where the Loiter holds / the Land lands: the
                         # search's plan from the Shield's own rules,
@@ -5184,6 +5259,8 @@ if HAVE_ROS:
                     self.rec.event("fsm_fault", t=now, error=str(e))
                     self._request_mode("LOITER", "FSM input refused")
                     self.failsafe_t = now       # end the episode after the grace
+            if ph_fsm1 is None:
+                ph_fsm1 = time.monotonic_ns()
             if fsm_out is not None:
                 setpoint = fsm_out.setpoint
                 if fsm_out.transition:
@@ -5253,6 +5330,7 @@ if HAVE_ROS:
                 flown_w = Action4D(vx=transit[0], vy=transit[1], vz_up=transit[2])
                 flown = body_command(transit, st.yaw_deg)
             pub_ns = None
+            ph_pub0 = time.monotonic_ns()
             if flown is not None:
                 # The delivery monitor's time is read BEFORE the publish, so
                 # the adapter's send of this setpoint can never be stamped
@@ -5264,6 +5342,15 @@ if HAVE_ROS:
                 pub_ns = time.monotonic_ns()
                 self._last_pub_ns = pub_ns
                 self.delivery.published(t_pub)
+            ph_pub1 = time.monotonic_ns()
+            # THE HOT-APPLY TICK (2026-11-23): this tick's hot-apply
+            # bookkeeping - the generation's policy and CSP files, its
+            # events, the scenario_event, the fences - now that the setpoint
+            # is out (on ntFIN4 it sat before it: spawn ticks ~51 ms against
+            # ~16 ms, one 105.5 ms). The Shield's own hot-apply ran in the
+            # tick, so the setpoint was judged under the new rules.
+            n_deferred = self._run_after_publish()
+            ph_q1 = time.monotonic_ns()
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity), the
             # dead reckoning of a lost fix and the clearance pipe; noted at
@@ -5460,6 +5547,35 @@ if HAVE_ROS:
             # THE GARBAGE COLLECTOR: the paced full collection, when due, at
             # this safe point - the setpoint is out, the row written.
             self.gc_pacer.after_publish(now)
+            # THE TICK'S PHASES (2026-11-23): where this tick's time went, so
+            # an outlier can be attributed (ntFIN4 row 50, 105.5 ms, could
+            # not be). On time.monotonic_ns, in ms; the seven phases add up
+            # to the tick's entry (tick_ns, before the lock) to here.
+            # pre_shield: the lock, the markers, the previous rules'
+            # judgement, the watchdogs and the pose handed over - all before
+            # the filter but hot_apply: the Shield's hot-apply of this
+            # tick's scenario events / --dynamic zone. shield: the filter.
+            # fsm: from its answer to the FSM's step (the row's rule fields,
+            # stop legality, the hold guard, the RTL watch, the FSM). hold:
+            # the hold planner's slice, the hold flight and mode requests,
+            # the setpoint's choice. publish: its publication (~0 when none).
+            # post_publish: all that waits for the setpoint, the paced GC
+            # included; `deferred` is the part of it the hot-apply
+            # bookkeeping took (_run_after_publish), `n_deferred` its items.
+            ph_end = time.monotonic_ns()
+
+            def _ms(a: int, b: int) -> float:
+                return round((b - a) / 1e6, 3)
+            self.rows[-1]["tick_phases_ms"] = {
+                "pre_shield": round(_ms(tick_ns, ph_ha0) + _ms(ph_ha1, ph_sh0), 3),
+                "hot_apply": _ms(ph_ha0, ph_ha1),
+                "shield": _ms(ph_sh0, ph_sh1),
+                "fsm": _ms(ph_sh1, ph_fsm1),
+                "hold": _ms(ph_fsm1, ph_pub0),
+                "publish": _ms(ph_pub0, ph_pub1),
+                "post_publish": _ms(ph_pub1, ph_end),
+                "deferred": _ms(ph_pub1, ph_q1),
+                "n_deferred": n_deferred}
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -5508,6 +5624,10 @@ if HAVE_ROS:
 
         def _finish(self, why: str) -> None:
             self.done = True
+            # A hot-apply this tick queued (THE HOT-APPLY TICK) is recorded
+            # before the episode's end: the generation's files and events,
+            # then mission_end, as when it ran in the tick.
+            self._run_after_publish()
             # The events a tick held are appended before the episode's end
             # (the report reads events.jsonl back), and the collector gets
             # CPython's own schedule back, everything unfrozen, for the report.
