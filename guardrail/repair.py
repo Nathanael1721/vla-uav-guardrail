@@ -71,7 +71,10 @@ the world-frame last resorts at random headings). So every repair that can
 change the flown action - the chain's operators and both last resorts -
 acts on the frame the VLA emits in; Brake (a stop, zero in every frame)
 and SoftRelax (which gives up rules, then re-runs the chain) change no
-action themselves.
+action themselves. One input check is outside: Sanitise zeroes non-finite
+channels of the world action before the chain, so a body action with one
+non-finite horizontal channel loses both horizontal channels at a heading
+that is not a quarter turn (fail-safe: more conservative, never less).
 
 An operator written to the grant's signature exactly - `repair(action,
 violation, ir)`, no `ctx`, no `categories` - is accepted too: `register`

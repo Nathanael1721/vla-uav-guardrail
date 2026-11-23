@@ -84,7 +84,9 @@ a single boundary in the codebase." In this codebase:
     repair.OpenedEscape) handed the body action and handing one back; until
     then `Shield._decide` called both on the world action outside the
     interface, with the same decisions. So every repair that can change the
-    flown action acts on the frame the VLA emits in. Neither side sees local NED
+    flown action acts on the frame the VLA emits in (Sanitise, the input
+    check for non-finite channels, runs on the world action before the
+    chain: repair.py's module docstring). Neither side sees local NED
     (ours is North / East / up, the reference's East / North / up). That the
     repair is the body-frame one - the same body action in a scene that
     turns with the aircraft gets the same emitted body action - is pinned
