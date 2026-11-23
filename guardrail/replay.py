@@ -1789,7 +1789,12 @@ class EpisodeRecord:
                    policy_id=policy.policy_id, policy_hash=policy.policy_hash,
                    generation=policy.generation, moved_aside=self.moved,
                    rule_clock=self.clock_record)
-        self.write_generation("take-off")
+        g0 = self.write_generation("take-off")
+        if g0.get("policy_file_error"):
+            # Before take-off a rail can still refuse: it does, as it did
+            # before write_generation caught the write.
+            raise OSError(f"generation 0's policy file could not be written: "
+                          f"{g0['policy_file_error']}")
 
     def end(self, why: str, t: float | None = None, **data) -> dict:
         """The `mission_end` event. Once only; a second call is a no-op."""
@@ -1856,7 +1861,17 @@ class EpisodeRecord:
         pol = self.policy if policy is None else policy
         g = pol.generation
         pol_file = self.dir / f"policy_g{g}.json"
-        pol_file.write_bytes(pol.canonical_bytes())
+        # Caught like the CSP compile (2026-11-23): a rail writes this after
+        # its setpoint flew, and a full disk must not lose the tick's row,
+        # the other generations or mission_end. Recorded instead: a
+        # `policy_file_failed` event and `policy_file_error` on the row (the
+        # rail flags the flight; the replay bundle then lacks the file and
+        # its generation table says so).
+        pol_err = None
+        try:
+            pol_file.write_bytes(pol.canonical_bytes())
+        except Exception as exc:                              # noqa: BLE001
+            pol_err = f"{type(exc).__name__}: {exc}"
         csp_file, err = self.dir / f"csp_g{g}.json", None
         cm_ref = cm_err = None
         # ONE clock reading for the CSP and its map (compile_csp refuses a
@@ -1903,7 +1918,11 @@ class EpisodeRecord:
             row["rule_clock_reading"] = now.isoformat(timespec="seconds")
         if self.cost_map:
             row["cost_map_ref"] = cm_ref
+        if pol_err is not None:
+            row["policy_file_error"] = pol_err
         self.generations.append(row)
+        if pol_err is not None:
+            self.event("policy_file_failed", t=t, generation=g, error=pol_err)
         if err is not None:
             self.event("csp_failed", t=t, generation=g, error=err)
         if self.cost_map and cm_ref is None:

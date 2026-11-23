@@ -493,6 +493,29 @@ def test_tick_timing_reads_the_end_to_end_fields_and_never_invents_a_zero():
     assert KR.tick_timing([{"x": 1}], {}) is None
 
 
+def test_the_budget_counts_the_wait_behind_work_moved_after_the_setpoint():
+    """e2e_with_wait_ms (2026-11-23, the review of 7e6aae2): the hil node runs
+    a hot-apply's bookkeeping after the setpoint, on the executor's one
+    thread, so the next action can wait behind it unseen by e2e_ms. The
+    tick budget is judged on e2e_ms plus that wait: a tick whose e2e_ms is
+    60 ms and whose wait was 50 ms is over 100 ms. A row from before the
+    move (no tick_phases_ms) is its e2e_ms; a row of the move's first days
+    (tick_phases_ms, no wait recorded) is left out, never read as e2e_ms."""
+    ph = {"post_publish": 0.1}
+    rows = ([{"t": 0.1, "e2e_ms": 60.0, "blocked_by_deferred_ms": 50.0,
+              "e2e_with_wait_ms": 110.0, "tick_phases_ms": ph},
+             {"t": 0.2, "e2e_ms": 20.0, "blocked_by_deferred_ms": 0.0,
+              "e2e_with_wait_ms": 20.0, "tick_phases_ms": ph},
+             {"t": 0.3, "e2e_ms": 30.0, "tick_phases_ms": ph},       # unmeasured wait
+             {"t": 0.4, "e2e_ms": 40.0}])                            # before the move
+    tt = KR.tick_timing(rows)
+    assert tt["e2e_ms"]["over_budget"] == 0 and tt["e2e_ms"]["n"] == 4, tt["e2e_ms"]
+    w = tt["e2e_with_wait_ms"]
+    assert w["n"] == 3 and w["max"] == 110.0 and w["over_budget"] == 1, w
+    assert KR._lat_verdict(w) != KR._lat_verdict(tt["e2e_ms"])
+    assert "e2e_with_wait_ms" in KR._LAT_NAMES and "e2e_with_wait_ms" in KR._NOT_MEASURED_WHY
+
+
 def test_the_latency_section_pools_per_rail_and_says_what_was_not_measured():
     eps = [{"id": "a", "source": "a", "kind": "flight", "rail": "hil", "kpi_grade": True,
             "tick_timing": {}},

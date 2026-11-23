@@ -2197,6 +2197,33 @@ def _hot_kinds(events):
     return out
 
 
+def _dynamic_node(argv=()):
+    """_scenario_node with --dynamic, its zone due at 0.3 s (this module
+    copy's DYNAMIC_AT_S only), from --start -100,0 to the target 0,0."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    import test_railinputs_node as RN
+    N = RN._node_module()
+    N.DYNAMIC_AT_S = 0.3
+    clk = RN._Clock()
+    N.time = clk
+    args, _ = N.make_parser().parse_known_args(
+        ["--policy", str(POLICY), "--dev-yaml", "--dynamic", "--start=-100,0,15",
+         "--target=0,0,15"] + RN.HAND_TICKED + list(argv))
+    out = Path(tempfile.mkdtemp(prefix="hot_apply_dyn_"))
+    return RN, N, N.ShieldNode(args, out), clk, out
+
+
+def _spawn_events(*ahead_m, at=0.3):
+    """An --events file of one spawn per distance ahead, all at `at`."""
+    tmp = Path(tempfile.mkdtemp(prefix="hot_apply_events_"))
+    evs = [{"at_sim_t": at, "type": "spawn_polygon_fence",
+            "payload": {"id": f"dyn-{i}", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": a, "anchor": "center"}}
+           for i, a in enumerate(ahead_m)]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    return tmp / "events.json"
+
+
 def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_written():
     """THE HOT-APPLY TICK (2026-11-23; ntFIN4 row 50, 105.5 ms, a spawn's
     tick). Two scenario spawns in one tick: the Shield has both zones before
@@ -2208,9 +2235,14 @@ def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_writte
     (30 ms per generation here) is out of the row's tick_ms and in its
     tick_phases_ms (deferred, post_publish), whose phases add up to tick_ms
     up to the publication. Every template was loaded at bring-up. The
-    episode's bundle holds every generation and re-derives its KPIs."""
+    episode's bundle holds every generation and re-derives its KPIs.
+
+    The review of 7e6aae2: the bookkeeping runs after the row is built, so
+    the pipe's note of the send is the publication's own reading (it was
+    noted 60 ms late), and the action that arrived while it ran carries the
+    wait on its row (blocked_by_deferred_ms; e2e_with_wait_ms over 100)."""
     from guardrail import compiler as K
-    from guardrail.replay import EPISODE, read_replay, verify_replay
+    from guardrail.replay import EPISODE, PIPE_ROW_KEY, read_replay, verify_replay
     tmp = Path(tempfile.mkdtemp(prefix="hot_apply_tick_"))
     evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
             "payload": {"id": "dyn-a", "width_m": 6, "height_m": 6,
@@ -2229,7 +2261,8 @@ def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_writte
 
     def pub(a):
         seen.append({"row": len(node.rows) + 1, "generation": node.policy.generation,
-                     "files": sorted(p.name for p in out.glob("*_g[12].json"))})
+                     "files": sorted(p.name for p in out.glob("*_g[12].json")),
+                     "t_pub": clk.monotonic()})
         real_pub(a)
     node._publish_body = pub
     _slow_generation_writes(node, clk)
@@ -2240,6 +2273,9 @@ def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_writte
     assert len(hit) == 1, (k, seen)
     assert hit[0]["generation"] == 2 and hit[0]["files"] == [], hit
     assert row["generation"] == 2, row["generation"]
+    # The Shield's pipe was told of the send at the publication, not after
+    # the bookkeeping (probe at 7e6aae2: published 1000.300, noted 1000.360).
+    assert row[PIPE_ROW_KEY]["t"] == hit[0]["t_pub"], (row[PIPE_ROW_KEY], hit)
     # Afterwards, every file, each generation as it stood.
     ids = {g: [c["id"] for c in json.loads((out / f"policy_g{g}.json").read_text(
         encoding="utf-8"))["constraints"]] for g in (1, 2)}
@@ -2263,6 +2299,17 @@ def test_a_hot_apply_tick_publishes_its_setpoint_before_the_generation_is_writte
     assert abs(to_pub - row["tick_ms"]) < 0.01, (to_pub, row["tick_ms"])
     assert all(r["tick_phases_ms"]["n_deferred"] == 0 for r in node.rows if r is not row)
     assert not node._after_publish
+    # The next action (_fly sends it the moment the tick returns) waited
+    # behind the bookkeeping: its row says so, and the budget sees it.
+    nxt, after = node.rows[k + 1], node.rows[k + 2]
+    assert nxt["blocked_by_deferred_ms"] == ph["deferred"], nxt
+    assert nxt["e2e_with_wait_ms"] == round(nxt["e2e_ms"] + ph["deferred"], 3) > 100.0, nxt
+    assert after["blocked_by_deferred_ms"] == 0.0 and \
+        after["e2e_with_wait_ms"] == after["e2e_ms"], after
+    tl = N.latency_summary(node.rows)
+    assert tl["blocked_by_deferred_ms"]["max"] == ph["deferred"], tl
+    assert tl["e2e_with_wait_ms"]["over_budget"] == 1 and tl["e2e_ms"]["over_budget"] == 0
+    assert tl["deferred_ms"]["max"] == ph["deferred"] and tl["post_publish_ms"]["n"] == 6
     # The episode's bundle: every generation, and its KPIs re-derived.
     node._finish("test")
     bundle = out / f"{out.name}.replay.tar.gz"
@@ -2281,17 +2328,7 @@ def test_a_hot_apply_on_the_tick_that_ends_the_episode_is_still_recorded():
     and the fences, then mission_end, as when it all ran in the tick; the
     bundle carries generation 1."""
     from guardrail.replay import EPISODE, read_replay, verify_replay
-    sys.path.insert(0, str(ROOT / "tests"))
-    import test_railinputs_node as RN
-    N = RN._node_module()
-    N.DYNAMIC_AT_S = 0.3                 # this module copy's only
-    clk = RN._Clock()
-    N.time = clk
-    args, _ = N.make_parser().parse_known_args(
-        ["--policy", str(POLICY), "--dev-yaml", "--dynamic", "--start=-100,0,15",
-         "--target=0,0,15"] + RN.HAND_TICKED)
-    out = Path(tempfile.mkdtemp(prefix="hot_apply_end_"))
-    node = N.ShieldNode(args, out)
+    RN, N, node, clk, out = _dynamic_node()
     _ekf_pose(RN, N, node)
     node.start_mission()
     _slow_generation_writes(node, clk)
@@ -2312,6 +2349,118 @@ def test_a_hot_apply_on_the_tick_that_ends_the_episode_is_still_recorded():
     assert f"{EPISODE}policy_g1.json" in members and f"{EPISODE}csp_g1.json" in members
     ok, why = verify_replay(bundle)
     assert ok, why
+
+
+def test_a_failed_bookkeeping_item_is_recorded_and_the_tick_still_completes():
+    """THE HOT-APPLY TICK, the review of 7e6aae2: an item of the bookkeeping
+    that raises after the setpoint flew (here generation 1's write, as an
+    OSError from a full disk) no longer aborts the tick. It is a
+    `deferred_failed` event (what, generation, error) and metrics.json
+    `deferred_failed`; the rest still run (generation 2's files, both
+    scenario_events, the fences); the tick's row is written; the flight is
+    not KPI-grade and the stress harness refuses it by name."""
+    RN, N, node, clk, out = _scenario_node(
+        ["--start=-100,0,15", "--target=0,0,15", f"--events={_spawn_events(40, 60)}"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    real = node.rec.write_generation
+
+    def full_disk(*a, **kw):
+        if kw.get("policy") is not None and kw["policy"].generation == 1:
+            raise OSError(28, "No space left on device")
+        return real(*a, **kw)
+    node.rec.write_generation = full_disk
+    _fly(RN, N, node, clk, 5)
+    assert len(node.rows) == 5, len(node.rows)
+    k = next(i for i, r in enumerate(node.rows) if r["rule_events"])
+    assert node.rows[k]["tick_phases_ms"]["n_deferred"] == 7, node.rows[k]
+    assert not (out / "policy_g1.json").exists() and (out / "policy_g2.json").is_file()
+    ev = RN._events(out)
+    bad = [e for e in ev if e["kind"] == "deferred_failed"]
+    assert len(bad) == 1 and bad[0]["generation"] == 1, bad
+    assert bad[0]["what"].startswith("generation 1") and "No space left" in bad[0]["error"]
+    assert [x for x in _hot_kinds(ev) if x[0] != "mission_end"] == [
+        ("scenario_event", "dyn-0"), ("policy_generation", 2),
+        ("scenario_event", "dyn-1"), ("fences_published", 2)], _hot_kinds(ev)
+    node._finish("test")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert [d["generation"] for d in met["deferred_failed"]] == [1], met["deferred_failed"]
+    kpi = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert kpi["kpi_grade"] is False and any(
+        "deferred_failed" in w for w in kpi["kpi_grade_reasons"]), kpi["kpi_grade_reasons"]
+    kinds = [e["kind"] for e in RN._events(out)]
+    assert "mission_end" in kinds and kinds.index("deferred_failed") < kinds.index("mission_end")
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+    assert any("deferred_failed" in w for w in S.hil_flight_problems(met))
+    assert not [w for w in S.hil_flight_problems({**met, "deferred_failed": []})
+                if "deferred_failed" in w]
+
+
+def test_a_failed_bookkeeping_item_on_the_last_tick_still_ends_the_episode():
+    """...and in _finish: the --dynamic zone applied on the tick the target
+    is reached, its generation's write raising. mission_end is still
+    written, after the deferred_failed event and the fences."""
+    RN, N, node, clk, out = _dynamic_node()
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+
+    def broken(*a, **kw):
+        raise OSError(5, "Input/output error")
+    _fly(RN, N, node, clk, 2)
+    node.rec.write_generation = broken
+    _ekf_pose(RN, N, node, north=100.0)
+    RN._act(N, node, vx=0.0)
+    clk.t += 0.1
+    node._tick()
+    assert node.done and node.reached and node.policy.generation == 1
+    kinds = [e["kind"] for e in RN._events(out)]
+    # (the mission-end LAND's mode_request follows mission_end)
+    end = kinds.index("mission_end")
+    assert kinds[end - 2:end + 1] == ["deferred_failed", "fences_published", "mission_end"], \
+        kinds[-6:]
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert met["deferred_failed"][0]["error"].startswith("OSError"), met["deferred_failed"]
+
+
+def test_one_fences_publication_per_tick_after_every_generation():
+    """THE HOT-APPLY TICK, the review of 7e6aae2: the --dynamic zone and a
+    scenario spawn on the same tick re-publish the fences ONCE, after both
+    generations are recorded, labelled with the last generation and both
+    reasons (it was twice: the first labelled before the second
+    generation's record, with the second's rules)."""
+    RN, N, node, clk, out = _dynamic_node([f"--events={_spawn_events(40)}"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _fly(RN, N, node, clk, 4)
+    assert node.policy.generation == 2
+    ev = RN._events(out)
+    assert _hot_kinds(ev) == [("policy_generation", 1), ("scenario_event", "dyn-0"),
+                              ("policy_generation", 2), ("fences_published", 2)], \
+        _hot_kinds(ev)
+    fp = [e for e in ev if e["kind"] == "fences_published"][-1]
+    assert "scenario event(s): spawn_polygon_fence dyn-0" in fp["reason"] and \
+        "hot_apply nfz-dynamic" in fp["reason"], fp["reason"]
+
+
+def test_the_wait_behind_the_bookkeeping_is_bounded_by_its_window():
+    """deferred_wait_ms: the first action whose callback runs within
+    DEFERRED_PICKUP_S of a drain's end may have waited the whole drain (the
+    message has no stamp: the bound); one later, or no drain, waited for
+    none of it. latency_fields carries it beside e2e_ms only."""
+    N = _node()
+    w = (1_000_000_000, 1_040_000_000)                      # a 40 ms drain
+    assert N.deferred_wait_ms(None, 1_050_000_000) == 0.0
+    assert N.deferred_wait_ms(w, 1_040_000_000) == 40.0
+    assert N.deferred_wait_ms(w, 1_040_000_000 + int(N.DEFERRED_PICKUP_S * 1e9)) == 40.0
+    assert N.deferred_wait_ms(w, 1_061_000_000) == 0.0
+    lat = N.latency_fields(0, 30_000_000, 10_000_000, fresh=True, blocked_ms=40.0)
+    assert lat["e2e_ms"] == 20.0 and lat["blocked_by_deferred_ms"] == 40.0 \
+        and lat["e2e_with_wait_ms"] == 60.0, lat
+    again = N.latency_fields(0, 30_000_000, 10_000_000, fresh=False, blocked_ms=40.0)
+    assert again["blocked_by_deferred_ms"] is None and again["e2e_with_wait_ms"] is None
+    plain = N.latency_fields(0, 30_000_000, 10_000_000, fresh=True)
+    assert plain["blocked_by_deferred_ms"] == 0.0 and plain["e2e_with_wait_ms"] == 20.0
 
 
 def test_every_row_carries_the_rule_clock_and_the_previous_judgement_reads_its_own():

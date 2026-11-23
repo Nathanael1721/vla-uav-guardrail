@@ -789,6 +789,55 @@ def _scored(run: Path, policy, rec) -> None:
         {"policy_hash": policy.policy_hash, "topology": "dev"}), encoding="utf-8")
 
 
+def test_a_generation_whose_policy_file_cannot_be_written_is_recorded_not_raised():
+    """write_generation (2026-11-23, the review of 7e6aae2): a rail writes a
+    hot-applied generation after its setpoint flew, so an OSError writing
+    policy_g<N>.json is caught as the CSP compile is - `policy_file_error`
+    on the generation's row and a `policy_file_failed` event - and the CSP
+    is still written. Generation 0's, before take-off, still raises: a rail
+    can refuse there. generation_writer writes the generation as it stood
+    when it was taken, not as the live policy is when it runs."""
+    from guardrail.models import PolygonFence, XY
+    from guardrail.replay import EpisodeRecord
+    from guardrail.compiler import ConstraintCompiler
+    from guardrail.shield import Shield
+    d = _tmp()
+    run = d / "ep"
+    run.mkdir(parents=True)
+    policy = load_policy(SIM_POLICY)
+    m = ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
+    rec = EpisodeRecord(run, policy, m, lookahead_s=3.0)
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    (run / "policy_g1.json").mkdir()                 # the write cannot land
+    later = []
+    zone = PolygonFence(id="nfz-a", type="polygon_fence", **HARD_P0,
+                        vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14),
+                                  XY(x=23, y=14)], margin_m=1.0)
+    rec.apply_zone(shield, zone, t=1.0, later=later)
+    assert len(later) == 1 and policy.generation == 1
+    rec.apply_zone(shield, zone.model_copy(update={"id": "nfz-b"}), t=1.0, later=later)
+    assert policy.generation == 2 and not (run / "csp_g1.json").exists()
+    rows = [fn() for fn in later]
+    assert [r["generation"] for r in rows] == [1, 2], rows
+    assert rows[0]["policy_file_error"] and "policy_file_error" not in rows[1], rows
+    assert (run / "csp_g1.json").is_file() and (run / "policy_g2.json").is_file()
+    g2 = json.loads((run / "policy_g2.json").read_text(encoding="utf-8"))
+    assert {"nfz-a", "nfz-b"} <= {c["id"] for c in g2["constraints"]}
+    ev = [json.loads(x) for x in (run / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    bad = [e for e in ev if e["kind"] == "policy_file_failed"]
+    assert len(bad) == 1 and bad[0]["generation"] == 1, bad
+    # Generation 0, before take-off: refused, as before.
+    run0 = d / "ep0"
+    (run0 / "policy_g0.json").mkdir(parents=True)
+    try:
+        EpisodeRecord(run0, load_policy(SIM_POLICY), m, lookahead_s=3.0, rotate=False)
+    except OSError as e:
+        assert "generation 0" in str(e), e
+    else:
+        raise AssertionError("generation 0's unwritable policy file was not refused")
+
+
 def test_every_policy_generation_and_its_csp_travel_with_the_episode():
     """WP2-15: after a hot-apply the dynamic KPI run's log named a policy
     that no saved file described. Now both generations, and the CSP compiled

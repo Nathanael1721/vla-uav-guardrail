@@ -147,7 +147,10 @@ reach. So:
     every flown row over the WHOLE flight (a rail run's scenario window
     cuts the performance KPIs, never this): `tick_ms` (tick start to the
     setpoint's publication) and `e2e_ms` (an action's receipt to the first
-    setpoint flown from it) on the hil Shield node, and, on the perception
+    setpoint flown from it) on the hil Shield node, with `e2e_with_wait_ms`
+    beside it (since 2026-11-23: e2e_ms plus the wait behind the previous
+    tick's post-setpoint hot-apply bookkeeping; a tick is over the budget
+    when that is over 100 ms), and, on the perception
     rail's VLA pilot, `cam_age_ms` / `cam_to_setpoint_ms` (the camera frame
     behind the flown action at publication) - p50 / p95 / p99 / max
     (nearest rank) and the ticks over 100 ms, pooled per rail; a measure no
@@ -446,6 +449,11 @@ LATENCY_FIELDS = (
     ("e2e_ms", "an action's receipt to the first setpoint flown from it (hil Shield "
                "node; since 2026-11-11 the tick runs on the action's arrival: a deferred or "
                "timer tick adds the wait for its poll)"),
+    ("e2e_with_wait_ms", "e2e_ms plus the wait the action may have had in the DDS queue "
+                         "behind the previous tick's hot-apply bookkeeping (hil Shield "
+                         "node since 2026-11-23, blocked_by_deferred_ms, an upper "
+                         "bound): the budget's end-to-end time, so work moved out of the "
+                         "tick still counts"),
     ("cam_age_ms", "age of the camera frame behind the flown action at its publication "
                    "(perception rail, VLA pilot), every tick a VLA decision's action flew"),
     ("cam_to_setpoint_ms", "camera frame to the FIRST setpoint flown from its decision "
@@ -466,11 +474,30 @@ def latency_stats(vals: list[float], budget_ms: float = TICK_BUDGET_MS) -> dict:
             "over_budget": sum(1 for v in vals if v > budget_ms)}
 
 
+def _e2e_with_wait(r: dict):
+    """A row's e2e_with_wait_ms: its own; on a hil row from before the
+    hot-apply bookkeeping left the tick (no tick_phases_ms: nothing ran
+    after the setpoint to wait behind) its e2e_ms; None on a row of the
+    days the bookkeeping ran after the setpoint unmeasured (tick_phases_ms
+    and no e2e_with_wait_ms), which is not measured rather than e2e_ms."""
+    if "e2e_with_wait_ms" in r:
+        return r["e2e_with_wait_ms"]
+    if "tick_phases_ms" in r:
+        return None
+    return r.get("e2e_ms")
+
+
 def latency_values(rows: list[dict]) -> dict[str, list[float]]:
-    """Every LATENCY_FIELDS value the rows carry, per field (absent: none)."""
+    """Every LATENCY_FIELDS value the rows carry, per field (absent: none).
+    e2e_with_wait_ms falls back to e2e_ms where nothing ran after the
+    setpoint (_e2e_with_wait)."""
     out: dict[str, list[float]] = {}
     for key, _ in LATENCY_FIELDS:
-        v = [float(r[key]) for r in rows if _num(r.get(key))]
+        if key == "e2e_with_wait_ms":
+            got = [_e2e_with_wait(r) for r in rows]
+        else:
+            got = [r.get(key) for r in rows]
+        v = [float(x) for x in got if _num(x)]
         if v:
             out[key] = v
     return out
@@ -2441,6 +2468,9 @@ _NOT_MEASURED_WHY = {
     "e2e_ms": "no row and no metrics.json of these episodes carries it (the hil Shield "
               "node logs it; on the perception rail the pilot runs inside the tick, "
               "so there is no action receipt to time - see cam_to_setpoint_ms)",
+    "e2e_with_wait_ms": "no row carries an e2e_ms it can be judged from (the hil Shield "
+                        "node logs it; its rows flown at 7e6aae2, before the wait was "
+                        "measured, are left out rather than read as e2e_ms)",
     "cam_age_ms": "no camera in this rail's loop, or a log from before 2026-11-11: the "
                   "perception rail's VLA pilot logs it (demo/pas_ardupilot/"
                   "perception_node.py --pilot vla); the hil Shield node flies an "
@@ -3351,6 +3381,8 @@ def _render_tick_budget(t: dict | None) -> list[str]:
 
 
 _LAT_NAMES = {"tick_ms": "Tick to setpoint", "e2e_ms": "Action receipt to setpoint",
+              "e2e_with_wait_ms": "Action receipt to setpoint, with the wait behind "
+                                  "post-setpoint work",
               "cam_age_ms": "Camera frame age at setpoint",
               "cam_to_setpoint_ms": "Camera to first setpoint"}
 
@@ -3462,7 +3494,7 @@ def _render_kpi_summary(rep: dict) -> list[str]:
         for key, _ in LATENCY_FIELDS:
             null = ("a tick run on the action's arrival is the node's own work; a "
                     "deferred tick or a --tick-trigger timer run adds the wait for its "
-                    "poll or timer" if key == "e2e_ms" else
+                    "poll or timer" if key in ("e2e_ms", "e2e_with_wait_ms") else
                     "frame ARRIVAL at the node, not render: render and transport before "
                     "it are not in it" if key.startswith("cam") else "-")
             got = isinstance(r.get(key), dict) and not r[key].get("status")

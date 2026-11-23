@@ -472,15 +472,25 @@ against ~16 ms, because the hot-apply's bookkeeping ran between the action
 and the setpoint - the generation's policy file, its CSP compiled from the
 Jinja2 templates (the first one loading its rule type's templates cold) and
 written, its events, a console line and the fences re-published (the zones
-placed twice, policy_fences). Now only the Shield's hot-apply runs there (this tick's filter judges
-under the new rules); the rest is queued and run on the same thread right
-after the publication (_run_after_publish), in its order (policy_generation,
-then the scenario_event, then fences_published - after this tick's
-fsm_transition / mode lines now), and on every way out of a tick and in
-_finish, so no generation is lost from the replay bundle. Every template is
-loaded at start-up (compiler.prewarm_templates), and each row carries
-`tick_phases_ms`, where its time went (pre_shield, hot_apply, shield, fsm,
-hold, publish, post_publish, and of post_publish the deferred bookkeeping).
+placed twice, policy_fences). Now only the Shield's hot-apply runs there
+(this tick's filter judges under the new rules); the rest is queued and run
+on the same thread after the publication - at the end of the tick, once the
+row is built, so the pipe's note of the send and every age on the row are
+read at the publication (the review of 7e6aae2) - in its order
+(policy_generation, then the scenario_event; the fences ONCE, last, with
+every reason, of the tick's last generation), after this tick's
+fsm_transition / mode lines, and on every way out of a tick and in _finish,
+so no generation is lost from the replay bundle. An item that fails is a
+`deferred_failed` event and metrics.json `deferred_failed` (not KPI-grade;
+the stress harness refuses the flight), and the rest still run. Every
+template is loaded at start-up (compiler.prewarm_templates), and each row
+carries `tick_phases_ms`, where its time went (pre_shield, hot_apply,
+shield, fsm, hold, publish, post_publish, and of post_publish the deferred
+bookkeeping). The bookkeeping holds the executor's one thread: an action
+that arrives meanwhile waits in the DDS queue, which e2e_ms (from its
+callback's entry) does not see, so its row carries `blocked_by_deferred_ms`
+(an upper bound, deferred_wait_ms) and `e2e_with_wait_ms`, e2e_ms plus it -
+the end-to-end time tools/kpi_report.py judges the 100 ms budget on.
 
 CAMERA TO SETPOINT (2026-11-11, WP3-13). With the VLA bridge, each row whose
 setpoint was flown from a camera-backed action carries `camera_age_ms`: the
@@ -2243,17 +2253,56 @@ def identity_contract_problems(ident, decision_timeout_s: float) -> list[str]:
 
 
 def latency_fields(tick_ns: int, pub_ns: int | None, rx_ns: int | None,
-                   fresh: bool) -> dict:
+                   fresh: bool, blocked_ms: float | None = None) -> dict:
     """One row's latency, in ms on time.monotonic_ns(): `tick_ms` (the tick
     callback's entry to the setpoint's publication), `action_age_ms` (the
     receipt of the action the setpoint came from to its publication) and
     `e2e_ms` (the same, on the first tick that flies a newly received
-    action; None on a tick that re-flies one, publishes nothing, or holds)."""
+    action; None on a tick that re-flies one, publishes nothing, or holds).
+
+    THE WAIT BEHIND THE BOOKKEEPING (2026-11-23): `blocked_by_deferred_ms`
+    is how long that action may have waited in the DDS queue, before its
+    callback ran, behind the previous tick's hot-apply bookkeeping
+    (deferred_wait_ms; 0.0 when none ran just before it), and
+    `e2e_with_wait_ms` is e2e_ms plus it - the end-to-end time the budget
+    is judged on, so moving work out of the tick cannot pass it. Both only
+    beside an e2e_ms."""
     if pub_ns is None:
-        return {"tick_ms": None, "action_age_ms": None, "e2e_ms": None}
+        return {"tick_ms": None, "action_age_ms": None, "e2e_ms": None,
+                "blocked_by_deferred_ms": None, "e2e_with_wait_ms": None}
     age = None if rx_ns is None else round((pub_ns - rx_ns) / 1e6, 3)
+    e2e = age if fresh else None
+    blk = None if e2e is None else round(blocked_ms or 0.0, 3)
     return {"tick_ms": round((pub_ns - tick_ns) / 1e6, 3),
-            "action_age_ms": age, "e2e_ms": age if fresh else None}
+            "action_age_ms": age, "e2e_ms": e2e, "blocked_by_deferred_ms": blk,
+            "e2e_with_wait_ms": None if e2e is None else round(e2e + blk, 3)}
+
+
+# How soon after a drain of the hot-apply bookkeeping an action's callback
+# must run for its message to count as one that waited behind it: the
+# single-threaded executor takes a message ready at the drain's end at its
+# next spin, a few ms on (other ready callbacks first). Later than this, the
+# message arrived after the drain and waited for nothing of it.
+DEFERRED_PICKUP_S = 0.02
+
+
+def deferred_wait_ms(window: tuple[int, int] | None, rx_ns: int) -> float:
+    """How long an action whose callback entered at `rx_ns` may have waited
+    behind the hot-apply bookkeeping drained in `window` (monotonic_ns start,
+    end) - the drain runs on the executor's one thread, under the lock, so
+    a message that arrived meanwhile waited in the DDS queue, and neither
+    e2e_ms (from the callback's entry) nor tick_ms counts it.
+    /vla/action_4d (a Float32MultiArray) carries no stamp of its own, so the
+    arrival is not known: the bound is the whole window, for the first
+    action whose callback runs within DEFERRED_PICKUP_S of its end - an upper
+    bound, the honest side for a budget. 0.0 otherwise (no window, or an
+    action that came later)."""
+    if window is None:
+        return 0.0
+    q0, q1 = window
+    if rx_ns < q1 or (rx_ns - q1) / 1e9 > DEFERRED_PICKUP_S:
+        return 0.0
+    return round((q1 - q0) / 1e6, 3)
 
 
 E2E_NOTES = {
@@ -2282,12 +2331,22 @@ def latency_summary(rows: list[dict], budget_ms: float = TICK_BUDGET_MS,
     the message's arrival (`trigger` "action", THE TICK SCHEDULE) e2e is the
     tick's own work."""
     out: dict = {"budget_ms": budget_ms}
-    for key in ("e2e_ms", "action_age_ms", "tick_ms"):
-        vals = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
-        out[key] = {"n": len(vals), "p50": percentile(vals, 50),
-                    "p95": percentile(vals, 95), "p99": percentile(vals, 99),
-                    "max": round(max(vals), 3) if vals else None,
-                    "over_budget": sum(1 for v in vals if v > budget_ms)}
+
+    def stats(vals: list) -> dict:
+        return {"n": len(vals), "p50": percentile(vals, 50),
+                "p95": percentile(vals, 95), "p99": percentile(vals, 99),
+                "max": round(max(vals), 3) if vals else None,
+                "over_budget": sum(1 for v in vals if v > budget_ms)}
+    for key in ("e2e_ms", "action_age_ms", "tick_ms", "e2e_with_wait_ms",
+                "blocked_by_deferred_ms"):
+        out[key] = stats([r[key] for r in rows if isinstance(r.get(key), (int, float))])
+    # The bookkeeping that waits for the setpoint (THE HOT-APPLY TICK,
+    # tick_phases_ms): not in tick_ms, so summarised beside it.
+    for key in ("post_publish", "deferred"):
+        out[f"{key}_ms"] = stats([r["tick_phases_ms"][key] for r in rows
+                                  if isinstance(r.get("tick_phases_ms"), dict)
+                                  and isinstance(r["tick_phases_ms"].get(key),
+                                                 (int, float))])
     out["tick_trigger"] = trigger
     out["note"] = E2E_NOTES.get(trigger, E2E_NOTES["action"])
     return out
@@ -3203,8 +3262,17 @@ if HAVE_ROS:
             self.traj: list[dict] = []
             self.rows: list[dict] = []
             # THE HOT-APPLY TICK: a tick's hot-apply bookkeeping, run after
-            # its setpoint is published (_run_after_publish).
-            self._after_publish: list = []
+            # its setpoint is published (_run_after_publish): (what,
+            # generation, callable) in order; the fences' re-publish once a
+            # tick, after them, for every reason queued (_queue_fences); an
+            # item that raised (deferred_failed, metrics.json); the last
+            # drain's window on the monotonic clock, for the next action's
+            # wait behind it (blocked_by_deferred_ms).
+            self._after_publish: list[tuple[str, int | None, object]] = []
+            self._fences_reasons: list[str] | None = None
+            self.deferred_failures: list[dict] = []
+            self._deferred_window: tuple[int, int] | None = None
+            self._action_blocked_ms: float | None = None
             # Evidence of the topology, gathered from the live system rather
             # than asserted (guardrail.manifest.check_topology_evidence), the
             # same way as the mission-style node (sitl/mavros_evidence.py).
@@ -3682,6 +3750,8 @@ if HAVE_ROS:
             self.raw_body = Action4D(vx=d[0], vy=d[1], vz_up=d[2], yaw_rate=d[3])
             self.n_actions += 1
             self._action_rx_ns = rx_ns
+            self._action_blocked_ms = deferred_wait_ms(self._deferred_window, rx_ns)
+            self._deferred_window = None
             self._action_seq += 1
             self.watchdog.received(self._action_rx_ns / 1e9)
             self.pilot = pf
@@ -4638,7 +4708,6 @@ if HAVE_ROS:
             _after_publish, in this order, and run after the setpoint."""
             labels: list[str] = []
             accepted: list[str] = []
-            later = self._after_publish
             while self._ev_pending and self._ev_pending[0][1].at_sim_t <= now + 1e-9:
                 idx, ev = self._ev_pending.pop(0)
                 try:
@@ -4660,26 +4729,49 @@ if HAVE_ROS:
                 if not rec.get("refused"):
                     rule = rec.get("rule_id") or rec.get("zone") or rec.get("target")
                     # The policy and rule clock as they stand now; written later.
-                    self.rec.hot_applied(str(rule or ev.type), t=now, later=later)
+                    self._defer_generation(str(rule or ev.type), now)
                     if ev.type == "spawn_polygon_fence" and rec.get("rule_id"):
                         # On the trajectory's 0.01 s grid, as the --dynamic
                         # zone's and a REST zone's (zone_dwell).
                         self._ev_live_from[rec["rule_id"]] = round(now, 2)
                     accepted.append(f"{ev.type} {rule}")
                 self._ev_records.append(rec)
-                later.append(functools.partial(
+                self._defer(f"scenario_event {idx} ({ev.type})", functools.partial(
                     self.rec.event, "scenario_event", t=now,
                     **{k: v for k, v in rec.items() if k != "t"}))
                 labels.append(f"scenario event {idx}: {ev.type}"
                               + (" (refused)" if rec.get("refused") else ""))
-                later.append(functools.partial(
+                self._defer("console line", functools.partial(
                     self.get_logger().info,
                     f"scenario event {idx} {ev.type} at t={now:.1f}s -> generation "
                     f"{self.policy.generation}" + (" REFUSED" if rec.get("refused") else "")))
             if accepted:
-                later.append(functools.partial(
-                    self._publish_fences, "scenario event(s): " + "; ".join(accepted)))
+                self._queue_fences("scenario event(s): " + "; ".join(accepted))
             return labels
+
+        def _defer(self, what: str, fn, generation: int | None = None) -> None:
+            """Queue one item of this tick's hot-apply bookkeeping (THE
+            HOT-APPLY TICK), for _run_after_publish."""
+            self._after_publish.append((what, generation, fn))
+
+        def _defer_generation(self, rule_id: str, now: float) -> None:
+            """The generation a hot-apply just made: its policy and rule-clock
+            reading taken now (EpisodeRecord.generation_writer), its files
+            and events written after the setpoint."""
+            got: list = []
+            self.rec.hot_applied(rule_id, t=now, later=got)
+            g = self.policy.generation
+            for fn in got:
+                self._defer(f"generation {g} (policy_g{g}.json, csp_g{g}.json)", fn, g)
+
+        def _queue_fences(self, reason: str) -> None:
+            """The fences follow the new rules ONCE per tick, after the
+            tick's generations are recorded, with every reason (the
+            --dynamic zone and scenario events on one tick: one
+            fences_published, of the last generation, both reasons)."""
+            if self._fences_reasons is None:
+                self._fences_reasons = []
+            self._fences_reasons.append(reason)
 
         def _run_after_publish(self) -> int:
             """THE HOT-APPLY TICK (2026-11-23): run the hot-apply bookkeeping
@@ -4690,12 +4782,43 @@ if HAVE_ROS:
             episode or raises before its publication loses nothing (every
             generation's files are written before the replay bundle is
             packed). Each item is taken off the queue before it runs. The
-            number run."""
+            number run.
+
+            An item that raises (an OSError writing policy_g<N>.json, say)
+            is recorded - a `deferred_failed` event (what, generation,
+            error) and metrics.json `deferred_failed`, which take the flight
+            out of the KPIs and which the stress harness refuses by name -
+            and the rest still run: the setpoint already flew, so the tick
+            (its row, its audit record) and _finish (mission_end) must
+            complete. A generation whose policy file could not be written
+            (EpisodeRecord: `policy_file_error`) is recorded alike."""
             n = 0
-            while self._after_publish:
-                self._after_publish.pop(0)()
+            while self._after_publish or self._fences_reasons is not None:
+                if self._after_publish:
+                    what, gen, fn = self._after_publish.pop(0)
+                else:
+                    what, gen = "fences", self.policy.generation
+                    reasons, self._fences_reasons = self._fences_reasons, None
+                    fn = functools.partial(self._publish_fences, "; ".join(reasons))
                 n += 1
+                try:
+                    out = fn()
+                except Exception as exc:                         # noqa: BLE001
+                    self._deferred_failed(what, gen, f"{type(exc).__name__}: {exc}")
+                    continue
+                if isinstance(out, dict) and out.get("policy_file_error"):
+                    self._deferred_failed(what, gen, out["policy_file_error"])
             return n
+
+        def _deferred_failed(self, what: str, gen: int | None, error: str) -> None:
+            rec = {"t": round(self._t(), 3), "what": what, "generation": gen,
+                   "error": error}
+            self.deferred_failures.append(rec)
+            self.get_logger().error(f"hot-apply bookkeeping failed: {what}: {error}")
+            try:
+                self.rec.event("deferred_failed", **rec)
+            except Exception as exc:                             # noqa: BLE001
+                self.get_logger().error(f"deferred_failed not recorded: {exc}")
 
         def _tick(self) -> None:
             """The 10 Hz timer's tick (--tick-trigger timer)."""
@@ -4999,13 +5122,16 @@ if HAVE_ROS:
                 # mid-flight update model (EpisodeRecord.apply_zone).
                 # The generation's files and events, the fences and the
                 # console line wait for the setpoint (THE HOT-APPLY TICK).
-                applied = self.rec.apply_zone(self.shield, fence, t=now,
-                                              later=self._after_publish)
-                self._after_publish.append(functools.partial(
-                    self._publish_fences, f"hot_apply {applied.id} ({applied.type})"))
+                got: list = []
+                applied = self.rec.apply_zone(self.shield, fence, t=now, later=got)
+                g = self.policy.generation
+                for fn in got:
+                    self._defer(f"generation {g} (policy_g{g}.json, csp_g{g}.json)",
+                                fn, g)
+                self._queue_fences(f"hot_apply {applied.id} ({applied.type})")
                 self.spawn_t, self.spawn_pos = now, (st.x, st.y)
                 rule_events.append(f"dynamic zone {applied.id}")
-                self._after_publish.append(functools.partial(
+                self._defer("console line", functools.partial(
                     self.get_logger().info,
                     f"dynamic NFZ applied t={now:.1f}s -> generation "
                     f"{self.policy.generation}"))
@@ -5071,6 +5197,7 @@ if HAVE_ROS:
             zeroed = stale or pose_stale or dec_stale
             body = Action4D() if zeroed else self.raw_body
             seq, rx_ns = self._action_seq, self._action_rx_ns
+            blocked_ms = self._action_blocked_ms
             # This tick's row number (1-based), bound once: the audit record
             # and the log row of one decision carry the same tick.
             tick_no = len(self.traj) + 1
@@ -5343,14 +5470,6 @@ if HAVE_ROS:
                 self._last_pub_ns = pub_ns
                 self.delivery.published(t_pub)
             ph_pub1 = time.monotonic_ns()
-            # THE HOT-APPLY TICK (2026-11-23): this tick's hot-apply
-            # bookkeeping - the generation's policy and CSP files, its
-            # events, the scenario_event, the fences - now that the setpoint
-            # is out (on ntFIN4 it sat before it: spawn ticks ~51 ms against
-            # ~16 ms, one 105.5 ms). The Shield's own hot-apply ran in the
-            # tick, so the setpoint was judged under the new rules.
-            n_deferred = self._run_after_publish()
-            ph_q1 = time.monotonic_ns()
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity), the
             # dead reckoning of a lost fix and the clearance pipe; noted at
@@ -5359,7 +5478,8 @@ if HAVE_ROS:
             pipe_note = self.pipe_rec.note_flown(self.shield, flown_w, pipe_reads)
             # A stop flown for a stale input did not come from the action.
             lat = latency_fields(tick_ns, pub_ns, rx_ns,
-                                 fresh=(not zeroed and seq != self._flown_seq))
+                                 fresh=(not zeroed and seq != self._flown_seq),
+                                 blocked_ms=blocked_ms)
             if pub_ns is not None and not zeroed:
                 self._flown_seq = seq
             # Was the setpoint flown from the pilot's action (the Shield's
@@ -5387,8 +5507,11 @@ if HAVE_ROS:
                     "fsm": fsm_out.state.value if fsm_out else None})))
             # A zone held back while the aircraft was near it goes to the
             # adapter once the aircraft is clear (the backstop, not this
-            # tick's setpoint).
-            self._recheck_deferred(st, extra["unsafe_rules"])
+            # tick's setpoint). Not on a tick whose fences are re-published
+            # after the row (THE HOT-APPLY TICK): that publication holds
+            # back what is still near and sends the rest.
+            if self._fences_reasons is None:
+                self._recheck_deferred(st, extra["unsafe_rules"])
             # How many nodes publish the pilot's topic (review of 339f23a,
             # P1-A): a stub left running beside the bridge is a second
             # hand on the stick. Read once a second (every 10th tick from the
@@ -5544,6 +5667,21 @@ if HAVE_ROS:
                                      camera_age_ms=camera_age_ms(
                                          pf.get("decision_age_s") if from_action
                                          else None, rx_ns, pub_ns))
+            # THE HOT-APPLY TICK (2026-11-23): this tick's hot-apply
+            # bookkeeping - the generation's policy and CSP files, its
+            # events, the scenario_event, the fences - now that the setpoint
+            # is out (on ntFIN4 it sat before it: spawn ticks ~51 ms against
+            # ~16 ms, one 105.5 ms). The Shield's own hot-apply ran in the
+            # tick, so the setpoint was judged under the new rules. Run
+            # after the row is built (the review of 7e6aae2): the pipe's
+            # note of the send, the latency and every age on the row are
+            # read at the publication, not after the bookkeeping.
+            ph_q0 = time.monotonic_ns()
+            n_deferred = self._run_after_publish()
+            ph_q1 = time.monotonic_ns()
+            # Its window: an action that arrives meanwhile waits in the DDS
+            # queue behind it (blocked_by_deferred_ms on its row).
+            self._deferred_window = (ph_q0, ph_q1) if n_deferred else None
             # THE GARBAGE COLLECTOR: the paced full collection, when due, at
             # this safe point - the setpoint is out, the row written.
             self.gc_pacer.after_publish(now)
@@ -5574,7 +5712,7 @@ if HAVE_ROS:
                 "hold": _ms(ph_fsm1, ph_pub0),
                 "publish": _ms(ph_pub0, ph_pub1),
                 "post_publish": _ms(ph_pub1, ph_end),
-                "deferred": _ms(ph_pub1, ph_q1),
+                "deferred": _ms(ph_q0, ph_q1),
                 "n_deferred": n_deferred}
 
             # The episode ends when the autopilot has the aircraft and is done
@@ -5827,6 +5965,12 @@ if HAVE_ROS:
                 # over people only; guardrail/people.py).
                 **({} if self.shield.people_source is None
                    else {"people_source": self.shield.people_source}),
+                # THE HOT-APPLY TICK: the bookkeeping items that failed after
+                # their setpoint flew (a generation's files, an event, the
+                # fences); not empty, the flight is not KPI-grade and the
+                # stress harness refuses it (sweep_scenarios.
+                # hil_flight_problems).
+                "deferred_failed": list(self.deferred_failures),
                 "scenario_events": (None if not self._ev_file else {
                     "file": self._ev_file, "declared": self._ev_declared,
                     "applied": [r for r in self._ev_records if not r.get("refused")],
@@ -6088,6 +6232,11 @@ if HAVE_ROS:
                                                   "start_heading_err_deg": None})
             if self.fsm_fault:
                 graded, why = False, why + [f"FSM fault: {self.fsm_fault}"]
+            if self.deferred_failures:
+                graded, why = False, why + [
+                    f"{len(self.deferred_failures)} hot-apply bookkeeping item(s) failed "
+                    f"(deferred_failed): "
+                    + "; ".join(f"{d['what']}: {d['error']}" for d in self.deferred_failures)]
             if self.pose_watchdog.spells:
                 graded, why = False, why + [
                     f"the pose stream went stale ({len(self.pose_watchdog.spells)} "

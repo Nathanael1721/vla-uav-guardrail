@@ -6791,6 +6791,15 @@ def hil_flight_problems(metrics: dict) -> list[str]:
     if ev.get("not_applied"):
         out.append(f"{len(ev['not_applied'])} scenario event(s) never fired (the mission "
                    f"ended first): {[e.get('index') for e in ev['not_applied']]}")
+    # The hot-apply bookkeeping that runs after the setpoint (2026-11-23,
+    # sitl/ros2_shield_node.py THE HOT-APPLY TICK): an item that failed left
+    # a generation, an event or the fences unrecorded.
+    bad = metrics.get("deferred_failed")
+    if isinstance(bad, list) and bad:
+        out.append(f"{len(bad)} hot-apply bookkeeping item(s) failed after the setpoint "
+                   f"(deferred_failed): "
+                   + "; ".join(f"{d.get('what')}: {d.get('error')}" for d in bad
+                               if isinstance(d, dict)))
     return out
 
 
