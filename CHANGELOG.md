@@ -16,6 +16,11 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-23
+
+Release for the final hil smoke and nightly (WP3-19, WP4-14, WP3-13): every dated
+entry below, back to 0.6.0, ships in it.
+
 ### 2026-11-23 (code: the hot-apply tick, last resorts in the body frame, MSL readers, changelog diffs, FSM profiles, replay under GPS noise, Linux CI) — changes for the gaps the 23 Nov recount named and for ntFIN4's one tick over 100 ms; not flown yet
 
 #### Changed
