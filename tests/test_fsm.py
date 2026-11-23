@@ -1827,6 +1827,71 @@ def test_a_profile_may_override_in_the_other_spelling():
     assert FSMConfig.from_mapping(data).n_violations == 3
 
 
+def test_load_fsm_config_selects_a_profile_and_fails_closed():
+    """WP3-07b (2026-11-21): what every rail's --fsm-config / --fsm-profile
+    reads. Neither given is FSMConfig() with today's digest (the default is
+    unchanged); a file alone is its base; a file and a profile the overlay.
+    An unknown profile, a profile with no file, an empty name, a
+    `profiles:` that is not a mapping and a file that is not YAML are
+    ValueError - never the base flown under the profile's name - and a
+    missing file is OSError."""
+    from guardrail.fsm import load_fsm_config
+    assert load_fsm_config() == FSMConfig() and load_fsm_config(None, None) == FSMConfig()
+    assert load_fsm_config().digest == FSMConfig().digest
+    p = _yaml("escalation:\n  N: 4\n  T: 6\n"
+              "  profiles:\n    night:\n      T_recover: 3\n")
+    base = load_fsm_config(p)
+    assert (base.n_violations, base.window_s, base.t_recover_s) == (4, 6.0, 2.0)
+    night = load_fsm_config(str(p), "night")
+    assert (night.n_violations, night.t_recover_s) == (4, 3.0)
+    assert night == FSMConfig.from_yaml(p, profile="night") and night.digest != base.digest
+    e = raises(ValueError, load_fsm_config, p, "dawn")
+    assert "dawn" in str(e) and "night" in str(e), e
+    e = raises(ValueError, load_fsm_config, None, "night")
+    assert "--fsm-config" in str(e), e
+    raises(ValueError, load_fsm_config, p, "")
+    raises(ValueError, load_fsm_config, p, "  ")
+    raises(ValueError, load_fsm_config, _yaml("escalation:\n  profiles: [night]\n"), "night")
+    raises(ValueError, load_fsm_config, _yaml("escalation: [unclosed\n"))
+    raises(OSError, load_fsm_config, Path(tempfile.mkdtemp()) / "absent.yaml")
+
+
+def test_fsm_config_record_says_what_was_flown():
+    """metrics.json `fsm_config` (WP3-07b): the source, profile, digest and
+    values of the config in force, the loaded digest before a rail-side
+    adjustment, and whether the loaded thresholds are the defaults."""
+    from dataclasses import replace
+    from guardrail.fsm import fsm_config_record, load_fsm_config
+    rec = fsm_config_record(FSMConfig())
+    assert rec == {"source": None, "profile": None, "digest": FSMConfig().digest,
+                   "values": FSMConfig().to_dict(), "loaded_digest": FSMConfig().digest,
+                   "default": True}
+    json.dumps(rec)                                           # serialisable as-is
+    p = _yaml("escalation:\n  profiles:\n    tight:\n      N: 2\n")
+    tight = load_fsm_config(p, "tight")
+    widened = replace(tight, window_s=9.0)
+    rec = fsm_config_record(widened, p, "tight", loaded=tight)
+    assert rec["source"] == p.as_posix() and rec["profile"] == "tight"
+    assert rec["digest"] == widened.digest and rec["values"]["window_s"] == 9.0
+    assert rec["loaded_digest"] == tight.digest != widened.digest
+    assert rec["values"]["n_violations"] == 2 and rec["default"] is False
+
+
+def test_the_shipped_fsm_profiles_file_keeps_the_grant_defaults():
+    """experiments/fsm_profiles.yaml (WP3-07b): its base and its `grant`
+    profile are exactly FSMConfig() (same hash), so naming the file changes
+    nothing by itself; every profile in it loads."""
+    import yaml
+    from guardrail.fsm import load_fsm_config
+    path = ROOT / "experiments" / "fsm_profiles.yaml"
+    assert load_fsm_config(path) == FSMConfig()
+    assert load_fsm_config(path, "grant").digest == FSMConfig().digest
+    names = yaml.safe_load(path.read_text(encoding="utf-8"))["escalation"]["profiles"]
+    for name in names:
+        load_fsm_config(path, name)
+    assert load_fsm_config(path, "example_night").t_recover_s == 3.0
+
+
 def test_one_set_of_thresholds_has_one_hash():
     """YAML 'T: 5' arrives as an int; json writes 5 and 5.0 differently. The
     hash must follow the thresholds, not their spelling, and keep all 64 hex

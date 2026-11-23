@@ -95,7 +95,8 @@ from guardrail.frames import (BODY_STOP, body_to_local_ned,           # noqa: E4
                               filter_world_as_body)
 from guardrail import holdpoint                                        # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
-                           THETA_HORIZON_S, EscalationFSM, FSMConfig, FSMState,
+                           THETA_HORIZON_S, EscalationFSM, FSMState,
+                           fsm_config_record, load_fsm_config,
                            tick_input_from_decision)
 from guardrail.hold_flight import HoldFlight, body_command            # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
@@ -527,6 +528,12 @@ def main() -> int:
                          "random numbers.")
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
+    ap.add_argument("--fsm-profile", default=None, metavar="NAME",
+                    help="a profile of --fsm-config's `profiles:` overlaid on its base "
+                         "thresholds (2026-11-21, WP3-07b; guardrail.fsm."
+                         "load_fsm_config); an unknown one, or one without "
+                         "--fsm-config, is refused before anything is written. Left "
+                         "out: as before. metrics.json fsm_config records the config")
     ap.add_argument("--no-fsm", action="store_true",
                     help="do not run the escalation FSM (the pre-2026-10-06 rail)")
     ap.add_argument("--theta-horizon-s", default="auto",
@@ -593,7 +600,11 @@ def main() -> int:
         # with_uniform_wind, 2026-11-07): SITL's default profile halved the
         # 2 Nov runs' 8 m/s at their 15 m.
         sim_params = with_uniform_wind(parse_sim_params(args.sim_param))
-    except ValueError as e:
+        # The FSM's config and profile (2026-11-21, WP3-07b), read before
+        # anything is written: a missing file or an unknown profile is an
+        # argument error, never a flight on the defaults.
+        fsm_cfg = load_fsm_config(args.fsm_config, args.fsm_profile)
+    except (ValueError, OSError) as e:
         ap.error(str(e))
 
     shield_on = args.shield == "on"
@@ -737,9 +748,7 @@ def main() -> int:
           + (f" (raised from {ap_fence['fence_alt_max_raised_from']})"
              if ap_fence["fence_alt_max_raised_from"] is not None else "")
           + f"  AVOID_ENABLE {ap_fence['AVOID_ENABLE']}")
-    fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
-                         else FSMConfig())
-           if shield_on and not args.no_fsm else None)
+    fsm = EscalationFSM(fsm_cfg) if shield_on and not args.no_fsm else None
     fsm_fault = None
     failsafe_t = None
     # The FSM's hold points (--hold-points): planned by the search and flown
@@ -1203,6 +1212,10 @@ def main() -> int:
                      hold_points={"choice": args.hold_points,
                                   "moved_transits": hold_flight.transits})
                 if fsm is not None else None),
+        # The FSMConfig flown (--fsm-config / --fsm-profile, 2026-11-21,
+        # WP3-07b); in_use false when no FSM ran (control arm, --no-fsm).
+        "fsm_config": dict(fsm_config_record(fsm_cfg, args.fsm_config, args.fsm_profile),
+                           in_use=fsm is not None),
         # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
         # what ArduCopter was asked for (the FSM's LOITER as BRAKE), as the
         # ROS 2 and Project AirSim rails record them.

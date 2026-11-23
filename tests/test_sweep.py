@@ -4002,6 +4002,199 @@ def test_a_literal_loiter_hil_campaign_flies_the_adapter_loiter_and_checks_it():
 
 
 # --------------------------------------------------------------------------- #
+# the FSM's config and profile on the rails (--rail-fsm-config, 2026-11-21,
+# WP3-07b)
+# --------------------------------------------------------------------------- #
+
+FSM_YAML = "experiments/fsm_profiles.yaml"
+
+
+def test_a_campaign_hands_the_node_its_fsm_config_and_profile_checked():
+    """--rail-fsm-config / --rail-fsm-profile become the Shield node's
+    --fsm-config=<path in the checkout> --fsm-profile=<name> (declared by
+    the node, ignored by the VLA stub); with neither, nothing at all is
+    added, so every campaign's node arguments are the ones it flew. An
+    unknown profile, a profile with no file, a file outside the checkout,
+    a flag given twice or an absolute / backslashed path are refused."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as N
+    import ros2_vla_stub_node as V
+    from guardrail.fsm import FSMConfig
+    assert S.rail_fsm_args(None, None) == []
+    assert S.rail_fsm_requested(None) == (None, None)
+    got = S.rail_fsm_args(FSM_YAML, "example_night")
+    assert got == [f"--fsm-config={FSM_YAML}", "--fsm-profile=example_night"], got
+    assert S.rail_fsm_args(str(ROOT / FSM_YAML), None) == [f"--fsm-config={FSM_YAML}"]
+    assert S.rail_extra_args(got) == got
+    assert S.rail_fsm_requested(got) == (FSM_YAML, "example_night")
+    rel, cfg = S.rail_fsm_config(FSM_YAML, "example_night")
+    assert rel == FSM_YAML and cfg == FSMConfig.from_yaml(ROOT / FSM_YAML, "example_night")
+    ns, rest = N.make_parser().parse_known_args(got)
+    assert rest == [] and (ns.fsm_config, ns.fsm_profile) == (FSM_YAML, "example_night")
+    assert N.fsm_config_from_args(ns) == cfg
+    _, rest_v = V.make_parser().parse_known_args(got)
+    assert rest_v == got, "the VLA stub must ignore them, not misread them"
+    with tempfile.TemporaryDirectory() as td:
+        outside = Path(td) / "fsm.yaml"
+        outside.write_text("escalation:\n  N: 3\n", encoding="utf-8")
+        refused = [(FSM_YAML, "dawn"), (None, "grant"), (str(outside), None),
+                   ("experiments/no_such_fsm.yaml", None)]
+        for config, profile in refused:
+            try:
+                S.rail_fsm_args(config, profile)
+            except S.UnsupportedScenario:
+                continue
+            raise AssertionError(f"accepted {config!r} / {profile!r}")
+    for bad in ([f"--fsm-config={FSM_YAML}", f"--fsm-config={FSM_YAML}"],
+                [f"--fsm-config={ROOT / FSM_YAML}"],
+                ["--fsm-config=experiments\\fsm_profiles.yaml"],
+                [f"--fsm-config={FSM_YAML}", "--fsm-profile=dawn"],
+                ["--fsm-profile=grant"], ["--fsm-config", FSM_YAML]):
+        try:
+            S.rail_extra_args(bad)
+        except S.UnsupportedScenario:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    # The hil rig is asked for the file before SITL starts.
+    assert S.orin_input_files(["--bundle", "bundles/b.tar.gz"] + got) == [
+        "bundles/b.tar.gz", FSM_YAML]
+
+
+def test_a_flight_not_on_the_asked_fsm_config_is_never_scored():
+    """Fail closed (fsm_config_problems): asked, the node's metrics.json
+    fsm_config must name the profile and carry the loaded digest the file
+    and profile give here - a node older than the flag records none, and a
+    record of the defaults is another campaign's flight; not asked, a record
+    naming a file or profile is a flight no campaign named. Both rails
+    check it, and a scored mission carries the record."""
+    from guardrail.fsm import FSMConfig, fsm_config_record
+    args = S.rail_fsm_args(FSM_YAML, "example_night")
+    cfg = FSMConfig.from_yaml(ROOT / FSM_YAML, "example_night")
+    ok = {"fsm_config": dict(fsm_config_record(cfg, FSM_YAML, "example_night"),
+                             in_use=True)}
+    assert S.fsm_config_problems(ok, args) == []
+    assert S.fsm_config_result(ok)["profile"] == "example_night"
+    assert S.fsm_config_result(ok)["digest"] == cfg.digest
+    assert "older node" in S.fsm_config_problems({}, args)[0]
+    dflt = {"fsm_config": dict(fsm_config_record(FSMConfig()), in_use=True)}
+    got = S.fsm_config_problems(dflt, args)
+    assert len(got) == 2 and "profile" in got[0] and "loaded_digest" in got[1], got
+    base = {"fsm_config": fsm_config_record(FSMConfig(), FSM_YAML, None)}
+    assert S.fsm_config_problems(base, S.rail_fsm_args(FSM_YAML, None)) == []
+    assert S.fsm_config_problems(dflt, None) == [] == S.fsm_config_problems({}, None)
+    assert S.fsm_config_problems(dflt, ["--arc-forecast=on"]) == []
+    assert "no --fsm-config was asked" in S.fsm_config_problems(ok, None)[0]
+    src = (ROOT / "experiments" / "sweep_scenarios.py").read_text(encoding="utf-8")
+    assert src.count("fsm_config_problems(metrics, extra_args)") == 2, \
+        "both rails (run_sitl, run_hil) must check it"
+    assert src.count('extra["fsm_config"] = fsm_config_result(metrics)') == 2
+
+
+def test_rail_fsm_config_is_refused_off_the_rails():
+    """--rail-fsm-config / --rail-fsm-profile choose what a flown campaign
+    flies: refused on the headless backend and on a re-score, and an
+    unknown profile is refused before any mission is spent."""
+    assert S.main(["--rail-fsm-config", FSM_YAML, "--only", "nfz-head-on"]) == 2
+    assert S.main(["--rail-fsm-profile", "grant", "--only", "nfz-head-on"]) == 2
+    with tempfile.TemporaryDirectory() as td:
+        assert S.main(["--rail-fsm-config", FSM_YAML, "--rescore-rail",
+                       str(Path(td) / "x*"), "--out", str(Path(td) / "o.json")]) == 2
+        cfg = Path(td) / "hil.json"
+        cfg.write_text(json.dumps({"store": str(Path(td) / "store")}), encoding="utf-8")
+        assert S.main(["--backend", "hil", "--hil-config", str(cfg), "--hil-dry-run",
+                       "--only", "speed-cap", "--rail-fsm-config", FSM_YAML,
+                       "--rail-fsm-profile", "dawn"]) == 2
+
+
+class _FsmRig(_FakeRig):
+    """_FakeRig whose mission writes the fsm_config record the Shield node
+    would for the --fsm-config / --fsm-profile it is handed (`honour`
+    False: the record of the defaults, as a node older than the flag that
+    dropped them would fly)."""
+    honour = True
+
+    def run_mission(self, args, tag, shield, timeout_s, env=None):
+        from guardrail.fsm import fsm_config_record, load_fsm_config
+        rc, out = super().run_mission(args, tag, shield, timeout_s)
+        p = self.remote / "demo" / "out" / tag / "metrics.json"
+        m = json.loads(p.read_text(encoding="utf-8"))
+        config = profile = None
+        for a in args:
+            if a.startswith("--fsm-config="):
+                config = a.split("=", 1)[1]
+            elif a.startswith("--fsm-profile="):
+                profile = a.split("=", 1)[1]
+        if not self.honour:
+            config = profile = None
+        cfg = load_fsm_config(ROOT / config if config else None, profile)
+        m["fsm_config"] = dict(fsm_config_record(cfg, config, profile), in_use=True)
+        p.write_text(json.dumps(m), encoding="utf-8")
+        return rc, out
+
+
+def _fsm_campaign(honour, extra, tagname):
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        cfg = td / "hil.json"
+        cfg.write_text(json.dumps({"store": str(td / "store"),
+                                   "bundles_dir": str(_signed_like_bundles(td))}),
+                       encoding="utf-8")
+        rigs = []
+        mk = S.make_hil_transport
+
+        def make(c):
+            rig = _FsmRig(c)
+            rig.honour = honour
+            rigs.append(rig)
+            return rig
+        S.make_hil_transport = make
+        try:
+            _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
+                    "--out", str(td / "s.json"), "--no-bundles", "--only", "speed-cap",
+                    "--hil-campaign", tagname] + extra)
+        finally:
+            S.make_hil_transport = mk
+            for d in (ROOT / S.CAMPAIGN_DIR).glob(f"{tagname}*"):
+                shutil.rmtree(d, ignore_errors=True)
+        doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
+        score = None
+        sp = td / "store" / f"{tagname}_001_speed-cap" / S.SCENARIO_SCORE
+        if sp.is_file():
+            score = json.loads(sp.read_text(encoding="utf-8"))
+    (r,) = [r for r in doc["results"] if r["id"] == "speed-cap"]
+    return r, doc, rigs[0], score
+
+
+def test_an_fsm_profile_hil_campaign_flies_the_profile_and_checks_it():
+    """--backend hil --rail-fsm-config --rail-fsm-profile on a fake rig: the
+    mission container's node gets both flags; a run whose node recorded
+    that profile's digest is scored, with the record in scenario_score.json
+    and the campaign's record naming the config; a node that flew the
+    defaults instead (an older node dropping the flags) is an ERROR, never
+    scored. Without the options the node's arguments carry neither flag."""
+    from guardrail.fsm import FSMConfig
+    want = FSMConfig.from_yaml(ROOT / FSM_YAML, "example_night")
+    opts = ["--rail-fsm-config", FSM_YAML, "--rail-fsm-profile", "example_night"]
+    r, doc, rig, score = _fsm_campaign(True, opts, "tst7f")
+    assert r["status"] == "pass", r
+    (run,) = [c for c in rig.calls if c[0] == "run_mission"]
+    assert f"--fsm-config={FSM_YAML}" in run[3] and "--fsm-profile=example_night" in run[3]
+    assert score["fsm_config"]["digest"] == want.digest, score["fsm_config"]
+    assert score["fsm_config"]["profile"] == "example_night"
+    scope = doc["_scope"]
+    assert scope["rail_fsm_config"]["digest"] == want.digest == \
+        scope["hil"]["fsm_config"]["digest"]
+    assert scope["rail_fsm_config"]["source"] == FSM_YAML
+    r, _, _, _ = _fsm_campaign(False, opts, "tst7g")
+    assert r["status"] == "error" and "not flown on the asked FSM config" in r["error"], r
+    r, doc, rig, score = _fsm_campaign(True, [], "tst7h")
+    assert r["status"] == "pass", r
+    (run,) = [c for c in rig.calls if c[0] == "run_mission"]
+    assert not any(a.startswith(("--fsm-config", "--fsm-profile")) for a in run[3]), run[3]
+    assert "fsm_config" not in score and "rail_fsm_config" not in doc["_scope"]
+
+
+# --------------------------------------------------------------------------- #
 # the rail scorer (2026-11-07): the rule readings from the rail's own log, the
 # scenario's window, the proposed rail gates, the offline re-score
 # --------------------------------------------------------------------------- #

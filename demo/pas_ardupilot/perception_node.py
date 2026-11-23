@@ -462,8 +462,9 @@ from guardrail.gc_pacing import GcPacer                               # noqa: E4
 from guardrail import people as people_feed                           # noqa: E402
 from guardrail.frames import BODY_STOP, to_body                       # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
-                           THETA_HORIZON_S, EscalationFSM, FSMConfig,
-                           FSMState, tick_input_from_decision)
+                           THETA_HORIZON_S, EscalationFSM,
+                           FSMState, fsm_config_record, load_fsm_config,
+                           tick_input_from_decision)
 from guardrail.kpi import compute_from_dir, null_hover_mission        # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, MAX_HEADING_ERR_DEG,   # noqa: E402
                                 NO_VLA, TOPOLOGY_DEV, TOPOLOGY_HIL, build_manifest,
@@ -5266,6 +5267,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
+    ap.add_argument("--fsm-profile", default=None, metavar="NAME",
+                    help="a profile of --fsm-config's `profiles:` overlaid on its base "
+                         "thresholds (2026-11-21, WP3-07b; guardrail.fsm."
+                         "load_fsm_config); an unknown one, or one without "
+                         "--fsm-config, is refused before anything starts. Left out: "
+                         "as before. metrics.json fsm_config records the config")
     ap.add_argument("--no-fsm", action="store_true",
                     help="do not run the escalation FSM (not for KPI runs)")
     ap.add_argument("--theta-horizon-s", default="auto",
@@ -5619,6 +5626,13 @@ def check_args(args) -> None:
                          f"--start-timeout-s in (0, {START_TIMEOUT_MAX_S:g}] s: the "
                          f"airborne hover before the mission is capped "
                          f"(START_TIMEOUT_MAX_S)")
+    # The FSM's config and profile (2026-11-21, WP3-07b): a missing file or
+    # an unknown profile is refused here, never flown on the defaults.
+    try:
+        load_fsm_config(getattr(args, "fsm_config", None),
+                        getattr(args, "fsm_profile", None))
+    except (ValueError, OSError) as exc:
+        raise SystemExit(f"[fsm] {exc}") from None
     check_pilot_args(args)
     check_estimator_args(args)
 
@@ -7194,9 +7208,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # the flown action re-checked from the position on the commanded
     # forecast, beside the rail's own re-check (made with the velocity).
     n_p0_cmd_basis = 0
-    fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
-                         else FSMConfig())
-           if shield_on and not args.no_fsm else None)
+    # --fsm-config / --fsm-profile (2026-11-21, WP3-07b; check_args read
+    # them already): neither given is FSMConfig(), as before.
+    fsm_cfg = load_fsm_config(getattr(args, "fsm_config", None),
+                              getattr(args, "fsm_profile", None))
+    fsm = EscalationFSM(fsm_cfg) if shield_on and not args.no_fsm else None
     horizon = theta_horizon(getattr(args, "theta_horizon_s", "auto"))
     hold_mode = getattr(args, "hold_mode", HOLD_MODE)
     hold_ap_mode = autopilot_mode("LOITER", hold_mode)    # what ArduCopter holds in
@@ -9171,6 +9187,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                          hold_mode={"fsm_mode": "LOITER",
                                     "autopilot_mode": autopilot_mode("LOITER", hold_mode)})
                     if fsm is not None else None),
+            # The FSMConfig flown (--fsm-config / --fsm-profile, 2026-11-21,
+            # WP3-07b); in_use false when no FSM ran.
+            "fsm_config": dict(fsm_config_record(fsm_cfg,
+                                                 getattr(args, "fsm_config", None),
+                                                 getattr(args, "fsm_profile", None)),
+                               in_use=fsm is not None),
             # The FSM's LOITER as flown, and the throttle override that makes
             # ArduCopter's LOITER hold altitude (--hold-mode LOITER on SITL).
             "hold": {"fsm_mode": "LOITER",

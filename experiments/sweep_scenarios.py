@@ -3599,6 +3599,14 @@ RAIL_HOLD_FLAGS = {"--hold-flight": ("brake",), "--hold-mode": ("LOITER",),
                    "--literal-loiter": ("on", "off")}
 RAIL_LITERAL_LOITER_ARGS = ("--hold-flight=brake", "--hold-mode=LOITER",
                             "--literal-loiter=on")
+# The escalation FSM's config and profile (--rail-fsm-config /
+# --rail-fsm-profile, 2026-11-21, WP3-07b): handed to every mission's Shield
+# node through the same `extra_args`, each at most once, the file a path
+# inside the checkout (the node reads it from the same relative path in WSL
+# or on the Orin) and the pair loadable here (rail_fsm_args). Opt-in: a
+# campaign without them sends none, and the node flies FSMConfig() exactly
+# as before. Checked after the flight by fsm_config_problems.
+RAIL_FSM_FLAGS = ("--fsm-config", "--fsm-profile")
 # mavlink_adapter_node.ADAPTER_HOLD_ENV, written out so this module reads it
 # without importing the adapter (tests/test_sweep.py pins the two together).
 RAIL_ADAPTER_HOLD_ENV = "VLAGUARD_ADAPTER_HOLD"
@@ -4549,7 +4557,8 @@ def rail_extra_args(extra_args) -> list[str]:
     """`extra_args` of run_hil / run_sitl, checked: `--flag=value` tokens of
     RAIL_HOTAPPLY_FLAGS, RAIL_FORECAST_FLAGS or (since 2026-11-21)
     RAIL_HOLD_FLAGS (the last two with one of that flag's values, at most
-    once) only, each declared by the Shield node
+    once) or RAIL_FSM_FLAGS (at most once each, a file in the checkout and a
+    profile it defines: rail_fsm_config) only, each declared by the Shield node
     (it reads its arguments with parse_known_args, so an undeclared flag
     would vanish without a word). [] for None. Raises UnsupportedScenario
     otherwise."""
@@ -4557,14 +4566,15 @@ def rail_extra_args(extra_args) -> list[str]:
     if not out:
         return []
     valued = {**RAIL_FORECAST_FLAGS, **RAIL_HOLD_FLAGS}
-    allowed = set(RAIL_HOTAPPLY_FLAGS) | set(valued)
+    allowed = set(RAIL_HOTAPPLY_FLAGS) | set(valued) | set(RAIL_FSM_FLAGS)
     bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in allowed]
     if bad:
         raise UnsupportedScenario(
             f"extra rail arguments {bad}: only --flag=value forms of "
             f"{sorted(allowed)} may be added to a scenario's own")
     names = [a.split("=", 1)[0] for a in out]
-    twice = sorted({n for n in names if n in valued and names.count(n) > 1})
+    once = set(valued) | set(RAIL_FSM_FLAGS)
+    twice = sorted({n for n in names if n in once and names.count(n) > 1})
     if twice:
         raise UnsupportedScenario(f"extra rail arguments name {twice} more than once")
     for a in out:
@@ -4572,6 +4582,10 @@ def rail_extra_args(extra_args) -> list[str]:
         if name in valued and value not in valued[name]:
             raise UnsupportedScenario(f"{name}={value}: one of "
                                       f"{list(valued[name])}")
+    if any(n in RAIL_FSM_FLAGS for n in names):
+        # Loaded here, so a profile the file lacks is refused before a
+        # mission is spent (the node would refuse it too, after SITL boots).
+        rail_fsm_config(*rail_fsm_requested(out), relative_only=True)
     node = sitl_node_flags(_REPO / SITL_NODE)
     missing = sorted(set(names) - node)
     if missing:
@@ -4658,6 +4672,117 @@ def literal_loiter_record(metrics: dict) -> dict:
             "loiter_spells": block.get("loiter_spells"),
             "loiter_held_s": block.get("loiter_held_s"),
             "alt_tol_m": (block.get("rules") or {}).get("alt_tol_m")}
+
+
+def rail_fsm_requested(extra_args) -> tuple[str | None, str | None]:
+    """(the `--fsm-config=` value, the `--fsm-profile=` value) in
+    `extra_args` (2026-11-21, WP3-07b; RAIL_FSM_FLAGS), None for each one
+    absent. (None, None): the campaign asked for no FSM config."""
+    config = profile = None
+    for a in (str(x) for x in (extra_args or ())):
+        name, _, value = a.partition("=")
+        if name == "--fsm-config":
+            config = value
+        elif name == "--fsm-profile":
+            profile = value
+    return config, profile
+
+
+def rail_fsm_config(config: str | None, profile: str | None, *,
+                    relative_only: bool = False):
+    """(the config's path relative to the checkout, POSIX; the FSMConfig it
+    and `profile` give) for a campaign's --rail-fsm-config / --rail-fsm-profile
+    (2026-11-21, WP3-07b). The file must be inside the checkout, because
+    the Shield node reads it from the same relative path on the rail (WSL,
+    or the Orin's checkout; its repo_path); with `relative_only` (a node
+    argument) it must already be written relative. A profile needs a file,
+    and the file must define it (guardrail.fsm.load_fsm_config). Raises
+    UnsupportedScenario for any of these, so nothing flies on the defaults
+    under a profile's name."""
+    from guardrail.fsm import load_fsm_config
+    if config is None:
+        if profile is not None:
+            raise UnsupportedScenario(f"--fsm-profile {profile!r} needs --fsm-config "
+                                      f"(the YAML that defines its profiles)")
+        raise UnsupportedScenario("no --fsm-config given")
+    given = Path(config)
+    if relative_only and (given.is_absolute() or "\\" in config):
+        raise UnsupportedScenario(f"--fsm-config={config}: name it relative to the "
+                                  f"checkout, with /, as the node on the rail reads it")
+    path = (given if given.is_absolute() else ROOT / given).resolve()
+    try:
+        rel = path.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        raise UnsupportedScenario(f"--fsm-config {config}: not inside the checkout "
+                                  f"({ROOT}); the node on the rail could not read it") \
+            from None
+    if not path.is_file():
+        raise UnsupportedScenario(f"--fsm-config {config}: no such file")
+    try:
+        cfg = load_fsm_config(path, profile)
+    except (ValueError, OSError) as e:
+        raise UnsupportedScenario(f"--fsm-config {config}"
+                                  + (f" --fsm-profile {profile}" if profile else "")
+                                  + f": {e}") from None
+    return rel, cfg
+
+
+def rail_fsm_args(config: str | None, profile: str | None) -> list[str]:
+    """The Shield node arguments a campaign's --rail-fsm-config /
+    --rail-fsm-profile become (2026-11-21, WP3-07b): [] when neither is
+    given (every mission's node arguments exactly as before), else
+    `--fsm-config=<path in the checkout>` and, with a profile,
+    `--fsm-profile=<name>`, checked by rail_extra_args. Raises
+    UnsupportedScenario (rail_fsm_config)."""
+    if config is None and profile is None:
+        return []
+    rel, _ = rail_fsm_config(config, profile)
+    return rail_extra_args([f"--fsm-config={rel}"]
+                           + ([f"--fsm-profile={profile}"] if profile is not None else []))
+
+
+def fsm_config_problems(metrics: dict, extra_args) -> list[str]:
+    """Fail closed on the FSM's config (2026-11-21, WP3-07b): when
+    `extra_args` asked for one, the node's own record (metrics.json
+    fsm_config, guardrail.fsm.fsm_config_record) must name the profile asked
+    and carry the digest the file and profile give on this desktop
+    (loaded_digest: before the node's slow-pilot window). A node from an
+    older bundle parses with parse_known_args and would drop the flags
+    without a word, flying FSMConfig() under the profile's name; a file that
+    differs on the rail would fly other thresholds. Not asked, a record that
+    names a file or profile is a flight no campaign named. [] when they
+    agree (and when nothing was asked and nothing recorded)."""
+    config, profile = rail_fsm_requested(extra_args)
+    rec = metrics.get("fsm_config")
+    if config is None:
+        if isinstance(rec, dict) and (rec.get("source") or rec.get("profile")):
+            return [f"metrics.json fsm_config names {rec.get('source')!r} / profile "
+                    f"{rec.get('profile')!r} but no --fsm-config was asked"]
+        return []
+    if not isinstance(rec, dict):
+        return [f"--fsm-config={config} was asked but metrics.json carries no fsm_config "
+                f"record (an older node drops the flag)"]
+    try:
+        _, cfg = rail_fsm_config(config, profile, relative_only=True)
+    except UnsupportedScenario as e:
+        return [f"the asked FSM config cannot be read on this desktop now: {e}"]
+    out = []
+    if rec.get("profile") != profile:
+        out.append(f"metrics.json fsm_config.profile is {rec.get('profile')!r}, "
+                   f"not the {profile!r} asked")
+    if rec.get("loaded_digest") != cfg.digest:
+        out.append(f"metrics.json fsm_config.loaded_digest {rec.get('loaded_digest')!r} "
+                   f"is not {cfg.digest} ({config}"
+                   + (f", profile {profile}" if profile else "") + " on this desktop)")
+    return out
+
+
+def fsm_config_result(metrics: dict) -> dict:
+    """What a mission flown with --rail-fsm-config carries in its results
+    (`fsm_config`): the node's record (source, profile, digest, values)."""
+    rec = metrics.get("fsm_config") or {}
+    return {k: rec.get(k) for k in ("source", "profile", "digest", "loaded_digest",
+                                    "values", "in_use")}
 
 
 def _num(v: float) -> str:
@@ -6270,6 +6395,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
         # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
         raise RuntimeError(f"{tag}: not a literal-LOITER flight: "
                            + "; ".join(loiter_problems))
+    fsm_problems = fsm_config_problems(metrics, extra_args)
+    if fsm_problems:
+        # Fail closed (--rail-fsm-config): never scored under another FSM.
+        raise RuntimeError(f"{tag}: not flown on the asked FSM config: "
+                           + "; ".join(fsm_problems))
     ground_problems = ground_flight_problems(spec, metrics)
     if ground_problems:
         # Fail closed (X-11): never scored over a ground it did not fly.
@@ -6282,6 +6412,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     extra["sim_stressors_check"] = stress
     if literal_loiter_asked(extra_args):
         extra["literal_loiter"] = literal_loiter_record(metrics)
+    if rail_fsm_requested(extra_args)[0] is not None:
+        extra["fsm_config"] = fsm_config_result(metrics)
     if meta.get("arm_record"):
         extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
     if phys is not None:
@@ -6765,10 +6897,11 @@ def record_desktop_revision(run_dir: Path, cfg: HilConfig | None = None, *,
 
 def orin_input_files(args: list[str]) -> list[str]:
     """The files a hil mission's node arguments name for it to read on the
-    Orin: --bundle and --ground (both `--flag value` and `--flag=value`)."""
+    Orin: --bundle and --ground (both `--flag value` and `--flag=value`),
+    and since 2026-11-21 a campaign's --fsm-config (WP3-07b)."""
     out: list[str] = []
     for i, a in enumerate(args):
-        for flag in ("--bundle", "--ground"):
+        for flag in ("--bundle", "--ground", "--fsm-config"):
             if a == flag and i + 1 < len(args):
                 out.append(args[i + 1])
             elif a.startswith(flag + "="):
@@ -6889,6 +7022,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if loiter_problems:
         # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
         problems.append("not a literal-LOITER flight: " + "; ".join(loiter_problems))
+    fsm_problems = fsm_config_problems(metrics, extra_args)
+    if fsm_problems:
+        # Fail closed (--rail-fsm-config): never scored under another FSM.
+        problems.append("not flown on the asked FSM config: " + "; ".join(fsm_problems))
     ground_problems = ground_flight_problems(spec, metrics)
     if ground_problems:
         # Fail closed (X-11): never scored over a ground it did not fly.
@@ -6909,6 +7046,8 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
     if literal_loiter_asked(extra_args):
         extra["literal_loiter"] = literal_loiter_record(metrics)
+    if rail_fsm_requested(extra_args)[0] is not None:
+        extra["fsm_config"] = fsm_config_result(metrics)
     prios = rail_rule_priorities(pol, gens)
     # `rows`: the scenario's own window, which score() reads (rail_scored_rows);
     # `rows_all`: the whole flight, past the cap to the fail-safe's outcome.
@@ -6998,6 +7137,10 @@ def score_document(meta: dict, res: dict, extra: dict, status: str, bad: list,
         # A --rail-hold loiter mission only (2026-11-21): its literal-LOITER
         # check, and whether it counts as a literal-LOITER run.
         doc["literal_loiter"] = extra["literal_loiter"]
+    if extra.get("fsm_config") is not None:
+        # A --rail-fsm-config mission only (2026-11-21, WP3-07b): the FSM
+        # config it flew, as the node recorded it.
+        doc["fsm_config"] = extra["fsm_config"]
     return doc
 
 
@@ -9738,6 +9881,18 @@ def main(argv: list[str] | None = None) -> int:
                          "only), and a mission whose metrics.json literal_loiter check is "
                          "missing or failed is an error, never scored. Recorded in "
                          "sweep.json; a separate campaign")
+    ap.add_argument("--rail-fsm-config", default=None, metavar="YAML",
+                    help="--backend sitl / hil (2026-11-21, WP3-07b): the escalation "
+                         "FSM's thresholds YAML (guardrail.fsm.FSMConfig, a file inside "
+                         "the checkout) every mission's Shield node flies "
+                         "(--fsm-config); left out (default): nothing is added and the "
+                         "node flies FSMConfig(). A mission whose metrics.json fsm_config "
+                         "does not carry this file's (and profile's) digest is an error, "
+                         "never scored. Recorded in sweep.json; a separate campaign")
+    ap.add_argument("--rail-fsm-profile", default=None, metavar="NAME",
+                    help="with --rail-fsm-config: the profile of its `profiles:` every "
+                         "mission's node overlays (--fsm-profile); an unknown one is "
+                         "refused before anything flies")
     ap.add_argument("--rescore-rail", nargs="+", default=None, metavar="RUN_GLOB",
                     help="re-score fetched rail runs (hil / sitl run folders with a "
                          "scenario record) with this checkout's scorer, against the "
@@ -9965,6 +10120,10 @@ def main(argv: list[str] | None = None) -> int:
             print("REFUSED: --rail-hold chooses what a campaign flies; "
                   "--rescore-rail reads runs already flown")
             return 2
+        if args.rail_fsm_config is not None or args.rail_fsm_profile is not None:
+            print("REFUSED: --rail-fsm-config / --rail-fsm-profile choose what a "
+                  "campaign flies; --rescore-rail reads runs already flown")
+            return 2
         return rescore_rail_main(args.rescore_rail, episodes, lib.defaults,
                                  args.rail_gates, Path(args.out),
                                  labels_path=(Path(args.rail_labels)
@@ -10006,7 +10165,30 @@ def main(argv: list[str] | None = None) -> int:
         print("LITERAL-LOITER CAMPAIGN: every mission's Loiter is flown as SET_MODE LOITER "
               "with the throttle centred by the adapter (SITL only); a mission whose "
               "literal_loiter check fails is an error, never scored\n")
-    rail_args = (rail_arc_args + rail_hold_args) or None
+    # The escalation FSM's config and profile (--rail-fsm-config /
+    # --rail-fsm-profile, 2026-11-21, WP3-07b): loaded and checked here
+    # (an unknown profile, or a profile without a file, is refused before a
+    # mission is spent), handed to every mission's node, and checked after
+    # each flight against the node's own record (fsm_config_problems).
+    rail_fsm: list[str] = []
+    if args.rail_fsm_config is not None or args.rail_fsm_profile is not None:
+        if args.backend not in RAIL_BACKENDS:
+            print("REFUSED: --rail-fsm-config / --rail-fsm-profile are for a rail's "
+                  "flights (--backend sitl / hil)")
+            return 2
+        try:
+            rail_fsm = rail_fsm_args(args.rail_fsm_config, args.rail_fsm_profile)
+            fsm_rel, fsm_cfg = rail_fsm_config(args.rail_fsm_config, args.rail_fsm_profile)
+        except UnsupportedScenario as e:
+            print(f"REFUSED: {e}")
+            return 2
+        info["rail_fsm_config"] = {"source": fsm_rel, "profile": args.rail_fsm_profile,
+                                   "digest": fsm_cfg.digest, "values": fsm_cfg.to_dict()}
+        print(f"FSM-CONFIG CAMPAIGN: every mission's Shield node flies {fsm_rel}"
+              + (f" profile {args.rail_fsm_profile}" if args.rail_fsm_profile else "")
+              + f" ({fsm_cfg.digest[:19]}); a separate campaign, never merged with "
+              "one on the default thresholds\n")
+    rail_args = (rail_arc_args + rail_hold_args + rail_fsm) or None
     if args.rail_gates != "ideal" and profile is not None and profile.prefix_consumer:
         # The derived bounds come from a headless flight of the cell's own
         # pilot; a consuming pilot flies another flight.
@@ -10100,6 +10282,9 @@ def main(argv: list[str] | None = None) -> int:
         if rail_hold_args:
             # --rail-hold loiter (2026-11-21): only then, as above.
             info["hil"]["rail_hold"] = args.rail_hold
+        if rail_fsm:
+            # --rail-fsm-config (2026-11-21, WP3-07b): only then, as above.
+            info["hil"]["fsm_config"] = info["rail_fsm_config"]
         if args.hil_dry_run:
             print_hil_plan(plan, hil_cfg, hil_max_s_add)
             return 0

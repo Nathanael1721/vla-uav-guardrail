@@ -3154,6 +3154,107 @@ def test_no_sitl_script_reads_a_name_nothing_binds():
         assert not unbound, f"{path.name}: names nothing binds: {unbound}"
 
 
+# ------------------------------------------- the FSM profile (2026-11-21, WP3-07b)
+
+FSM_PROFILES = ROOT / "experiments" / "fsm_profiles.yaml"
+
+
+def _fsm_yaml() -> Path:
+    p = Path(tempfile.mkdtemp(prefix="fsm_profile_")) / "escalation.yaml"
+    p.write_text("escalation:\n  N: 3\n  T: 5\n  profiles:\n    night:\n"
+                 "      T_recover: 3\n      theta_lateral: 1.5\n", encoding="utf-8")
+    return p
+
+
+def test_the_pymavlink_rail_flies_the_fsm_profile_it_is_given_and_records_it():
+    """WP3-07b: --fsm-config FILE --fsm-profile NAME reaches the FSM (its
+    fsm_config_hash is the profile's) and metrics.json fsm_config names the
+    file, the profile and the values; with neither, FSMConfig() exactly as
+    before; an unknown profile is an argument error before anything flies."""
+    from guardrail import fsm as F
+    p = _fsm_yaml()
+    night = F.FSMConfig.from_yaml(p, profile="night")
+    _, metrics, *_ = _fly_pymavlink_rail(["--shield", "on", "--fsm-config", str(p),
+                                          "--fsm-profile", "night"])
+    rec = metrics["fsm_config"]
+    assert rec["profile"] == "night" and rec["source"] == p.as_posix(), rec
+    assert rec["digest"] == night.digest == metrics["fsm"]["fsm_config_hash"], rec
+    assert rec["values"]["t_recover_s"] == 3.0 and rec["values"]["theta_lateral_m"] == 1.5
+    assert rec["in_use"] is True and rec["default"] is False
+    _, metrics, *_ = _fly_pymavlink_rail(["--shield", "on"])
+    rec = metrics["fsm_config"]
+    assert rec["source"] is None and rec["profile"] is None and rec["default"] is True
+    assert rec["digest"] == F.FSMConfig().digest == metrics["fsm"]["fsm_config_hash"]
+    for bad in (["--fsm-config", str(p), "--fsm-profile", "dawn"],
+                ["--fsm-profile", "night"]):
+        try:
+            _fly_pymavlink_rail(["--shield", "on"] + bad)
+        except SystemExit as e:
+            assert e.code == 2, e
+        else:
+            raise AssertionError(f"{bad} was flown")
+
+
+def test_the_ros2_node_takes_an_fsm_profile_and_refuses_an_unknown_one_before_ros():
+    """WP3-07b: the ROS 2 Shield node declares --fsm-profile (default None),
+    finds a campaign's relative --fsm-config from the checkout (repo_path),
+    reads both in main() inside the pre-ROS refusal, builds its FSM from them
+    and writes metrics.json fsm_config on every arm."""
+    from types import SimpleNamespace
+    from guardrail import fsm as F
+    sys.path.insert(0, str(SITL))
+    import ros2_shield_node as N
+    dflt = N.make_parser().parse_known_args([])[0]
+    assert dflt.fsm_config is None and dflt.fsm_profile is None
+    assert N.fsm_config_from_args(dflt) == F.FSMConfig()
+    ns, rest = N.make_parser().parse_known_args(
+        ["--fsm-config=experiments/fsm_profiles.yaml", "--fsm-profile=example_night"])
+    assert rest == [] and ns.fsm_profile == "example_night"
+    assert N.fsm_config_from_args(ns) == F.FSMConfig.from_yaml(FSM_PROFILES, "example_night")
+    for bad in (SimpleNamespace(fsm_config=str(FSM_PROFILES), fsm_profile="dawn"),
+                SimpleNamespace(fsm_config=None, fsm_profile="grant")):
+        try:
+            N.fsm_config_from_args(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad} was accepted")
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    main = src[src.index("def main(argv"):]
+    i_check = main.index("fsm_config_for_pilot(fsm_config_from_args(args)")
+    assert main.index("try:") < i_check < main.index("except (ValueError, OSError) as exc:")
+    assert i_check < main.index("rclpy.init(")
+    assert "loaded = cfg = fsm_config_from_args(args)" in src
+    assert '"fsm_config": {**self.fsm_config_rec, "in_use": self.fsm is not None}' in src
+
+
+def test_the_pas_node_takes_an_fsm_profile_and_refuses_an_unknown_one():
+    """WP3-07b: the Project AirSim perception node declares --fsm-profile,
+    check_args refuses an unknown profile (or one with no --fsm-config)
+    before anything starts, and its FSM and metrics.json fsm_config come
+    from the same load."""
+    sys.path.insert(0, str(ROOT / "demo" / "pas_ardupilot"))
+    import perception_node as pn
+    base = ["--network", "mirrored"]
+    assert pn.build_parser().parse_args(base).fsm_profile is None
+    for extra in (["--fsm-config", str(FSM_PROFILES), "--fsm-profile", "dawn"],
+                  ["--fsm-profile", "grant"]):
+        try:
+            pn.check_args(pn.build_parser().parse_args(base + extra))
+        except SystemExit as exc:
+            assert "[fsm]" in str(exc), exc
+        else:
+            raise AssertionError(f"{extra} was accepted")
+    ok = pn.build_parser().parse_args(
+        base + ["--fsm-config", str(FSM_PROFILES), "--fsm-profile", "example_night"])
+    try:
+        pn.check_args(ok)
+    except SystemExit as exc:                  # another check may refuse; not ours
+        assert "[fsm]" not in str(exc), exc
+    src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
+    assert "fsm = EscalationFSM(fsm_cfg) if shield_on and not args.no_fsm else None" in src
+    assert '"fsm_config": dict(fsm_config_record(fsm_cfg,' in src
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

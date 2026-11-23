@@ -307,8 +307,20 @@ the option left out (the default: the 10 Hz stub every KPI campaign flies),
 with the thresholds and their hash exactly as before (fsm_config_for_pilot).
 metrics.json `fsm.decision_period` says which. Only a hand-launched node
 takes it (sitl/run_ros2_demo.sh EXTRA): no campaign path passes it - the
-harness's rail_node_args never adds it and rail_extra_args accepts only the
-hot-apply flags.
+harness's rail_node_args never adds it and rail_extra_args does not accept
+it.
+
+THE FSM PROFILE (2026-11-21, WP3-07b). The grant makes N, T, theta and
+T_recover "config-file overridable per mission profile" (Safety Shield PDF
+p4). `--fsm-config FILE --fsm-profile NAME` flies FILE's base thresholds
+overlaid with its profile NAME (guardrail.fsm.load_fsm_config); an unknown
+profile, or a profile with no file, is refused in main() before ROS starts.
+Neither given is FSMConfig(), exactly as before. metrics.json `fsm_config`
+records what was flown (source, profile, digest, values, and the loaded
+digest before the slow-pilot window), on every arm. A campaign selects it
+with experiments/sweep_scenarios.py --rail-fsm-config / --rail-fsm-profile,
+which hands both flags through rail_extra_args and refuses a run whose
+record disagrees (fsm_config_problems).
 
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
@@ -548,7 +560,8 @@ from guardrail.delivery import (DELIVERY_SHORTFALL_MAX, DeliveryMonitor,  # noqa
 from guardrail import holdpoint                                           # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
-                           FSMState, tick_input_from_decision)
+                           FSMState, fsm_config_record, load_fsm_config,
+                           tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.hold_flight import HoldFlight, HoldWatch, body_command     # noqa: E402
 from guardrail.response import ARDUCOPTER_GUIDED                         # noqa: E402
@@ -935,6 +948,18 @@ def repo_path(p: str | Path) -> Path:
     if path.is_absolute() or path.exists():
         return path
     return ROOT / path
+
+
+def fsm_config_from_args(args) -> FSMConfig:
+    """The FSMConfig `--fsm-config` / `--fsm-profile` name (THE FSM PROFILE,
+    2026-11-21): guardrail.fsm.load_fsm_config over the file found as
+    repo_path finds every other input (a campaign names it relative to the
+    checkout). Neither given: FSMConfig(), as before the flags. Raises
+    ValueError for an unknown profile or a profile without a file, OSError
+    for a file that cannot be read."""
+    path = getattr(args, "fsm_config", None)
+    return load_fsm_config(repo_path(path) if path else None,
+                           getattr(args, "fsm_profile", None))
 
 
 def load_scenario_meta(path) -> dict:
@@ -3020,10 +3045,16 @@ if HAVE_ROS:
                                     if args.theta_horizon_s == "auto"
                                     else (None if args.theta_horizon_s == "none"
                                           else float(args.theta_horizon_s)))
-            cfg = FSMConfig.from_yaml(args.fsm_config) if args.fsm_config else FSMConfig()
+            # --fsm-config / --fsm-profile (THE FSM PROFILE, 2026-11-21):
+            # neither given is FSMConfig(), as before the flags.
+            fsm_profile = getattr(args, "fsm_profile", None)
+            loaded = cfg = fsm_config_from_args(args)
             # A slow pilot's N-in-T window (THE PILOT'S DECISION PERIOD).
             cfg, self.decision_period = fsm_config_for_pilot(
                 cfg, getattr(args, "decision_period_s", None))
+            # The config flown, for metrics.json `fsm_config` (every arm).
+            self.fsm_config_rec = fsm_config_record(cfg, args.fsm_config, fsm_profile,
+                                                    loaded=loaded)
             self.fsm = EscalationFSM(cfg) if self.shield_on else None
             # PathRepair (default chain since 2026-11-17) stands aside where
             # the projection is over THIS FSM's theta; the Shield has no FSM.
@@ -5733,6 +5764,10 @@ if HAVE_ROS:
                                                     else "in_place"),
                                          "moved_transits": self.hold_flight.transits}}
                         if self.fsm else None),
+                # The FSMConfig flown (THE FSM PROFILE, 2026-11-21): its
+                # source, profile, digest and values; on the control arm, the
+                # one an FSM would have run (fsm: null says none did).
+                "fsm_config": {**self.fsm_config_rec, "in_use": self.fsm is not None},
                 # G6's input (2026-11-14; module docstring, THE RTL WATCH):
                 # how the watch was configured, what it judged and why each
                 # RTL failed; the autopilot's battery reports behind it.
@@ -6223,6 +6258,13 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--subject-class", default="pedestrian")
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
+    ap.add_argument("--fsm-profile", default=None, metavar="NAME",
+                    help="a profile of --fsm-config's `profiles:` overlaid on its base "
+                         "thresholds (2026-11-21, WP3-07b; guardrail.fsm."
+                         "load_fsm_config). An unknown profile, or one without "
+                         "--fsm-config, is refused before anything flies. Left out (the "
+                         "default): the file's base thresholds, or FSMConfig() with no "
+                         "file. metrics.json fsm_config records the config flown")
     ap.add_argument("--decision-period-s", type=float, default=None,
                     help="the pilot's decision period, seconds: above T / (1.5 x N) "
                          "(1.11 s for the grant's N = 3, T = 5 s) the FSM's N-in-T window "
@@ -6276,7 +6318,9 @@ def main(argv: list[str] | None = None) -> None:
         ActionWatchdog(args.action_timeout_s)
         ActionWatchdog(args.pose_timeout_s, what="pose")
         DecisionWatchdog(args.decision_timeout_s)
-        fsm_config_for_pilot(FSMConfig(), args.decision_period_s)
+        # The FSM's config (and profile) is read here too, so a missing file
+        # or an unknown profile is refused before ROS starts.
+        fsm_config_for_pilot(fsm_config_from_args(args), args.decision_period_s)
         if not (math.isfinite(args.decision_hold_max_s) and args.decision_hold_max_s > 0):
             raise ValueError(f"--decision-hold-max-s must be a positive number of seconds, "
                              f"got {args.decision_hold_max_s!r}")

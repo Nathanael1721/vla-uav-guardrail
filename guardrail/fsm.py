@@ -42,7 +42,10 @@ kuanting-vla-uav-guardrail/docs/02-implementation/safety-shield.md):
 Defaults (p4): N=3, T=5 s, theta = 2.0 m lateral / 0.5 m vertical,
 T_recover = 2 s. "All five are config-file overridable per mission profile",
 and the Outputs table (p7) asks for a "Python state machine; YAML-overridable
-thresholds". `FSMConfig.from_yaml` does that.
+thresholds". `FSMConfig.from_yaml` does that, and since 2026-11-21 (WP3-07b)
+every rail selects a profile on its command line (`--fsm-config FILE
+--fsm-profile NAME`, load_fsm_config) and writes the config it flew into
+metrics.json `fsm_config` (fsm_config_record).
 
 The mode each state asks for is p5's "Mode escalation: SET_MODE GUIDED /
 LOITER / RTL / LAND". Normal and Brake are both GUIDED: Brake is not an
@@ -1430,6 +1433,9 @@ class FSMConfig:
                                    "escalation")
         if profile is not None:
             profiles = section.get("profiles") or {}
+            if not isinstance(profiles, Mapping):
+                raise ValueError(f"`profiles:` must be a mapping of name -> thresholds, "
+                                 f"got {type(profiles).__name__}")
             if profile not in profiles:
                 raise KeyError(f"no escalation profile {profile!r}; "
                                f"have {sorted(profiles)}")
@@ -1499,6 +1505,68 @@ class FSMConfig:
             d = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
             object.__setattr__(self, "_digest", d)
         return d
+
+
+def load_fsm_config(path: str | Path | None = None,
+                    profile: str | None = None) -> FSMConfig:
+    """The escalation FSM's config a rail flies, from its `--fsm-config FILE`
+    and `--fsm-profile NAME` (2026-11-21, WP3-07b).
+
+    What: no file and no profile is FSMConfig() - today's default, the same
+    object every rail built before the flag existed, so its digest is
+    unchanged. A file without a profile is the file's base thresholds (as
+    FSMConfig.from_yaml always read it); a file and a profile is the base
+    overlaid with that profile.
+
+    Why: the grant makes N, T, theta and T_recover "config-file overridable
+    per mission profile" (Safety Shield PDF p4), and FSMConfig.from_mapping
+    has read `profiles:` since the FSM was written, but no rail could name
+    one, so no flown run could use any profile at all.
+
+    Fails closed, before anything flies: a profile with no file, an empty
+    profile name, a profile the file does not define, or a file whose
+    `profiles:` is not a mapping raises ValueError (never the base config
+    flown under the profile's name); a file that cannot be read raises
+    OSError, one that is not YAML and a bad threshold ValueError."""
+    if profile is not None:
+        if not isinstance(profile, str) or not profile.strip():
+            raise ValueError(f"--fsm-profile must name a profile, got {profile!r}")
+        if not path:
+            raise ValueError(f"--fsm-profile {profile!r} needs --fsm-config (the YAML "
+                             f"that defines its profiles): the defaults have none")
+    if not path:
+        return FSMConfig()
+    import yaml  # local, as from_yaml: this module stays importable without PyYAML
+    try:
+        return FSMConfig.from_yaml(path, profile)
+    except KeyError as exc:
+        # from_mapping's "no escalation profile ..." - a refusal, not a crash.
+        raise ValueError(f"{path}: {exc.args[0] if exc.args else exc}") from None
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: not readable as YAML: {exc}") from None
+
+
+def fsm_config_record(cfg: FSMConfig, path: str | Path | None = None,
+                      profile: str | None = None,
+                      loaded: FSMConfig | None = None) -> dict[str, Any]:
+    """metrics.json `fsm_config` (2026-11-21, WP3-07b): the FSMConfig a run
+    actually flew, so a figure can be traced to the thresholds behind it
+    without re-reading a YAML that may since have changed.
+
+    `cfg` is the config in force (after any rail-side adjustment, e.g. the
+    ROS 2 node's slow-pilot window, fsm_config_for_pilot); `loaded` the one
+    load_fsm_config(path, profile) gave (default: `cfg`). `digest` and
+    `values` are `cfg`'s (digest is the fsm_config_hash every audit record
+    carries); `loaded_digest` is what the stress harness compares with the
+    profile it asked for (experiments/sweep_scenarios.fsm_config_problems).
+    `default` says whether the loaded thresholds are today's FSMConfig()."""
+    loaded = cfg if loaded is None else loaded
+    return {"source": None if not path else Path(path).as_posix(),
+            "profile": profile,
+            "digest": cfg.digest,
+            "values": cfg.to_dict(),
+            "loaded_digest": loaded.digest,
+            "default": loaded == FSMConfig()}
 
 
 @dataclass(frozen=True)
