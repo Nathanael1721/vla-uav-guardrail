@@ -50,7 +50,7 @@ from guardrail import load_policy                                       # noqa: 
 from guardrail import repair as R                                       # noqa: E402
 from guardrail.models import (Action4D, ObstacleClearance, Policy,      # noqa: E402
                               State, SubjectStandoff)
-from guardrail.shield import Shield                                     # noqa: E402
+from guardrail.shield import Repair, Shield                             # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -69,7 +69,28 @@ def _map():
 
 class _OldChain(Shield):
     """Shield._repair_chain as it stood at 4418ae0, verbatim but for the
-    fourth return value the new signature carries."""
+    fourth return value the new signature carries; and the two last resorts
+    as Shield._decide ran them until 2026-11-23 (529e787), on the WORLD
+    action outside the operator interface: `_rescue` and
+    `_slower_opened_escape` called directly (WP3-04b moved both behind the
+    body-frame interface, repair.ClearanceEscape / repair.OpenedEscape)."""
+
+    def _clearance_escape(self, tick, state, raw, fixed, repairs, blocking, best_effort):
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        clean, best = self._rescue(state, raw, fixed, cap)
+        if clean is not None:
+            repairs.append(Repair(operator="ClearanceEscape",
+                                  detail="repair not converged -> recovery heading"))
+            return clean
+        if best_effort and best is not None:
+            repairs.append(Repair(
+                operator="ClearanceEscape",
+                detail="stopping is itself illegal here -> best-effort recovery"))
+            return best
+        return None
+
+    def _opened_escape(self, tick, state, raw, flags, enforced):
+        return self._slower_opened_escape(state, raw, flags, enforced)
 
     def _repair_chain(self, tick, state, raw, skip, repairs, raw_violations=()):
         prev, tick.skip = tick.skip, frozenset(skip)
@@ -142,7 +163,13 @@ def test_the_default_chain_decides_as_the_old_chain_on_every_policy():
     """60 seeded ticks per policy in policies/ (the 28 test_check_contract
     hashes), stand-off subjects placed near the aircraft, the CityLife map
     under every clearance rule; plus 300 ticks of the 50-rule load near and
-    among its fences. Whole decisions compared, FSM verdict included."""
+    among its fences. Whole decisions compared, FSM verdict included. Every
+    tick at a random heading, so the operators' body-frame interface is
+    crossed at headings that are not quarter turns; since 2026-11-23
+    (WP3-04b) the old side also runs the last resorts on the world action,
+    and the ClearanceEscape rescues among the ticks are counted, both kinds
+    (a heading that re-checks clean, the best effort where a stop is
+    illegal)."""
     import json
     import bench_shield_50rules as B
     names = sorted(json.loads((ROOT / "tests" / "fixtures" / "check_baseline_digests.json")
@@ -150,6 +177,7 @@ def test_the_default_chain_decides_as_the_old_chain_on_every_policy():
     smap = _map()
     rng = random.Random(20261012)
     n_touched = 0
+    rescues = {False: 0, True: 0}             # ClearanceEscape: best effort?
     cases = [(name, load_policy(ROOT / "policies" / name)) for name in names]
     cases.append(("bench-50", B.fifty_rule_policy()))
     for name, pol in cases:
@@ -167,7 +195,14 @@ def test_the_default_chain_decides_as_the_old_chain_on_every_policy():
             dn, do = new.filter(st, a, t=0.1 * k), old.filter(st, a, t=0.1 * k)
             assert dn.model_dump() == do.model_dump(), (name, k, dn.repairs, do.repairs)
             n_touched += bool(dn.repairs)
+            for r in dn.repairs:
+                if r.operator == "ClearanceEscape":
+                    rescues[r.detail.endswith("best-effort recovery")] += 1
     assert n_touched > 500, f"only {n_touched} repaired ticks: the comparison saw too little"
+    # Measured 2026-11-23: 42 clean, 2 best effort (the best effort is also
+    # pinned at three headings in the last-resort test below).
+    assert rescues[False] >= 20 and rescues[True] >= 1, \
+        f"rescues (clean, best effort) {rescues}: the last resorts were barely compared"
 
 
 def test_every_operator_considered_is_on_the_ledger_with_a_reason():
@@ -570,6 +605,131 @@ def test_the_interface_rotation_pair_is_lossless_on_its_own_results():
     b.vx = 0.0
     assert ctx.to_world(b) == from_body(0.0, b.vy, b.vz_up, b.yaw_rate, 37.3)
     assert ctx.raw_body == ctx.to_body(ctx.raw)
+
+
+# WP3-04b (since 2026-11-23): the Shield's two last resorts, ClearanceEscape
+# (Shield._rescue) and the slowed GeofenceEscape from a zone that opened on
+# the aircraft (Shield._slower_opened_escape), act through the same body-frame
+# interface (repair.ClearanceEscape / repair.OpenedEscape, run from
+# Shield.last_resort_operators). The test below fails at 529e787, where
+# `_decide` called both on the world action and the Shield had no
+# `last_resort_operators`.
+
+class _LastResortSpy:
+    """Wraps a last-resort operator and records what it was handed, what it
+    handed back, and its context."""
+
+    def __init__(self, op, log):
+        self.op, self.log = op, log
+        self.name, self.categories = op.name, op.categories
+
+    def repair(self, action, violation, ir, *, ctx, **kw):
+        att = self.op.repair(action, violation, ir, ctx=ctx, **kw)
+        self.log.append((self.name, action, att, ctx))
+        return att
+
+
+def _last_resorts_spied(sh):
+    log = []
+    sh.last_resort_operators = {k: _LastResortSpy(op, log)
+                                for k, op in sh.last_resort_operators.items()}
+    return sh, log
+
+
+def _acted_in_the_body_frame(log, name, result, d, h):
+    """The one call of last resort `name`: told the tick's heading, handed
+    a body-frame action (the body form, at `h`, of the world action it
+    stands for), and handing back the body form of the emitted action, to
+    the bit - not the world action, which is metres per second away at a
+    heading that is not a quarter turn."""
+    from guardrail.frames import body_action
+    calls = [(a, att, ctx) for n, a, att, ctx in log if n == name]
+    assert len(calls) == 1, [(n, att.result) for n, _, att, _ in log]
+    handed, att, ctx = calls[0]
+    assert (att.result, ctx.heading_deg) == (result, h), (att, ctx.heading_deg)
+    world_in = ctx.to_world(handed)
+    assert handed == body_action(world_in, h), (handed, world_in)
+    if math.hypot(world_in.vx, world_in.vy) > 1.0:
+        assert not _close(handed, world_in, 0.3), (handed, world_in)
+    assert att.action == body_action(d.emitted, h), (att.action, d.emitted)
+    assert not _close(att.action, d.emitted, 0.3), (att.action, d.emitted)
+    assert ctx.to_world(att.action) == d.emitted
+    return att
+
+
+def test_the_last_resorts_act_on_the_body_action_and_decide_as_before():
+    """At three headings that are not quarter turns (37.3, -123.4, 151.9):
+
+      * GeofenceEscape: the corridor_survey cell whose school zone opens on
+        the aircraft, another zone's ring 2 m past the exit (tests/
+        test_window_opens_on.py, "escaping towards another zone slows down"):
+        the pilot's 4 m/s north is slowed to 3.0 m/s;
+      * ClearanceEscape, a heading that re-checks clean: follow_pedestrian
+        on the CityLife map, the chain not converging 3 m off a building;
+      * ClearanceEscape, the best effort where a stop is illegal: inside a
+        zone and a stand-off ring whose exits point opposite ways (tests/
+        test_shield.py, "a best-effort recovery never deepens the ring").
+
+    Each last resort is handed the body-frame action at the tick's heading
+    and hands back the body form of what is flown, and the whole decision
+    is the one the world-frame last resorts made (_OldChain), FSM verdict
+    included, bit for bit."""
+    import test_window_opens_on as W
+    smap = _map()
+    conflict = Policy.model_validate({"policy_id": "conflict", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
+         "vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20},
+                      {"x": 0, "y": 20}]},
+        {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
+         "min_range_m": 10.0},
+        {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+    opened = W._survey_with_north(34.0)
+    pedestrian = load_policy(ROOT / "policies" / "follow_pedestrian.yaml")
+    for h in (37.3, -123.4, 151.9):
+        cases = (
+            ("GeofenceEscape", "ok", None,
+             lambda cls: cls(opened.model_copy(deep=True), now=lambda: W.MON_0729_58),
+             State(x=60.0, y=21.0, up=15.0, yaw_deg=h),
+             Action4D(vx=0.05, vy=math.sqrt(16.0 - 0.05 ** 2))),
+            ("ClearanceEscape", "fallback", R.RESCUE_CLEAN,
+             lambda cls: cls(pedestrian.model_copy(deep=True), obstacle_map=smap),
+             State(x=-2.67, y=27.61, up=10.75, yaw_deg=h), Action4D(vx=2.0, vy=-3.58)),
+            ("ClearanceEscape", "fallback", R.RESCUE_BEST_EFFORT,
+             lambda cls: cls(conflict.model_copy(deep=True), escalation=False),
+             State(x=18.5, y=10.0, up=10.0, yaw_deg=h), Action4D(vx=2.0)),
+        )
+        for name, result, detail, make, st, raw in cases:
+            sh, log = _last_resorts_spied(make(Shield))
+            old = make(_OldChain)
+            for s in (sh, old):
+                if name == "ClearanceEscape" and detail == R.RESCUE_BEST_EFFORT:
+                    s.set_subject(24.0, 10.0, "vehicle")
+            d, do = sh.filter(st, raw), old.filter(st, raw)
+            assert d.model_dump() == do.model_dump(), (h, name, d.repairs, do.repairs)
+            att = _acted_in_the_body_frame(log, name, result, d, h)
+            assert d.repairs[-1].operator == name and att.repairs == (d.repairs[-1],), \
+                (h, name, d.repairs)
+            if detail is not None:
+                assert d.repairs[-1].detail == detail, (h, d.repairs)
+            if name == "GeofenceEscape":
+                assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
+                assert d.repairs[0].recovery is True and not d.emitted_violations
+                assert abs(d.emitted.vy - 3.0) < 1e-9, (h, d.emitted)
+            elif detail == R.RESCUE_CLEAN:
+                assert not d.emitted_violations, (h, d.emitted_violations)
+            else:
+                assert d.emitted_violations, "a clean heading exists: the case proves nothing"
+            # The body action the Shield's body boundary emits is the one
+            # the last resort handed back, rotated by nothing.
+            if name == "ClearanceEscape":
+                sh2, log2 = _last_resorts_spied(make(Shield))
+                if detail == R.RESCUE_BEST_EFFORT:
+                    sh2.set_subject(24.0, 10.0, "vehicle")
+                from guardrail.frames import body_action
+                d2, eb = sh2.filter_body(st, body_action(raw, h))
+                att2 = [a for n, _, a, _ in log2 if n == name]
+                assert att2 and att2[0].action == eb, (h, att2, eb)
 
 
 # ------------------------------------------------------------- first feasible

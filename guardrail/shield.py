@@ -2249,7 +2249,10 @@ class Shield:
         each pair of consecutive forecast poses against every zone's margin
         ring and every corridor's boundary, so a zone thinner than one
         forecast step is not stepped over. `repair_operators` is this
-        Shield's copy of the operator registry.
+        Shield's copy of the operator registry; `last_resort_operators`
+        (since 2026-11-23, WP3-04b) its own copy of the two last resorts
+        `_decide` runs outside the stacks (repair.ClearanceEscape,
+        repair.OpenedEscape), at the same body-frame interface.
 
         repair_order: operator names (registry keys) that replace the
         iterated loop's stack (repair.CHAIN_LOOP) in chain mode, or the
@@ -2361,6 +2364,7 @@ class Shield:
         self.theta_config = None
         self.segment_check = bool(segment_check)
         self.repair_operators: dict = dict(_repair.REGISTRY)
+        self.last_resort_operators: dict = _repair.last_resort_operators()
         if repair_order is not None:
             repair_order = tuple(repair_order)
             unknown = [n for n in repair_order if n not in self.repair_operators]
@@ -7516,7 +7520,12 @@ class Shield:
         two). Until then the operators were handed the world action and the
         only turn was this method's, once around the whole stack; the
         decisions are the same bit for bit (the interface's rotation pair is
-        lossless on its own results). Pinned per rule family in tests/
+        lossless on its own results). Since 2026-11-23 (WP3-04b) the two
+        last resorts `_decide` runs outside the stacks, ClearanceEscape
+        (`_rescue`) and the slowed GeofenceEscape (`_slower_opened_escape`),
+        are handed the body action and hand one back too (`_clearance_escape`,
+        `_opened_escape`; repair.ClearanceEscape / repair.OpenedEscape), with
+        the same decisions. Pinned per rule family in tests/
         test_frame_boundary.py (zone, envelopes, corridor, stand-off and its
         overhead recovery, PathRepair's stand-off detour at any heading; the
         clearance rule on a raster map and its direction search, whose
@@ -8441,6 +8450,55 @@ class Shield:
                 magnitude_m=depth, axis="lateral", recovery=True)
         return None
 
+    # ------------- the last resorts, at the operator interface ------------- #
+    #
+    # WP3-04b (since 2026-11-23). `_rescue` and `_slower_opened_escape` above
+    # compute in the world frame the rules are written in. `_decide` runs
+    # them through the operator interface every chain operator speaks
+    # (guardrail/repair.py, THE FRAME): the ClearanceEscape / OpenedEscape
+    # operator is handed the action in the BODY frame at the decision
+    # state's heading and hands its answer back in it, its world geometry
+    # between RepairContext.to_world and to_body. What it hands back is read
+    # in the world frame again (`ctx.to_world`) for the decision's records
+    # and re-checks: the pair is lossless on its own results, so the flown
+    # action is the world-frame method's, bit for bit, at every heading.
+    # Until 2026-11-23 `_decide` called the two methods on the world action
+    # outside the interface (tests/test_shieldcore_repair.py keeps that
+    # path, verbatim, to compare with).
+
+    def _last_resort_ctx(self, state: State, raw: Action4D, repairs: list,
+                         open_violations=(), open_label: str = "on the raw action"):
+        """A RepairContext for one last-resort call: the decision state's
+        heading, the world raw action, the list the Repair is logged in."""
+        return _repair.RepairContext(self, state, repairs, raw, tuple(open_violations),
+                                     tuple(open_violations), open_label,
+                                     heading_deg=state.yaw_deg)
+
+    def _clearance_escape(self, tick: _Tick, state: State, raw: Action4D, fixed: Action4D,
+                          repairs: list, blocking, best_effort: bool) -> "Action4D | None":
+        """The ClearanceEscape operator on the chain's repaired action
+        `fixed` (handed in the body frame): the heading it chose, in the
+        world frame, its Repair logged in `repairs`; None when it has none
+        to fly (no heading re-checks clean and, unless `best_effort` - a
+        stop is illegal here - no best effort is taken)."""
+        ctx = self._last_resort_ctx(state, raw, repairs, blocking, "after the repair chain")
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        att = self.last_resort_operators["ClearanceEscape"].repair(
+            ctx.to_body(fixed), None, tick.rt.ir, ctx=ctx, cap=cap, best_effort=best_effort)
+        return ctx.to_world(att.action) if att.result == "fallback" else None
+
+    def _opened_escape(self, tick: _Tick, state: State, raw: Action4D, flags: dict,
+                       enforced: list) -> "tuple[Action4D, Repair] | None":
+        """The OpenedEscape operator (`_slower_opened_escape`) on the raw
+        action (handed in the body frame): (the slowed escape in the world
+        frame, its GeofenceEscape Repair), or None."""
+        ctx = self._last_resort_ctx(state, raw, [], enforced)
+        att = self.last_resort_operators["GeofenceEscape"].repair(
+            ctx.raw_body, None, tick.rt.ir, ctx=ctx, flags=flags, enforced=enforced)
+        if att.result != "ok":
+            return None
+        return ctx.to_world(att.action), att.repairs[0]
+
     def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
         tick = self._tick_ctx()
         if tick is None:                        # called outside filter()
@@ -8578,7 +8636,7 @@ class Shield:
         if self.repair_mode == "chain" and not head:
             prev, tick.skip = tick.skip, monitor
             try:
-                slower = self._slower_opened_escape(state, raw, flags, enforced)
+                slower = self._opened_escape(tick, state, raw, flags, enforced)
             finally:
                 tick.skip = prev
             if slower is not None:
@@ -8611,33 +8669,23 @@ class Shield:
             # same violation is raised next tick and the vehicle is frozen into
             # the violation instead of recovering from it. Look for a heading
             # that re-checks CLEAN before considering a stop.
+            #
+            # The heading is the ClearanceEscape operator's (repair.py), handed
+            # the repaired action in the body frame and handing its heading
+            # back in it (WP3-04b, since 2026-11-23; `_clearance_escape`): a
+            # heading that re-checks clean, else - only where stopping is
+            # itself illegal - the best effort, else None and a stop.
             stop_illegal = self._stop_illegal(tick, state)
-            clean = best = None
+            rescued = None
             prev, tick.skip = tick.skip, monitor
             try:
                 if any(v.category == "clearance" for v in blocking) or stop_illegal:
-                    cap = min((k.speed_max_mps for k in self._kins), default=4.0)
-                    clean, best = self._rescue(state, raw, fixed, cap)
+                    rescued = self._clearance_escape(tick, state, raw, fixed, repairs,
+                                                     blocking, stop_illegal)
             finally:
                 tick.skip = prev
-            if clean is not None:
-                repairs.append(Repair(
-                    operator="ClearanceEscape",
-                    detail="repair not converged -> recovery heading"))
-                fixed = clean
-            elif not stop_illegal:
-                repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
-                final.append(last_resort("Brake", "fallback", repairs[-1].detail))
-                return self._traced(
-                    ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                   repairs=_dedupe(repairs), braked=True,
-                                   emitted_violations=self._check(state, BRAKE)),
-                    state, tick, passes, final, edge, mode, flags, first)
-            elif best is not None:
-                repairs.append(Repair(
-                    operator="ClearanceEscape",
-                    detail="stopping is itself illegal here -> best-effort recovery"))
-                fixed = best
+            if rescued is not None:
+                fixed = rescued
             else:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 final.append(last_resort("Brake", "fallback", repairs[-1].detail))
@@ -8650,8 +8698,8 @@ class Shield:
 
         # One more _check, on the action that is actually leaving the building.
         # In the common case `fixed` already re-checked clean inside the loop
-        # above and this is a repeat; in the `best is not None` branch it is the
-        # only check that has ever been run against what gets flown.
+        # above and this is a repeat; in the best-effort ClearanceEscape branch
+        # it is the only check that has ever been run against what gets flown.
         return self._traced(
             ShieldDecision(raw=raw, emitted=fixed, violations=violations,
                            repairs=_dedupe(repairs), relaxed=relaxed,

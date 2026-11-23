@@ -58,6 +58,21 @@ world action and the Shield turned once around the whole stack
 (Shield.filter_body); an operator registered before then that read the
 action as North / East now reads forward / right (the same at heading 0).
 
+The Shield's two LAST RESORTS act through the same interface since
+2026-11-23 (WP3-04b): ClearanceEscape (Shield._rescue, the heading flown
+when the chain did not converge) and the slowed GeofenceEscape from a zone
+that opened on the aircraft (Shield._slower_opened_escape). Each is an
+operator below (`ClearanceEscape`, `OpenedEscape`; not in REGISTRY, no
+stack names them) handed the body action and handing one back, its world
+geometry between `ctx.to_world` and `ctx.to_body`. Until then the Shield
+called both on the world action outside the interface; the decisions are
+the same bit for bit (tests/test_shieldcore_repair.py compares them with
+the world-frame last resorts at random headings). So every repair that can
+change the flown action - the chain's operators and both last resorts -
+acts on the frame the VLA emits in; Brake (a stop, zero in every frame)
+and SoftRelax (which gives up rules, then re-runs the chain) change no
+action themselves.
+
 An operator written to the grant's signature exactly - `repair(action,
 violation, ir)`, no `ctx`, no `categories` - is accepted too: `register`
 wraps it (`GrantOperator`; it then covers every category, and a change it
@@ -77,6 +92,10 @@ THE OPERATORS
     CorridorProjection   Shield._repair_corridor           CorridorReturn CorridorAltitudeFix
     LateralProjection    Shield._repair_geofence           GeofenceEscape GeofenceSlide
     PathRepair           a body-frame detour waypoint      PathRepair      (default on since 2026-11-17)
+
+  the last resorts (Shield.last_resort_operators, run by Shield._decide):
+    ClearanceEscape      Shield._rescue                    ClearanceEscape
+    OpenedEscape         Shield._slower_opened_escape      GeofenceEscape  (recovery)
 
 Every one takes and hands back the body-frame action (THE FRAME above).
 
@@ -178,7 +197,9 @@ class RepairContext:
     body action an operator builds itself is rotated (`from_body`). So the
     default chain's decisions are the world-frame chain's bit for bit
     (tests/test_shieldcore_repair.py compares them with the old chain at
-    random headings) while every operator speaks the body frame."""
+    random headings) while every operator speaks the body frame. The same
+    holds for the Shield's two last resorts (ClearanceEscape, OpenedEscape
+    below; since 2026-11-23), each run with a context of its own."""
     shield: Any
     state: State
     repairs: list
@@ -835,6 +856,124 @@ def register(op, *, replace_existing: bool = False):
     return op
 
 
+# ------------------------------------------------------------- last resorts
+#
+# The Shield's two last-resort repairs, the ones it runs outside the chain's
+# stacks (guardrail/shield.py `_decide`), as operators at the same body-frame
+# interface (WP3-04b, since 2026-11-23). They are not in REGISTRY: no stack
+# names them and `repair_order` cannot put them in one (a last resort run as
+# a chain stage would answer a violation the chain is still repairing). Each
+# Shield holds its own copy (`Shield.last_resort_operators`).
+
+# The details the Shield's ClearanceEscape records carry (unchanged since
+# 2026-10-08; guardrail/fsm.py and guardrail/kpi.py read the operator name).
+RESCUE_CLEAN = "repair not converged -> recovery heading"
+RESCUE_BEST_EFFORT = "stopping is itself illegal here -> best-effort recovery"
+
+
+class ClearanceEscape:
+    """The rescue when the repair chain did not converge (record
+    "ClearanceEscape"): a heading that re-checks with zero violations, or,
+    where a stop is itself illegal (`best_effort`), the best heading there
+    is (Shield._rescue says how both are chosen). "fallback" with the
+    heading and its Repair logged in `ctx.repairs`; "fail", the action
+    unchanged and nothing logged, when there is no heading to fly - the
+    Shield then brakes.
+
+    Body in, body out (WP3-04b, since 2026-11-23). `action` is the chain's
+    repaired action in the body frame at `ctx.heading_deg`, and the heading
+    handed back is in the body frame too. The heading search
+    (`Shield._rescue`) is world geometry - the clearance forecast, the
+    zones and rings the aircraft is inside, the tie toward the commanded
+    heading (`ctx.raw`, the world raw action) - so it runs between the
+    interface's rotation pair, `ctx.to_world` in and `ctx.to_body` out, as
+    a HookOperator's `_repair_*` call does. The pair is lossless on its own
+    results, so the Shield flies the heading the world-frame search chose,
+    bit for bit, at every heading. Until 2026-11-23 the Shield called
+    `_rescue` on the world action outside the operator interface."""
+    name = "ClearanceEscape"
+    categories = ("kinematic", "altitude", "clearance", "standoff", "corridor", "geofence")
+    hook = "_rescue"
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r} -> Shield.{self.hook})"
+
+    def headings(self, action: Action4D, cap: float, *, ctx: RepairContext):
+        """(clean, best) in the body frame at the tick's heading, either
+        None: the Shield's `_rescue` on `action` turned into the world
+        frame, its two headings turned back."""
+        clean, best = getattr(ctx.shield, self.hook)(ctx.state, ctx.raw,
+                                                     ctx.to_world(action), cap)
+        return (None if clean is None else ctx.to_body(clean),
+                None if best is None else ctx.to_body(best))
+
+    def repair(self, action, violation, ir, *, ctx: RepairContext,
+               cap: float | None = None, best_effort: bool = False) -> RepairAttempt:
+        """`cap`: the horizontal speed the headings fly at (None: the lowest
+        speed cap in force, 4.0 m/s without one, as the Shield reads it).
+        `best_effort`: a stop is illegal here, so the best heading flies
+        when none re-checks clean."""
+        if cap is None:
+            cap = min((k.speed_max_mps for k in ctx.shield._kins), default=4.0)
+        clean, best = self.headings(action, cap, ctx=ctx)
+        if clean is not None:
+            out, detail = clean, RESCUE_CLEAN
+        elif best_effort and best is not None:
+            out, detail = best, RESCUE_BEST_EFFORT
+        else:
+            why = ("no heading re-checks clean and a stop is legal here" if not best_effort
+                   else "no heading to fly")
+            return RepairAttempt(self.name, "fail", action, why, (), ctx.pass_no)
+        from .shield import Repair                    # shield imports this module
+        rep = Repair(operator=self.name, detail=detail)
+        ctx.repairs.append(rep)
+        return RepairAttempt(self.name, "fallback", out, detail, (rep,), ctx.pass_no)
+
+
+class OpenedEscape:
+    """The escape from the one zone that opened on the aircraft, slowed
+    until it re-checks clean (record "GeofenceEscape", recovery=True;
+    Shield._slower_opened_escape says when and why): "ok" with the slowed
+    escape and its Repair logged in `ctx.repairs`, "skip" with the action
+    unchanged otherwise (the Shield's chain then runs as before). `flags`
+    is the decision's flags (the zones whose window opens or opened on the
+    aircraft, the cap-all zones), `enforced` its enforced violations.
+
+    Body in, body out (WP3-04b, since 2026-11-23). `action` is the raw
+    action in the body frame at `ctx.heading_deg` (`ctx.raw_body`), and the
+    slowed escape is handed back in the body frame. The way out of the zone
+    is world geometry, so `Shield._slower_opened_escape` runs between the
+    interface's rotation pair (`ctx.to_world` in, `ctx.to_body` out),
+    lossless on its own results: the escape flown is the world-frame one,
+    bit for bit, at every heading. Until 2026-11-23 the Shield called it on
+    the world action outside the operator interface."""
+    name = "GeofenceEscape"
+    categories = ("geofence", "corridor")
+    hook = "_slower_opened_escape"
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r} -> Shield.{self.hook})"
+
+    def repair(self, action, violation, ir, *, ctx: RepairContext,
+               flags: dict | None = None, enforced=()) -> RepairAttempt:
+        out = getattr(ctx.shield, self.hook)(ctx.state, ctx.to_world(action),
+                                             flags if flags is not None else {}, enforced)
+        if out is None:
+            return RepairAttempt(self.name, "skip", action,
+                                 "no zone that opened on the aircraft has a slower escape "
+                                 "that re-checks clean", (), ctx.pass_no)
+        cand, rep = out
+        ctx.repairs.append(rep)
+        return RepairAttempt(self.name, "ok", ctx.to_body(cand), rep.detail, (rep,),
+                             ctx.pass_no)
+
+
+def last_resort_operators() -> dict:
+    """A fresh set of the Shield's last-resort operators, by name (each
+    Shield takes its own: `Shield.last_resort_operators`)."""
+    return {op.name: op for op in (ClearanceEscape(), OpenedEscape())}
+
+
 # The default chain (guardrail/shield.py `_repair_chain`): run once before the
 # iterated loop, then each pass of the loop. KinematicClamp closes every pass
 # because AltitudeFix can size a climb past the cap on a deep recovery (it
@@ -864,7 +1003,8 @@ def ledger_record(passes: list) -> list:
             for k, atts in passes]
 
 
-__all__ = ["CATEGORIES", "CHAIN_LOOP", "CHAIN_PRE", "FIRST_FEASIBLE", "GrantOperator",
-           "HookOperator", "PathRepair", "REGISTRY", "REPAIR_MODES", "RESULTS",
-           "RepairAttempt", "RepairContext", "RepairOperator", "adapt", "default_operators",
-           "ledger_record", "register", "with_path_repair"]
+__all__ = ["CATEGORIES", "CHAIN_LOOP", "CHAIN_PRE", "ClearanceEscape", "FIRST_FEASIBLE",
+           "GrantOperator", "HookOperator", "OpenedEscape", "PathRepair", "REGISTRY",
+           "REPAIR_MODES", "RESULTS", "RepairAttempt", "RepairContext", "RepairOperator",
+           "adapt", "default_operators", "last_resort_operators", "ledger_record", "register",
+           "with_path_repair"]
