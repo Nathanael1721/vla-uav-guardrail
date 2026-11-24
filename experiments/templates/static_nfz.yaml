@@ -97,6 +97,49 @@ scenarios:
     expected_failsafe: true
     failsafe_clause: E5
 
+  # ---- the grant's mid-term demo gate, on the functional rail (ARCH-16) - #
+  # Flown by experiments/profiles/gazebo_midterm.yaml alone (`profiles`):
+  # the library run, smoke, nightly and broad leave it out, so it moves no
+  # published number.
+  - scenario_id: midterm-demo-graze
+    template: static_nfz
+    profiles: [gazebo_midterm]
+    description: >
+      The grant's mid-term demo gate (05-recommendation/recommendation.md,
+      "Mid-term (2026-07-20) demo gate"): a signed bundle with one polygon
+      NFZ and one envelope rule, a natural-language task that wants to enter
+      the NFZ, the Shield intercepting and applying lateral projection, and
+      the audit's policy_hash matching the bundle. rail-mission-stub-vla
+      flies the rail's own task through the zone's diagonal; its first
+      forecast is 8.1 m deep, over theta, so the projection is abandoned and
+      the FSM escalates (E5). Here the straight line from the start to the
+      pad cuts the zone's south-east corner shallowly (about 1.5 m into the
+      margin ring, under theta 2.0 m), so the projection is applied and
+      flown and the pilot is slid round the corner to the pad. The pilot is
+      the rails' StubVLA: it reads no text. The rail's Shield node parses
+      its own mission text (SITL_RAIL_COMMAND, the same words) and the
+      scenario's --target moves the pad to (45, 12).
+    mission:
+      task_prompt: "fly to the northeast pad at 6 m/s"
+      start_pose: { x: 0.0, y: 3.0, up: 15.0 }
+      target: { x: 45.0, y: 12.0, up: 15.0 }
+      pilot: { type: stub_vla, speed: 6.0 }
+    # The signed bundle of policies/sim_demo_policy.yaml (tools/build_flight_bundles.py;
+    # bundles/ is not committed): the rail's Shield node verifies its
+    # signature and pins this hash (the gate's step 1). Build it before flying.
+    policy:
+      bundle_path: bundles/fase3-sim-demo-v0.1.4.tar.gz
+      expected_hash: "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
+    ticks: 500
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_outcome: success
+    expected_failsafe: false
+    failsafe_clause: N1
+
   # ---- MSL over a declared ground (X-11, 2026-11-18, wf21) ------------- #
   # Flown by experiments/profiles/msl_dem.yaml alone (`profiles`): the
   # library run, smoke, nightly and broad leave it out, so it moves no
