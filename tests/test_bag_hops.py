@@ -41,6 +41,18 @@ def test_messages_before_any_cause_are_left_out():
     assert len(h["shield_to_mavros_ms"]) == 2
 
 
+def test_a_hop_longer_than_the_input_gap_reads_short_the_stated_limit():
+    # The 25 Nov review: a setpoint 150 ms after its action, with the next
+    # action 100 ms after the first, pairs with the next action and reads
+    # 50 ms. The tool states this limit; it cannot fail a 100 ms budget alone.
+    a = [0, 100 * MS]
+    s = [150 * MS]
+    h = B.pair_hops(a, s, [151 * MS])
+    assert round(h["action_to_shield_ms"][0], 3) == 50.0
+    assert B.min_gap_ms(a) == 100.0
+    assert B.min_gap_ms([5 * MS]) is None
+
+
 def test_summary_counts_the_budget_and_the_reordered():
     s = B.summarise([1.0, 2.0, -0.1, 150.0])
     assert s["n"] == 4 and s["over_budget"] == 1 and s["negative_reordered"] == 1

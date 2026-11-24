@@ -6,6 +6,11 @@
  "errors": [],
  "tolerance_ms": 2.0,
  "pairing": "each Shield setpoint with the latest action received before it, each MAVROS setpoint with the latest Shield setpoint before it, 'before' allowing 2.0 ms of recorder reordering",
+ "limit": "receive-time pairing reads a hop faithfully only below the gap to the next input; longer hops pair with the next input and read short, so over_budget cannot count them. Corroborates the node's per-action e2e_ms; it is not an independent test of the budget",
+ "resolves_hops_below_ms_min_over_runs": {
+  "action": 97.839,
+  "shield_setpoint": 60.354
+ },
  "pooled": {
   "action_to_shield_ms": {
    "n": 16002,
@@ -47,6 +52,10 @@
    "n_action": 867,
    "n_shield_setpoint": 333,
    "n_mavros_setpoint": 333,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.061,
+    "shield_to_mavros": 95.669
+   },
    "action_to_shield_ms": {
     "n": 333,
     "min_ms": 4.129,
@@ -86,6 +95,10 @@
    "n_action": 532,
    "n_shield_setpoint": 80,
    "n_mavros_setpoint": 80,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.221,
+    "shield_to_mavros": 97.462
+   },
    "action_to_shield_ms": {
     "n": 80,
     "min_ms": 2.533,
@@ -125,6 +138,10 @@
    "n_action": 845,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.234,
+    "shield_to_mavros": 90.723
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.2,
@@ -164,6 +181,10 @@
    "n_action": 815,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.872,
+    "shield_to_mavros": 94.133
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 3.301,
@@ -203,6 +224,10 @@
    "n_action": 894,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.014,
+    "shield_to_mavros": 95.671
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 6.32,
@@ -242,6 +267,10 @@
    "n_action": 849,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.054,
+    "shield_to_mavros": 97.006
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.594,
@@ -281,6 +310,10 @@
    "n_action": 878,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.085,
+    "shield_to_mavros": 96.293
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 4.22,
@@ -320,6 +353,10 @@
    "n_action": 339,
    "n_shield_setpoint": 138,
    "n_mavros_setpoint": 138,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.804,
+    "shield_to_mavros": 98.61
+   },
    "action_to_shield_ms": {
     "n": 138,
     "min_ms": 2.901,
@@ -359,6 +396,10 @@
    "n_action": 871,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.205,
+    "shield_to_mavros": 95.406
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 3.843,
@@ -398,6 +439,10 @@
    "n_action": 1064,
    "n_shield_setpoint": 414,
    "n_mavros_setpoint": 414,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.59,
+    "shield_to_mavros": 88.18
+   },
    "action_to_shield_ms": {
     "n": 414,
     "min_ms": 3.999,
@@ -437,6 +482,10 @@
    "n_action": 1287,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.021,
+    "shield_to_mavros": 94.478
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 3.943,
@@ -476,6 +525,10 @@
    "n_action": 862,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.228,
+    "shield_to_mavros": 80.246
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.346,
@@ -515,6 +568,10 @@
    "n_action": 360,
    "n_shield_setpoint": 143,
    "n_mavros_setpoint": 143,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.994,
+    "shield_to_mavros": 97.571
+   },
    "action_to_shield_ms": {
     "n": 143,
     "min_ms": 3.367,
@@ -554,6 +611,10 @@
    "n_action": 323,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.072,
+    "shield_to_mavros": 97.432
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.139,
@@ -593,6 +654,10 @@
    "n_action": 854,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.076,
+    "shield_to_mavros": 92.193
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 4.426,
@@ -632,6 +697,10 @@
    "n_action": 303,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.061,
+    "shield_to_mavros": 96.763
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.671,
@@ -671,6 +740,10 @@
    "n_action": 962,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.524,
+    "shield_to_mavros": 90.734
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.928,
@@ -710,6 +783,10 @@
    "n_action": 505,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.085,
+    "shield_to_mavros": 90.162
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.892,
@@ -749,6 +826,10 @@
    "n_action": 556,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.895,
+    "shield_to_mavros": 87.564
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 3.684,
@@ -788,6 +869,10 @@
    "n_action": 873,
    "n_shield_setpoint": 398,
    "n_mavros_setpoint": 398,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.414,
+    "shield_to_mavros": 93.899
+   },
    "action_to_shield_ms": {
     "n": 398,
     "min_ms": 2.636,
@@ -827,6 +912,10 @@
    "n_action": 656,
    "n_shield_setpoint": 434,
    "n_mavros_setpoint": 434,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.3,
+    "shield_to_mavros": 84.187
+   },
    "action_to_shield_ms": {
     "n": 434,
     "min_ms": 3.813,
@@ -866,6 +955,10 @@
    "n_action": 452,
    "n_shield_setpoint": 232,
    "n_mavros_setpoint": 232,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.535,
+    "shield_to_mavros": 87.964
+   },
    "action_to_shield_ms": {
     "n": 232,
     "min_ms": 2.844,
@@ -905,6 +998,10 @@
    "n_action": 298,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.738,
+    "shield_to_mavros": 90.037
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 7.112,
@@ -944,6 +1041,10 @@
    "n_action": 369,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.049,
+    "shield_to_mavros": 90.385
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 4.893,
@@ -983,6 +1084,10 @@
    "n_action": 825,
    "n_shield_setpoint": 343,
    "n_mavros_setpoint": 343,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.475,
+    "shield_to_mavros": 81.203
+   },
    "action_to_shield_ms": {
     "n": 343,
     "min_ms": 7.321,
@@ -1022,6 +1127,10 @@
    "n_action": 955,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.898,
+    "shield_to_mavros": 83.185
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.134,
@@ -1061,6 +1170,10 @@
    "n_action": 419,
    "n_shield_setpoint": 230,
    "n_mavros_setpoint": 230,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.257,
+    "shield_to_mavros": 87.237
+   },
    "action_to_shield_ms": {
     "n": 230,
     "min_ms": 3.352,
@@ -1100,6 +1213,10 @@
    "n_action": 440,
    "n_shield_setpoint": 223,
    "n_mavros_setpoint": 223,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.086,
+    "shield_to_mavros": 82.109
+   },
    "action_to_shield_ms": {
     "n": 223,
     "min_ms": 3.102,
@@ -1139,6 +1256,10 @@
    "n_action": 972,
    "n_shield_setpoint": 343,
    "n_mavros_setpoint": 343,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.141,
+    "shield_to_mavros": 84.09
+   },
    "action_to_shield_ms": {
     "n": 343,
     "min_ms": 3.294,
@@ -1178,6 +1299,10 @@
    "n_action": 1023,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.918,
+    "shield_to_mavros": 60.354
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 4.99,
@@ -1217,6 +1342,10 @@
    "n_action": 1012,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.509,
+    "shield_to_mavros": 62.67
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 3.954,
@@ -1256,6 +1385,10 @@
    "n_action": 552,
    "n_shield_setpoint": 340,
    "n_mavros_setpoint": 340,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.217,
+    "shield_to_mavros": 94.124
+   },
    "action_to_shield_ms": {
     "n": 340,
     "min_ms": 2.981,
@@ -1295,6 +1428,10 @@
    "n_action": 1063,
    "n_shield_setpoint": 850,
    "n_mavros_setpoint": 850,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.08,
+    "shield_to_mavros": 90.278
+   },
    "action_to_shield_ms": {
     "n": 850,
     "min_ms": 2.746,
@@ -1334,6 +1471,10 @@
    "n_action": 924,
    "n_shield_setpoint": 332,
    "n_mavros_setpoint": 332,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.317,
+    "shield_to_mavros": 92.482
+   },
    "action_to_shield_ms": {
     "n": 332,
     "min_ms": 3.007,
@@ -1373,6 +1514,10 @@
    "n_action": 634,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.234,
+    "shield_to_mavros": 99.432
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.745,
@@ -1412,6 +1557,10 @@
    "n_action": 520,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.357,
+    "shield_to_mavros": 98.705
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 2.9,
@@ -1451,6 +1600,10 @@
    "n_action": 952,
    "n_shield_setpoint": 330,
    "n_mavros_setpoint": 330,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.222,
+    "shield_to_mavros": 95.693
+   },
    "action_to_shield_ms": {
     "n": 330,
     "min_ms": 2.663,
@@ -1490,6 +1643,10 @@
    "n_action": 544,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.746,
+    "shield_to_mavros": 83.574
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 3.11,
@@ -1529,6 +1686,10 @@
    "n_action": 456,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.28,
+    "shield_to_mavros": 96.377
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.239,
@@ -1568,6 +1729,10 @@
    "n_action": 460,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.193,
+    "shield_to_mavros": 97.182
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.227,
@@ -1607,6 +1772,10 @@
    "n_action": 360,
    "n_shield_setpoint": 163,
    "n_mavros_setpoint": 163,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.379,
+    "shield_to_mavros": 98.201
+   },
    "action_to_shield_ms": {
     "n": 163,
     "min_ms": 2.148,
@@ -1646,6 +1815,10 @@
    "n_action": 364,
    "n_shield_setpoint": 163,
    "n_mavros_setpoint": 163,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.267,
+    "shield_to_mavros": 97.328
+   },
    "action_to_shield_ms": {
     "n": 163,
     "min_ms": 2.888,
@@ -1685,6 +1858,10 @@
    "n_action": 745,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.153,
+    "shield_to_mavros": 92.521
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.592,
@@ -1724,6 +1901,10 @@
    "n_action": 458,
    "n_shield_setpoint": 240,
    "n_mavros_setpoint": 240,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.882,
+    "shield_to_mavros": 96.336
+   },
    "action_to_shield_ms": {
     "n": 240,
     "min_ms": 4.376,
@@ -1763,6 +1944,10 @@
    "n_action": 463,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.328,
+    "shield_to_mavros": 95.459
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 4.455,
@@ -1802,6 +1987,10 @@
    "n_action": 766,
    "n_shield_setpoint": 33,
    "n_mavros_setpoint": 33,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.279,
+    "shield_to_mavros": 99.01
+   },
    "action_to_shield_ms": {
     "n": 33,
     "min_ms": 6.453,
@@ -1841,6 +2030,10 @@
    "n_action": 1002,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.292,
+    "shield_to_mavros": 92.597
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 3.029,
@@ -1880,6 +2073,10 @@
    "n_action": 447,
    "n_shield_setpoint": 239,
    "n_mavros_setpoint": 239,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.123,
+    "shield_to_mavros": 97.324
+   },
    "action_to_shield_ms": {
     "n": 239,
     "min_ms": 2.785,
@@ -1919,6 +2116,10 @@
    "n_action": 968,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.968,
+    "shield_to_mavros": 92.688
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 4.528,
@@ -1958,6 +2159,10 @@
    "n_action": 430,
    "n_shield_setpoint": 230,
    "n_mavros_setpoint": 230,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.839,
+    "shield_to_mavros": 96.508
+   },
    "action_to_shield_ms": {
     "n": 230,
     "min_ms": 3.058,
@@ -1997,6 +2202,10 @@
    "n_action": 1003,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.063,
+    "shield_to_mavros": 94.187
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 3.093,
@@ -2036,6 +2245,10 @@
    "n_action": 642,
    "n_shield_setpoint": 111,
    "n_mavros_setpoint": 111,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.37,
+    "shield_to_mavros": 97.171
+   },
    "action_to_shield_ms": {
     "n": 111,
     "min_ms": 3.028,
