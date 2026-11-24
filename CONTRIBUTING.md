@@ -72,6 +72,14 @@ silent new directory.
 files inside it changes live public URLs. Do that deliberately, not as a
 side effect of a tidy-up.
 
+## Releases
+
+A release is cut and flown by `docs/RUNBOOK-release.md`: full local CI at
+the release commit, `VERSION` and a `## [x.y.z]` CHANGELOG heading, an
+annotated tag, then the release's own smoke on the hil rig at the tag,
+flying the grant's five-row Shield matrix KPI-grade, with its record
+committed. A tag whose smoke has not flown is not a release.
+
 ## Commit messages
 
 Narrative, not a one-line label. State what was wrong (or what was built),
