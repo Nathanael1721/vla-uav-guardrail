@@ -1,0 +1,30 @@
+# The grant's mid-term demo gate on the functional rail (ARCH-16).
+#
+# 05-recommendation/recommendation.md, "Mid-term (2026-07-20) demo gate":
+# on the functional rail (Gazebo Harmonic), end to end, (1) a signed policy
+# bundle with one polygon NFZ and one envelope rule, (2) a natural-language
+# task that wants to enter the NFZ, (3) the Safety Shield intercepting and
+# applying lateral projection, (4) the audit log's policy_hash matching the
+# loaded bundle. One family, midterm-demo-graze (experiments/templates/
+# static_nfz.yaml), flown by this profile alone: no library, smoke, nightly
+# or broad number moves.
+#
+#   python experiments/sweep_scenarios.py --profile gazebo_midterm
+#   python experiments/sweep_scenarios.py --profile gazebo_midterm --backend sitl
+#
+# Not KPI-grade on Gazebo (functional_only, the lab's choice of 17 Nov).
+
+profile: gazebo_midterm
+cadence: on demand (ARCH-16, the mid-term demo gate on the functional rail)
+grant_scope: "the grant's mid-term demo gate (05-recommendation/recommendation.md), flown on the Gazebo functional rail"
+grant_sim_speedup: "1.0 on the sitl rail - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+rail_physics: gazebo
+rail_sim_speedup: 1.0
+library: experiments/scenarios.yaml
+seeds: [1001, 1002, 1003]
+samples_per_family: 1
+paraphrase_k: 0
+prefix_ab: false
+families: [midterm-demo-graze]
+expected_cells: [1, 1]

@@ -5457,7 +5457,8 @@ def test_a_profile_flies_at_speedup_1_and_only_gazebo_names_a_rail():
     """Profile: rail_sim_speedup 1.0 only, on the functional rail too (the
     Shield node runs on wall time); rail_physics gazebo needs
     grant_kpi_bearing false; every shipped profile but gazebo_functional
-    names no rail, and every one flies at 1.0."""
+    names no rail, and every one flies at 1.0. gazebo_midterm (25 Nov, the
+    grant's mid-term demo gate, ARCH-16) is the second Gazebo profile."""
     from guardrail.scenario_spec import Profile, load_profile
     base = yaml.safe_load(GAZEBO_PROFILE.read_text(encoding="utf-8"))
     Profile.model_validate(base)
@@ -5474,7 +5475,10 @@ def test_a_profile_flies_at_speedup_1_and_only_gazebo_names_a_rail():
     for p in sorted((ROOT / "experiments" / "profiles").glob("*.yaml")):
         prof = load_profile(p)
         assert prof.rail_sim_speedup == 1.0, p.name
-        if p.stem != "gazebo_functional":
+        if p.stem in ("gazebo_functional", "gazebo_midterm"):
+            assert prof.rail_physics == "gazebo", p.name
+            assert prof.grant_kpi_bearing is False, p.name
+        else:
             assert prof.rail_physics is None, p.name
 
 
