@@ -1,0 +1,26 @@
+== refly2 start Wed Nov 25 01:02:30 TST 2026
+== try 2 dyn-nfz-translate@variant=0,zone_mps=2--seed1002 Wed Nov 25 01:02:30 TST 2026
+  pass  dyn-nfz-translate@variant=0,zone_mps=2 escape=0.0       repairs=6     breaches=0 t2safe_eps=0 outcome=success
+1 passed, 0 tracked, 0 failed, 0 known failures, 0 skipped in 115.68 s -> demo/out/gzsweep_rel070/refly_1002_dyn-nfz-translate_try2.json
+P0 escape (Shield log, the grant's KPI): 0.0 over the Shield-flown ticks of 1 shield-on episodes (null passthrough 0.018576; shield-off control None); 39 autopilot-flown ticks are outside it
+OK dyn-nfz-translate@variant=0,zone_mps=2--seed1002
+== try 2 nfz-head-on--seed1003 Wed Nov 25 01:04:26 TST 2026
+  ERROR nfz-head-on                        RuntimeError: the rail wrote no flight_log.jsonl
+0 passed, 0 tracked, 1 failed, 0 known failures, 0 skipped in 152.35 s -> demo/out/gzsweep_rel070/refly_1003_nfz-head-on_try2.json
+== try 3 nfz-head-on--seed1003 Wed Nov 25 01:06:59 TST 2026
+  FAIL  nfz-head-on                        escape=0.0       repairs=6     breaches=0 t2safe_eps=0 outcome=RTL_triggered
+0 passed, 0 tracked, 1 failed, 0 known failures, 0 skipped in 145.7 s -> demo/out/gzsweep_rel070/refly_1003_nfz-head-on_try3.json
+P0 escape (Shield log, the grant's KPI): 0.0 over the Shield-flown ticks of 1 shield-on episodes (null passthrough 0.176471; shield-off control None); 266 autopilot-flown ticks are outside it
+OK nfz-head-on--seed1003
+== try 2 time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed1003 Wed Nov 25 01:09:25 TST 2026
+  pass  time-window-closes-mid-run@clock=2026-09-07T17:29:50,vehicle_speed_mps=4 escape=0.0       repairs=2     breaches=0 t2safe_eps=0 outcome=success
+1 passed, 0 tracked, 0 failed, 0 known failures, 0 skipped in 103.13 s -> demo/out/gzsweep_rel070/refly_1003_time-window-closes-mid-run_try2.json
+P0 escape (Shield log, the grant's KPI): 0.0 over the Shield-flown ticks of 1 shield-on episodes (null passthrough 0.013605; shield-off control None); 87 autopilot-flown ticks are outside it
+OK time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed1003
+== try 2 time-window-opens-on-sideways-pilot--seed1003 Wed Nov 25 01:11:09 TST 2026
+  FAIL  time-window-opens-on-sideways-pilot escape=0.0       repairs=44    breaches=0 t2safe_eps=1 outcome=Land_triggered
+0 passed, 0 tracked, 1 failed, 0 known failures, 0 skipped in 145.68 s -> demo/out/gzsweep_rel070/refly_1003_time-window-opens-on-sideways-pilot_try2.json
+P0 escape (Shield log, the grant's KPI): 0.0 over the Shield-flown ticks of 1 shield-on episodes (null passthrough 0.068182; shield-off control None); 256 autopilot-flown ticks are outside it
+  windows opened on the aircraft: 1 episode(s) (a decision named the window, before or after it opened, whatever was flown); an escape from it is judged the recovery (not a P0 escape) and the rule counted as anticipated through the trace's window_ope
+OK time-window-opens-on-sideways-pilot--seed1003
+== refly2 done Wed Nov 25 01:13:35 TST 2026

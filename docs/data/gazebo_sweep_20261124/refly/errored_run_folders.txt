@@ -1,0 +1,11 @@
+gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1002
+gzsweep_dyn-nfz-translate@variant=0,zone_mps=2--seed1002.try1
+gzsweep_nfz-head-on--seed1003
+gzsweep_nfz-head-on--seed1003.try1
+gzsweep_nfz-head-on--seed1003.try2
+gzsweep_nfz-head-on-control--seed1001
+gzsweep_time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed1003
+gzsweep_time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed1003.try1
+gzsweep_time-window-opens-on-sideways-pilot--seed1001
+gzsweep_time-window-opens-on-sideways-pilot--seed1003
+gzsweep_time-window-opens-on-sideways-pilot--seed1003.try1
