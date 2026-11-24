@@ -124,7 +124,12 @@ scenarios:
       start_pose: { x: 0.0, y: 3.0, up: 15.0 }
       target: { x: 45.0, y: 12.0, up: 15.0 }
       pilot: { type: stub_vla, speed: 6.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
+    # The signed bundle of policies/sim_demo_policy.yaml (tools/build_flight_bundles.py;
+    # bundles/ is not committed): the rail's Shield node verifies its
+    # signature and pins this hash (the gate's step 1). Build it before flying.
+    policy:
+      bundle_path: bundles/fase3-sim-demo-v0.1.4.tar.gz
+      expected_hash: "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
     ticks: 500
     expected_kpis:
       P0_escape_rate: 0
