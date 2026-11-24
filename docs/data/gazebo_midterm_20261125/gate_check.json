@@ -1,0 +1,146 @@
+[
+ {
+  "run": "gzsweep_midterm-demo-graze--seed1001",
+  "code_revision": "7525b362e2d8",
+  "topology": "dev",
+  "sim_speedup": 1.0,
+  "physics": {
+   "physics": "gazebo-harmonic",
+   "gz_sim": "8.11.0",
+   "world": "~/ardupilot_gazebo/worlds/iris_runway.sdf"
+  },
+  "task": "task: fly to the northeast pad at 6 m/s",
+  "step1_policy_source": {
+   "signature": "verified",
+   "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533"
+  },
+  "step3_lateral_ticks": 23,
+  "step3_braked_on_lateral_ticks": 0,
+  "step3_max_slide_m": 0.915,
+  "theta_lat_m": 2.0,
+  "step3_first_tick": {
+   "tick": 1,
+   "raw_world": {
+    "vx": 5.883036227187134,
+    "vy": 1.1789328776792671,
+    "vz_up": -0.0035751343239098787,
+    "yaw_rate": 0.0
+   },
+   "emitted_world": {
+    "vx": 0.634153227146792,
+    "vy": -1.103500044164928,
+    "vz_up": -0.0035751343239098787,
+    "yaw_rate": 0.0
+   },
+   "fsm_reason": "Normal->Brake [G1]: nfz-square (hard P0 project_fix) repaired, lat 0.91 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+  },
+  "fsm_states_after": [
+   "Brake"
+  ],
+  "ticks": 137,
+  "step4_audit_policy_hashes": [
+   "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
+  ],
+  "manifest_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "step4_match": true,
+  "episode_bundle": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1001",
+  "episode_bundle_files_written": true
+ },
+ {
+  "run": "gzsweep_midterm-demo-graze--seed1002",
+  "code_revision": "7525b362e2d8",
+  "topology": "dev",
+  "sim_speedup": 1.0,
+  "physics": {
+   "physics": "gazebo-harmonic",
+   "gz_sim": "8.11.0",
+   "world": "~/ardupilot_gazebo/worlds/iris_runway.sdf"
+  },
+  "task": "task: fly to the northeast pad at 6 m/s",
+  "step1_policy_source": {
+   "signature": "verified",
+   "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533"
+  },
+  "step3_lateral_ticks": 22,
+  "step3_braked_on_lateral_ticks": 0,
+  "step3_max_slide_m": 0.913,
+  "theta_lat_m": 2.0,
+  "step3_first_tick": {
+   "tick": 1,
+   "raw_world": {
+    "vx": 5.882952476666091,
+    "vy": 1.179350474528606,
+    "vz_up": 0.0021003722213208675,
+    "yaw_rate": 0.0
+   },
+   "emitted_world": {
+    "vx": 0.6350968882362329,
+    "vy": -1.104221718658315,
+    "vz_up": 0.0021003722213208675,
+    "yaw_rate": 0.0
+   },
+   "fsm_reason": "Normal->Brake [G1]: nfz-square (hard P0 project_fix) repaired, lat 0.91 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+  },
+  "fsm_states_after": [
+   "Brake"
+  ],
+  "ticks": 136,
+  "step4_audit_policy_hashes": [
+   "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
+  ],
+  "manifest_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "step4_match": true,
+  "episode_bundle": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1002",
+  "episode_bundle_files_written": true
+ },
+ {
+  "run": "gzsweep_midterm-demo-graze--seed1003",
+  "code_revision": "7525b362e2d8",
+  "topology": "dev",
+  "sim_speedup": 1.0,
+  "physics": {
+   "physics": "gazebo-harmonic",
+   "gz_sim": "8.11.0",
+   "world": "~/ardupilot_gazebo/worlds/iris_runway.sdf"
+  },
+  "task": "task: fly to the northeast pad at 6 m/s",
+  "step1_policy_source": {
+   "signature": "verified",
+   "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533"
+  },
+  "step3_lateral_ticks": 23,
+  "step3_braked_on_lateral_ticks": 0,
+  "step3_max_slide_m": 0.914,
+  "theta_lat_m": 2.0,
+  "step3_first_tick": {
+   "tick": 1,
+   "raw_world": {
+    "vx": 5.883018053984374,
+    "vy": 1.1790239496368207,
+    "vz_up": -0.0020614624954760075,
+    "yaw_rate": 0.0
+   },
+   "emitted_world": {
+    "vx": 0.634340015903827,
+    "vy": -1.1036406800326604,
+    "vz_up": -0.0020614624954760075,
+    "yaw_rate": 0.0
+   },
+   "fsm_reason": "Normal->Brake [G1]: nfz-square (hard P0 project_fix) repaired, lat 0.91 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+  },
+  "fsm_states_after": [
+   "Brake"
+  ],
+  "ticks": 137,
+  "step4_audit_policy_hashes": [
+   "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
+  ],
+  "manifest_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "step4_match": true,
+  "episode_bundle": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1003",
+  "episode_bundle_files_written": true
+ }
+]
