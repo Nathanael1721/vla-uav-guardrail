@@ -16,6 +16,34 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-25 (docs: Appendix A after an independent review of seven rows) — three reviewers per row against the grant's own wording, one synthesis each; no status moved, ARCH-16 now rests on the mid-term gate, and every Open column says what is still unmet
+
+#### Changed
+- **Seven rows reviewed** (WP3-04, WP3-13, WP3-19, WP4-04, WP4-06, WP4-14, ARCH-16; WP3-13 twice, after its new evidence). Each by three independent reviewers (grant clauses, evidence, devil's advocate) and a synthesis; DONE needs 2 of 3 and no confirmed unmet clause. Counts unchanged: 109 DONE / 26 PARTIAL / 1 DRIFT / 0 MISSING.
+  - WP3-04 PARTIAL: the grant's "single boundary in the codebase" is unmet while Shield.filter_body rotates around the whole chain.
+  - WP3-13 PARTIAL: both numbers are met at 21c2771, but every hil figure has the stub pilot where the grant's hil runs the full VLA backend on the Orin, and the ~50-rule load exists only in the offline replay.
+  - WP3-19 and WP4-14 PARTIAL: only release 0.7.0 ran all five rows; the KPI-grade smoke is per release, the per-build smoke headless.
+  - WP4-04 PARTIAL: the broad sweep (~3000 x 5 at speed > 1) is not flown; the Gazebo run manifests of 24-25 Nov record `unversioned`.
+  - WP4-06 PARTIAL: smoke per build headless only, nightly not on a nightly cadence, broad sweep not run.
+  - ARCH-16 stays DONE (2 of 3): the grant's four-step mid-term demo gate flown on Gazebo on 25 Nov, the 2026-07-20 date stated as a fact under the lab's 17 Nov rule.
+- Stale line citations and run figures corrected in those rows (e.g. sitl/ros2_shield_node.py shield_step :1789, ntFIN4_236 tick 51, the GitHub run that is now green).
+
+### 2026-11-25 (flown and measured: the grant's mid-term demo gate on Gazebo, the geometry profile at release 0.7.0, the chain from action to MAVROS) — the four steps of the mid-term demo gate shown together on the functional rail for the first time, the 50-rule profile re-run on the AGX Orin at 21c2771, and the hops around the Shield node read from the release nightly's bags
+
+#### Flown
+- **The grant's mid-term demo gate on Gazebo Harmonic** (05-recommendation/recommendation.md, "Mid-term (2026-07-20) demo gate"; ARCH-16). New scenario `midterm-demo-graze` (experiments/templates/static_nfz.yaml, 0cd298d, 7525b36), flown only by the new profile experiments/profiles/gazebo_midterm.yaml, so no library, smoke, nightly or broad number moves. Start (0, 3) at 15 m, pad (45, 12): the line cuts nfz-square's corner shallowly, so the projection is applied instead of abandoned. Flown on 25 Nov at 7525b36, `--backend sitl`, gz_sim 8.11.0, dev topology, sim_speedup 1.0, from the signed bundle bundles/fase3-sim-demo-v0.1.4.tar.gz with its hash pinned: 3/3 pass, P0 escape 0, outcome success, no fail-safe. (1) signature "verified" (Ed25519, lab-dev key); (2) task "fly to the northeast pad at 6 m/s", raw command (5.88, 1.18) m/s with its forecast inside the zone; (3) tick 1 G1 "repaired, lat 0.91 m vs theta 2.00 m", GeofenceSlide on 23/22/23 ticks, none braked, emitted (0.63, -1.10) m/s; (4) every audit record's policy_hash equals the bundle's. docs/data/gazebo_midterm_20261125/ (0b595c9). The same three missions flown first at 0cd298d from the unsigned YAML (3/3 pass) are kept apart (demo/out/_gzmidterm_unsigned_0cd298d/) and are not the step 1 evidence. Every flight has a flight-log replay video.
+
+#### Measured
+- **The 50-rule x 51-pose geometry profile on the AGX Orin at release 0.7.0** (21c2771; WP3-13): `docker compose ... run --rm profile` (the evidence volumes; the MAVROS container alone cannot see the board name and was refused), MAXN, clocks not locked, MAVROS idle, no VLA server: _check p99 1.056 ms, max 1.100 ms, 0 of 1,301 ticks over 5 ms; filter p99 28.520 ms, max 51.057 ms (deploy/evidence/hil/shield_tick_profile_20261125.json, f2217d7). The last profile was at bc04e4a (14 Nov).
+- **The chain around the Shield node, from each run's rosbag2** (new tools/bag_hops.py, tests/test_bag_hops.py in the CI loop; fac32cf): the bag is recorded on the AGX, one clock, and messages are paired by receive time. ntFIN5 at 21c2771: /vla/action_4d to /mavros/setpoint_raw/local p50 10.18 / p99 30.51 / max 63.75 ms; adapter hop p99 2.39 ms, max 6.85 ms. smREL070: max 59.28 ms (docs/data/kpi_ntFIN5/bag_hops_ntFIN5.json, docs/data/kpi_smREL070/bag_hops_smREL070.json). A strict pairing first read 26 hops over 100 ms: the recorder had logged a MAVROS setpoint 0.1 ms before the Shield setpoint it carried, so it paired with the setpoint before. The pairing now allows 2 ms of reordering and counts the 27 negative hops it leaves. Limit (a5d4679, found by the independent review): receive-time pairing reads a hop faithfully only below the gap to the next input (94.18 ms between actions in ntFIN5), so it cannot count a hop over 100 ms; it corroborates the node's per-action e2e_ms, it is not an independent test of the budget. The tool reports that gap per run and a test pins the limit.
+
+#### Added
+- docs/data/github_ci/: run 45497539573, the push of master 339cacf on 24 Nov, green on all 3 jobs with "Smoke profile (stress harness, headless)" succeeding in each: the first green GitHub run since 13 Oct (38471368810) and the first per-build smoke since the release push failed before it (45156163225, 45156162082).
+
+#### Not done
+- The gate's step 2 is met by the rails' StubVLA, which reads no text: the Shield node parses the task, and the scenario's target moves the pad.
+- The geometry profile ran with the clocks not locked (no sudo on the AGX).
+
 ### 2026-11-25 (code: CI's pymavlink stand-in, the revision of a Windows worktree read from WSL, env_pins fixtures under MSYS_NO_PATHCONV) — the one file that turned the release's GitHub run red, a manifest field the Gazebo sweep showed empty, and a local-CI failure that came from the launching shell; not flown yet
 
 #### Fixed
