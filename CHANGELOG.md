@@ -16,6 +16,18 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-24 (flown: release 0.7.0 - the smoke smREL070 and the KPI-grade nightly ntFIN5 at 21c2771) — the release on the hil rig: nightly P0 escape 0 over 651 Shield-on flights, fail-safe trigger correctness 649/649 = 1.000 (Wilson 95 % low 0.994) under the adopted reading, and no tick of 183,961 over 100 ms end to end, the wait behind the post-setpoint work counted
+
+#### Flown
+- smREL070 (21c2771, hil, smoke, `--hil-controls`, from the detached worktree flight-21c2771, launched 23 Nov 18:27; 6274.9 s), the nightly's gate: 64 episodes planned, 52 missions flown, 12 refused; all 52 KPI-grade, single_sha 52/52 (`docs/data/kpi_smREL070/`): P0 escape 0 (2299 P0-violation ticks, 51 flights; control 0.65); fail-safe (r2) 50/50 = 1.000 (1 censored in Loiter, corridor-swap-shifted); `tick_ms` p99 24.6 / max 57.38 ms, `e2e_with_wait_ms` max 57.49 ms, 0 of 16,002 ticks over 100 ms; replay at the flown revision 43 identical, 9 last float digits.
+- ntFIN5 (21c2771, hil, nightly, `--hil-controls`, launched 23 Nov 20:12; 77,356.0 s): 744 episodes planned, 654 missions flown (651 Shield on, 3 controls), 90 refused; all 654 KPI-grade, single_sha 654/654 (companion and desktop 21c277170001, ArduCopter V4.5.7 2a3dc4b7). `docs/data/kpi_ntFIN5/`:
+  - P0 violation escape rate **0** (0 on 17,194 P0-violation ticks, 651 Shield-on flights; control 0.6500, passthrough null 0.1938).
+  - Fail-safe trigger correctness (r2) **649/649 = 1.000, Wilson 95 % low 0.994** (meets 99 % at the point and at 95 % confidence); 18 triggered by the GeoFence backstop; 631/631 as before the backstop rule, 631/649 with those counted as not triggered; (r) 637/649, (a) 574/649. Left out: ntFIN5_373 and ntFIN5_374 corridor-swap-shifted, censored in Loiter.
+  - `tick_ms` p99 28.3 / max 62.08 ms, `e2e_ms` and `e2e_with_wait_ms` p99 28.4 / max 62.18 ms: **0 of 183,961 ticks over 100 ms** (ntFIN4: 1 at 105.5 ms). The 249 ticks that hot-applied a rule: setpoint median 14.3 ms, max 62.08 ms; the generation write, CSP compile and fence publication after the setpoint took median 9.6 ms, max 20.5 ms, and no later action waited behind them (`blocked_by_deferred_ms` 0 on every row).
+  - Tracked: mission success 288/651, repair success 98.2 % (27,206/27,716 ticks), mean time to safe 3.49 s (max 9.90 s; 94 never recovered), 50.2 repairs per Shield-on mission.
+  - Replay at the flown revision: 352 identical, 301 last float digits (at most 3.7e-14), 0 not replayable, 1 repair-pass-count difference on a float tie (ntFIN5_306 rotate-spin, the same emitted action to 6.9e-14; as ntFIN4_304).
+- Track videos for every smREL070 and ntFIN5 run (52 and 654).
+
 ## [0.7.0] — 2026-11-23
 
 Release for the final hil smoke and nightly (WP3-19, WP4-14, WP3-13): every dated
