@@ -16,6 +16,19 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-24 (docs: final report v1.0, the release runbook, Appendix A at release 0.7.0) — the report's body written from the release's nightly ntFIN5; the procedure that binds a release to its own smoke written down; the contract map's evidence brought to release 0.7.0, its statuses left for an independent review
+
+#### Changed
+- **docs/FINAL-REPORT.md v1.0, the body** (15d5337). Sections 1-11 now take ntFIN5 at release 0.7.0 (21c2771) as the figure of record, with ntFIN4 (59e19a5) and ntFIN3 (71aabb3) beside it and smREL070 as the release smoke: P0 escape 0 on 17,194 ticks over 651 Shield-on flights; fail-safe (r2) 649/649 = 1.000, Wilson 95 % low 0.994; 0 of 183,961 ticks over 100 ms end to end. Section 10's limitations and section 11's remaining list were rewritten to match (the tick limitation closed by the flown fix; the Gazebo sweep, the GitHub smoke, the X-11 ridge reflight, the X-10 bundles at a CA, AP_DDS and the PI's decisions remaining).
+- **Appendix A evidence at release 0.7.0** (cf503b6). The report's copy had drifted from the outline on WP3-14, ARCH-30 and X-14 (older text in the report); both now hold the outline's rows. WP3-13, WP3-14, WP3-15, WP3-19, WP4-14, WP4-17, ARCH-31, X-01 and X-13 now cite ntFIN5 and smREL070. WP4-14 and X-01 name the one file that failed on GitHub on the release push (runs 45156163225, 45156162082): tests/test_msl_primitives.py, which needs pymavlink, not installed on the GitHub jobs; its fix is on fix/msl-pymavlink (11f3f7d), unmerged. tests/test_final_report_counts.py 6/6.
+
+#### Added
+- **docs/RUNBOOK-release.md** (143a1fb; WP4-14, WP3-19): the steps release 0.7.0 was cut and flown by, written down. Step 0 checks the smoke profile still lists the five rows (a rail refusal of one is a blocker); step 1 the full local CI; step 2 VERSION and the CHANGELOG heading; step 3 the annotated tag and push; step 4 the release smoke on hil from a detached worktree at the tag; step 5 the gate (P0 escape 0, no ERROR, all five rows KPI-grade, no tick over 100 ms in `e2e_with_wait_ms`); step 6 the committed record; step 7 the nightly. CONTRIBUTING.md gains a "Releases" section: "A tag whose smoke has not flown is not a release."
+
+#### Not done
+- No Appendix A status changed and the counts stay 109 DONE / 26 PARTIAL / 1 DRIFT / 0 MISSING: WP3-13, WP3-19, WP4-14 and WP3-04 are candidates for DONE, to be reviewed against the grant's wording by reviewers who did not write the evidence, after the Gazebo sweep lands. Section 1's counts, decision 9 and two limitation bullets (Gazebo, the per-build CI smoke) follow that review.
+- No DOCX/PDF of v1.0 built yet; the report is not signed (the signer is the PI's).
+
 ### 2026-11-24 (flown: release 0.7.0 - the smoke smREL070 and the KPI-grade nightly ntFIN5 at 21c2771) — the release on the hil rig: nightly P0 escape 0 over 651 Shield-on flights, fail-safe trigger correctness 649/649 = 1.000 (Wilson 95 % low 0.994) under the adopted reading, and no tick of 183,961 over 100 ms end to end, the wait behind the post-setpoint work counted
 
 #### Flown
