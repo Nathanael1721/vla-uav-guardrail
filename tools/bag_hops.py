@@ -16,6 +16,15 @@ a millisecond (seen on hil: the adapter's MAVROS setpoint logged 0.1 ms before
 the Shield setpoint it carried), so "before" allows TOLERANCE_MS; a negative
 hop in the output is such a reordering, never a message sent before its cause.
 
+LIMIT (found by the 25 Nov review). Receive-time pairing cannot see a hop
+longer than the gap to the next input: a Shield setpoint published 150 ms after
+its action, with the next action 100 ms after the first, pairs with the next
+action and reads 50 ms. So these hops cannot exceed the input period and the
+tool cannot fail a 100 ms budget on its own; it corroborates the node's own
+per-action `e2e_ms` (matched by action_seq) and adds the adapter hop beside
+it. Each run reports the smallest gap between inputs
+(`resolves_hops_below_ms`): only a hop shorter than that is read faithfully.
+
 Run where ROS 2 is installed (rosbag2_py), e.g. WSL:
 
     source /opt/ros/jazzy/setup.bash
@@ -61,6 +70,14 @@ def pair_hops(action_ns, shield_ns, mavros_ns, tol_ms: float = TOLERANCE_MS) -> 
             "action_to_mavros_ms": a_m}
 
 
+def min_gap_ms(times_ns) -> float | None:
+    """The smallest gap between consecutive inputs: the longest hop that
+    receive-time pairing reads faithfully (see LIMIT)."""
+    t = sorted(times_ns)
+    gaps = [(b - a) / 1e6 for a, b in zip(t, t[1:]) if b > a]
+    return round(min(gaps), 3) if gaps else None
+
+
 def _pct(v: list[float], q: float) -> float:
     s = sorted(v)
     if not s:
@@ -101,6 +118,7 @@ def main(argv=None) -> int:
     runs = sorted(glob.glob(args.runs))
     pooled = {"action_to_shield_ms": [], "shield_to_mavros_ms": [], "action_to_mavros_ms": []}
     per_run, errors = [], []
+    resolves: dict = {}
     for d in runs:
         bag = os.path.join(d, "bag")
         name = os.path.basename(d.rstrip("/"))
@@ -115,9 +133,15 @@ def main(argv=None) -> int:
         h = pair_hops(t[T_ACTION], t[T_SHIELD], t[T_MAVROS], args.tolerance_ms)
         for k in pooled:
             pooled[k].extend(h[k])
+        gap_a, gap_s = min_gap_ms(t[T_ACTION]), min_gap_ms(t[T_SHIELD])
+        for g, key in ((gap_a, "action"), (gap_s, "shield_setpoint")):
+            if g is not None:
+                resolves[key] = g if resolves.get(key) is None else min(resolves[key], g)
         per_run.append({"run": name, "n_action": len(t[T_ACTION]),
                         "n_shield_setpoint": len(t[T_SHIELD]),
                         "n_mavros_setpoint": len(t[T_MAVROS]),
+                        "resolves_hops_below_ms": {"action_to_shield": gap_a,
+                                                   "shield_to_mavros": gap_s},
                         **{k: summarise(v) for k, v in h.items()}})
     res = {"schema": "vlaguard.bag_hops/1", "runs_glob": args.runs,
            "runs": len(runs), "read": len(per_run), "errors": errors,
@@ -125,6 +149,11 @@ def main(argv=None) -> int:
            "pairing": "each Shield setpoint with the latest action received before it, "
                       "each MAVROS setpoint with the latest Shield setpoint before it, "
                       f"'before' allowing {args.tolerance_ms} ms of recorder reordering",
+           "limit": "receive-time pairing reads a hop faithfully only below the gap to "
+                    "the next input; longer hops pair with the next input and read short, "
+                    "so over_budget cannot count them. Corroborates the node's per-action "
+                    "e2e_ms; it is not an independent test of the budget",
+           "resolves_hops_below_ms_min_over_runs": resolves,
            "pooled": {k: summarise(v) for k, v in pooled.items()},
            "per_run": per_run}
     with open(args.out, "w", encoding="utf-8") as f:

@@ -6,6 +6,11 @@
  "errors": [],
  "tolerance_ms": 2.0,
  "pairing": "each Shield setpoint with the latest action received before it, each MAVROS setpoint with the latest Shield setpoint before it, 'before' allowing 2.0 ms of recorder reordering",
+ "limit": "receive-time pairing reads a hop faithfully only below the gap to the next input; longer hops pair with the next input and read short, so over_budget cannot count them. Corroborates the node's per-action e2e_ms; it is not an independent test of the budget",
+ "resolves_hops_below_ms_min_over_runs": {
+  "action": 94.178,
+  "shield_setpoint": 54.907
+ },
  "pooled": {
   "action_to_shield_ms": {
    "n": 183961,
@@ -47,6 +52,10 @@
    "n_action": 873,
    "n_shield_setpoint": 334,
    "n_mavros_setpoint": 334,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.149,
+    "shield_to_mavros": 94.906
+   },
    "action_to_shield_ms": {
     "n": 334,
     "min_ms": 2.82,
@@ -86,6 +95,10 @@
    "n_action": 873,
    "n_shield_setpoint": 334,
    "n_mavros_setpoint": 334,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 95.004
+   },
    "action_to_shield_ms": {
     "n": 334,
     "min_ms": 4.158,
@@ -125,6 +138,10 @@
    "n_action": 871,
    "n_shield_setpoint": 333,
    "n_mavros_setpoint": 333,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.882,
+    "shield_to_mavros": 95.725
+   },
    "action_to_shield_ms": {
     "n": 333,
     "min_ms": 3.946,
@@ -164,6 +181,10 @@
    "n_action": 539,
    "n_shield_setpoint": 80,
    "n_mavros_setpoint": 80,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.897,
+    "shield_to_mavros": 95.941
+   },
    "action_to_shield_ms": {
     "n": 80,
     "min_ms": 2.495,
@@ -203,6 +224,10 @@
    "n_action": 647,
    "n_shield_setpoint": 80,
    "n_mavros_setpoint": 80,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.445,
+    "shield_to_mavros": 96.313
+   },
    "action_to_shield_ms": {
     "n": 80,
     "min_ms": 3.372,
@@ -242,6 +267,10 @@
    "n_action": 530,
    "n_shield_setpoint": 80,
    "n_mavros_setpoint": 80,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.232,
+    "shield_to_mavros": 97.459
+   },
    "action_to_shield_ms": {
     "n": 80,
     "min_ms": 2.588,
@@ -281,6 +310,10 @@
    "n_action": 844,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.019,
+    "shield_to_mavros": 93.246
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.074,
@@ -320,6 +353,10 @@
    "n_action": 868,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.298,
+    "shield_to_mavros": 95.264
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.864,
@@ -359,6 +396,10 @@
    "n_action": 867,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.016,
+    "shield_to_mavros": 91.927
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.369,
@@ -398,6 +439,10 @@
    "n_action": 820,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.17,
+    "shield_to_mavros": 96.085
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.575,
@@ -437,6 +482,10 @@
    "n_action": 815,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.013,
+    "shield_to_mavros": 95.14
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.546,
@@ -476,6 +525,10 @@
    "n_action": 806,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.044,
+    "shield_to_mavros": 95.491
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.692,
@@ -515,6 +568,10 @@
    "n_action": 875,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.51,
+    "shield_to_mavros": 94.205
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 6.817,
@@ -554,6 +611,10 @@
    "n_action": 876,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.955,
+    "shield_to_mavros": 92.206
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 5.896,
@@ -593,6 +654,10 @@
    "n_action": 865,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.874,
+    "shield_to_mavros": 93.455
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 5.466,
@@ -632,6 +697,10 @@
    "n_action": 807,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.231,
+    "shield_to_mavros": 97.162
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.687,
@@ -671,6 +740,10 @@
    "n_action": 807,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.638,
+    "shield_to_mavros": 97.04
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.688,
@@ -710,6 +783,10 @@
    "n_action": 812,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.157,
+    "shield_to_mavros": 96.213
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.638,
@@ -749,6 +826,10 @@
    "n_action": 825,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.299,
+    "shield_to_mavros": 97.258
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.881,
@@ -788,6 +869,10 @@
    "n_action": 827,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.472,
+    "shield_to_mavros": 96.041
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.898,
@@ -827,6 +912,10 @@
    "n_action": 813,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.98,
+    "shield_to_mavros": 96.893
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.864,
@@ -866,6 +955,10 @@
    "n_action": 832,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.031,
+    "shield_to_mavros": 96.367
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.59,
@@ -905,6 +998,10 @@
    "n_action": 830,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.289,
+    "shield_to_mavros": 96.458
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.931,
@@ -944,6 +1041,10 @@
    "n_action": 836,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.756,
+    "shield_to_mavros": 95.31
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.954,
@@ -983,6 +1084,10 @@
    "n_action": 893,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.158,
+    "shield_to_mavros": 96.738
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.82,
@@ -1022,6 +1127,10 @@
    "n_action": 892,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.813,
+    "shield_to_mavros": 96.01
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 1.998,
@@ -1061,6 +1170,10 @@
    "n_action": 886,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.776,
+    "shield_to_mavros": 97.571
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.614,
@@ -1100,6 +1213,10 @@
    "n_action": 896,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.923,
+    "shield_to_mavros": 97.017
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.208,
@@ -1139,6 +1256,10 @@
    "n_action": 889,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.071,
+    "shield_to_mavros": 97.266
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 2.694,
@@ -1178,6 +1299,10 @@
    "n_action": 876,
    "n_shield_setpoint": 649,
    "n_mavros_setpoint": 649,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.063,
+    "shield_to_mavros": 95.911
+   },
    "action_to_shield_ms": {
     "n": 649,
     "min_ms": 2.716,
@@ -1217,6 +1342,10 @@
    "n_action": 847,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.72,
+    "shield_to_mavros": 96.046
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 3.894,
@@ -1256,6 +1385,10 @@
    "n_action": 874,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.828,
+    "shield_to_mavros": 97.059
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 3.756,
@@ -1295,6 +1428,10 @@
    "n_action": 876,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.248,
+    "shield_to_mavros": 95.487
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 4.119,
@@ -1334,6 +1471,10 @@
    "n_action": 343,
    "n_shield_setpoint": 138,
    "n_mavros_setpoint": 138,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.288,
+    "shield_to_mavros": 96.719
+   },
    "action_to_shield_ms": {
     "n": 138,
     "min_ms": 2.96,
@@ -1373,6 +1514,10 @@
    "n_action": 355,
    "n_shield_setpoint": 138,
    "n_mavros_setpoint": 138,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.343,
+    "shield_to_mavros": 98.343
+   },
    "action_to_shield_ms": {
     "n": 138,
     "min_ms": 2.939,
@@ -1412,6 +1557,10 @@
    "n_action": 343,
    "n_shield_setpoint": 137,
    "n_mavros_setpoint": 137,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.265,
+    "shield_to_mavros": 98.459
+   },
    "action_to_shield_ms": {
     "n": 137,
     "min_ms": 2.933,
@@ -1451,6 +1600,10 @@
    "n_action": 864,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.216,
+    "shield_to_mavros": 96.588
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 3.999,
@@ -1490,6 +1643,10 @@
    "n_action": 856,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.669,
+    "shield_to_mavros": 96.342
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 4.098,
@@ -1529,6 +1686,10 @@
    "n_action": 856,
    "n_shield_setpoint": 650,
    "n_mavros_setpoint": 650,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.116,
+    "shield_to_mavros": 96.077
+   },
    "action_to_shield_ms": {
     "n": 650,
     "min_ms": 4.052,
@@ -1568,6 +1729,10 @@
    "n_action": 1081,
    "n_shield_setpoint": 413,
    "n_mavros_setpoint": 413,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.199,
+    "shield_to_mavros": 87.717
+   },
    "action_to_shield_ms": {
     "n": 413,
     "min_ms": 3.35,
@@ -1607,6 +1772,10 @@
    "n_action": 1082,
    "n_shield_setpoint": 414,
    "n_mavros_setpoint": 414,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.774,
+    "shield_to_mavros": 86.987
+   },
    "action_to_shield_ms": {
     "n": 414,
     "min_ms": 2.758,
@@ -1646,6 +1815,10 @@
    "n_action": 1082,
    "n_shield_setpoint": 413,
    "n_mavros_setpoint": 413,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.968,
+    "shield_to_mavros": 88.765
+   },
    "action_to_shield_ms": {
     "n": 413,
     "min_ms": 3.032,
@@ -1685,6 +1858,10 @@
    "n_action": 1073,
    "n_shield_setpoint": 414,
    "n_mavros_setpoint": 414,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.053,
+    "shield_to_mavros": 86.269
+   },
    "action_to_shield_ms": {
     "n": 414,
     "min_ms": 4.083,
@@ -1724,6 +1901,10 @@
    "n_action": 1077,
    "n_shield_setpoint": 413,
    "n_mavros_setpoint": 413,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.788,
+    "shield_to_mavros": 87.76
+   },
    "action_to_shield_ms": {
     "n": 413,
     "min_ms": 4.031,
@@ -1763,6 +1944,10 @@
    "n_action": 1068,
    "n_shield_setpoint": 414,
    "n_mavros_setpoint": 414,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.884,
+    "shield_to_mavros": 87.617
+   },
    "action_to_shield_ms": {
     "n": 414,
     "min_ms": 4.227,
@@ -1802,6 +1987,10 @@
    "n_action": 1157,
    "n_shield_setpoint": 481,
    "n_mavros_setpoint": 481,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.202,
+    "shield_to_mavros": 90.135
+   },
    "action_to_shield_ms": {
     "n": 481,
     "min_ms": 3.11,
@@ -1841,6 +2030,10 @@
    "n_action": 1147,
    "n_shield_setpoint": 480,
    "n_mavros_setpoint": 480,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.096,
+    "shield_to_mavros": 87.658
+   },
    "action_to_shield_ms": {
     "n": 480,
     "min_ms": 3.194,
@@ -1880,6 +2073,10 @@
    "n_action": 1175,
    "n_shield_setpoint": 481,
    "n_mavros_setpoint": 481,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.516,
+    "shield_to_mavros": 89.931
+   },
    "action_to_shield_ms": {
     "n": 481,
     "min_ms": 2.853,
@@ -1919,6 +2116,10 @@
    "n_action": 943,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.26,
+    "shield_to_mavros": 90.358
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 5.463,
@@ -1958,6 +2159,10 @@
    "n_action": 934,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.523,
+    "shield_to_mavros": 86.727
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 4.133,
@@ -1997,6 +2202,10 @@
    "n_action": 933,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.085,
+    "shield_to_mavros": 92.348
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 4.297,
@@ -2036,6 +2245,10 @@
    "n_action": 1276,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.173,
+    "shield_to_mavros": 96.099
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 2.921,
@@ -2075,6 +2288,10 @@
    "n_action": 1265,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.389,
+    "shield_to_mavros": 95.591
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 3.009,
@@ -2114,6 +2331,10 @@
    "n_action": 1263,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.965,
+    "shield_to_mavros": 96.205
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 3.514,
@@ -2153,6 +2374,10 @@
    "n_action": 1283,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.207,
+    "shield_to_mavros": 96.05
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 3.955,
@@ -2192,6 +2417,10 @@
    "n_action": 1284,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.146,
+    "shield_to_mavros": 94.912
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 4.253,
@@ -2231,6 +2460,10 @@
    "n_action": 1285,
    "n_shield_setpoint": 1050,
    "n_mavros_setpoint": 1050,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.362,
+    "shield_to_mavros": 95.363
+   },
    "action_to_shield_ms": {
     "n": 1050,
     "min_ms": 3.315,
@@ -2270,6 +2503,10 @@
    "n_action": 932,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.808,
+    "shield_to_mavros": 87.454
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 3.718,
@@ -2309,6 +2546,10 @@
    "n_action": 933,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.016,
+    "shield_to_mavros": 84.969
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 4.124,
@@ -2348,6 +2589,10 @@
    "n_action": 917,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.775,
+    "shield_to_mavros": 86.756
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 3.039,
@@ -2387,6 +2632,10 @@
    "n_action": 924,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.175,
+    "shield_to_mavros": 88.453
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 4.19,
@@ -2426,6 +2675,10 @@
    "n_action": 955,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.59,
+    "shield_to_mavros": 88.877
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 5.45,
@@ -2465,6 +2718,10 @@
    "n_action": 934,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.521,
+    "shield_to_mavros": 85.658
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 4.293,
@@ -2504,6 +2761,10 @@
    "n_action": 1009,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.789,
+    "shield_to_mavros": 89.744
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 2.954,
@@ -2543,6 +2804,10 @@
    "n_action": 1009,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.098,
+    "shield_to_mavros": 88.785
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 2.979,
@@ -2582,6 +2847,10 @@
    "n_action": 994,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.248,
+    "shield_to_mavros": 87.927
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 3.122,
@@ -2621,6 +2890,10 @@
    "n_action": 987,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 87.129
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 4.033,
@@ -2660,6 +2933,10 @@
    "n_action": 992,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.431,
+    "shield_to_mavros": 90.292
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 4.491,
@@ -2699,6 +2976,10 @@
    "n_action": 982,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.622,
+    "shield_to_mavros": 87.814
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 4.518,
@@ -2738,6 +3019,10 @@
    "n_action": 932,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.743,
+    "shield_to_mavros": 90.307
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 3.161,
@@ -2777,6 +3062,10 @@
    "n_action": 942,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.199,
+    "shield_to_mavros": 83.775
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 5.008,
@@ -2816,6 +3105,10 @@
    "n_action": 928,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.216,
+    "shield_to_mavros": 87.753
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 3.377,
@@ -2855,6 +3148,10 @@
    "n_action": 935,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.502,
+    "shield_to_mavros": 86.693
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 6.115,
@@ -2894,6 +3191,10 @@
    "n_action": 934,
    "n_shield_setpoint": 328,
    "n_mavros_setpoint": 328,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.039,
+    "shield_to_mavros": 89.724
+   },
    "action_to_shield_ms": {
     "n": 328,
     "min_ms": 4.174,
@@ -2933,6 +3234,10 @@
    "n_action": 919,
    "n_shield_setpoint": 327,
    "n_mavros_setpoint": 327,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.767,
+    "shield_to_mavros": 86.281
+   },
    "action_to_shield_ms": {
     "n": 327,
     "min_ms": 4.197,
@@ -2972,6 +3277,10 @@
    "n_action": 842,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.655,
+    "shield_to_mavros": 83.93
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.714,
@@ -3011,6 +3320,10 @@
    "n_action": 839,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.911,
+    "shield_to_mavros": 85.088
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.675,
@@ -3050,6 +3363,10 @@
    "n_action": 860,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.434,
+    "shield_to_mavros": 88.75
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.745,
@@ -3089,6 +3406,10 @@
    "n_action": 358,
    "n_shield_setpoint": 142,
    "n_mavros_setpoint": 142,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.221,
+    "shield_to_mavros": 98.108
+   },
    "action_to_shield_ms": {
     "n": 142,
     "min_ms": 3.622,
@@ -3128,6 +3449,10 @@
    "n_action": 350,
    "n_shield_setpoint": 143,
    "n_mavros_setpoint": 143,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.408,
+    "shield_to_mavros": 97.301
+   },
    "action_to_shield_ms": {
     "n": 143,
     "min_ms": 3.004,
@@ -3167,6 +3492,10 @@
    "n_action": 350,
    "n_shield_setpoint": 142,
    "n_mavros_setpoint": 142,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.347,
+    "shield_to_mavros": 97.026
+   },
    "action_to_shield_ms": {
     "n": 142,
     "min_ms": 3.47,
@@ -3206,6 +3535,10 @@
    "n_action": 312,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.819,
+    "shield_to_mavros": 97.838
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.071,
@@ -3245,6 +3578,10 @@
    "n_action": 300,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.135,
+    "shield_to_mavros": 97.281
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.215,
@@ -3284,6 +3621,10 @@
    "n_action": 300,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.987,
+    "shield_to_mavros": 96.836
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.998,
@@ -3323,6 +3664,10 @@
    "n_action": 832,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.361,
+    "shield_to_mavros": 93.329
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 4.83,
@@ -3362,6 +3707,10 @@
    "n_action": 811,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.221,
+    "shield_to_mavros": 94.214
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 4.773,
@@ -3401,6 +3750,10 @@
    "n_action": 860,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.367,
+    "shield_to_mavros": 93.328
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 4.49,
@@ -3440,6 +3793,10 @@
    "n_action": 859,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 94.931
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 5.679,
@@ -3479,6 +3836,10 @@
    "n_action": 852,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.224,
+    "shield_to_mavros": 92.794
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 4.777,
@@ -3518,6 +3879,10 @@
    "n_action": 857,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.744,
+    "shield_to_mavros": 93.355
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 5.265,
@@ -3557,6 +3922,10 @@
    "n_action": 848,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.159,
+    "shield_to_mavros": 93.059
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 5.741,
@@ -3596,6 +3965,10 @@
    "n_action": 847,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.391,
+    "shield_to_mavros": 92.682
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 4.802,
@@ -3635,6 +4008,10 @@
    "n_action": 833,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.283,
+    "shield_to_mavros": 93.353
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 5.029,
@@ -3674,6 +4051,10 @@
    "n_action": 849,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.233,
+    "shield_to_mavros": 95.605
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 4.794,
@@ -3713,6 +4094,10 @@
    "n_action": 866,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.912,
+    "shield_to_mavros": 92.486
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 5.076,
@@ -3752,6 +4137,10 @@
    "n_action": 856,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.29,
+    "shield_to_mavros": 92.446
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 5.636,
@@ -3791,6 +4180,10 @@
    "n_action": 312,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.306,
+    "shield_to_mavros": 97.529
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.689,
@@ -3830,6 +4223,10 @@
    "n_action": 311,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.004,
+    "shield_to_mavros": 96.818
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.074,
@@ -3869,6 +4266,10 @@
    "n_action": 300,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.28,
+    "shield_to_mavros": 97.808
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.99,
@@ -3908,6 +4309,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.279,
+    "shield_to_mavros": 97.609
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.987,
@@ -3947,6 +4352,10 @@
    "n_action": 303,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.393,
+    "shield_to_mavros": 98.36
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.054,
@@ -3986,6 +4395,10 @@
    "n_action": 301,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.065,
+    "shield_to_mavros": 97.213
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 0.019,
@@ -4025,6 +4438,10 @@
    "n_action": 318,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.36,
+    "shield_to_mavros": 97.994
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.903,
@@ -4064,6 +4481,10 @@
    "n_action": 319,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.853,
+    "shield_to_mavros": 98.092
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.324,
@@ -4103,6 +4524,10 @@
    "n_action": 308,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.096,
+    "shield_to_mavros": 97.426
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.015,
@@ -4142,6 +4567,10 @@
    "n_action": 318,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.213,
+    "shield_to_mavros": 97.158
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.599,
@@ -4181,6 +4610,10 @@
    "n_action": 312,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.941,
+    "shield_to_mavros": 95.563
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.01,
@@ -4220,6 +4653,10 @@
    "n_action": 303,
    "n_shield_setpoint": 106,
    "n_mavros_setpoint": 106,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.954,
+    "shield_to_mavros": 97.905
+   },
    "action_to_shield_ms": {
     "n": 106,
     "min_ms": 2.292,
@@ -4259,6 +4696,10 @@
    "n_action": 304,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.174,
+    "shield_to_mavros": 96.409
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 4.147,
@@ -4298,6 +4739,10 @@
    "n_action": 300,
    "n_shield_setpoint": 106,
    "n_mavros_setpoint": 106,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.214,
+    "shield_to_mavros": 96.606
+   },
    "action_to_shield_ms": {
     "n": 106,
     "min_ms": 2.379,
@@ -4337,6 +4782,10 @@
    "n_action": 293,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.33,
+    "shield_to_mavros": 97.62
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.365,
@@ -4376,6 +4825,10 @@
    "n_action": 308,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.742,
+    "shield_to_mavros": 98.226
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.176,
@@ -4415,6 +4868,10 @@
    "n_action": 312,
    "n_shield_setpoint": 106,
    "n_mavros_setpoint": 106,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.188,
+    "shield_to_mavros": 98.408
+   },
    "action_to_shield_ms": {
     "n": 106,
     "min_ms": 2.238,
@@ -4454,6 +4911,10 @@
    "n_action": 321,
    "n_shield_setpoint": 106,
    "n_mavros_setpoint": 106,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.221,
+    "shield_to_mavros": 94.16
+   },
    "action_to_shield_ms": {
     "n": 106,
     "min_ms": 2.791,
@@ -4493,6 +4954,10 @@
    "n_action": 312,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.93,
+    "shield_to_mavros": 96.517
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.05,
@@ -4532,6 +4997,10 @@
    "n_action": 314,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.318,
+    "shield_to_mavros": 97.55
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.059,
@@ -4571,6 +5040,10 @@
    "n_action": 311,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.531,
+    "shield_to_mavros": 96.826
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.077,
@@ -4610,6 +5083,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.239,
+    "shield_to_mavros": 96.679
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.141,
@@ -4649,6 +5126,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.942,
+    "shield_to_mavros": 96.883
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.077,
@@ -4688,6 +5169,10 @@
    "n_action": 293,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.442,
+    "shield_to_mavros": 97.758
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.836,
@@ -4727,6 +5212,10 @@
    "n_action": 329,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.258,
+    "shield_to_mavros": 98.026
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.018,
@@ -4766,6 +5255,10 @@
    "n_action": 308,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.349,
+    "shield_to_mavros": 97.55
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.127,
@@ -4805,6 +5298,10 @@
    "n_action": 320,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.029,
+    "shield_to_mavros": 97.501
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.437,
@@ -4844,6 +5341,10 @@
    "n_action": 313,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.256,
+    "shield_to_mavros": 98.095
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.175,
@@ -4883,6 +5384,10 @@
    "n_action": 321,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.303,
+    "shield_to_mavros": 98.019
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.387,
@@ -4922,6 +5427,10 @@
    "n_action": 312,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.236,
+    "shield_to_mavros": 97.099
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.051,
@@ -4961,6 +5470,10 @@
    "n_action": 301,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.366,
+    "shield_to_mavros": 96.823
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.284,
@@ -5000,6 +5513,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.272,
+    "shield_to_mavros": 98.196
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.075,
@@ -5039,6 +5556,10 @@
    "n_action": 304,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.164,
+    "shield_to_mavros": 96.879
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.345,
@@ -5078,6 +5599,10 @@
    "n_action": 293,
    "n_shield_setpoint": 106,
    "n_mavros_setpoint": 106,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.826,
+    "shield_to_mavros": 95.995
+   },
    "action_to_shield_ms": {
     "n": 106,
     "min_ms": 3.881,
@@ -5117,6 +5642,10 @@
    "n_action": 311,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.088,
+    "shield_to_mavros": 97.284
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.479,
@@ -5156,6 +5685,10 @@
    "n_action": 308,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.687,
+    "shield_to_mavros": 97.986
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.2,
@@ -5195,6 +5728,10 @@
    "n_action": 310,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.047,
+    "shield_to_mavros": 97.881
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.962,
@@ -5234,6 +5771,10 @@
    "n_action": 319,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.95,
+    "shield_to_mavros": 97.327
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.086,
@@ -5273,6 +5814,10 @@
    "n_action": 315,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.348,
+    "shield_to_mavros": 97.883
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.152,
@@ -5312,6 +5857,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.022,
+    "shield_to_mavros": 98.107
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.86,
@@ -5351,6 +5900,10 @@
    "n_action": 302,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.426,
+    "shield_to_mavros": 98.105
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 3.169,
@@ -5390,6 +5943,10 @@
    "n_action": 292,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.2,
+    "shield_to_mavros": 97.586
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.382,
@@ -5429,6 +5986,10 @@
    "n_action": 292,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.353,
+    "shield_to_mavros": 96.844
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.912,
@@ -5468,6 +6029,10 @@
    "n_action": 307,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.621,
+    "shield_to_mavros": 97.677
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 1.931,
@@ -5507,6 +6072,10 @@
    "n_action": 311,
    "n_shield_setpoint": 105,
    "n_mavros_setpoint": 105,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.344,
+    "shield_to_mavros": 98.018
+   },
    "action_to_shield_ms": {
     "n": 105,
     "min_ms": 2.09,
@@ -5546,6 +6115,10 @@
    "n_action": 970,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.304,
+    "shield_to_mavros": 81.994
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.911,
@@ -5585,6 +6158,10 @@
    "n_action": 962,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.106,
+    "shield_to_mavros": 85.621
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.196,
@@ -5624,6 +6201,10 @@
    "n_action": 968,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.043,
+    "shield_to_mavros": 84.131
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.001,
@@ -5663,6 +6244,10 @@
    "n_action": 962,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.113,
+    "shield_to_mavros": 88.14
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 4.219,
@@ -5702,6 +6287,10 @@
    "n_action": 956,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.795,
+    "shield_to_mavros": 87.871
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.943,
@@ -5741,6 +6330,10 @@
    "n_action": 942,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.636,
+    "shield_to_mavros": 83.572
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.567,
@@ -5780,6 +6373,10 @@
    "n_action": 961,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.215,
+    "shield_to_mavros": 84.927
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 2.729,
@@ -5819,6 +6416,10 @@
    "n_action": 960,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.642,
+    "shield_to_mavros": 84.664
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.123,
@@ -5858,6 +6459,10 @@
    "n_action": 966,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.625,
+    "shield_to_mavros": 82.545
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.231,
@@ -5897,6 +6502,10 @@
    "n_action": 1070,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.299,
+    "shield_to_mavros": 85.681
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.775,
@@ -5936,6 +6545,10 @@
    "n_action": 963,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.109,
+    "shield_to_mavros": 84.123
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.006,
@@ -5975,6 +6588,10 @@
    "n_action": 957,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.117,
+    "shield_to_mavros": 85.529
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.856,
@@ -6014,6 +6631,10 @@
    "n_action": 956,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.985,
+    "shield_to_mavros": 94.527
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.042,
@@ -6053,6 +6674,10 @@
    "n_action": 942,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.282,
+    "shield_to_mavros": 88.074
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 4.218,
@@ -6092,6 +6717,10 @@
    "n_action": 960,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.287,
+    "shield_to_mavros": 93.935
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.067,
@@ -6131,6 +6760,10 @@
    "n_action": 960,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.014,
+    "shield_to_mavros": 88.127
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.013,
@@ -6170,6 +6803,10 @@
    "n_action": 971,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.751,
+    "shield_to_mavros": 85.044
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.426,
@@ -6209,6 +6846,10 @@
    "n_action": 963,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.345,
+    "shield_to_mavros": 84.361
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.257,
@@ -6248,6 +6889,10 @@
    "n_action": 966,
    "n_shield_setpoint": 374,
    "n_mavros_setpoint": 374,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.712,
+    "shield_to_mavros": 84.568
+   },
    "action_to_shield_ms": {
     "n": 374,
     "min_ms": 2.833,
@@ -6287,6 +6932,10 @@
    "n_action": 960,
    "n_shield_setpoint": 368,
    "n_mavros_setpoint": 368,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.139,
+    "shield_to_mavros": 84.833
+   },
    "action_to_shield_ms": {
     "n": 368,
     "min_ms": 4.713,
@@ -6326,6 +6975,10 @@
    "n_action": 957,
    "n_shield_setpoint": 369,
    "n_mavros_setpoint": 369,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.597,
+    "shield_to_mavros": 83.181
+   },
    "action_to_shield_ms": {
     "n": 369,
     "min_ms": 3.843,
@@ -6365,6 +7018,10 @@
    "n_action": 957,
    "n_shield_setpoint": 371,
    "n_mavros_setpoint": 371,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 95.963,
+    "shield_to_mavros": 93.415
+   },
    "action_to_shield_ms": {
     "n": 371,
     "min_ms": 2.855,
@@ -6404,6 +7061,10 @@
    "n_action": 966,
    "n_shield_setpoint": 370,
    "n_mavros_setpoint": 370,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.548,
+    "shield_to_mavros": 91.744
+   },
    "action_to_shield_ms": {
     "n": 370,
     "min_ms": 4.455,
@@ -6443,6 +7104,10 @@
    "n_action": 969,
    "n_shield_setpoint": 370,
    "n_mavros_setpoint": 370,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.163,
+    "shield_to_mavros": 93.182
+   },
    "action_to_shield_ms": {
     "n": 370,
     "min_ms": 2.895,
@@ -6482,6 +7147,10 @@
    "n_action": 975,
    "n_shield_setpoint": 369,
    "n_mavros_setpoint": 369,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.056,
+    "shield_to_mavros": 89.38
+   },
    "action_to_shield_ms": {
     "n": 369,
     "min_ms": 3.182,
@@ -6521,6 +7190,10 @@
    "n_action": 968,
    "n_shield_setpoint": 368,
    "n_mavros_setpoint": 368,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.544,
+    "shield_to_mavros": 89.821
+   },
    "action_to_shield_ms": {
     "n": 368,
     "min_ms": 2.702,
@@ -6560,6 +7233,10 @@
    "n_action": 968,
    "n_shield_setpoint": 370,
    "n_mavros_setpoint": 370,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.871,
+    "shield_to_mavros": 89.576
+   },
    "action_to_shield_ms": {
     "n": 370,
     "min_ms": 3.087,
@@ -6599,6 +7276,10 @@
    "n_action": 967,
    "n_shield_setpoint": 460,
    "n_mavros_setpoint": 460,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.038,
+    "shield_to_mavros": 87.953
+   },
    "action_to_shield_ms": {
     "n": 460,
     "min_ms": 2.885,
@@ -6638,6 +7319,10 @@
    "n_action": 958,
    "n_shield_setpoint": 459,
    "n_mavros_setpoint": 459,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.019,
+    "shield_to_mavros": 88.209
+   },
    "action_to_shield_ms": {
     "n": 459,
     "min_ms": 2.807,
@@ -6677,6 +7362,10 @@
    "n_action": 956,
    "n_shield_setpoint": 460,
    "n_mavros_setpoint": 460,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.626,
+    "shield_to_mavros": 87.489
+   },
    "action_to_shield_ms": {
     "n": 460,
     "min_ms": 2.542,
@@ -6716,6 +7405,10 @@
    "n_action": 968,
    "n_shield_setpoint": 458,
    "n_mavros_setpoint": 458,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.232,
+    "shield_to_mavros": 91.78
+   },
    "action_to_shield_ms": {
     "n": 458,
     "min_ms": 3.025,
@@ -6755,6 +7448,10 @@
    "n_action": 972,
    "n_shield_setpoint": 463,
    "n_mavros_setpoint": 463,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.085,
+    "shield_to_mavros": 94.519
+   },
    "action_to_shield_ms": {
     "n": 463,
     "min_ms": 2.95,
@@ -6794,6 +7491,10 @@
    "n_action": 1074,
    "n_shield_setpoint": 459,
    "n_mavros_setpoint": 459,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.357,
+    "shield_to_mavros": 91.402
+   },
    "action_to_shield_ms": {
     "n": 459,
     "min_ms": 3.137,
@@ -6833,6 +7534,10 @@
    "n_action": 971,
    "n_shield_setpoint": 475,
    "n_mavros_setpoint": 475,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.83,
+    "shield_to_mavros": 81.496
+   },
    "action_to_shield_ms": {
     "n": 475,
     "min_ms": 2.836,
@@ -6872,6 +7577,10 @@
    "n_action": 968,
    "n_shield_setpoint": 461,
    "n_mavros_setpoint": 461,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.345,
+    "shield_to_mavros": 88.874
+   },
    "action_to_shield_ms": {
     "n": 461,
     "min_ms": 2.737,
@@ -6911,6 +7620,10 @@
    "n_action": 954,
    "n_shield_setpoint": 460,
    "n_mavros_setpoint": 460,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.882,
+    "shield_to_mavros": 91.829
+   },
    "action_to_shield_ms": {
     "n": 460,
     "min_ms": 2.869,
@@ -6950,6 +7663,10 @@
    "n_action": 499,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.317,
+    "shield_to_mavros": 78.546
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 4.585,
@@ -6989,6 +7706,10 @@
    "n_action": 524,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.893,
+    "shield_to_mavros": 86.937
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 2.849,
@@ -7028,6 +7749,10 @@
    "n_action": 518,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.358,
+    "shield_to_mavros": 88.881
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 4.088,
@@ -7067,6 +7792,10 @@
    "n_action": 516,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.032,
+    "shield_to_mavros": 89.282
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 4.237,
@@ -7106,6 +7835,10 @@
    "n_action": 527,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.878,
+    "shield_to_mavros": 85.978
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 3.986,
@@ -7145,6 +7878,10 @@
    "n_action": 522,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.107,
+    "shield_to_mavros": 91.386
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 3.247,
@@ -7184,6 +7921,10 @@
    "n_action": 519,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.25,
+    "shield_to_mavros": 89.092
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 3.296,
@@ -7223,6 +7964,10 @@
    "n_action": 520,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.843,
+    "shield_to_mavros": 87.466
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 3.162,
@@ -7262,6 +8007,10 @@
    "n_action": 508,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.961,
+    "shield_to_mavros": 90.363
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 2.972,
@@ -7301,6 +8050,10 @@
    "n_action": 945,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.144,
+    "shield_to_mavros": 88.594
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.044,
@@ -7340,6 +8093,10 @@
    "n_action": 966,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.507,
+    "shield_to_mavros": 80.66
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.86,
@@ -7379,6 +8136,10 @@
    "n_action": 964,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.844,
+    "shield_to_mavros": 89.539
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.912,
@@ -7418,6 +8179,10 @@
    "n_action": 975,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.553,
+    "shield_to_mavros": 91.044
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.721,
@@ -7457,6 +8222,10 @@
    "n_action": 965,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.24,
+    "shield_to_mavros": 93.094
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.881,
@@ -7496,6 +8265,10 @@
    "n_action": 958,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.14,
+    "shield_to_mavros": 90.269
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 2.751,
@@ -7535,6 +8308,10 @@
    "n_action": 957,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.028,
+    "shield_to_mavros": 87.911
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.853,
@@ -7574,6 +8351,10 @@
    "n_action": 959,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 85.739
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.03,
@@ -7613,6 +8394,10 @@
    "n_action": 968,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.815,
+    "shield_to_mavros": 90.375
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 2.94,
@@ -7652,6 +8437,10 @@
    "n_action": 965,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.53,
+    "shield_to_mavros": 90.18
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 4.469,
@@ -7691,6 +8480,10 @@
    "n_action": 973,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.544,
+    "shield_to_mavros": 91.05
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.344,
@@ -7730,6 +8523,10 @@
    "n_action": 967,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.072,
+    "shield_to_mavros": 89.142
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.081,
@@ -7769,6 +8566,10 @@
    "n_action": 965,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.146,
+    "shield_to_mavros": 94.19
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.005,
@@ -7808,6 +8609,10 @@
    "n_action": 958,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.173,
+    "shield_to_mavros": 92.646
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 4.086,
@@ -7847,6 +8652,10 @@
    "n_action": 957,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.043,
+    "shield_to_mavros": 93.635
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.896,
@@ -7886,6 +8695,10 @@
    "n_action": 955,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.149,
+    "shield_to_mavros": 89.712
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 4.15,
@@ -7925,6 +8738,10 @@
    "n_action": 977,
    "n_shield_setpoint": 352,
    "n_mavros_setpoint": 352,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.652,
+    "shield_to_mavros": 91.71
+   },
    "action_to_shield_ms": {
     "n": 352,
     "min_ms": 3.167,
@@ -7964,6 +8781,10 @@
    "n_action": 962,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.661,
+    "shield_to_mavros": 92.998
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 3.282,
@@ -8003,6 +8824,10 @@
    "n_action": 967,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.364,
+    "shield_to_mavros": 93.116
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 3.125,
@@ -8042,6 +8867,10 @@
    "n_action": 976,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.799,
+    "shield_to_mavros": 94.467
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 2.914,
@@ -8081,6 +8910,10 @@
    "n_action": 969,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.291,
+    "shield_to_mavros": 90.61
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 2.917,
@@ -8120,6 +8953,10 @@
    "n_action": 956,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.131,
+    "shield_to_mavros": 93.833
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 3.124,
@@ -8159,6 +8996,10 @@
    "n_action": 958,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.267,
+    "shield_to_mavros": 93.594
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 3.162,
@@ -8198,6 +9039,10 @@
    "n_action": 946,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.206,
+    "shield_to_mavros": 94.094
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 3.537,
@@ -8237,6 +9082,10 @@
    "n_action": 973,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.751,
+    "shield_to_mavros": 93.464
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 2.816,
@@ -8276,6 +9125,10 @@
    "n_action": 974,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.505,
+    "shield_to_mavros": 92.576
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 2.886,
@@ -8315,6 +9168,10 @@
    "n_action": 975,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.942,
+    "shield_to_mavros": 92.654
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 2.839,
@@ -8354,6 +9211,10 @@
    "n_action": 519,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.132,
+    "shield_to_mavros": 87.856
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 6.031,
@@ -8393,6 +9254,10 @@
    "n_action": 519,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.347,
+    "shield_to_mavros": 90.949
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 4.125,
@@ -8432,6 +9297,10 @@
    "n_action": 520,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.715,
+    "shield_to_mavros": 90.068
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 4.419,
@@ -8471,6 +9340,10 @@
    "n_action": 513,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.989,
+    "shield_to_mavros": 91.79
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 3.876,
@@ -8510,6 +9383,10 @@
    "n_action": 498,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.842,
+    "shield_to_mavros": 86.639
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 5.829,
@@ -8549,6 +9426,10 @@
    "n_action": 529,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.199,
+    "shield_to_mavros": 88.299
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 4.617,
@@ -8588,6 +9469,10 @@
    "n_action": 523,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.344,
+    "shield_to_mavros": 78.699
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 5.781,
@@ -8627,6 +9512,10 @@
    "n_action": 517,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.068,
+    "shield_to_mavros": 89.094
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 4.195,
@@ -8666,6 +9555,10 @@
    "n_action": 519,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.179,
+    "shield_to_mavros": 91.171
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 3.871,
@@ -8705,6 +9598,10 @@
    "n_action": 971,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.097,
+    "shield_to_mavros": 82.537
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.629,
@@ -8744,6 +9641,10 @@
    "n_action": 971,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.933,
+    "shield_to_mavros": 80.542
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 6.02,
@@ -8783,6 +9684,10 @@
    "n_action": 968,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.72,
+    "shield_to_mavros": 84.242
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.328,
@@ -8822,6 +9727,10 @@
    "n_action": 964,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.212,
+    "shield_to_mavros": 89.695
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 4.666,
@@ -8861,6 +9770,10 @@
    "n_action": 961,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.063,
+    "shield_to_mavros": 87.563
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 6.24,
@@ -8900,6 +9813,10 @@
    "n_action": 964,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.244,
+    "shield_to_mavros": 88.908
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 5.712,
@@ -8939,6 +9856,10 @@
    "n_action": 981,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.17,
+    "shield_to_mavros": 86.088
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 5.783,
@@ -8978,6 +9899,10 @@
    "n_action": 981,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.051,
+    "shield_to_mavros": 87.912
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.634,
@@ -9017,6 +9942,10 @@
    "n_action": 970,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.148,
+    "shield_to_mavros": 83.275
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 5.326,
@@ -9056,6 +9985,10 @@
    "n_action": 959,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.065,
+    "shield_to_mavros": 91.75
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.335,
@@ -9095,6 +10028,10 @@
    "n_action": 961,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.013,
+    "shield_to_mavros": 93.031
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.246,
@@ -9134,6 +10071,10 @@
    "n_action": 951,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.022,
+    "shield_to_mavros": 84.308
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.776,
@@ -9173,6 +10114,10 @@
    "n_action": 968,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.785,
+    "shield_to_mavros": 95.552
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.312,
@@ -9212,6 +10157,10 @@
    "n_action": 968,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.659,
+    "shield_to_mavros": 88.57
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 4.487,
@@ -9251,6 +10200,10 @@
    "n_action": 968,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.019,
+    "shield_to_mavros": 93.925
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 4.303,
@@ -9290,6 +10243,10 @@
    "n_action": 971,
    "n_shield_setpoint": 351,
    "n_mavros_setpoint": 351,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.214,
+    "shield_to_mavros": 90.255
+   },
    "action_to_shield_ms": {
     "n": 351,
     "min_ms": 4.284,
@@ -9329,6 +10286,10 @@
    "n_action": 970,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.878,
+    "shield_to_mavros": 94.462
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 4.318,
@@ -9368,6 +10329,10 @@
    "n_action": 961,
    "n_shield_setpoint": 350,
    "n_mavros_setpoint": 350,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.134,
+    "shield_to_mavros": 90.209
+   },
    "action_to_shield_ms": {
     "n": 350,
     "min_ms": 5.71,
@@ -9407,6 +10372,10 @@
    "n_action": 960,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.156,
+    "shield_to_mavros": 92.077
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 5.963,
@@ -9446,6 +10415,10 @@
    "n_action": 951,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.983,
+    "shield_to_mavros": 91.685
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.684,
@@ -9485,6 +10458,10 @@
    "n_action": 969,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.517,
+    "shield_to_mavros": 95.324
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.52,
@@ -9524,6 +10501,10 @@
    "n_action": 980,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.765,
+    "shield_to_mavros": 94.42
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.46,
@@ -9563,6 +10544,10 @@
    "n_action": 978,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.28,
+    "shield_to_mavros": 93.591
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 4.43,
@@ -9602,6 +10587,10 @@
    "n_action": 969,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.909,
+    "shield_to_mavros": 93.484
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 4.415,
@@ -9641,6 +10630,10 @@
    "n_action": 972,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.162,
+    "shield_to_mavros": 94.539
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.353,
@@ -9680,6 +10673,10 @@
    "n_action": 960,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.176,
+    "shield_to_mavros": 93.802
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 4.071,
@@ -9719,6 +10716,10 @@
    "n_action": 948,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.02,
+    "shield_to_mavros": 94.344
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.027,
@@ -9758,6 +10759,10 @@
    "n_action": 516,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.207,
+    "shield_to_mavros": 91.016
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.771,
@@ -9797,6 +10802,10 @@
    "n_action": 513,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.074,
+    "shield_to_mavros": 94.398
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.762,
@@ -9836,6 +10845,10 @@
    "n_action": 523,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.436,
+    "shield_to_mavros": 90.277
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.117,
@@ -9875,6 +10888,10 @@
    "n_action": 521,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.36,
+    "shield_to_mavros": 94.525
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.191,
@@ -9914,6 +10931,10 @@
    "n_action": 515,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.785,
+    "shield_to_mavros": 90.392
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.681,
@@ -9953,6 +10974,10 @@
    "n_action": 516,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.764,
+    "shield_to_mavros": 93.952
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.952,
@@ -9992,6 +11017,10 @@
    "n_action": 504,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.871,
+    "shield_to_mavros": 90.443
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.851,
@@ -10031,6 +11060,10 @@
    "n_action": 504,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.148,
+    "shield_to_mavros": 93.579
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.07,
@@ -10070,6 +11103,10 @@
    "n_action": 498,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.072,
+    "shield_to_mavros": 92.843
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.532,
@@ -10109,6 +11146,10 @@
    "n_action": 525,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.123,
+    "shield_to_mavros": 91.61
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.874,
@@ -10148,6 +11189,10 @@
    "n_action": 511,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.231,
+    "shield_to_mavros": 94.407
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.751,
@@ -10187,6 +11232,10 @@
    "n_action": 523,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.08,
+    "shield_to_mavros": 91.453
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.975,
@@ -10226,6 +11275,10 @@
    "n_action": 523,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.325,
+    "shield_to_mavros": 90.775
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.672,
@@ -10265,6 +11318,10 @@
    "n_action": 517,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.295,
+    "shield_to_mavros": 89.726
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.202,
@@ -10304,6 +11361,10 @@
    "n_action": 505,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.822,
+    "shield_to_mavros": 92.577
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.026,
@@ -10343,6 +11404,10 @@
    "n_action": 516,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.621,
+    "shield_to_mavros": 94.153
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.992,
@@ -10382,6 +11447,10 @@
    "n_action": 506,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.801,
+    "shield_to_mavros": 93.497
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.792,
@@ -10421,6 +11490,10 @@
    "n_action": 505,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.736,
+    "shield_to_mavros": 95.307
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.051,
@@ -10460,6 +11533,10 @@
    "n_action": 664,
    "n_shield_setpoint": 451,
    "n_mavros_setpoint": 451,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.175,
+    "shield_to_mavros": 90.742
+   },
    "action_to_shield_ms": {
     "n": 451,
     "min_ms": 4.643,
@@ -10499,6 +11576,10 @@
    "n_action": 664,
    "n_shield_setpoint": 453,
    "n_mavros_setpoint": 453,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.075,
+    "shield_to_mavros": 89.795
+   },
    "action_to_shield_ms": {
     "n": 453,
     "min_ms": 4.158,
@@ -10538,6 +11619,10 @@
    "n_action": 660,
    "n_shield_setpoint": 452,
    "n_mavros_setpoint": 452,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.877,
+    "shield_to_mavros": 89.316
+   },
    "action_to_shield_ms": {
     "n": 452,
     "min_ms": 2.973,
@@ -10577,6 +11662,10 @@
    "n_action": 678,
    "n_shield_setpoint": 454,
    "n_mavros_setpoint": 454,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.485,
+    "shield_to_mavros": 87.905
+   },
    "action_to_shield_ms": {
     "n": 454,
     "min_ms": 4.632,
@@ -10616,6 +11705,10 @@
    "n_action": 665,
    "n_shield_setpoint": 452,
    "n_mavros_setpoint": 452,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.327,
+    "shield_to_mavros": 90.534
+   },
    "action_to_shield_ms": {
     "n": 452,
     "min_ms": 4.23,
@@ -10655,6 +11748,10 @@
    "n_action": 667,
    "n_shield_setpoint": 452,
    "n_mavros_setpoint": 452,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 91.807
+   },
    "action_to_shield_ms": {
     "n": 452,
     "min_ms": 4.116,
@@ -10694,6 +11791,10 @@
    "n_action": 653,
    "n_shield_setpoint": 452,
    "n_mavros_setpoint": 452,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.227,
+    "shield_to_mavros": 92.514
+   },
    "action_to_shield_ms": {
     "n": 452,
     "min_ms": 2.782,
@@ -10733,6 +11834,10 @@
    "n_action": 648,
    "n_shield_setpoint": 453,
    "n_mavros_setpoint": 453,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.092,
+    "shield_to_mavros": 89.363
+   },
    "action_to_shield_ms": {
     "n": 453,
     "min_ms": 1.792,
@@ -10772,6 +11877,10 @@
    "n_action": 657,
    "n_shield_setpoint": 453,
    "n_mavros_setpoint": 453,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.127,
+    "shield_to_mavros": 89.591
+   },
    "action_to_shield_ms": {
     "n": 453,
     "min_ms": 4.048,
@@ -10811,6 +11920,10 @@
    "n_action": 569,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.739,
+    "shield_to_mavros": 89.887
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 2.818,
@@ -10850,6 +11963,10 @@
    "n_action": 577,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.215,
+    "shield_to_mavros": 89.086
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 4.277,
@@ -10889,6 +12006,10 @@
    "n_action": 582,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.13,
+    "shield_to_mavros": 87.599
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 3.785,
@@ -10928,6 +12049,10 @@
    "n_action": 572,
    "n_shield_setpoint": 360,
    "n_mavros_setpoint": 360,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.175,
+    "shield_to_mavros": 92.624
+   },
    "action_to_shield_ms": {
     "n": 360,
     "min_ms": 3.731,
@@ -10967,6 +12092,10 @@
    "n_action": 560,
    "n_shield_setpoint": 360,
    "n_mavros_setpoint": 360,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.214,
+    "shield_to_mavros": 92.427
+   },
    "action_to_shield_ms": {
     "n": 360,
     "min_ms": 2.806,
@@ -11006,6 +12135,10 @@
    "n_action": 564,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.164,
+    "shield_to_mavros": 87.351
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 4.526,
@@ -11045,6 +12178,10 @@
    "n_action": 563,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.154,
+    "shield_to_mavros": 90.368
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 3.403,
@@ -11084,6 +12221,10 @@
    "n_action": 552,
    "n_shield_setpoint": 362,
    "n_mavros_setpoint": 362,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.776,
+    "shield_to_mavros": 87.573
+   },
    "action_to_shield_ms": {
     "n": 362,
     "min_ms": 3.355,
@@ -11123,6 +12264,10 @@
    "n_action": 571,
    "n_shield_setpoint": 361,
    "n_mavros_setpoint": 361,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.037,
+    "shield_to_mavros": 87.055
+   },
    "action_to_shield_ms": {
     "n": 361,
     "min_ms": 4.425,
@@ -11162,6 +12307,10 @@
    "n_action": 511,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.086,
+    "shield_to_mavros": 89.503
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.611,
@@ -11201,6 +12350,10 @@
    "n_action": 525,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.158,
+    "shield_to_mavros": 96.144
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.029,
@@ -11240,6 +12393,10 @@
    "n_action": 516,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.8,
+    "shield_to_mavros": 96.554
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.991,
@@ -11279,6 +12436,10 @@
    "n_action": 513,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.279,
+    "shield_to_mavros": 94.99
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.018,
@@ -11318,6 +12479,10 @@
    "n_action": 517,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.772,
+    "shield_to_mavros": 96.092
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.971,
@@ -11357,6 +12522,10 @@
    "n_action": 505,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.435,
+    "shield_to_mavros": 91.802
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.095,
@@ -11396,6 +12565,10 @@
    "n_action": 506,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.81,
+    "shield_to_mavros": 96.189
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.821,
@@ -11435,6 +12608,10 @@
    "n_action": 515,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.867,
+    "shield_to_mavros": 96.084
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 2.703,
@@ -11474,6 +12651,10 @@
    "n_action": 514,
    "n_shield_setpoint": 305,
    "n_mavros_setpoint": 305,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.979,
+    "shield_to_mavros": 93.308
+   },
    "action_to_shield_ms": {
     "n": 305,
     "min_ms": 3.538,
@@ -11513,6 +12694,10 @@
    "n_action": 874,
    "n_shield_setpoint": 398,
    "n_mavros_setpoint": 398,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.541,
+    "shield_to_mavros": 94.432
+   },
    "action_to_shield_ms": {
     "n": 398,
     "min_ms": 3.152,
@@ -11552,6 +12737,10 @@
    "n_action": 876,
    "n_shield_setpoint": 399,
    "n_mavros_setpoint": 399,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.305,
+    "shield_to_mavros": 94.028
+   },
    "action_to_shield_ms": {
     "n": 399,
     "min_ms": 2.823,
@@ -11591,6 +12780,10 @@
    "n_action": 865,
    "n_shield_setpoint": 399,
    "n_mavros_setpoint": 399,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.705,
+    "shield_to_mavros": 93.731
+   },
    "action_to_shield_ms": {
     "n": 399,
     "min_ms": 3.032,
@@ -11630,6 +12823,10 @@
    "n_action": 637,
    "n_shield_setpoint": 434,
    "n_mavros_setpoint": 434,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.211,
+    "shield_to_mavros": 83.56
+   },
    "action_to_shield_ms": {
     "n": 434,
     "min_ms": 4.154,
@@ -11669,6 +12866,10 @@
    "n_action": 638,
    "n_shield_setpoint": 435,
    "n_mavros_setpoint": 435,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.55,
+    "shield_to_mavros": 79.686
+   },
    "action_to_shield_ms": {
     "n": 435,
     "min_ms": 5.106,
@@ -11708,6 +12909,10 @@
    "n_action": 624,
    "n_shield_setpoint": 432,
    "n_mavros_setpoint": 432,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.196,
+    "shield_to_mavros": 83.864
+   },
    "action_to_shield_ms": {
     "n": 432,
     "min_ms": 4.072,
@@ -11747,6 +12952,10 @@
    "n_action": 577,
    "n_shield_setpoint": 383,
    "n_mavros_setpoint": 383,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.277,
+    "shield_to_mavros": 70.387
+   },
    "action_to_shield_ms": {
     "n": 383,
     "min_ms": 2.825,
@@ -11786,6 +12995,10 @@
    "n_action": 592,
    "n_shield_setpoint": 384,
    "n_mavros_setpoint": 384,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.092,
+    "shield_to_mavros": 80.903
+   },
    "action_to_shield_ms": {
     "n": 384,
     "min_ms": 4.07,
@@ -11825,6 +13038,10 @@
    "n_action": 605,
    "n_shield_setpoint": 384,
    "n_mavros_setpoint": 384,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.748,
+    "shield_to_mavros": 83.968
+   },
    "action_to_shield_ms": {
     "n": 384,
     "min_ms": 3.192,
@@ -11864,6 +13081,10 @@
    "n_action": 768,
    "n_shield_setpoint": 542,
    "n_mavros_setpoint": 542,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.07,
+    "shield_to_mavros": 73.367
+   },
    "action_to_shield_ms": {
     "n": 542,
     "min_ms": 4.679,
@@ -11903,6 +13124,10 @@
    "n_action": 758,
    "n_shield_setpoint": 542,
    "n_mavros_setpoint": 542,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.875,
+    "shield_to_mavros": 78.003
+   },
    "action_to_shield_ms": {
     "n": 542,
     "min_ms": 3.236,
@@ -11942,6 +13167,10 @@
    "n_action": 753,
    "n_shield_setpoint": 539,
    "n_mavros_setpoint": 539,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.321,
+    "shield_to_mavros": 80.369
+   },
    "action_to_shield_ms": {
     "n": 539,
     "min_ms": 2.905,
@@ -11981,6 +13210,10 @@
    "n_action": 616,
    "n_shield_setpoint": 417,
    "n_mavros_setpoint": 417,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.34,
+    "shield_to_mavros": 94.35
+   },
    "action_to_shield_ms": {
     "n": 417,
     "min_ms": 3.215,
@@ -12020,6 +13253,10 @@
    "n_action": 616,
    "n_shield_setpoint": 426,
    "n_mavros_setpoint": 426,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.132,
+    "shield_to_mavros": 85.359
+   },
    "action_to_shield_ms": {
     "n": 426,
     "min_ms": 3.202,
@@ -12059,6 +13296,10 @@
    "n_action": 633,
    "n_shield_setpoint": 416,
    "n_mavros_setpoint": 416,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.372,
+    "shield_to_mavros": 96.411
+   },
    "action_to_shield_ms": {
     "n": 416,
     "min_ms": 2.764,
@@ -12098,6 +13339,10 @@
    "n_action": 538,
    "n_shield_setpoint": 332,
    "n_mavros_setpoint": 332,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.561,
+    "shield_to_mavros": 90.12
+   },
    "action_to_shield_ms": {
     "n": 332,
     "min_ms": 3.253,
@@ -12137,6 +13382,10 @@
    "n_action": 537,
    "n_shield_setpoint": 330,
    "n_mavros_setpoint": 330,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.311,
+    "shield_to_mavros": 89.971
+   },
    "action_to_shield_ms": {
     "n": 330,
     "min_ms": 3.149,
@@ -12176,6 +13425,10 @@
    "n_action": 550,
    "n_shield_setpoint": 332,
    "n_mavros_setpoint": 332,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.285,
+    "shield_to_mavros": 86.608
+   },
    "action_to_shield_ms": {
     "n": 332,
     "min_ms": 3.214,
@@ -12215,6 +13468,10 @@
    "n_action": 534,
    "n_shield_setpoint": 326,
    "n_mavros_setpoint": 326,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.166,
+    "shield_to_mavros": 87.381
+   },
    "action_to_shield_ms": {
     "n": 326,
     "min_ms": 2.674,
@@ -12254,6 +13511,10 @@
    "n_action": 514,
    "n_shield_setpoint": 317,
    "n_mavros_setpoint": 317,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.1,
+    "shield_to_mavros": 95.581
+   },
    "action_to_shield_ms": {
     "n": 317,
     "min_ms": 3.025,
@@ -12293,6 +13554,10 @@
    "n_action": 523,
    "n_shield_setpoint": 325,
    "n_mavros_setpoint": 325,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.127,
+    "shield_to_mavros": 87.747
+   },
    "action_to_shield_ms": {
     "n": 325,
     "min_ms": 2.976,
@@ -12332,6 +13597,10 @@
    "n_action": 420,
    "n_shield_setpoint": 232,
    "n_mavros_setpoint": 232,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.597,
+    "shield_to_mavros": 92.799
+   },
    "action_to_shield_ms": {
     "n": 232,
     "min_ms": 2.469,
@@ -12371,6 +13640,10 @@
    "n_action": 428,
    "n_shield_setpoint": 231,
    "n_mavros_setpoint": 231,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.855,
+    "shield_to_mavros": 92.914
+   },
    "action_to_shield_ms": {
     "n": 231,
     "min_ms": 2.886,
@@ -12410,6 +13683,10 @@
    "n_action": 437,
    "n_shield_setpoint": 231,
    "n_mavros_setpoint": 231,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.065,
+    "shield_to_mavros": 92.041
+   },
    "action_to_shield_ms": {
     "n": 231,
     "min_ms": 3.111,
@@ -12449,6 +13726,10 @@
    "n_action": 303,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.277,
+    "shield_to_mavros": 88.709
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 7.452,
@@ -12488,6 +13769,10 @@
    "n_action": 306,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.276,
+    "shield_to_mavros": 87.299
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 6.843,
@@ -12527,6 +13812,10 @@
    "n_action": 298,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.238,
+    "shield_to_mavros": 90.435
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 7.339,
@@ -12566,6 +13855,10 @@
    "n_action": 367,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.268,
+    "shield_to_mavros": 89.696
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 7.608,
@@ -12605,6 +13898,10 @@
    "n_action": 370,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.25,
+    "shield_to_mavros": 91.656
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 4.866,
@@ -12644,6 +13941,10 @@
    "n_action": 356,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.399,
+    "shield_to_mavros": 91.117
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 5.767,
@@ -12683,6 +13984,10 @@
    "n_action": 279,
    "n_shield_setpoint": 91,
    "n_mavros_setpoint": 91,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.056,
+    "shield_to_mavros": 90.34
+   },
    "action_to_shield_ms": {
     "n": 91,
     "min_ms": 4.704,
@@ -12722,6 +14027,10 @@
    "n_action": 288,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.643,
+    "shield_to_mavros": 91.547
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 6.242,
@@ -12761,6 +14070,10 @@
    "n_action": 295,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.29,
+    "shield_to_mavros": 87.891
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 5.777,
@@ -12800,6 +14113,10 @@
    "n_action": 377,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.266,
+    "shield_to_mavros": 89.044
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 7.59,
@@ -12839,6 +14156,10 @@
    "n_action": 376,
    "n_shield_setpoint": 159,
    "n_mavros_setpoint": 159,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.261,
+    "shield_to_mavros": 89.968
+   },
    "action_to_shield_ms": {
     "n": 159,
     "min_ms": 4.727,
@@ -12878,6 +14199,10 @@
    "n_action": 366,
    "n_shield_setpoint": 159,
    "n_mavros_setpoint": 159,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.084,
+    "shield_to_mavros": 89.459
+   },
    "action_to_shield_ms": {
     "n": 159,
     "min_ms": 4.615,
@@ -12917,6 +14242,10 @@
    "n_action": 299,
    "n_shield_setpoint": 91,
    "n_mavros_setpoint": 91,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.379,
+    "shield_to_mavros": 93.901
+   },
    "action_to_shield_ms": {
     "n": 91,
     "min_ms": 8.536,
@@ -12956,6 +14285,10 @@
    "n_action": 298,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.254,
+    "shield_to_mavros": 89.172
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 4.448,
@@ -12995,6 +14328,10 @@
    "n_action": 288,
    "n_shield_setpoint": 90,
    "n_mavros_setpoint": 90,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.121,
+    "shield_to_mavros": 93.48
+   },
    "action_to_shield_ms": {
     "n": 90,
     "min_ms": 4.811,
@@ -13034,6 +14371,10 @@
    "n_action": 347,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.233,
+    "shield_to_mavros": 88.637
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 4.937,
@@ -13073,6 +14414,10 @@
    "n_action": 359,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.972,
+    "shield_to_mavros": 88.772
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 4.735,
@@ -13112,6 +14457,10 @@
    "n_action": 367,
    "n_shield_setpoint": 160,
    "n_mavros_setpoint": 160,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.926,
+    "shield_to_mavros": 91.62
+   },
    "action_to_shield_ms": {
     "n": 160,
     "min_ms": 4.3,
@@ -13151,6 +14500,10 @@
    "n_action": 836,
    "n_shield_setpoint": 345,
    "n_mavros_setpoint": 345,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.13,
+    "shield_to_mavros": 80.012
+   },
    "action_to_shield_ms": {
     "n": 345,
     "min_ms": 7.252,
@@ -13190,6 +14543,10 @@
    "n_action": 786,
    "n_shield_setpoint": 343,
    "n_mavros_setpoint": 343,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.368,
+    "shield_to_mavros": 81.809
+   },
    "action_to_shield_ms": {
     "n": 343,
     "min_ms": 7.366,
@@ -13229,6 +14586,10 @@
    "n_action": 832,
    "n_shield_setpoint": 343,
    "n_mavros_setpoint": 343,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.872,
+    "shield_to_mavros": 78.693
+   },
    "action_to_shield_ms": {
     "n": 343,
     "min_ms": 7.057,
@@ -13268,6 +14629,10 @@
    "n_action": 965,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.115,
+    "shield_to_mavros": 84.547
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 4.162,
@@ -13307,6 +14672,10 @@
    "n_action": 962,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.172,
+    "shield_to_mavros": 82.394
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 4.155,
@@ -13346,6 +14715,10 @@
    "n_action": 959,
    "n_shield_setpoint": 345,
    "n_mavros_setpoint": 345,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.495,
+    "shield_to_mavros": 82.503
+   },
    "action_to_shield_ms": {
     "n": 345,
     "min_ms": 3.31,
@@ -13385,6 +14758,10 @@
    "n_action": 944,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.986,
+    "shield_to_mavros": 85.399
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.553,
@@ -13424,6 +14801,10 @@
    "n_action": 961,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.128,
+    "shield_to_mavros": 83.499
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.417,
@@ -13463,6 +14844,10 @@
    "n_action": 962,
    "n_shield_setpoint": 343,
    "n_mavros_setpoint": 343,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.947,
+    "shield_to_mavros": 85.593
+   },
    "action_to_shield_ms": {
     "n": 343,
     "min_ms": 3.54,
@@ -13502,6 +14887,10 @@
    "n_action": 450,
    "n_shield_setpoint": 232,
    "n_mavros_setpoint": 232,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.873,
+    "shield_to_mavros": 75.843
+   },
    "action_to_shield_ms": {
     "n": 232,
     "min_ms": 3.209,
@@ -13541,6 +14930,10 @@
    "n_action": 442,
    "n_shield_setpoint": 232,
    "n_mavros_setpoint": 232,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.215,
+    "shield_to_mavros": 81.821
+   },
    "action_to_shield_ms": {
     "n": 232,
     "min_ms": 5.279,
@@ -13580,6 +14973,10 @@
    "n_action": 429,
    "n_shield_setpoint": 231,
    "n_mavros_setpoint": 231,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.166,
+    "shield_to_mavros": 90.464
+   },
    "action_to_shield_ms": {
     "n": 231,
     "min_ms": 3.275,
@@ -13619,6 +15016,10 @@
    "n_action": 436,
    "n_shield_setpoint": 224,
    "n_mavros_setpoint": 224,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.34,
+    "shield_to_mavros": 81.274
+   },
    "action_to_shield_ms": {
     "n": 224,
     "min_ms": 2.784,
@@ -13658,6 +15059,10 @@
    "n_action": 421,
    "n_shield_setpoint": 223,
    "n_mavros_setpoint": 223,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.506,
+    "shield_to_mavros": 81.91
+   },
    "action_to_shield_ms": {
     "n": 223,
     "min_ms": 5.581,
@@ -13697,6 +15102,10 @@
    "n_action": 409,
    "n_shield_setpoint": 222,
    "n_mavros_setpoint": 222,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.577,
+    "shield_to_mavros": 83.326
+   },
    "action_to_shield_ms": {
     "n": 222,
     "min_ms": 3.209,
@@ -13736,6 +15145,10 @@
    "n_action": 959,
    "n_shield_setpoint": 345,
    "n_mavros_setpoint": 345,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.137,
+    "shield_to_mavros": 83.571
+   },
    "action_to_shield_ms": {
     "n": 345,
     "min_ms": 3.347,
@@ -13775,6 +15188,10 @@
    "n_action": 962,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.959,
+    "shield_to_mavros": 85.976
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.466,
@@ -13814,6 +15231,10 @@
    "n_action": 972,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.534,
+    "shield_to_mavros": 82.497
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 4.128,
@@ -13853,6 +15274,10 @@
    "n_action": 974,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.507,
+    "shield_to_mavros": 80.331
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.06,
@@ -13892,6 +15317,10 @@
    "n_action": 962,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.94,
+    "shield_to_mavros": 85.507
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.216,
@@ -13931,6 +15360,10 @@
    "n_action": 957,
    "n_shield_setpoint": 344,
    "n_mavros_setpoint": 344,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.837,
+    "shield_to_mavros": 83.549
+   },
    "action_to_shield_ms": {
     "n": 344,
     "min_ms": 3.963,
@@ -13970,6 +15403,10 @@
    "n_action": 1008,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.182,
+    "shield_to_mavros": 57.566
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 2.773,
@@ -14009,6 +15446,10 @@
    "n_action": 998,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.025,
+    "shield_to_mavros": 57.896
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 2.871,
@@ -14048,6 +15489,10 @@
    "n_action": 1026,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.541,
+    "shield_to_mavros": 61.588
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 3.298,
@@ -14087,6 +15532,10 @@
    "n_action": 1019,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.105,
+    "shield_to_mavros": 58.585
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.126,
@@ -14126,6 +15575,10 @@
    "n_action": 1019,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.785,
+    "shield_to_mavros": 57.431
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 2.989,
@@ -14165,6 +15618,10 @@
    "n_action": 1005,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.826,
+    "shield_to_mavros": 54.907
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.829,
@@ -14204,6 +15661,10 @@
    "n_action": 991,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.553,
+    "shield_to_mavros": 59.299
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 2.734,
@@ -14243,6 +15704,10 @@
    "n_action": 1001,
    "n_shield_setpoint": 379,
    "n_mavros_setpoint": 379,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.906,
+    "shield_to_mavros": 57.661
+   },
    "action_to_shield_ms": {
     "n": 379,
     "min_ms": 2.904,
@@ -14282,6 +15747,10 @@
    "n_action": 986,
    "n_shield_setpoint": 378,
    "n_mavros_setpoint": 378,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.167,
+    "shield_to_mavros": 59.738
+   },
    "action_to_shield_ms": {
     "n": 378,
     "min_ms": 4.305,
@@ -14321,6 +15790,10 @@
    "n_action": 541,
    "n_shield_setpoint": 340,
    "n_mavros_setpoint": 340,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.662,
+    "shield_to_mavros": 90.757
+   },
    "action_to_shield_ms": {
     "n": 340,
     "min_ms": 2.848,
@@ -14360,6 +15833,10 @@
    "n_action": 550,
    "n_shield_setpoint": 342,
    "n_mavros_setpoint": 342,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.55,
+    "shield_to_mavros": 91.636
+   },
    "action_to_shield_ms": {
     "n": 342,
     "min_ms": 2.811,
@@ -14399,6 +15876,10 @@
    "n_action": 559,
    "n_shield_setpoint": 341,
    "n_mavros_setpoint": 341,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.857,
+    "shield_to_mavros": 91.085
+   },
    "action_to_shield_ms": {
     "n": 341,
     "min_ms": 3.016,
@@ -14438,6 +15919,10 @@
    "n_action": 558,
    "n_shield_setpoint": 340,
    "n_mavros_setpoint": 340,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.122,
+    "shield_to_mavros": 89.699
+   },
    "action_to_shield_ms": {
     "n": 340,
     "min_ms": 3.129,
@@ -14477,6 +15962,10 @@
    "n_action": 549,
    "n_shield_setpoint": 340,
    "n_mavros_setpoint": 340,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.284,
+    "shield_to_mavros": 90.356
+   },
    "action_to_shield_ms": {
     "n": 340,
     "min_ms": 3.113,
@@ -14516,6 +16005,10 @@
    "n_action": 553,
    "n_shield_setpoint": 342,
    "n_mavros_setpoint": 342,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.963,
+    "shield_to_mavros": 92.205
+   },
    "action_to_shield_ms": {
     "n": 342,
     "min_ms": 2.939,
@@ -14555,6 +16048,10 @@
    "n_action": 1060,
    "n_shield_setpoint": 850,
    "n_mavros_setpoint": 850,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.243,
+    "shield_to_mavros": 90.187
+   },
    "action_to_shield_ms": {
     "n": 850,
     "min_ms": 2.982,
@@ -14594,6 +16091,10 @@
    "n_action": 1060,
    "n_shield_setpoint": 850,
    "n_mavros_setpoint": 850,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.912,
+    "shield_to_mavros": 88.558
+   },
    "action_to_shield_ms": {
     "n": 850,
     "min_ms": 3.747,
@@ -14633,6 +16134,10 @@
    "n_action": 1056,
    "n_shield_setpoint": 410,
    "n_mavros_setpoint": 410,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.176,
+    "shield_to_mavros": 90.052
+   },
    "action_to_shield_ms": {
     "n": 410,
     "min_ms": 2.893,
@@ -14672,6 +16177,10 @@
    "n_action": 926,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.002,
+    "shield_to_mavros": 93.132
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.067,
@@ -14711,6 +16220,10 @@
    "n_action": 927,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.655,
+    "shield_to_mavros": 94.667
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.338,
@@ -14750,6 +16263,10 @@
    "n_action": 929,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.959,
+    "shield_to_mavros": 94.23
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.09,
@@ -14789,6 +16306,10 @@
    "n_action": 930,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.109,
+    "shield_to_mavros": 92.263
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.257,
@@ -14828,6 +16349,10 @@
    "n_action": 929,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.656,
+    "shield_to_mavros": 93.935
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.059,
@@ -14867,6 +16392,10 @@
    "n_action": 918,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.564,
+    "shield_to_mavros": 92.529
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.121,
@@ -14906,6 +16435,10 @@
    "n_action": 543,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.029,
+    "shield_to_mavros": 97.511
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.212,
@@ -14945,6 +16478,10 @@
    "n_action": 674,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.887,
+    "shield_to_mavros": 98.936
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.408,
@@ -14984,6 +16521,10 @@
    "n_action": 571,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.325,
+    "shield_to_mavros": 97.499
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.278,
@@ -15023,6 +16564,10 @@
    "n_action": 664,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.221,
+    "shield_to_mavros": 99.424
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 2.924,
@@ -15062,6 +16607,10 @@
    "n_action": 668,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.796,
+    "shield_to_mavros": 98.248
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.581,
@@ -15101,6 +16650,10 @@
    "n_action": 654,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.046,
+    "shield_to_mavros": 98.867
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.241,
@@ -15140,6 +16693,10 @@
    "n_action": 654,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.278,
+    "shield_to_mavros": 97.723
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.355,
@@ -15179,6 +16736,10 @@
    "n_action": 553,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.373,
+    "shield_to_mavros": 97.387
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.05,
@@ -15218,6 +16779,10 @@
    "n_action": 554,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.58,
+    "shield_to_mavros": 98.46
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.483,
@@ -15257,6 +16822,10 @@
    "n_action": 639,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.033,
+    "shield_to_mavros": 98.343
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.004,
@@ -15296,6 +16865,10 @@
    "n_action": 571,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.052,
+    "shield_to_mavros": 98.617
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 2.925,
@@ -15335,6 +16908,10 @@
    "n_action": 661,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.436,
+    "shield_to_mavros": 97.98
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.244,
@@ -15374,6 +16951,10 @@
    "n_action": 663,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.039,
+    "shield_to_mavros": 99.519
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.057,
@@ -15413,6 +16994,10 @@
    "n_action": 563,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.307,
+    "shield_to_mavros": 98.323
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.08,
@@ -15452,6 +17037,10 @@
    "n_action": 658,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.325,
+    "shield_to_mavros": 98.295
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.002,
@@ -15491,6 +17080,10 @@
    "n_action": 658,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.132,
+    "shield_to_mavros": 98.485
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.076,
@@ -15530,6 +17123,10 @@
    "n_action": 643,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.202,
+    "shield_to_mavros": 98.569
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.016,
@@ -15569,6 +17166,10 @@
    "n_action": 648,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.29,
+    "shield_to_mavros": 98.465
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.396,
@@ -15608,6 +17209,10 @@
    "n_action": 537,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.65,
+    "shield_to_mavros": 98.534
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 2.971,
@@ -15647,6 +17252,10 @@
    "n_action": 520,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.014,
+    "shield_to_mavros": 97.283
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 3.099,
@@ -15686,6 +17295,10 @@
    "n_action": 519,
    "n_shield_setpoint": 31,
    "n_mavros_setpoint": 31,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.992,
+    "shield_to_mavros": 98.668
+   },
    "action_to_shield_ms": {
     "n": 31,
     "min_ms": 4.287,
@@ -15725,6 +17338,10 @@
    "n_action": 942,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.177,
+    "shield_to_mavros": 96.11
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 2.825,
@@ -15764,6 +17381,10 @@
    "n_action": 943,
    "n_shield_setpoint": 330,
    "n_mavros_setpoint": 330,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.033,
+    "shield_to_mavros": 95.755
+   },
    "action_to_shield_ms": {
     "n": 330,
     "min_ms": 3.376,
@@ -15803,6 +17424,10 @@
    "n_action": 932,
    "n_shield_setpoint": 331,
    "n_mavros_setpoint": 331,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.052,
+    "shield_to_mavros": 94.76
+   },
    "action_to_shield_ms": {
     "n": 331,
     "min_ms": 3.028,
@@ -15842,6 +17467,10 @@
    "n_action": 527,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.086,
+    "shield_to_mavros": 86.69
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 3.418,
@@ -15881,6 +17510,10 @@
    "n_action": 511,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.715,
+    "shield_to_mavros": 93.789
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 3.997,
@@ -15920,6 +17553,10 @@
    "n_action": 521,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.43,
+    "shield_to_mavros": 85.68
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 3.106,
@@ -15959,6 +17596,10 @@
    "n_action": 463,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.931,
+    "shield_to_mavros": 95.488
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 3.152,
@@ -15998,6 +17639,10 @@
    "n_action": 462,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.756,
+    "shield_to_mavros": 95.733
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 3.107,
@@ -16037,6 +17682,10 @@
    "n_action": 452,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.232,
+    "shield_to_mavros": 95.814
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.631,
@@ -16076,6 +17725,10 @@
    "n_action": 469,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.24,
+    "shield_to_mavros": 95.53
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.67,
@@ -16115,6 +17768,10 @@
    "n_action": 455,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.224,
+    "shield_to_mavros": 96.709
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.53,
@@ -16154,6 +17811,10 @@
    "n_action": 443,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.613,
+    "shield_to_mavros": 95.849
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.759,
@@ -16193,6 +17854,10 @@
    "n_action": 446,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.059,
+    "shield_to_mavros": 96.332
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.659,
@@ -16232,6 +17897,10 @@
    "n_action": 448,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.27,
+    "shield_to_mavros": 96.619
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.207,
@@ -16271,6 +17940,10 @@
    "n_action": 476,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.217,
+    "shield_to_mavros": 97.092
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.103,
@@ -16310,6 +17983,10 @@
    "n_action": 464,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.891,
+    "shield_to_mavros": 96.634
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.4,
@@ -16349,6 +18026,10 @@
    "n_action": 464,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.314,
+    "shield_to_mavros": 96.347
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.904,
@@ -16388,6 +18069,10 @@
    "n_action": 466,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.304,
+    "shield_to_mavros": 96.688
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.305,
@@ -16427,6 +18112,10 @@
    "n_action": 466,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.032,
+    "shield_to_mavros": 96.102
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.314,
@@ -16466,6 +18155,10 @@
    "n_action": 454,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.463,
+    "shield_to_mavros": 95.613
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 3.645,
@@ -16505,6 +18198,10 @@
    "n_action": 444,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.768,
+    "shield_to_mavros": 95.318
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.378,
@@ -16544,6 +18241,10 @@
    "n_action": 448,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.061,
+    "shield_to_mavros": 96.44
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.656,
@@ -16583,6 +18284,10 @@
    "n_action": 439,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.404,
+    "shield_to_mavros": 95.182
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 5.301,
@@ -16622,6 +18327,10 @@
    "n_action": 465,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.897,
+    "shield_to_mavros": 95.072
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 3.49,
@@ -16661,6 +18370,10 @@
    "n_action": 458,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.137,
+    "shield_to_mavros": 95.739
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.318,
@@ -16700,6 +18413,10 @@
    "n_action": 461,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.751,
+    "shield_to_mavros": 94.652
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.583,
@@ -16739,6 +18456,10 @@
    "n_action": 452,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.987,
+    "shield_to_mavros": 96.718
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.203,
@@ -16778,6 +18499,10 @@
    "n_action": 453,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.113,
+    "shield_to_mavros": 96.199
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.492,
@@ -16817,6 +18542,10 @@
    "n_action": 451,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.654,
+    "shield_to_mavros": 97.256
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.193,
@@ -16856,6 +18585,10 @@
    "n_action": 440,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.196,
+    "shield_to_mavros": 96.738
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.245,
@@ -16895,6 +18628,10 @@
    "n_action": 442,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.213,
+    "shield_to_mavros": 96.108
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.413,
@@ -16934,6 +18671,10 @@
    "n_action": 435,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.949,
+    "shield_to_mavros": 97.086
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.124,
@@ -16973,6 +18714,10 @@
    "n_action": 458,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.654,
+    "shield_to_mavros": 97.192
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.075,
@@ -17012,6 +18757,10 @@
    "n_action": 458,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.202,
+    "shield_to_mavros": 97.364
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.742,
@@ -17051,6 +18800,10 @@
    "n_action": 461,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.844,
+    "shield_to_mavros": 95.401
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 3.288,
@@ -17090,6 +18843,10 @@
    "n_action": 449,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.248,
+    "shield_to_mavros": 96.955
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 4.258,
@@ -17129,6 +18886,10 @@
    "n_action": 452,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.271,
+    "shield_to_mavros": 95.554
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.413,
@@ -17168,6 +18929,10 @@
    "n_action": 442,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.126,
+    "shield_to_mavros": 95.879
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 5.168,
@@ -17207,6 +18972,10 @@
    "n_action": 444,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.956,
+    "shield_to_mavros": 95.83
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 3.038,
@@ -17246,6 +19015,10 @@
    "n_action": 464,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.073,
+    "shield_to_mavros": 97.571
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.88,
@@ -17285,6 +19058,10 @@
    "n_action": 458,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.306,
+    "shield_to_mavros": 97.452
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 3.009,
@@ -17324,6 +19101,10 @@
    "n_action": 461,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.088,
+    "shield_to_mavros": 92.434
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 4.314,
@@ -17363,6 +19144,10 @@
    "n_action": 453,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.317,
+    "shield_to_mavros": 96.004
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.243,
@@ -17402,6 +19187,10 @@
    "n_action": 457,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.982,
+    "shield_to_mavros": 97.054
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.325,
@@ -17441,6 +19230,10 @@
    "n_action": 449,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.198,
+    "shield_to_mavros": 95.781
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.207,
@@ -17480,6 +19273,10 @@
    "n_action": 436,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.153,
+    "shield_to_mavros": 97.832
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.462,
@@ -17519,6 +19316,10 @@
    "n_action": 436,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.083,
+    "shield_to_mavros": 96.207
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.429,
@@ -17558,6 +19359,10 @@
    "n_action": 426,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.615,
+    "shield_to_mavros": 97.033
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.201,
@@ -17597,6 +19402,10 @@
    "n_action": 455,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.152,
+    "shield_to_mavros": 95.306
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.083,
@@ -17636,6 +19445,10 @@
    "n_action": 457,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.657,
+    "shield_to_mavros": 93.683
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 3.517,
@@ -17675,6 +19488,10 @@
    "n_action": 455,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.387,
+    "shield_to_mavros": 97.417
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.193,
@@ -17714,6 +19531,10 @@
    "n_action": 447,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.844,
+    "shield_to_mavros": 96.968
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.311,
@@ -17753,6 +19574,10 @@
    "n_action": 446,
    "n_shield_setpoint": 235,
    "n_mavros_setpoint": 235,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.492,
+    "shield_to_mavros": 96.641
+   },
    "action_to_shield_ms": {
     "n": 235,
     "min_ms": 4.503,
@@ -17792,6 +19617,10 @@
    "n_action": 448,
    "n_shield_setpoint": 236,
    "n_mavros_setpoint": 236,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.001,
+    "shield_to_mavros": 96.571
+   },
    "action_to_shield_ms": {
     "n": 236,
     "min_ms": 4.483,
@@ -17831,6 +19660,10 @@
    "n_action": 440,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.559,
+    "shield_to_mavros": 95.873
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 3.371,
@@ -17870,6 +19703,10 @@
    "n_action": 437,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.51,
+    "shield_to_mavros": 96.383
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 3.132,
@@ -17909,6 +19746,10 @@
    "n_action": 427,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.086,
+    "shield_to_mavros": 94.784
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.462,
@@ -17948,6 +19789,10 @@
    "n_action": 446,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.161,
+    "shield_to_mavros": 96.15
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 3.053,
@@ -17987,6 +19832,10 @@
    "n_action": 454,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.002,
+    "shield_to_mavros": 96.545
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.124,
@@ -18026,6 +19875,10 @@
    "n_action": 455,
    "n_shield_setpoint": 237,
    "n_mavros_setpoint": 237,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.164,
+    "shield_to_mavros": 93.693
+   },
    "action_to_shield_ms": {
     "n": 237,
     "min_ms": 4.727,
@@ -18065,6 +19918,10 @@
    "n_action": 434,
    "n_shield_setpoint": 213,
    "n_mavros_setpoint": 213,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.101,
+    "shield_to_mavros": 95.357
+   },
    "action_to_shield_ms": {
     "n": 213,
     "min_ms": 3.647,
@@ -18104,6 +19961,10 @@
    "n_action": 431,
    "n_shield_setpoint": 213,
    "n_mavros_setpoint": 213,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.72,
+    "shield_to_mavros": 95.693
+   },
    "action_to_shield_ms": {
     "n": 213,
     "min_ms": 3.775,
@@ -18143,6 +20004,10 @@
    "n_action": 425,
    "n_shield_setpoint": 213,
    "n_mavros_setpoint": 213,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.028,
+    "shield_to_mavros": 97.494
+   },
    "action_to_shield_ms": {
     "n": 213,
     "min_ms": 3.694,
@@ -18182,6 +20047,10 @@
    "n_action": 384,
    "n_shield_setpoint": 184,
    "n_mavros_setpoint": 184,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.209,
+    "shield_to_mavros": 95.831
+   },
    "action_to_shield_ms": {
     "n": 184,
     "min_ms": 3.676,
@@ -18221,6 +20090,10 @@
    "n_action": 384,
    "n_shield_setpoint": 184,
    "n_mavros_setpoint": 184,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.302,
+    "shield_to_mavros": 96.243
+   },
    "action_to_shield_ms": {
     "n": 184,
     "min_ms": 3.804,
@@ -18260,6 +20133,10 @@
    "n_action": 379,
    "n_shield_setpoint": 184,
    "n_mavros_setpoint": 184,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.099,
+    "shield_to_mavros": 94.984
+   },
    "action_to_shield_ms": {
     "n": 184,
     "min_ms": 3.488,
@@ -18299,6 +20176,10 @@
    "n_action": 415,
    "n_shield_setpoint": 186,
    "n_mavros_setpoint": 186,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.051,
+    "shield_to_mavros": 95.179
+   },
    "action_to_shield_ms": {
     "n": 186,
     "min_ms": 5.644,
@@ -18338,6 +20219,10 @@
    "n_action": 406,
    "n_shield_setpoint": 186,
    "n_mavros_setpoint": 186,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.309,
+    "shield_to_mavros": 95.266
+   },
    "action_to_shield_ms": {
     "n": 186,
     "min_ms": 5.412,
@@ -18377,6 +20262,10 @@
    "n_action": 405,
    "n_shield_setpoint": 186,
    "n_mavros_setpoint": 186,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.353,
+    "shield_to_mavros": 94.974
+   },
    "action_to_shield_ms": {
     "n": 186,
     "min_ms": 3.641,
@@ -18416,6 +20305,10 @@
    "n_action": 429,
    "n_shield_setpoint": 211,
    "n_mavros_setpoint": 211,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.373,
+    "shield_to_mavros": 95.084
+   },
    "action_to_shield_ms": {
     "n": 211,
     "min_ms": 3.709,
@@ -18455,6 +20348,10 @@
    "n_action": 428,
    "n_shield_setpoint": 211,
    "n_mavros_setpoint": 211,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.847,
+    "shield_to_mavros": 96.327
+   },
    "action_to_shield_ms": {
     "n": 211,
     "min_ms": 3.73,
@@ -18494,6 +20391,10 @@
    "n_action": 420,
    "n_shield_setpoint": 211,
    "n_mavros_setpoint": 211,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.319,
+    "shield_to_mavros": 95.242
+   },
    "action_to_shield_ms": {
     "n": 211,
     "min_ms": 3.537,
@@ -18533,6 +20434,10 @@
    "n_action": 376,
    "n_shield_setpoint": 181,
    "n_mavros_setpoint": 181,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.18,
+    "shield_to_mavros": 96.704
+   },
    "action_to_shield_ms": {
     "n": 181,
     "min_ms": 3.881,
@@ -18572,6 +20477,10 @@
    "n_action": 378,
    "n_shield_setpoint": 182,
    "n_mavros_setpoint": 182,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.203,
+    "shield_to_mavros": 93.915
+   },
    "action_to_shield_ms": {
     "n": 182,
     "min_ms": 5.119,
@@ -18611,6 +20520,10 @@
    "n_action": 378,
    "n_shield_setpoint": 182,
    "n_mavros_setpoint": 182,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.122,
+    "shield_to_mavros": 96.009
+   },
    "action_to_shield_ms": {
     "n": 182,
     "min_ms": 3.83,
@@ -18650,6 +20563,10 @@
    "n_action": 400,
    "n_shield_setpoint": 182,
    "n_mavros_setpoint": 182,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.13,
+    "shield_to_mavros": 96.816
+   },
    "action_to_shield_ms": {
     "n": 182,
     "min_ms": 3.658,
@@ -18689,6 +20606,10 @@
    "n_action": 392,
    "n_shield_setpoint": 182,
    "n_mavros_setpoint": 182,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.278,
+    "shield_to_mavros": 96.934
+   },
    "action_to_shield_ms": {
     "n": 182,
     "min_ms": 3.857,
@@ -18728,6 +20649,10 @@
    "n_action": 401,
    "n_shield_setpoint": 181,
    "n_mavros_setpoint": 181,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.061,
+    "shield_to_mavros": 96.033
+   },
    "action_to_shield_ms": {
     "n": 181,
     "min_ms": 5.237,
@@ -18767,6 +20692,10 @@
    "n_action": 417,
    "n_shield_setpoint": 208,
    "n_mavros_setpoint": 208,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.997,
+    "shield_to_mavros": 96.564
+   },
    "action_to_shield_ms": {
     "n": 208,
     "min_ms": 3.77,
@@ -18806,6 +20735,10 @@
    "n_action": 427,
    "n_shield_setpoint": 208,
    "n_mavros_setpoint": 208,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.011,
+    "shield_to_mavros": 95.219
+   },
    "action_to_shield_ms": {
     "n": 208,
     "min_ms": 3.378,
@@ -18845,6 +20778,10 @@
    "n_action": 415,
    "n_shield_setpoint": 208,
    "n_mavros_setpoint": 208,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.531,
+    "shield_to_mavros": 95.025
+   },
    "action_to_shield_ms": {
     "n": 208,
     "min_ms": 3.808,
@@ -18884,6 +20821,10 @@
    "n_action": 385,
    "n_shield_setpoint": 177,
    "n_mavros_setpoint": 177,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.93,
+    "shield_to_mavros": 95.78
+   },
    "action_to_shield_ms": {
     "n": 177,
     "min_ms": 5.933,
@@ -18923,6 +20864,10 @@
    "n_action": 376,
    "n_shield_setpoint": 179,
    "n_mavros_setpoint": 179,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.978,
+    "shield_to_mavros": 95.057
+   },
    "action_to_shield_ms": {
     "n": 179,
     "min_ms": 3.609,
@@ -18962,6 +20907,10 @@
    "n_action": 376,
    "n_shield_setpoint": 177,
    "n_mavros_setpoint": 177,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.28,
+    "shield_to_mavros": 95.265
+   },
    "action_to_shield_ms": {
     "n": 177,
     "min_ms": 3.873,
@@ -19001,6 +20950,10 @@
    "n_action": 387,
    "n_shield_setpoint": 177,
    "n_mavros_setpoint": 177,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.554,
+    "shield_to_mavros": 95.531
+   },
    "action_to_shield_ms": {
     "n": 177,
     "min_ms": 3.995,
@@ -19040,6 +20993,10 @@
    "n_action": 395,
    "n_shield_setpoint": 177,
    "n_mavros_setpoint": 177,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.341,
+    "shield_to_mavros": 95.506
+   },
    "action_to_shield_ms": {
     "n": 177,
     "min_ms": 4.023,
@@ -19079,6 +21036,10 @@
    "n_action": 397,
    "n_shield_setpoint": 178,
    "n_mavros_setpoint": 178,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.184,
+    "shield_to_mavros": 95.902
+   },
    "action_to_shield_ms": {
     "n": 178,
     "min_ms": 5.023,
@@ -19118,6 +21079,10 @@
    "n_action": 418,
    "n_shield_setpoint": 202,
    "n_mavros_setpoint": 202,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.528,
+    "shield_to_mavros": 95.636
+   },
    "action_to_shield_ms": {
     "n": 202,
     "min_ms": 3.729,
@@ -19157,6 +21122,10 @@
    "n_action": 412,
    "n_shield_setpoint": 204,
    "n_mavros_setpoint": 204,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.973,
+    "shield_to_mavros": 95.799
+   },
    "action_to_shield_ms": {
     "n": 204,
     "min_ms": 3.384,
@@ -19196,6 +21165,10 @@
    "n_action": 519,
    "n_shield_setpoint": 204,
    "n_mavros_setpoint": 204,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.215,
+    "shield_to_mavros": 93.833
+   },
    "action_to_shield_ms": {
     "n": 204,
     "min_ms": 3.831,
@@ -19235,6 +21208,10 @@
    "n_action": 373,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.211,
+    "shield_to_mavros": 95.677
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 3.358,
@@ -19274,6 +21251,10 @@
    "n_action": 370,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.925,
+    "shield_to_mavros": 91.928
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 3.277,
@@ -19313,6 +21294,10 @@
    "n_action": 372,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.269,
+    "shield_to_mavros": 93.053
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 4.089,
@@ -19352,6 +21337,10 @@
    "n_action": 401,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.092,
+    "shield_to_mavros": 96.392
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 5.752,
@@ -19391,6 +21380,10 @@
    "n_action": 391,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.682,
+    "shield_to_mavros": 95.207
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 3.952,
@@ -19430,6 +21423,10 @@
    "n_action": 392,
    "n_shield_setpoint": 173,
    "n_mavros_setpoint": 173,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.295,
+    "shield_to_mavros": 97.02
+   },
    "action_to_shield_ms": {
     "n": 173,
     "min_ms": 5.514,
@@ -19469,6 +21466,10 @@
    "n_action": 771,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.168,
+    "shield_to_mavros": 90.43
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.105,
@@ -19508,6 +21509,10 @@
    "n_action": 774,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.386,
+    "shield_to_mavros": 89.347
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.648,
@@ -19547,6 +21552,10 @@
    "n_action": 764,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.316,
+    "shield_to_mavros": 93.094
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 12.306,
@@ -19586,6 +21595,10 @@
    "n_action": 759,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.713,
+    "shield_to_mavros": 90.847
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.911,
@@ -19625,6 +21638,10 @@
    "n_action": 753,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.092,
+    "shield_to_mavros": 93.138
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.701,
@@ -19664,6 +21681,10 @@
    "n_action": 753,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.281,
+    "shield_to_mavros": 94.331
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.04,
@@ -19703,6 +21724,10 @@
    "n_action": 761,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.308,
+    "shield_to_mavros": 92.74
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 11.076,
@@ -19742,6 +21767,10 @@
    "n_action": 766,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.15,
+    "shield_to_mavros": 93.843
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.213,
@@ -19781,6 +21810,10 @@
    "n_action": 768,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.615,
+    "shield_to_mavros": 93.271
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.483,
@@ -19820,6 +21853,10 @@
    "n_action": 764,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 94.178,
+    "shield_to_mavros": 93.412
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.055,
@@ -19859,6 +21896,10 @@
    "n_action": 769,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 96.748,
+    "shield_to_mavros": 89.53
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.55,
@@ -19898,6 +21939,10 @@
    "n_action": 764,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.58,
+    "shield_to_mavros": 85.696
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 11.138,
@@ -19937,6 +21982,10 @@
    "n_action": 752,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.11,
+    "shield_to_mavros": 92.257
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.168,
@@ -19976,6 +22025,10 @@
    "n_action": 753,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 95.947,
+    "shield_to_mavros": 92.955
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.488,
@@ -20015,6 +22068,10 @@
    "n_action": 772,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.35,
+    "shield_to_mavros": 93.894
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 8.957,
@@ -20054,6 +22111,10 @@
    "n_action": 765,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.679,
+    "shield_to_mavros": 92.625
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.609,
@@ -20093,6 +22154,10 @@
    "n_action": 759,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.567,
+    "shield_to_mavros": 89.677
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 11.156,
@@ -20132,6 +22197,10 @@
    "n_action": 769,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.218,
+    "shield_to_mavros": 92.424
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.502,
@@ -20171,6 +22240,10 @@
    "n_action": 782,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.4,
+    "shield_to_mavros": 93.633
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 12.532,
@@ -20210,6 +22283,10 @@
    "n_action": 779,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.991,
+    "shield_to_mavros": 93.607
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.64,
@@ -20249,6 +22326,10 @@
    "n_action": 774,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.178,
+    "shield_to_mavros": 93.034
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.495,
@@ -20288,6 +22369,10 @@
    "n_action": 758,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.369,
+    "shield_to_mavros": 92.11
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 12.619,
@@ -20327,6 +22412,10 @@
    "n_action": 791,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.095,
+    "shield_to_mavros": 91.238
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.381,
@@ -20366,6 +22455,10 @@
    "n_action": 790,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.924,
+    "shield_to_mavros": 92.852
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.276,
@@ -20405,6 +22498,10 @@
    "n_action": 784,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.979,
+    "shield_to_mavros": 93.353
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 11.971,
@@ -20444,6 +22541,10 @@
    "n_action": 789,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.047,
+    "shield_to_mavros": 93.472
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.501,
@@ -20483,6 +22584,10 @@
    "n_action": 774,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.143,
+    "shield_to_mavros": 92.234
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.651,
@@ -20522,6 +22627,10 @@
    "n_action": 783,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.282,
+    "shield_to_mavros": 92.33
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 11.858,
@@ -20561,6 +22670,10 @@
    "n_action": 763,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 95.541,
+    "shield_to_mavros": 92.036
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.083,
@@ -20600,6 +22713,10 @@
    "n_action": 763,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.546,
+    "shield_to_mavros": 93.308
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.312,
@@ -20639,6 +22756,10 @@
    "n_action": 777,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.178,
+    "shield_to_mavros": 92.431
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 8.987,
@@ -20678,6 +22799,10 @@
    "n_action": 791,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.377,
+    "shield_to_mavros": 93.54
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.86,
@@ -20717,6 +22842,10 @@
    "n_action": 791,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.309,
+    "shield_to_mavros": 92.902
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.151,
@@ -20756,6 +22885,10 @@
    "n_action": 774,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.118,
+    "shield_to_mavros": 90.007
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.598,
@@ -20795,6 +22928,10 @@
    "n_action": 783,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.128,
+    "shield_to_mavros": 92.595
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.103,
@@ -20834,6 +22971,10 @@
    "n_action": 772,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.163,
+    "shield_to_mavros": 91.673
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 12.852,
@@ -20873,6 +23014,10 @@
    "n_action": 778,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.966,
+    "shield_to_mavros": 92.06
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.742,
@@ -20912,6 +23057,10 @@
    "n_action": 784,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.816,
+    "shield_to_mavros": 92.126
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.25,
@@ -20951,6 +23100,10 @@
    "n_action": 795,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.513,
+    "shield_to_mavros": 93.851
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 12.045,
@@ -20990,6 +23143,10 @@
    "n_action": 801,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.392,
+    "shield_to_mavros": 91.31
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 11.238,
@@ -21029,6 +23186,10 @@
    "n_action": 805,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.019,
+    "shield_to_mavros": 92.051
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 8.984,
@@ -21068,6 +23229,10 @@
    "n_action": 794,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.958,
+    "shield_to_mavros": 92.482
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 10.4,
@@ -21107,6 +23272,10 @@
    "n_action": 789,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.447,
+    "shield_to_mavros": 87.116
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.609,
@@ -21146,6 +23315,10 @@
    "n_action": 778,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.676,
+    "shield_to_mavros": 91.225
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 12.785,
@@ -21185,6 +23358,10 @@
    "n_action": 773,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.387,
+    "shield_to_mavros": 93.912
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.55,
@@ -21224,6 +23401,10 @@
    "n_action": 778,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.245,
+    "shield_to_mavros": 93.385
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 11.927,
@@ -21263,6 +23444,10 @@
    "n_action": 792,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.288,
+    "shield_to_mavros": 90.142
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.628,
@@ -21302,6 +23487,10 @@
    "n_action": 792,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.241,
+    "shield_to_mavros": 92.122
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 10.791,
@@ -21341,6 +23530,10 @@
    "n_action": 801,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.848,
+    "shield_to_mavros": 93.136
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.01,
@@ -21380,6 +23573,10 @@
    "n_action": 793,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.834,
+    "shield_to_mavros": 87.503
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.404,
@@ -21419,6 +23616,10 @@
    "n_action": 789,
    "n_shield_setpoint": 302,
    "n_mavros_setpoint": 302,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.159,
+    "shield_to_mavros": 92.73
+   },
    "action_to_shield_ms": {
     "n": 302,
     "min_ms": 9.891,
@@ -21458,6 +23659,10 @@
    "n_action": 788,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.063,
+    "shield_to_mavros": 92.89
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.941,
@@ -21497,6 +23702,10 @@
    "n_action": 769,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.825,
+    "shield_to_mavros": 92.235
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.779,
@@ -21536,6 +23745,10 @@
    "n_action": 783,
    "n_shield_setpoint": 301,
    "n_mavros_setpoint": 301,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.191,
+    "shield_to_mavros": 91.712
+   },
    "action_to_shield_ms": {
     "n": 301,
     "min_ms": 9.767,
@@ -21575,6 +23788,10 @@
    "n_action": 450,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.232,
+    "shield_to_mavros": 95.778
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.379,
@@ -21614,6 +23831,10 @@
    "n_action": 464,
    "n_shield_setpoint": 247,
    "n_mavros_setpoint": 247,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.344,
+    "shield_to_mavros": 95.275
+   },
    "action_to_shield_ms": {
     "n": 247,
     "min_ms": 5.106,
@@ -21653,6 +23874,10 @@
    "n_action": 464,
    "n_shield_setpoint": 248,
    "n_mavros_setpoint": 248,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.283,
+    "shield_to_mavros": 97.124
+   },
    "action_to_shield_ms": {
     "n": 248,
     "min_ms": 7.489,
@@ -21692,6 +23917,10 @@
    "n_action": 461,
    "n_shield_setpoint": 249,
    "n_mavros_setpoint": 249,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.281,
+    "shield_to_mavros": 97.052
+   },
    "action_to_shield_ms": {
     "n": 249,
     "min_ms": 6.077,
@@ -21731,6 +23960,10 @@
    "n_action": 455,
    "n_shield_setpoint": 248,
    "n_mavros_setpoint": 248,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.401,
+    "shield_to_mavros": 97.312
+   },
    "action_to_shield_ms": {
     "n": 248,
     "min_ms": 4.689,
@@ -21770,6 +24003,10 @@
    "n_action": 451,
    "n_shield_setpoint": 249,
    "n_mavros_setpoint": 249,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.833,
+    "shield_to_mavros": 95.47
+   },
    "action_to_shield_ms": {
     "n": 249,
     "min_ms": 5.278,
@@ -21809,6 +24046,10 @@
    "n_action": 451,
    "n_shield_setpoint": 253,
    "n_mavros_setpoint": 253,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.642,
+    "shield_to_mavros": 96.452
+   },
    "action_to_shield_ms": {
     "n": 253,
     "min_ms": 5.049,
@@ -21848,6 +24089,10 @@
    "n_action": 445,
    "n_shield_setpoint": 249,
    "n_mavros_setpoint": 249,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.625,
+    "shield_to_mavros": 95.786
+   },
    "action_to_shield_ms": {
     "n": 249,
     "min_ms": 4.626,
@@ -21887,6 +24132,10 @@
    "n_action": 469,
    "n_shield_setpoint": 252,
    "n_mavros_setpoint": 252,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.381,
+    "shield_to_mavros": 96.576
+   },
    "action_to_shield_ms": {
     "n": 252,
     "min_ms": 4.799,
@@ -21926,6 +24175,10 @@
    "n_action": 459,
    "n_shield_setpoint": 254,
    "n_mavros_setpoint": 254,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.619,
+    "shield_to_mavros": 96.964
+   },
    "action_to_shield_ms": {
     "n": 254,
     "min_ms": 4.755,
@@ -21965,6 +24218,10 @@
    "n_action": 467,
    "n_shield_setpoint": 249,
    "n_mavros_setpoint": 249,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.82,
+    "shield_to_mavros": 95.582
+   },
    "action_to_shield_ms": {
     "n": 249,
     "min_ms": 5.115,
@@ -22004,6 +24261,10 @@
    "n_action": 469,
    "n_shield_setpoint": 251,
    "n_mavros_setpoint": 251,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.161,
+    "shield_to_mavros": 94.705
+   },
    "action_to_shield_ms": {
     "n": 251,
     "min_ms": 4.802,
@@ -22043,6 +24304,10 @@
    "n_action": 459,
    "n_shield_setpoint": 250,
    "n_mavros_setpoint": 250,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.039,
+    "shield_to_mavros": 95.353
+   },
    "action_to_shield_ms": {
     "n": 250,
     "min_ms": 4.984,
@@ -22082,6 +24347,10 @@
    "n_action": 450,
    "n_shield_setpoint": 248,
    "n_mavros_setpoint": 248,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.263,
+    "shield_to_mavros": 96.749
+   },
    "action_to_shield_ms": {
     "n": 248,
     "min_ms": 5.138,
@@ -22121,6 +24390,10 @@
    "n_action": 448,
    "n_shield_setpoint": 250,
    "n_mavros_setpoint": 250,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.328,
+    "shield_to_mavros": 95.174
+   },
    "action_to_shield_ms": {
     "n": 250,
     "min_ms": 5.195,
@@ -22160,6 +24433,10 @@
    "n_action": 452,
    "n_shield_setpoint": 253,
    "n_mavros_setpoint": 253,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.518,
+    "shield_to_mavros": 95.738
+   },
    "action_to_shield_ms": {
     "n": 253,
     "min_ms": 4.662,
@@ -22199,6 +24476,10 @@
    "n_action": 444,
    "n_shield_setpoint": 253,
    "n_mavros_setpoint": 253,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.602,
+    "shield_to_mavros": 96.502
+   },
    "action_to_shield_ms": {
     "n": 253,
     "min_ms": 4.445,
@@ -22238,6 +24519,10 @@
    "n_action": 459,
    "n_shield_setpoint": 251,
    "n_mavros_setpoint": 251,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.66,
+    "shield_to_mavros": 94.497
+   },
    "action_to_shield_ms": {
     "n": 251,
     "min_ms": 5.048,
@@ -22277,6 +24562,10 @@
    "n_action": 445,
    "n_shield_setpoint": 239,
    "n_mavros_setpoint": 239,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.959,
+    "shield_to_mavros": 96.975
+   },
    "action_to_shield_ms": {
     "n": 239,
     "min_ms": 5.502,
@@ -22316,6 +24605,10 @@
    "n_action": 456,
    "n_shield_setpoint": 240,
    "n_mavros_setpoint": 240,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.639,
+    "shield_to_mavros": 96.416
+   },
    "action_to_shield_ms": {
     "n": 240,
     "min_ms": 5.266,
@@ -22355,6 +24648,10 @@
    "n_action": 460,
    "n_shield_setpoint": 242,
    "n_mavros_setpoint": 242,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.316,
+    "shield_to_mavros": 96.312
+   },
    "action_to_shield_ms": {
     "n": 242,
     "min_ms": 5.048,
@@ -22394,6 +24691,10 @@
    "n_action": 450,
    "n_shield_setpoint": 242,
    "n_mavros_setpoint": 242,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.068,
+    "shield_to_mavros": 94.56
+   },
    "action_to_shield_ms": {
     "n": 242,
     "min_ms": 4.681,
@@ -22433,6 +24734,10 @@
    "n_action": 443,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.783,
+    "shield_to_mavros": 96.094
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 4.743,
@@ -22472,6 +24777,10 @@
    "n_action": 440,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.777,
+    "shield_to_mavros": 96.792
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.81,
@@ -22511,6 +24820,10 @@
    "n_action": 441,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.263,
+    "shield_to_mavros": 95.777
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 5.35,
@@ -22550,6 +24863,10 @@
    "n_action": 445,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.409,
+    "shield_to_mavros": 96.123
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.673,
@@ -22589,6 +24906,10 @@
    "n_action": 448,
    "n_shield_setpoint": 244,
    "n_mavros_setpoint": 244,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.377,
+    "shield_to_mavros": 96.391
+   },
    "action_to_shield_ms": {
     "n": 244,
     "min_ms": 4.862,
@@ -22628,6 +24949,10 @@
    "n_action": 444,
    "n_shield_setpoint": 239,
    "n_mavros_setpoint": 239,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.313,
+    "shield_to_mavros": 96.414
+   },
    "action_to_shield_ms": {
     "n": 239,
     "min_ms": 5.007,
@@ -22667,6 +24992,10 @@
    "n_action": 461,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.313,
+    "shield_to_mavros": 96.973
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 6.049,
@@ -22706,6 +25035,10 @@
    "n_action": 461,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.133,
+    "shield_to_mavros": 96.933
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 4.816,
@@ -22745,6 +25078,10 @@
    "n_action": 453,
    "n_shield_setpoint": 243,
    "n_mavros_setpoint": 243,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.567,
+    "shield_to_mavros": 96.169
+   },
    "action_to_shield_ms": {
     "n": 243,
     "min_ms": 6.62,
@@ -22784,6 +25121,10 @@
    "n_action": 445,
    "n_shield_setpoint": 246,
    "n_mavros_setpoint": 246,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.678,
+    "shield_to_mavros": 96.578
+   },
    "action_to_shield_ms": {
     "n": 246,
     "min_ms": 4.075,
@@ -22823,6 +25164,10 @@
    "n_action": 443,
    "n_shield_setpoint": 242,
    "n_mavros_setpoint": 242,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.194,
+    "shield_to_mavros": 96.008
+   },
    "action_to_shield_ms": {
     "n": 242,
     "min_ms": 4.777,
@@ -22862,6 +25207,10 @@
    "n_action": 434,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.678,
+    "shield_to_mavros": 96.442
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 4.86,
@@ -22901,6 +25250,10 @@
    "n_action": 434,
    "n_shield_setpoint": 245,
    "n_mavros_setpoint": 245,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.77,
+    "shield_to_mavros": 94.757
+   },
    "action_to_shield_ms": {
     "n": 245,
     "min_ms": 4.588,
@@ -22940,6 +25293,10 @@
    "n_action": 453,
    "n_shield_setpoint": 247,
    "n_mavros_setpoint": 247,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.353,
+    "shield_to_mavros": 96.316
+   },
    "action_to_shield_ms": {
     "n": 247,
     "min_ms": 4.373,
@@ -22979,6 +25336,10 @@
    "n_action": 694,
    "n_shield_setpoint": 54,
    "n_mavros_setpoint": 54,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.059,
+    "shield_to_mavros": 97.235
+   },
    "action_to_shield_ms": {
     "n": 54,
     "min_ms": 8.711,
@@ -23018,6 +25379,10 @@
    "n_action": 704,
    "n_shield_setpoint": 56,
    "n_mavros_setpoint": 56,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.843,
+    "shield_to_mavros": 95.621
+   },
    "action_to_shield_ms": {
     "n": 56,
     "min_ms": 6.83,
@@ -23057,6 +25422,10 @@
    "n_action": 699,
    "n_shield_setpoint": 53,
    "n_mavros_setpoint": 53,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.944,
+    "shield_to_mavros": 95.007
+   },
    "action_to_shield_ms": {
     "n": 53,
     "min_ms": 7.158,
@@ -23096,6 +25465,10 @@
    "n_action": 701,
    "n_shield_setpoint": 58,
    "n_mavros_setpoint": 58,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.013,
+    "shield_to_mavros": 97.187
+   },
    "action_to_shield_ms": {
     "n": 58,
     "min_ms": 9.779,
@@ -23135,6 +25508,10 @@
    "n_action": 696,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.258,
+    "shield_to_mavros": 98.074
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 6.58,
@@ -23174,6 +25551,10 @@
    "n_action": 691,
    "n_shield_setpoint": 59,
    "n_mavros_setpoint": 59,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.16,
+    "shield_to_mavros": 98.949
+   },
    "action_to_shield_ms": {
     "n": 59,
     "min_ms": 6.558,
@@ -23213,6 +25594,10 @@
    "n_action": 636,
    "n_shield_setpoint": 33,
    "n_mavros_setpoint": 33,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.845,
+    "shield_to_mavros": 95.639
+   },
    "action_to_shield_ms": {
     "n": 33,
     "min_ms": 6.443,
@@ -23252,6 +25637,10 @@
    "n_action": 590,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.087,
+    "shield_to_mavros": 95.524
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 6.741,
@@ -23291,6 +25680,10 @@
    "n_action": 674,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.852,
+    "shield_to_mavros": 95.784
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 8.149,
@@ -23330,6 +25723,10 @@
    "n_action": 699,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.034,
+    "shield_to_mavros": 98.007
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 6.699,
@@ -23369,6 +25766,10 @@
    "n_action": 689,
    "n_shield_setpoint": 46,
    "n_mavros_setpoint": 46,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.561,
+    "shield_to_mavros": 97.995
+   },
    "action_to_shield_ms": {
     "n": 46,
     "min_ms": 6.539,
@@ -23408,6 +25809,10 @@
    "n_action": 575,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.091,
+    "shield_to_mavros": 99.246
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 6.377,
@@ -23447,6 +25852,10 @@
    "n_action": 690,
    "n_shield_setpoint": 53,
    "n_mavros_setpoint": 53,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.957,
+    "shield_to_mavros": 95.904
+   },
    "action_to_shield_ms": {
     "n": 53,
     "min_ms": 6.46,
@@ -23486,6 +25895,10 @@
    "n_action": 686,
    "n_shield_setpoint": 56,
    "n_mavros_setpoint": 56,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.045,
+    "shield_to_mavros": 96.551
+   },
    "action_to_shield_ms": {
     "n": 56,
     "min_ms": 7.549,
@@ -23525,6 +25938,10 @@
    "n_action": 680,
    "n_shield_setpoint": 53,
    "n_mavros_setpoint": 53,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.186,
+    "shield_to_mavros": 95.796
+   },
    "action_to_shield_ms": {
     "n": 53,
     "min_ms": 6.471,
@@ -23564,6 +25981,10 @@
    "n_action": 681,
    "n_shield_setpoint": 61,
    "n_mavros_setpoint": 61,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.648,
+    "shield_to_mavros": 98.504
+   },
    "action_to_shield_ms": {
     "n": 61,
     "min_ms": 6.454,
@@ -23603,6 +26024,10 @@
    "n_action": 694,
    "n_shield_setpoint": 57,
    "n_mavros_setpoint": 57,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.582,
+    "shield_to_mavros": 97.491
+   },
    "action_to_shield_ms": {
     "n": 57,
     "min_ms": 8.185,
@@ -23642,6 +26067,10 @@
    "n_action": 709,
    "n_shield_setpoint": 59,
    "n_mavros_setpoint": 59,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.272,
+    "shield_to_mavros": 97.57
+   },
    "action_to_shield_ms": {
     "n": 59,
     "min_ms": 7.113,
@@ -23681,6 +26110,10 @@
    "n_action": 664,
    "n_shield_setpoint": 33,
    "n_mavros_setpoint": 33,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.176,
+    "shield_to_mavros": 94.811
+   },
    "action_to_shield_ms": {
     "n": 33,
     "min_ms": 6.73,
@@ -23720,6 +26153,10 @@
    "n_action": 676,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.261,
+    "shield_to_mavros": 98.504
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 8.192,
@@ -23759,6 +26196,10 @@
    "n_action": 675,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.159,
+    "shield_to_mavros": 98.672
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 9.26,
@@ -23798,6 +26239,10 @@
    "n_action": 691,
    "n_shield_setpoint": 51,
    "n_mavros_setpoint": 51,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.912,
+    "shield_to_mavros": 99.355
+   },
    "action_to_shield_ms": {
     "n": 51,
     "min_ms": 6.753,
@@ -23837,6 +26282,10 @@
    "n_action": 565,
    "n_shield_setpoint": 46,
    "n_mavros_setpoint": 46,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.571,
+    "shield_to_mavros": 97.516
+   },
    "action_to_shield_ms": {
     "n": 46,
     "min_ms": 8.455,
@@ -23876,6 +26325,10 @@
    "n_action": 556,
    "n_shield_setpoint": 44,
    "n_mavros_setpoint": 44,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.354,
+    "shield_to_mavros": 98.105
+   },
    "action_to_shield_ms": {
     "n": 44,
     "min_ms": 7.783,
@@ -23915,6 +26368,10 @@
    "n_action": 996,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.667,
+    "shield_to_mavros": 96.302
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 3.57,
@@ -23954,6 +26411,10 @@
    "n_action": 1004,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.848,
+    "shield_to_mavros": 93.268
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 4.214,
@@ -23993,6 +26454,10 @@
    "n_action": 1001,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.61,
+    "shield_to_mavros": 93.924
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 2.924,
@@ -24032,6 +26497,10 @@
    "n_action": 1001,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.659,
+    "shield_to_mavros": 91.673
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 2.957,
@@ -24071,6 +26540,10 @@
    "n_action": 985,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.713,
+    "shield_to_mavros": 94.823
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 3.017,
@@ -24110,6 +26583,10 @@
    "n_action": 981,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.244,
+    "shield_to_mavros": 91.923
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 4.531,
@@ -24149,6 +26626,10 @@
    "n_action": 981,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.045,
+    "shield_to_mavros": 96.091
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 4.121,
@@ -24188,6 +26669,10 @@
    "n_action": 980,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.807,
+    "shield_to_mavros": 95.598
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 3.185,
@@ -24227,6 +26712,10 @@
    "n_action": 1003,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.289,
+    "shield_to_mavros": 93.619
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 2.709,
@@ -24266,6 +26755,10 @@
    "n_action": 1008,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.081,
+    "shield_to_mavros": 95.769
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 2.877,
@@ -24305,6 +26798,10 @@
    "n_action": 996,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.232,
+    "shield_to_mavros": 94.384
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 3.617,
@@ -24344,6 +26841,10 @@
    "n_action": 1099,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.403,
+    "shield_to_mavros": 95.252
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 4.228,
@@ -24383,6 +26884,10 @@
    "n_action": 452,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.285,
+    "shield_to_mavros": 94.194
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 3.001,
@@ -24422,6 +26927,10 @@
    "n_action": 449,
    "n_shield_setpoint": 240,
    "n_mavros_setpoint": 240,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.074,
+    "shield_to_mavros": 95.373
+   },
    "action_to_shield_ms": {
     "n": 240,
     "min_ms": 2.761,
@@ -24461,6 +26970,10 @@
    "n_action": 442,
    "n_shield_setpoint": 242,
    "n_mavros_setpoint": 242,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.871,
+    "shield_to_mavros": 95.832
+   },
    "action_to_shield_ms": {
     "n": 242,
     "min_ms": 3.046,
@@ -24500,6 +27013,10 @@
    "n_action": 436,
    "n_shield_setpoint": 239,
    "n_mavros_setpoint": 239,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.148,
+    "shield_to_mavros": 95.362
+   },
    "action_to_shield_ms": {
     "n": 239,
     "min_ms": 2.923,
@@ -24539,6 +27056,10 @@
    "n_action": 456,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.095,
+    "shield_to_mavros": 95.6
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 2.739,
@@ -24578,6 +27099,10 @@
    "n_action": 469,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.522,
+    "shield_to_mavros": 96.342
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 2.787,
@@ -24617,6 +27142,10 @@
    "n_action": 460,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.186,
+    "shield_to_mavros": 96.349
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 2.848,
@@ -24656,6 +27185,10 @@
    "n_action": 457,
    "n_shield_setpoint": 240,
    "n_mavros_setpoint": 240,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.659,
+    "shield_to_mavros": 96.033
+   },
    "action_to_shield_ms": {
     "n": 240,
     "min_ms": 3.337,
@@ -24695,6 +27228,10 @@
    "n_action": 457,
    "n_shield_setpoint": 238,
    "n_mavros_setpoint": 238,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.179,
+    "shield_to_mavros": 94.804
+   },
    "action_to_shield_ms": {
     "n": 238,
     "min_ms": 3.425,
@@ -24734,6 +27271,10 @@
    "n_action": 446,
    "n_shield_setpoint": 240,
    "n_mavros_setpoint": 240,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.476,
+    "shield_to_mavros": 93.828
+   },
    "action_to_shield_ms": {
     "n": 240,
     "min_ms": 2.802,
@@ -24773,6 +27314,10 @@
    "n_action": 450,
    "n_shield_setpoint": 241,
    "n_mavros_setpoint": 241,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.329,
+    "shield_to_mavros": 97.691
+   },
    "action_to_shield_ms": {
     "n": 241,
     "min_ms": 3.015,
@@ -24812,6 +27357,10 @@
    "n_action": 437,
    "n_shield_setpoint": 239,
    "n_mavros_setpoint": 239,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.277,
+    "shield_to_mavros": 94.507
+   },
    "action_to_shield_ms": {
     "n": 239,
     "min_ms": 2.935,
@@ -24851,6 +27400,10 @@
    "n_action": 956,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.281,
+    "shield_to_mavros": 93.841
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 2.815,
@@ -24890,6 +27443,10 @@
    "n_action": 984,
    "n_shield_setpoint": 359,
    "n_mavros_setpoint": 359,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.872,
+    "shield_to_mavros": 94.403
+   },
    "action_to_shield_ms": {
     "n": 359,
     "min_ms": 4.068,
@@ -24929,6 +27486,10 @@
    "n_action": 979,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.533,
+    "shield_to_mavros": 92.416
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 5.077,
@@ -24968,6 +27529,10 @@
    "n_action": 446,
    "n_shield_setpoint": 230,
    "n_mavros_setpoint": 230,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.205,
+    "shield_to_mavros": 97.628
+   },
    "action_to_shield_ms": {
     "n": 230,
     "min_ms": 3.088,
@@ -25007,6 +27572,10 @@
    "n_action": 450,
    "n_shield_setpoint": 229,
    "n_mavros_setpoint": 229,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.781,
+    "shield_to_mavros": 96.256
+   },
    "action_to_shield_ms": {
     "n": 229,
     "min_ms": 3.155,
@@ -25046,6 +27615,10 @@
    "n_action": 449,
    "n_shield_setpoint": 230,
    "n_mavros_setpoint": 230,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.248,
+    "shield_to_mavros": 95.336
+   },
    "action_to_shield_ms": {
     "n": 230,
     "min_ms": 3.013,
@@ -25085,6 +27658,10 @@
    "n_action": 1025,
    "n_shield_setpoint": 357,
    "n_mavros_setpoint": 357,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.393,
+    "shield_to_mavros": 95.761
+   },
    "action_to_shield_ms": {
     "n": 357,
     "min_ms": 4.469,
@@ -25124,6 +27701,10 @@
    "n_action": 1010,
    "n_shield_setpoint": 357,
    "n_mavros_setpoint": 357,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.277,
+    "shield_to_mavros": 94.636
+   },
    "action_to_shield_ms": {
     "n": 357,
     "min_ms": 2.945,
@@ -25163,6 +27744,10 @@
    "n_action": 1002,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.251,
+    "shield_to_mavros": 95.304
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 2.853,
@@ -25202,6 +27787,10 @@
    "n_action": 669,
    "n_shield_setpoint": 112,
    "n_mavros_setpoint": 112,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.519,
+    "shield_to_mavros": 95.421
+   },
    "action_to_shield_ms": {
     "n": 112,
     "min_ms": 2.643,
@@ -25241,6 +27830,10 @@
    "n_action": 761,
    "n_shield_setpoint": 218,
    "n_mavros_setpoint": 218,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.601,
+    "shield_to_mavros": 81.667
+   },
    "action_to_shield_ms": {
     "n": 218,
     "min_ms": 3.938,
@@ -25280,6 +27873,10 @@
    "n_action": 660,
    "n_shield_setpoint": 155,
    "n_mavros_setpoint": 155,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.223,
+    "shield_to_mavros": 83.966
+   },
    "action_to_shield_ms": {
     "n": 155,
     "min_ms": 2.815,
@@ -25319,6 +27916,10 @@
    "n_action": 1036,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.095,
+    "shield_to_mavros": 94.111
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 4.15,
@@ -25358,6 +27959,10 @@
    "n_action": 1027,
    "n_shield_setpoint": 358,
    "n_mavros_setpoint": 358,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 98.541,
+    "shield_to_mavros": 94.129
+   },
    "action_to_shield_ms": {
     "n": 358,
     "min_ms": 3.726,
@@ -25397,6 +28002,10 @@
    "n_action": 1020,
    "n_shield_setpoint": 357,
    "n_mavros_setpoint": 357,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 97.806,
+    "shield_to_mavros": 95.279
+   },
    "action_to_shield_ms": {
     "n": 357,
     "min_ms": 2.924,
@@ -25436,6 +28045,10 @@
    "n_action": 738,
    "n_shield_setpoint": 225,
    "n_mavros_setpoint": 225,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.148,
+    "shield_to_mavros": 91.959
+   },
    "action_to_shield_ms": {
     "n": 225,
     "min_ms": 3.301,
@@ -25475,6 +28088,10 @@
    "n_action": 738,
    "n_shield_setpoint": 223,
    "n_mavros_setpoint": 223,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.284,
+    "shield_to_mavros": 66.433
+   },
    "action_to_shield_ms": {
     "n": 223,
     "min_ms": 3.383,
@@ -25514,6 +28131,10 @@
    "n_action": 768,
    "n_shield_setpoint": 221,
    "n_mavros_setpoint": 221,
+   "resolves_hops_below_ms": {
+    "action_to_shield": 99.007,
+    "shield_to_mavros": 76.755
+   },
    "action_to_shield_ms": {
     "n": 221,
     "min_ms": 3.356,
