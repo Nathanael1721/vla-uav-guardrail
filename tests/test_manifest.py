@@ -1306,6 +1306,83 @@ def test_a_plain_hash_string_still_works_for_callers_that_pass_one():
     assert al.policy_hash == pol.policy_hash
 
 
+
+def test_a_windows_worktree_gitdir_is_mapped_to_the_wsl_mount():
+    """A Windows git worktree's `.git` file names its git directory with a
+    drive letter ("gitdir: D:/..."). Under WSL that path does not resolve,
+    so until 2026-11-25 every Gazebo rail run flown from a Windows worktree
+    recorded code_revision "unversioned" (docs/data/gazebo_sweep_20261124/
+    README.md, Open). The drive-letter path maps to <mount>/<drive>/<rest>;
+    a Linux gitdir, a missing folder and a .git directory are left alone."""
+    import os as _os
+    import shutil as _sh
+    import tempfile
+    from guardrail import manifest as M
+    rx = M._WINDOWS_GITDIR_RE
+    assert rx.search("gitdir: D:/a/.git/worktrees/w\n").groups() == ("D", "a/.git/worktrees/w")
+    assert rx.search("gitdir: d:\\a\\b\r\n").groups() == ("d", "a\\b")
+    assert rx.search("gitdir: /home/x/.git/worktrees/w\n") is None
+    if _os.name == "nt":
+        print("      SKIP: the mapping applies on Linux (WSL) only")
+        return SKIP
+    tmp = Path(tempfile.mkdtemp(prefix="wslgd_"))
+    try:
+        (tmp / "mnt" / "q" / "lab" / ".git" / "worktrees" / "w").mkdir(parents=True)
+        wt = tmp / "wt"
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: Q:/lab/.git/worktrees/w\n", encoding="utf-8")
+        assert M._wsl_gitdir(wt, str(tmp / "mnt")) == tmp / "mnt" / "q" / "lab" / ".git" / "worktrees" / "w"
+        (wt / ".git").write_text("gitdir: Q:/nowhere\n", encoding="utf-8")
+        assert M._wsl_gitdir(wt, str(tmp / "mnt")) is None, "a folder that is not there"
+        (wt / ".git").unlink()
+        (wt / ".git").mkdir()
+        assert M._wsl_gitdir(wt, str(tmp / "mnt")) is None, "a .git directory"
+    finally:
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
+def test_code_revision_reads_a_windows_worktree_from_wsl():
+    """The defect end to end: a real worktree whose `.git` file is rewritten
+    to the drive-letter form Windows git writes. With the drive mapped (a
+    temporary mount root holding a link to /), code_revision names the
+    worktree's HEAD, clean, where it said "unversioned" before 2026-11-25."""
+    import os as _os
+    import shutil as _sh
+    import subprocess
+    import tempfile
+    from guardrail import manifest as M
+    if _os.name == "nt" or _sh.which("git") is None:
+        print("      SKIP: needs Linux (WSL) and git")
+        return SKIP
+    tmp = Path(tempfile.mkdtemp(prefix="wslrev_")).resolve()
+    real_root = M.WSL_MOUNT_ROOT
+    try:
+        repo = tmp / "repo"
+        (repo / "guardrail").mkdir(parents=True)
+        (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+               "-c", "commit.gpgsign=false"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "guardrail/shield.py"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "t"], check=True)
+        head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        wt = tmp / "wt"
+        subprocess.run(git[:3] + ["worktree", "add", "-q", "--detach", str(wt)], check=True)
+        gitdir = (wt / ".git").read_text(encoding="utf-8").split(":", 1)[1].strip()
+        mnt = tmp / "mnt"
+        mnt.mkdir()
+        (mnt / "q").symlink_to("/")
+        (wt / ".git").write_text("gitdir: Q:" + gitdir + "\n", encoding="utf-8")
+        assert subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                              capture_output=True).returncode != 0, \
+            "the drive-letter gitdir should not resolve on its own"
+        M.WSL_MOUNT_ROOT = str(mnt)
+        assert M.code_revision(wt) == head[:12], M.code_revision(wt)
+    finally:
+        M.WSL_MOUNT_ROOT = real_root
+        _sh.rmtree(tmp, ignore_errors=True)
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

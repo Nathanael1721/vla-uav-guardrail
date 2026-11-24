@@ -126,11 +126,54 @@ MAX_HEADING_ERR_DEG = 10.0
 CODE_SENTINEL = "guardrail/shield.py"
 
 
+# Where a Windows drive is mounted when this code runs under WSL ("D:" ->
+# /mnt/d). A module constant so a test can point it at a temporary folder.
+WSL_MOUNT_ROOT = "/mnt"
+_WINDOWS_GITDIR_RE = re.compile(r"^gitdir:\s*([A-Za-z]):[\\/](.*?)\s*$", re.M)
+
+
+def _wsl_gitdir(cand: Path, mount_root: str | None = None) -> Path | None:
+    """The git directory of a Windows git worktree, as seen from Linux.
+
+    A worktree's `.git` is a FILE ("gitdir: D:/.../.git/worktrees/<name>"),
+    written with the Windows path of the checkout that made it. Under WSL,
+    git reads that path as relative to the worktree and fails, so until
+    2026-11-25 every run the Gazebo rail flew from a Windows worktree recorded
+    code_revision "unversioned" (docs/data/gazebo_sweep_20261124/README.md,
+    Open), although the tree was a clean release. On Linux only (on Windows
+    git reads the path as written), a drive-letter gitdir is mapped to
+    <mount_root>/<drive>/<rest>; None when `.git` is not such a file or the
+    mapped folder does not exist."""
+    if os.name == "nt":
+        return None
+    try:
+        text = (Path(cand) / ".git").read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None                       # no .git file (a directory, or none)
+    m = _WINDOWS_GITDIR_RE.search(text)
+    if not m:
+        return None
+    root = Path(mount_root or WSL_MOUNT_ROOT)
+    mapped = root / m.group(1).lower() / m.group(2).replace("\\", "/")
+    return mapped if mapped.is_dir() else None
+
+
+def _git(cand: Path) -> list[str]:
+    """The git command prefix that reads `cand`: `git -C cand`, plus the
+    mapped --git-dir / --work-tree of a Windows worktree under WSL
+    (_wsl_gitdir)."""
+    base = ["git", "-C", str(cand)]
+    gd = _wsl_gitdir(cand)
+    if gd is not None:
+        base += [f"--git-dir={gd}", f"--work-tree={Path(cand).resolve()}"]
+    return base
+
+
 def _tracks_our_code(cand: Path) -> bool:
     """Does this repository actually contain the Shield?"""
     try:
         r = subprocess.run(
-            ["git", "-C", str(cand), "ls-files", "--error-unmatch", CODE_SENTINEL],
+            _git(cand) + ["ls-files", "--error-unmatch", CODE_SENTINEL],
             capture_output=True, text=True, timeout=15)
         return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -166,7 +209,7 @@ def code_revision(repo: str | Path | None = None) -> str:
     """
     for cand in _code_candidates(repo):
         try:
-            head = subprocess.run(["git", "-C", str(cand), "rev-parse", "HEAD"],
+            head = subprocess.run(_git(cand) + ["rev-parse", "HEAD"],
                                   capture_output=True, text=True, timeout=15)
             if head.returncode != 0:
                 continue
@@ -185,7 +228,7 @@ def code_revision(repo: str | Path | None = None) -> str:
             dirty = None
             for status_timeout_s in (20, 90):
                 try:
-                    st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
+                    st = subprocess.run(_git(cand) + ["status", "--porcelain"],
                                         capture_output=True, text=True,
                                         timeout=status_timeout_s)
                 except (OSError, subprocess.SubprocessError):
@@ -1714,7 +1757,7 @@ def git_describe(repo: str | Path | None = None) -> str | None:
     counts untracked files; describe would not. None when git cannot say."""
     for cand in _code_candidates(repo):
         try:
-            r = subprocess.run(["git", "-C", str(cand), "describe", "--always",
+            r = subprocess.run(_git(cand) + ["describe", "--always",
                                 "--tags", "--abbrev=12"],
                                capture_output=True, text=True, timeout=15)
         except (OSError, subprocess.SubprocessError):
