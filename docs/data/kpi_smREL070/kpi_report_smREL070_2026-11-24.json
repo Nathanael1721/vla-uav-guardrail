@@ -5,7 +5,7 @@
  "code_revision": "4a3b207f82c3",
  "inputs": {
   "runs": [
-   "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/smREL070_*"
+   "demo/out/hil_smoke/smREL070_*"
   ],
   "sweep": [],
   "campaign": "demo/out/hil_smREL070/sweep.json",
@@ -52,7 +52,7 @@
   "profile": "smoke",
   "grant_scope": "~50 scenarios x 1 seed each",
   "cadence": "per build (CI)",
-  "command": "python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/hil_rig.json --hil-campaign smREL070 --out D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smREL070/sweep.json --runs D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smREL070 --hil-controls",
+  "command": "python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config <scratchpad>/hil_rig.json --hil-campaign smREL070 --out demo/out/hil_smREL070/sweep.json --runs demo/out/hil_smREL070 --hil-controls",
   "code_revision": "21c277170001",
   "max_s_add": 0.0,
   "flight_length": {
@@ -72,7 +72,7 @@
   "flyable": 52,
   "refused_cells": 12,
   "runs_glob": [
-   "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/smREL070_*"
+   "demo/out/hil_smoke/smREL070_*"
   ],
   "accepted": {
    "smREL070_001_nfz-head-on": {

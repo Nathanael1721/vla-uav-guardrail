@@ -50,12 +50,12 @@ Nulls: a hover would pass 0.0 % of the missions; an always-brake Shield's repair
 - Campaign `smREL070`: experiments/sweep_scenarios.py --backend hil, profile smoke (grant scope '~50 scenarios x 1 seed each', cadence 'per build (CI)'), flown at code revision `21c277170001` in 6275 s.
 - Summary `demo/out/hil_smREL070/sweep.json`: 64 results (8 fail, 1 known_failure, 38 pass, 12 skipped, 5 tracked); 52 flyable on the rail, 12 cell(s) the rail refused before flight.
 - Flight length: the profile's own (each mission to the rail's cap: the scenario's max_s + the Loiter operator timeout + 5 s).
-- Runs read from: `D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/smREL070_*`.
+- Runs read from: `demo/out/hil_smoke/smREL070_*`.
 - Flights the campaign accepted: 52. Run folders it did not accept or does not list: 0 - NOT KPI-grade here, whatever their manifest says:
 - The campaign's own fail-safe figure, on the labels it flew with: 45/50 = 0.900 (4 false, 1 missed); 0 of its fail-safes triggered by the autopilot's GeoFence backstop.
 
 ```
-python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/hil_rig.json --hil-campaign smREL070 --out D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smREL070/sweep.json --runs D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smREL070 --hil-controls
+python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config <scratchpad>/hil_rig.json --hil-campaign smREL070 --out demo/out/hil_smREL070/sweep.json --runs demo/out/hil_smREL070 --hil-controls
 ```
 
 ### Stack revisions by campaign

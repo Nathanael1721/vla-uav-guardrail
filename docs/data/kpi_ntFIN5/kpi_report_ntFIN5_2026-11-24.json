@@ -5,7 +5,7 @@
  "code_revision": "b171c57c9162",
  "inputs": {
   "runs": [
-   "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/ntFIN5_*"
+   "demo/out/hil_smoke/ntFIN5_*"
   ],
   "sweep": [],
   "campaign": "demo/out/hil_ntFIN5/sweep.json",
@@ -52,7 +52,7 @@
   "profile": "nightly",
   "grant_scope": "~200 scenarios x 3 seeds",
   "cadence": "nightly",
-  "command": "python experiments/sweep_scenarios.py --profile nightly --backend hil --hil-config C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/hil_rig.json --hil-campaign ntFIN5 --out D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_ntFIN5/sweep.json --runs D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_ntFIN5 --hil-controls",
+  "command": "python experiments/sweep_scenarios.py --profile nightly --backend hil --hil-config <scratchpad>/hil_rig.json --hil-campaign ntFIN5 --out demo/out/hil_ntFIN5/sweep.json --runs demo/out/hil_ntFIN5 --hil-controls",
   "code_revision": "21c277170001",
   "max_s_add": 0.0,
   "flight_length": {
@@ -72,7 +72,7 @@
   "flyable": 654,
   "refused_cells": 30,
   "runs_glob": [
-   "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke/ntFIN5_*"
+   "demo/out/hil_smoke/ntFIN5_*"
   ],
   "accepted": {
    "ntFIN5_001_nfz-head-on": {
