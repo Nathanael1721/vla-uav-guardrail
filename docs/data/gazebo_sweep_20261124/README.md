@@ -55,7 +55,7 @@ Not seen on the hil rig: ntFIN5 flew 654 missions with no ERROR.
 | `refly/refly_*.json`, `refly/refly*_stdout.txt` | the re-flights' records and console output, including the attempts that errored |
 | `refly/errored_run_folders.txt` | the 11 refused run folders kept aside |
 | `rescore_rail_gz.json` / `rescore_rail_stdout.txt` | `python experiments/sweep_scenarios.py --profile gazebo_functional --backend sitl --rescore-rail "<worktree>/demo/out/gzsweep_*" --out docs/data/gazebo_sweep_20261124/rescore_rail_gz.json` over the final 132 run folders, at 0d3dcda |
-| `kpi_report_gz_<date>.md` / `.json` | `python tools/kpi_report.py --runs '.claude/worktrees/flight-21c2771/demo/out/gzsweep_*' --no-sweep --rescore-rail docs/data/gazebo_sweep_20261124/rescore_rail_gz.json`, from a clean tree after these inputs were committed |
+| `kpi_report_gz_2026-11-25.md` / `.json` | `python tools/kpi_report.py --runs '.claude/worktrees/flight-21c2771/demo/out/gzsweep_*' --no-sweep --rescore-rail docs/data/gazebo_sweep_20261124/rescore_rail_gz.json`, from a clean tree at 96a5a03 after these inputs were committed |
 
 Run folders (worktree flight-21c2771, gitignored):
 `demo/out/gzsweep_<cell>--seed<n>/` (flight log, rosbag2 `bag/`, events,
