@@ -384,6 +384,15 @@ def test_the_vla_flight_rail_declares_the_scene_ground():
 
 
 def test_the_sitl_rail_declares_a_ground_at_its_home():
+    # run_sitl_demo imports pymavlink at module level, which the CI's Linux
+    # jobs do not install; this test calls only its ground declaration, so a
+    # stand-in module is enough there (the real one is used where present).
+    import importlib.util
+    import types
+    if importlib.util.find_spec("pymavlink") is None and "pymavlink" not in sys.modules:
+        fake, mu = types.ModuleType("pymavlink"), types.ModuleType("pymavlink.mavutil")
+        fake.mavutil = mu
+        sys.modules["pymavlink"], sys.modules["pymavlink.mavutil"] = fake, mu
     import run_sitl_demo as rs
     from guardrail.bundle import load_for_flight
     d = Path(tempfile.mkdtemp(prefix="msl_prim_rs_"))
