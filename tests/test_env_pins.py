@@ -504,8 +504,8 @@ def test_the_gazebo_rail_exits_with_the_missions_status():
     stub("gz", 'echo "gz stub ran"')
     py = home / "venv-ap" / "bin" / "python"
     py.parent.mkdir(parents=True)
-    env = dict(os.environ, HOME=str(home),
-               PATH=str(fake) + os.pathsep + os.environ.get("PATH", ""))
+    env = _bash_env(HOME=str(home),
+                    PATH=str(fake) + os.pathsep + os.environ.get("PATH", ""))
     for rc in (2, 0):
         py.write_bytes(('#!/usr/bin/env bash\necho "[policy] stand-in mission"\n'
                         f'echo "Traceback (most recent call last):"\nexit {rc}\n').encode())
@@ -539,6 +539,18 @@ def test_the_design_doc_records_the_same_pin():
 _BASH = []
 
 
+def _bash_env(**kw):
+    """os.environ for a Git Bash child, without the MSYS switches that stop
+    Git Bash from turning its /tmp/... paths into Windows paths when it calls
+    git.exe. A shell that exported MSYS_NO_PATHCONV=1 (needed elsewhere to
+    hand paths to wsl) made git fail with "cannot change to '/tmp/...'" and
+    eleven fixture tests fail in a full ci_local run only (25 Nov)."""
+    env = {k: v for k, v in os.environ.items()
+           if k.upper() not in ("MSYS_NO_PATHCONV", "MSYS2_ARG_CONV_EXCL")}
+    env.update(kw)
+    return env
+
+
 def _bash():
     """A POSIX bash whose $HOME is the fixture. On Windows that is Git Bash.
     A WSL launcher (System32\\bash.exe, WindowsApps\\bash.exe, or one under any
@@ -562,7 +574,7 @@ def _bash():
         if not c or not Path(c).is_file() or re.search(r"system32|windowsapps", c, re.I):
             continue
         try:
-            r = subprocess.run([c, "-c", 'cat "$HOME/probe"'], env=dict(os.environ, HOME=str(probe)),
+            r = subprocess.run([c, "-c", 'cat "$HOME/probe"'], env=_bash_env(HOME=str(probe)),
                                capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -655,8 +667,8 @@ def _fixture(banner_sha8=None, binary=True, banner=True):
 def _verify(home, sha, ref="fixture-tag", **extra):
     # ARDUPILOT_URL points at nothing: a broken --verify dispatch that fell
     # through to `git clone` must fail in milliseconds, never fetch GitHub.
-    env = dict(os.environ, HOME=str(home), ARDUPILOT_SHA=sha, ARDUPILOT_REF=ref,
-               ARDUPILOT_URL=str(home / "no-upstream"), **extra)
+    env = _bash_env(HOME=str(home), ARDUPILOT_SHA=sha, ARDUPILOT_REF=ref,
+                    ARDUPILOT_URL=str(home / "no-upstream"), **extra)
     r = subprocess.run([_bash(), str(SETUP_SITL), "--verify"], env=env,
                        capture_output=True, text=True, timeout=120)
     return r.returncode, r.stdout + r.stderr
@@ -752,11 +764,11 @@ def _home():
 
 def _setup(home, sha, ref="pin-tag", **extra):
     up = _upstream()
-    env = dict(os.environ, HOME=str(home), ARDUPILOT_SHA=sha, ARDUPILOT_REF=ref,
-               ARDUPILOT_URL=up["url"],
-               # Local-path submodules are refused by default since git 2.38.1.
-               GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow",
-               GIT_CONFIG_VALUE_0="always", **extra)
+    env = _bash_env(HOME=str(home), ARDUPILOT_SHA=sha, ARDUPILOT_REF=ref,
+                    ARDUPILOT_URL=up["url"],
+                    # Local-path submodules are refused by default since git 2.38.1.
+                    GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow",
+                    GIT_CONFIG_VALUE_0="always", **extra)
     r = subprocess.run([_bash(), str(SETUP_SITL)], env=env, capture_output=True,
                        text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
