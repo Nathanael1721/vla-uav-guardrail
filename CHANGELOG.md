@@ -16,6 +16,25 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-25 (code: CI's pymavlink stand-in, the revision of a Windows worktree read from WSL) — the one file that turned the release's GitHub run red, and a manifest field the Gazebo sweep showed empty; not flown yet
+
+#### Fixed
+- **GitHub Actions: tests/test_msl_primitives.py without pymavlink** (11f3f7d). The release push's two GitHub runs (45156163225, 45156162082) failed on this one file only: it imports sitl/run_sitl_demo.py, which imports pymavlink at module level, and the CI image has none. Its SITL-rail test (test_the_sitl_rail_declares_a_ground_at_its_home) now installs a stand-in pymavlink module when none is installed; it calls only the rail's ground declaration, which does not touch MAVLink, and the real module is used where present.
+- **The code revision of a run flown from a Windows git worktree under WSL** (6a78190). A worktree's `.git` is a file naming its git directory with a drive letter ("gitdir: D:/..."); git in WSL cannot resolve it, so every Gazebo-rail run of the 24-25 Nov sweep, flown from the clean release worktree flight-21c2771, recorded `code_revision` "unversioned" (the sweep's own record names 21c2771). guardrail/manifest.py maps a drive-letter gitdir to `/mnt/<drive>/...` on Linux and passes it as `--git-dir` / `--work-tree` to every git call of code_revision, git_describe and the ownership check. Two tests in tests/test_manifest.py (the mapping; a real worktree rewritten to the drive-letter form, whose HEAD code_revision now names); they skip on Windows and pass in WSL, where the release worktree now reads its revision instead of "unversioned".
+
+### 2026-11-25 (flown: the Gazebo functional sweep at release 0.7.0) — the full gazebo_functional profile, 44 cells x 3 seeds = 132 missions on the Gazebo Harmonic rail: P0 escape 0 on every Shield-on mission; every failed gate fails the same way on the hil rig; functional evidence, never KPI-grade
+
+#### Flown
+- gazebo_functional at release 0.7.0 (21c2771, the detached worktree flight-21c2771, `--backend sitl`, Gazebo Harmonic 8.11.0 behind ArduCopter V4.5.7 SITL, dev topology, sim_speedup 1.0), launched 24 Nov 19:59 after ntFIN5; 17,132 s. 132 missions planned (129 Shield on, 3 Shield-off controls). Six ended before arming because MAVROS never received the autopilot's home position (the node's home check refused to arm); they were re-flown on their own seeds, some more than once: 143 attempts for 132 flights, the 11 refused run folders kept aside (`docs/data/gazebo_sweep_20261124/README.md`).
+  - P0 violation escape **0** on 6,419 P0-violation ticks over the 129 Shield-on missions; the Shield-off control escaped 158 times (family rate 0.656).
+  - Gates on ideal-vehicle labels: 107 pass, 3 tracked, 16 fail, 6 known failures. Each failed gate fails the same way on the same cells in ntFIN5 on the hil rig: nfz-head-on and dyn-nfz-rotate-step (fail-safe triggered where the ideal label expects none; r2 expects one), time-window-opens-on-vehicle and time-window-opens-on-sideways-pilot (time to safe 3.8-4.1 s over the headless limits of 2.7 and 2.9 s), failsafe-rtl-zone seed 1002 (Land instead of RTL).
+  - Fail-safe trigger on ideal labels 120/129 (9 false triggers, 0 missed); repair success 9,678/9,779 ticks; desktop `tick_ms` max 24.04 ms and `e2e_with_wait_ms` max 83.51 ms, 0 of 39,251 over 100 ms (a dev-host baseline, not the Orin's budget evidence); GUIDED hold handed to BRAKE in 5 of 132 missions.
+  - Re-scored at 0d3dcda, rolled up by tools/kpi_report.py from a clean tree at 96a5a03 (`docs/data/gazebo_sweep_20261124/`, 96a5a03, f797831). Every record is functional_only; `is_kpi_grade` refuses it.
+
+#### Not done
+- The cause of the home-position refusals on this rail (11 of 143 attempts) is not investigated.
+- No rail-vehicle labels for Gazebo's iris, so the adopted reading (r2) is not applied to these runs.
+
 ### 2026-11-24 (docs: final report v1.0, the release runbook, Appendix A at release 0.7.0) — the report's body written from the release's nightly ntFIN5; the procedure that binds a release to its own smoke written down; the contract map's evidence brought to release 0.7.0, its statuses left for an independent review
 
 #### Changed
