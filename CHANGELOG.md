@@ -16,6 +16,14 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-25 (docs: the final report's body brought up to the 25 Nov evidence) — sections 1, 3, 4.4, 10 and 11 of docs/FINAL-REPORT.md still said one Gazebo seed and a red GitHub smoke; they now state what Appendix A already records, and no count changes (109 DONE / 26 PARTIAL / 1 DRIFT / 0 MISSING)
+
+- Section 1 "cannot claim": the grant's broad sweep at sim_speedup > 1 and a KPI-grade smoke per build, in place of "multi-seed Gazebo sweeps" and "a green CI smoke per build".
+- Section 3 rails: the gazebo_functional profile at release 0.7.0 (132 missions on 3 seeds, P0 escape 0) and the mid-term demo gate on Gazebo at 75a6d45 (3/3).
+- Section 4.4 open items and section 10 limitations: Gazebo functional only at speed 1.0 (107 pass, 16 fail, 6 known, 3 tracked; manifests record code revision `unversioned`, fixed at 6a78190); the GitHub smoke green per push since 24 Nov (run 45497539573) but headless; release 0.7.0 the one release whose own smoke flew the five rows.
+- Section 10 tick budget: the ntFIN5 bag chain from action to MAVROS setpoint (p50 10.18 ms, p99 30.51 ms, max 63.75 ms) as corroboration, with the pairing limit stated; the offline geometry profile re-run at 21c2771 (_check p99 1.056 ms, max 1.100 ms).
+- Section 11: the 24-25 Nov work moved to "Done"; the remaining list is X-11, X-10, AP_DDS and the PI's decisions.
+
 ### 2026-11-25 (docs: Appendix A after an independent review of seven rows) — three reviewers per row against the grant's own wording, one synthesis each; no status moved, ARCH-16 now rests on the mid-term gate, and every Open column says what is still unmet
 
 #### Changed

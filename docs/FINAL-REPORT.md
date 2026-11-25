@@ -15,7 +15,10 @@ NTUT AIoT Lab · v1.0, 2026-11-24
 > them the tick fix that answers ntFIN4's one 105.5 ms tick. Its smoke
 > smREL070 and its KPI-grade nightly ntFIN5 flew on `hil` on 23-24 Nov and
 > are the figures of record; ntFIN4 and ntFIN3 stay beside them as the
-> earlier figures. The grant's final-delivery gate is 2026-11-30 (a signed
+> earlier figures. Updated 25 Nov (docs/1125, feat/midterm-gazebo-demo)
+> for the Gazebo sweep at 0.7.0, the mid-term demo gate flown on Gazebo,
+> the first green GitHub smoke since 13 Oct and an independent review of
+> seven Appendix A rows; no count changed. The grant's final-delivery gate is 2026-11-30 (a signed
 > final report, X-01). The signer and the signing CA are not named yet (PI,
 > 12 Oct, Q5; on 22 Nov the user decided to wait for the PI to name the
 > CA). No value is filled in ahead of its evidence. Every number below names
@@ -92,8 +95,9 @@ NTUT AIoT Lab · v1.0, 2026-11-24
   missions, 0 P0 escapes (X-05, ARCH-25, ARCH-01, ARCH-21; section 6).
 - What this report cannot claim: a 7B VLA deciding at 10 Hz (OpenVLA about
   0.98 s per decision on the AGX Orin; ARCH-03), the `flight` topology (ARCH-14),
-  multi-seed Gazebo sweeps (WP4-04), a green CI smoke per build (WP4-06),
-  and SET_MODE LOITER as the FSM's default (WP3-07).
+  the grant's broad sweep at sim_speedup > 1 (WP4-04, WP4-06), a KPI-grade
+  smoke per build (WP4-06: the per-build GitHub smoke is green since
+  24 Nov but headless), and SET_MODE LOITER as the FSM's default (WP3-07).
 
 ## 2. Scope and acceptance criteria
 
@@ -201,7 +205,7 @@ section 2):
 
 - **Rails.** ArduPilot SITL + MAVROS 2 (the KPI rail); Project AirSim +
   ArduPilot (the perception rail; a learned VLA on it on `hil` since 14 Nov);
-  Gazebo Harmonic (flown end to end on 2 Nov, ARCH-16; first functional sweep 20 Nov, 7 of 8 missions passed, WP4-04). All three
+  Gazebo Harmonic (flown end to end on 2 Nov, ARCH-16; first functional sweep 20 Nov, 7 of 8 missions passed; the gazebo_functional profile at release 0.7.0 on 24-25 Nov, 132 missions on 3 seeds, P0 escape 0, WP4-04; the grant's four-step mid-term demo gate on 25 Nov at 75a6d45, 3/3, ARCH-16). All three
   fly ArduPilot as the inner loop (ARCH-02). Project AirSim CityLife with
   simple_flight is a comparison bench (the follow comparisons of section 6),
   not a rail of the delivery and never KPI evidence.
@@ -383,10 +387,11 @@ remains. The per-obligation rows are in Appendix A.
 - Open: the KPI report's delivery with this report (WP4-17; the report
   itself is committed, section 2); KPIs in this report that do not come
   from a Stress Testing run in `hil` (DSL, CSP and per-paraphrase, section
-  2; WP4-01); Gazebo functional sweeps beyond one seed and the broad sweep
-  (WP4-04); a CI smoke that completes per build, a nightly cadence and the
-  broad sweep (WP4-06: master was pushed on 22 Nov, and both GitHub runs
-  since were red before the smoke step); bit-for-bit replay on every
+  2; WP4-01); the broad sweep at sim_speedup > 1 (WP4-04: the Gazebo
+  functional sweep flew 132 missions on 3 seeds at 1.0 on 24-25 Nov); a
+  KPI-grade smoke per build and a nightly cadence (WP4-06: the GitHub
+  smoke has run green per push since 24 Nov, run 45497539573, but it is
+  headless and not KPI-grade); bit-for-bit replay on every
   episode and the Q3 replay for reproducibility (WP4-11); the final demo
   gate with a dynamic suite scenario and the Prefix Compiler in the loop
   (WP4-19).
@@ -1017,8 +1022,14 @@ rows above.
   flown in ntFIN5, section 8). The figures rest on stub-pilot runs and on
   the Shield node alone
   (`e2e_ms` has neither the pilot's DDS hop nor the adapter's hop to
-  MAVROS); no learned VLA's decision time is in it (ARCH-03); ~50 rules
-  only in the offline Orin profile (last re-run 14 Nov at bc04e4a).
+  MAVROS); the ntFIN5 bags corroborate the chain from action to MAVROS
+  setpoint (p50 10.18 ms, p99 30.51 ms, max 63.75 ms;
+  docs/data/kpi_ntFIN5/bag_hops_ntFIN5.json), but receive-time pairing
+  cannot see a hop longer than the gap to the next input, so it is not an
+  independent test of the budget; no learned VLA's decision time is in it
+  (ARCH-03); ~50 rules only in the offline Orin profile (re-run 25 Nov at
+  release 0.7.0, 21c2771: _check p99 1.056 ms, max 1.100 ms;
+  deploy/evidence/hil/shield_tick_profile_20261125.json).
 - **SET_MODE LOITER is not the default** (WP3-07, PARTIAL): it flew on
   `hil` only opt-in (sk1122b, 2 missions, a SITL-only throttle stand-in,
   no G8 or G4 in that mode); the default holds the FSM's Loiter in GUIDED
@@ -1049,13 +1060,22 @@ rows above.
 - **No `flight` topology**, no flight firmware bit-identity (ARCH-14,
   ARCH-31); the real FC is not flashed to the rig's ArduCopter (the user's
   decision, 22 Nov).
-- **One Gazebo functional sweep**, one seed, 7 of 8 missions passed
-  (20 Nov; WP4-04); the 123-mission gazebo_functional profile has had a
-  dry run only.
-- **No green CI smoke per build, no release with the five-row smoke**
-  (WP3-19, WP4-06, WP4-14): master was pushed on 22 Nov and both GitHub
-  runs since were red before the smoke step (decision 9); the five-row
-  smoke flew at the unreleased 59e19a5.
+- **Gazebo is functional only, at speed 1.0** (WP4-04, WP4-06): the
+  gazebo_functional profile flew at release 0.7.0 on 24-25 Nov, 132
+  missions on 3 seeds (11 of 143 attempts refused before arming and
+  re-flown), P0 escape 0 on 129 Shield-on missions, gates 107 pass, 16
+  fail, 6 known, 3 tracked, each failed gate failing the same way on `hil`
+  (docs/data/gazebo_sweep_20261124/); its run manifests record code
+  revision `unversioned` (fixed at 6a78190, after the sweep). The broad
+  sweep at speed > 1 is refused while the Shield node runs on wall time.
+  The mid-term demo gate (ARCH-16) flew 3/3 on 25 Nov with a stub pilot
+  and a lab-dev-signed bundle (docs/data/gazebo_midterm_20261125/).
+- **The per-build smoke is headless, and one release ran the five-row
+  smoke** (WP3-19, WP4-06, WP4-14): the GitHub smoke is green per push
+  since 24 Nov (run 45497539573, master 339cacf; docs/data/github_ci/),
+  but the release 0.7.0 push failed before its smoke step and the
+  per-build smoke is not KPI-grade; release 0.7.0's own `hil` smoke
+  smREL070 flew the five rows KPI-grade, and earlier releases did not.
 - **Perception stress** is one run per stressor, non-KPI by design
   (WP4-16, WP4-18). The novel road texture (15 Nov) broke the follow: the
   detector found the car on 0.095 of frames against 0.865 unstressed, and
@@ -1119,23 +1139,25 @@ missions, the five-row matrix) and the KPI-grade nightly ntFIN5 (654
 KPI-grade missions, 0 ticks over 100 ms), the figure of record of this
 report (sections 2 and 5; docs/data/kpi_ntFIN5/, docs/data/kpi_smREL070/).
 
+Done 24-25 Nov: the Gazebo functional sweep at 21c2771 over 3 seeds (132
+missions, P0 escape 0; docs/data/gazebo_sweep_20261124/; WP4-04); the
+GitHub smoke green on a pushed build (run 45497539573, master 339cacf;
+WP4-06); the grant's mid-term demo gate flown on Gazebo at 75a6d45, 3/3
+(docs/data/gazebo_midterm_20261125/; ARCH-16); the geometry profile re-run
+on the AGX Orin at 21c2771 and the cross-node chain read from the ntFIN5
+and smREL070 bags (WP3-13, still PARTIAL); an independent review of seven
+Appendix A rows (ARCH-16 DONE, the other six PARTIAL; counts unchanged).
+
 Remaining, in order:
 
-1. The Gazebo functional sweep over its 3 seeds (the gazebo_functional
-   profile, 44 cells / 132 missions at 21c2771, flying since 24 Nov 19:59;
-   WP4-04).
-2. The GitHub smoke completing on a pushed build (WP4-06): one Linux-only
-   test (tests/test_msl_primitives.py importing pymavlink, which the CI's
-   Linux jobs do not install) is fixed on a branch, to be merged after the
-   full local CI and pushed.
-3. X-11: the hil zone-ridge cells re-flown with the terrain feed.
-4. X-10: the delivered flight bundles rebuilt with their changelog diffs
+1. X-11: the hil zone-ridge cells re-flown with the terrain feed.
+2. X-10: the delivered flight bundles rebuilt with their changelog diffs
    when they are re-signed under the CA the PI names (the builder passes
    the previous version since c928a23; nothing re-signed before then, the
    user's decision of 22 Nov).
-5. AP_DDS: run the runbook's steps 4-6 on the DDS SITL (ARCH-08), or record
+3. AP_DDS: run the runbook's steps 4-6 on the DDS SITL (ARCH-08), or record
    that this optional row closes at PARTIAL.
-6. The PI's decisions (section 9: the CA, the `flight` waiver, the
+4. The PI's decisions (section 9: the CA, the `flight` waiver, the
    firmware bit-identity, and confirmation of decisions 1-15 and of the
    user's 22 Nov decisions); then sign (X-01).
 
