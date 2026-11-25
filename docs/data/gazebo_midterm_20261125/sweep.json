@@ -48,6 +48,7 @@
       1
     ],
     "cells_within_expected": true,
+    "rail_signed_bundle": true,
     "wind_model": "guided",
     "autopilot_hold_model": "moved_points",
     "autopilot_hold_model_flown_by_a_rail": false,
@@ -66,7 +67,7 @@
     "distinct": 3,
     "note": "episodes whose KPI tables differ (status, escapes, repairs, breaches, fail-safe, outcome, goal, time to safe, true-state distance and ticks, speed, range, offset). An upper bound on behavioural variety: float jitter in repair counts splits symmetric copies"
   },
-  "_runtime_s": 284.48,
+  "_runtime_s": 289.41,
   "_runner": {
     "python": "3.10.20",
     "implementation": "CPython",
@@ -74,8 +75,8 @@
     "platform": "Windows-10"
   },
   "_manifest_common": {
-    "code_revision": "7525b362e2d8",
-    "vla_model_hash": "experiments.sweep_scenarios._pilot@src:39923478c0492f2e3fd2772e9ac0fc5c1ca2cdce864f614947daab5d4599ee99",
+    "code_revision": "75a6d45be758",
+    "vla_model_hash": "experiments.sweep_scenarios._pilot@src:3ead2f816908aa92661b5dc02b5d576f258e354911eaff613037ceaad144183a",
     "topology": "headless-kinematic"
   },
   "_seeds": {
@@ -204,7 +205,7 @@
       "episodes_inside_polygon": 0,
       "true_p0_flown_ticks": 0,
       "autopilot_p0_flown_ticks": 0,
-      "min_true_dist_to_fence_m": 1.242,
+      "min_true_dist_to_fence_m": 1.167,
       "fsm_outcomes": {
         "success": 3
       },
@@ -226,14 +227,14 @@
       "p0_escapes": 0,
       "episodes_with_p0_escape": 0,
       "episodes_p0_escape_not_measurable": 0,
-      "p0_violation_ticks": 89,
+      "p0_violation_ticks": 93,
       "p0_ticks_not_measurable": 0,
       "p0_ticks_blind": null,
       "episodes_p0_blind": 0,
       "episodes_with_collision": 0,
       "episodes_collision_not_measured": 3,
       "p0_acted_tick_share": 1.0,
-      "failsafe_expected_ticks": 89,
+      "failsafe_expected_ticks": 93,
       "episodes_failsafe_not_measurable": 0,
       "false_trigger_rate": 0.0,
       "false_trigger_ticks": 0,
@@ -259,16 +260,16 @@
       "mean_repair_count_per_episode": 159.333,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 136.667,
-      "mean_repair_magnitude_mps": 2.5594,
-      "max_repair_magnitude_mps": 5.7237,
+      "mean_repair_magnitude_mps": 2.5595,
+      "max_repair_magnitude_mps": 5.7248,
       "mean_repair_magnitude_by_priority": {
         "P0": {
-          "ticks": 89,
-          "mean_mps": 4.7375
+          "ticks": 93,
+          "mean_mps": 4.6244
         },
         "P1": {
-          "ticks": 321,
-          "mean_mps": 1.9555
+          "ticks": 317,
+          "mean_mps": 1.9538
         },
         "P2": {
           "ticks": 0,
@@ -288,7 +289,7 @@
         },
         "LateralProjection": {
           "ticks": 68,
-          "mean_mps": 5.5829,
+          "mean_mps": 5.5892,
           "sole_ticks": 0,
           "sole_mean_mps": null
         },
@@ -300,9 +301,9 @@
         },
         "KinematicClamp": {
           "ticks": 410,
-          "mean_mps": 2.5594,
+          "mean_mps": 2.5595,
           "sole_ticks": 342,
-          "sole_mean_mps": 1.9582
+          "sole_mean_mps": 1.9571
         },
         "Recovery": {
           "ticks": 0,
@@ -357,7 +358,7 @@
       "time_to_safe_censored": 0,
       "episodes_time_to_safe_measured": 3,
       "episodes_time_to_safe_not_measurable": 0,
-      "null_passthrough_p0_escape_rate": 0.212919,
+      "null_passthrough_p0_escape_rate": 0.222488,
       "null_always_brake_repair_success_rate": 0.0,
       "null_hover_mission_success_rate": 0.0,
       "null_hover_known_episodes": 3,
@@ -379,14 +380,14 @@
       "p0_escapes": 0,
       "episodes_with_p0_escape": 0,
       "episodes_p0_escape_not_measurable": 0,
-      "p0_violation_ticks": 89,
+      "p0_violation_ticks": 93,
       "p0_ticks_not_measurable": 0,
       "p0_ticks_blind": null,
       "episodes_p0_blind": 0,
       "episodes_with_collision": 0,
       "episodes_collision_not_measured": 3,
       "p0_acted_tick_share": 1.0,
-      "failsafe_expected_ticks": 89,
+      "failsafe_expected_ticks": 93,
       "episodes_failsafe_not_measurable": 0,
       "false_trigger_rate": 0.0,
       "false_trigger_ticks": 0,
@@ -412,16 +413,16 @@
       "mean_repair_count_per_episode": 159.333,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 136.667,
-      "mean_repair_magnitude_mps": 2.5594,
-      "max_repair_magnitude_mps": 5.7237,
+      "mean_repair_magnitude_mps": 2.5595,
+      "max_repair_magnitude_mps": 5.7248,
       "mean_repair_magnitude_by_priority": {
         "P0": {
-          "ticks": 89,
-          "mean_mps": 4.7375
+          "ticks": 93,
+          "mean_mps": 4.6244
         },
         "P1": {
-          "ticks": 321,
-          "mean_mps": 1.9555
+          "ticks": 317,
+          "mean_mps": 1.9538
         },
         "P2": {
           "ticks": 0,
@@ -441,7 +442,7 @@
         },
         "LateralProjection": {
           "ticks": 68,
-          "mean_mps": 5.5829,
+          "mean_mps": 5.5892,
           "sole_ticks": 0,
           "sole_mean_mps": null
         },
@@ -453,9 +454,9 @@
         },
         "KinematicClamp": {
           "ticks": 410,
-          "mean_mps": 2.5594,
+          "mean_mps": 2.5595,
           "sole_ticks": 342,
-          "sole_mean_mps": 1.9582
+          "sole_mean_mps": 1.9571
         },
         "Recovery": {
           "ticks": 0,
@@ -510,7 +511,7 @@
       "time_to_safe_censored": 0,
       "episodes_time_to_safe_measured": 3,
       "episodes_time_to_safe_not_measurable": 0,
-      "null_passthrough_p0_escape_rate": 0.212919,
+      "null_passthrough_p0_escape_rate": 0.222488,
       "null_always_brake_repair_success_rate": 0.0,
       "null_hover_mission_success_rate": 0.0,
       "null_hover_known_episodes": 3,
@@ -565,14 +566,14 @@
       "p0_escapes": 0,
       "episodes_with_p0_escape": 0,
       "episodes_p0_escape_not_measurable": 0,
-      "p0_violation_ticks": 89,
+      "p0_violation_ticks": 93,
       "p0_ticks_not_measurable": 0,
       "p0_ticks_blind": null,
       "episodes_p0_blind": 0,
       "episodes_with_collision": 0,
       "episodes_collision_not_measured": 3,
       "p0_acted_tick_share": 1.0,
-      "failsafe_expected_ticks": 89,
+      "failsafe_expected_ticks": 93,
       "episodes_failsafe_not_measurable": 0,
       "false_trigger_rate": 0.0,
       "false_trigger_ticks": 0,
@@ -598,16 +599,16 @@
       "mean_repair_count_per_episode": 159.333,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 136.667,
-      "mean_repair_magnitude_mps": 2.5594,
-      "max_repair_magnitude_mps": 5.7237,
+      "mean_repair_magnitude_mps": 2.5595,
+      "max_repair_magnitude_mps": 5.7248,
       "mean_repair_magnitude_by_priority": {
         "P0": {
-          "ticks": 89,
-          "mean_mps": 4.7375
+          "ticks": 93,
+          "mean_mps": 4.6244
         },
         "P1": {
-          "ticks": 321,
-          "mean_mps": 1.9555
+          "ticks": 317,
+          "mean_mps": 1.9538
         },
         "P2": {
           "ticks": 0,
@@ -627,7 +628,7 @@
         },
         "LateralProjection": {
           "ticks": 68,
-          "mean_mps": 5.5829,
+          "mean_mps": 5.5892,
           "sole_ticks": 0,
           "sole_mean_mps": null
         },
@@ -639,9 +640,9 @@
         },
         "KinematicClamp": {
           "ticks": 410,
-          "mean_mps": 2.5594,
+          "mean_mps": 2.5595,
           "sole_ticks": 342,
-          "sole_mean_mps": 1.9582
+          "sole_mean_mps": 1.9571
         },
         "Recovery": {
           "ticks": 0,
@@ -696,7 +697,7 @@
       "time_to_safe_censored": 0,
       "episodes_time_to_safe_measured": 3,
       "episodes_time_to_safe_not_measurable": 0,
-      "null_passthrough_p0_escape_rate": 0.212919,
+      "null_passthrough_p0_escape_rate": 0.222488,
       "null_always_brake_repair_success_rate": 0.0,
       "null_hover_mission_success_rate": 0.0,
       "null_hover_known_episodes": 3,
@@ -738,7 +739,7 @@
       "run": "demo/out/gzsweep_midterm-demo-graze--seed1001",
       "mission_tag": "gzsweep_midterm-demo-graze--seed1001",
       "replay_bundle": "demo/out/gzsweep_midterm-demo-graze--seed1001/gzsweep_midterm-demo-graze--seed1001.replay.tar.gz",
-      "grant_episode_name": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1001",
+      "grant_episode_name": "episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1001",
       "grant_episode_name_note": "after the flight the episode's bundle is written under this name in the campaign's folder, with the grant's six file names (manifest.json, policy_bundle.tar.gz, episode.bag2, shield_audit.jsonl, harness_events.jsonl, kpi.json); the run folder keeps its own files and <tag>.replay.tar.gz; <UTC> is the sweep's start stamp",
       "functional_only": true,
       "status": "pass",
@@ -752,7 +753,7 @@
         "p0_violation_escape_rate": 0.0,
         "p0_violation_escape_rate_status": "measured",
         "p0_escapes": 0,
-        "p0_violation_ticks": 30,
+        "p0_violation_ticks": 31,
         "p0_ticks_not_measurable": 0,
         "p0_ticks_blind": null,
         "collision_contacts": null,
@@ -760,12 +761,12 @@
         "p0_acted_tick_share": 1.0,
         "failsafe_trigger_correctness": 1.0,
         "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
-        "failsafe_expected_ticks": 30,
-        "failsafe_correct_ticks": 30,
+        "failsafe_expected_ticks": 31,
+        "failsafe_correct_ticks": 31,
         "violation_free_ticks": 2,
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
-        "failsafe_permitted_ticks": 107,
+        "failsafe_permitted_ticks": 106,
         "repair_count": 160,
         "repairs_per_episode": 160,
         "repair_success_rate": 1.0,
@@ -803,21 +804,21 @@
           "vertical": 0.5
         },
         "failsafe_instrumented": true,
-        "mean_repair_magnitude_mps": 2.5606,
-        "max_repair_magnitude_mps": 5.7237,
+        "mean_repair_magnitude_mps": 2.5626,
+        "max_repair_magnitude_mps": 5.7242,
         "mean_yaw_repair_dps": 0.0,
         "repaired_ticks": 137,
         "repair_ticks_not_measurable": 0,
         "repair_magnitude_by_priority": {
           "P0": {
-            "ticks": 30,
-            "sum_mps": 142.49912,
-            "mean_mps": 4.75
+            "ticks": 31,
+            "sum_mps": 144.608373,
+            "mean_mps": 4.6648
           },
           "P1": {
-            "ticks": 107,
-            "sum_mps": 208.298133,
-            "mean_mps": 1.9467
+            "ticks": 106,
+            "sum_mps": 206.472863,
+            "mean_mps": 1.9479
           },
           "P2": {
             "ticks": 0,
@@ -841,8 +842,8 @@
           },
           "LateralProjection": {
             "ticks": 23,
-            "sum_mps": 128.49912,
-            "mean_mps": 5.5869,
+            "sum_mps": 128.608373,
+            "mean_mps": 5.5917,
             "sole_ticks": 0,
             "sole_sum_mps": 0.0,
             "sole_mean_mps": null
@@ -857,11 +858,11 @@
           },
           "KinematicClamp": {
             "ticks": 137,
-            "sum_mps": 350.797254,
-            "mean_mps": 2.5606,
+            "sum_mps": 351.081236,
+            "mean_mps": 2.5626,
             "sole_ticks": 114,
-            "sole_sum_mps": 222.298134,
-            "sole_mean_mps": 1.95
+            "sole_sum_mps": 222.472864,
+            "sole_mean_mps": 1.9515
           },
           "Recovery": {
             "ticks": 0,
@@ -914,11 +915,11 @@
         "mission_goal_status": "reached",
         "violations_by_risk_level": {
           "P1": 137,
-          "P0": 30
+          "P0": 31
         },
         "violations_by_type": {
           "kinematic": 137,
-          "geofence": 30
+          "geofence": 31
         },
         "seed_applied": true,
         "reached_goal": true,
@@ -938,11 +939,11 @@
           "transitions": [
             {
               "tick": 1,
-              "t_s": 0.039626,
+              "t_s": 0.047834,
               "from": "Normal",
               "to": "Brake",
               "edge": "G1",
-              "reason": "nfz-square (hard P0 project_fix) repaired, lat 0.91 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+              "reason": "nfz-square (hard P0 project_fix) repaired, lat 0.92 m / vert 0.00 m vs theta 2.00 / 0.50 m"
             }
           ],
           "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
@@ -977,7 +978,7 @@
           "altitude_band": 0
         },
         "ticks_inside_fence_polygon": 0,
-        "min_true_dist_to_fence_m": 1.251,
+        "min_true_dist_to_fence_m": 1.217,
         "polygon_entries": 0,
         "autopilot_polygon_entries": 0,
         "ended_safe": true,
@@ -1011,7 +1012,7 @@
           "p0_violation_escape_rate": 0.0,
           "p0_violation_escape_rate_status": "measured",
           "p0_escapes": 0,
-          "p0_violation_ticks": 30,
+          "p0_violation_ticks": 31,
           "p0_ticks_not_measurable": 0,
           "p0_ticks_blind": null,
           "p0_acted_tick_share": 1.0
@@ -1022,7 +1023,7 @@
           "rows_after_cap": 0,
           "rows_after_mission_end": 0,
           "rows_flight": 139,
-          "flight_s": 13.839,
+          "flight_s": 13.848,
           "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
         },
         "sim_stressors": [],
@@ -1065,7 +1066,7 @@
       "manifest": null,
       "manifest_extras": null,
       "arm_record": null,
-      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1001"
+      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1001"
     },
     {
       "id": "midterm-demo-graze",
@@ -1083,7 +1084,7 @@
       "run": "demo/out/gzsweep_midterm-demo-graze--seed1002",
       "mission_tag": "gzsweep_midterm-demo-graze--seed1002",
       "replay_bundle": "demo/out/gzsweep_midterm-demo-graze--seed1002/gzsweep_midterm-demo-graze--seed1002.replay.tar.gz",
-      "grant_episode_name": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1002",
+      "grant_episode_name": "episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1002",
       "grant_episode_name_note": "after the flight the episode's bundle is written under this name in the campaign's folder, with the grant's six file names (manifest.json, policy_bundle.tar.gz, episode.bag2, shield_audit.jsonl, harness_events.jsonl, kpi.json); the run folder keeps its own files and <tag>.replay.tar.gz; <UTC> is the sweep's start stamp",
       "functional_only": true,
       "status": "pass",
@@ -1097,7 +1098,7 @@
         "p0_violation_escape_rate": 0.0,
         "p0_violation_escape_rate_status": "measured",
         "p0_escapes": 0,
-        "p0_violation_ticks": 29,
+        "p0_violation_ticks": 32,
         "p0_ticks_not_measurable": 0,
         "p0_ticks_blind": null,
         "collision_contacts": null,
@@ -1105,12 +1106,12 @@
         "p0_acted_tick_share": 1.0,
         "failsafe_trigger_correctness": 1.0,
         "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
-        "failsafe_expected_ticks": 29,
-        "failsafe_correct_ticks": 29,
+        "failsafe_expected_ticks": 32,
+        "failsafe_correct_ticks": 32,
         "violation_free_ticks": 3,
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
-        "failsafe_permitted_ticks": 107,
+        "failsafe_permitted_ticks": 104,
         "repair_count": 158,
         "repairs_per_episode": 158,
         "repair_success_rate": 1.0,
@@ -1148,21 +1149,21 @@
           "vertical": 0.5
         },
         "failsafe_instrumented": true,
-        "mean_repair_magnitude_mps": 2.5489,
-        "max_repair_magnitude_mps": 5.7232,
+        "mean_repair_magnitude_mps": 2.5501,
+        "max_repair_magnitude_mps": 5.7231,
         "mean_yaw_repair_dps": 0.0,
         "repaired_ticks": 136,
         "repair_ticks_not_measurable": 0,
         "repair_magnitude_by_priority": {
           "P0": {
-            "ticks": 29,
-            "sum_mps": 136.802694,
-            "mean_mps": 4.7173
+            "ticks": 32,
+            "sum_mps": 142.992086,
+            "mean_mps": 4.4685
           },
           "P1": {
-            "ticks": 107,
-            "sum_mps": 209.850671,
-            "mean_mps": 1.9612
+            "ticks": 104,
+            "sum_mps": 203.822511,
+            "mean_mps": 1.9598
           },
           "P2": {
             "ticks": 0,
@@ -1186,8 +1187,8 @@
           },
           "LateralProjection": {
             "ticks": 22,
-            "sum_mps": 122.802693,
-            "mean_mps": 5.5819,
+            "sum_mps": 122.992086,
+            "mean_mps": 5.5905,
             "sole_ticks": 0,
             "sole_sum_mps": 0.0,
             "sole_mean_mps": null
@@ -1202,11 +1203,11 @@
           },
           "KinematicClamp": {
             "ticks": 136,
-            "sum_mps": 346.653364,
-            "mean_mps": 2.5489,
+            "sum_mps": 346.814597,
+            "mean_mps": 2.5501,
             "sole_ticks": 114,
-            "sole_sum_mps": 223.850671,
-            "sole_mean_mps": 1.9636
+            "sole_sum_mps": 223.822511,
+            "sole_mean_mps": 1.9634
           },
           "Recovery": {
             "ticks": 0,
@@ -1247,8 +1248,8 @@
         "time_to_safe_episodes": 0,
         "time_to_safe_censored": 0,
         "time_to_safe_not_measurable": false,
-        "mean_intervention_s": 13.699,
-        "max_intervention_s": 13.699,
+        "mean_intervention_s": 13.6,
+        "max_intervention_s": 13.6,
         "intervention_episodes": 1,
         "intervention_censored": 0,
         "intervention_not_measurable": false,
@@ -1259,11 +1260,11 @@
         "mission_goal_status": "reached",
         "violations_by_risk_level": {
           "P1": 136,
-          "P0": 29
+          "P0": 32
         },
         "violations_by_type": {
           "kinematic": 136,
-          "geofence": 29
+          "geofence": 32
         },
         "seed_applied": true,
         "reached_goal": true,
@@ -1283,7 +1284,7 @@
           "transitions": [
             {
               "tick": 1,
-              "t_s": 0.023537,
+              "t_s": 0.099157,
               "from": "Normal",
               "to": "Brake",
               "edge": "G1",
@@ -1322,7 +1323,7 @@
           "altitude_band": 0
         },
         "ticks_inside_fence_polygon": 0,
-        "min_true_dist_to_fence_m": 1.242,
+        "min_true_dist_to_fence_m": 1.167,
         "polygon_entries": 0,
         "autopilot_polygon_entries": 0,
         "ended_safe": true,
@@ -1356,7 +1357,7 @@
           "p0_violation_escape_rate": 0.0,
           "p0_violation_escape_rate_status": "measured",
           "p0_escapes": 0,
-          "p0_violation_ticks": 29,
+          "p0_violation_ticks": 32,
           "p0_ticks_not_measurable": 0,
           "p0_ticks_blind": null,
           "p0_acted_tick_share": 1.0
@@ -1367,7 +1368,7 @@
           "rows_after_cap": 0,
           "rows_after_mission_end": 0,
           "rows_flight": 139,
-          "flight_s": 13.923,
+          "flight_s": 13.899,
           "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
         },
         "sim_stressors": [],
@@ -1410,7 +1411,7 @@
       "manifest": null,
       "manifest_extras": null,
       "arm_record": null,
-      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1002"
+      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1002"
     },
     {
       "id": "midterm-demo-graze",
@@ -1428,7 +1429,7 @@
       "run": "demo/out/gzsweep_midterm-demo-graze--seed1003",
       "mission_tag": "gzsweep_midterm-demo-graze--seed1003",
       "replay_bundle": "demo/out/gzsweep_midterm-demo-graze--seed1003/gzsweep_midterm-demo-graze--seed1003.replay.tar.gz",
-      "grant_episode_name": "episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1003",
+      "grant_episode_name": "episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1003",
       "grant_episode_name_note": "after the flight the episode's bundle is written under this name in the campaign's folder, with the grant's six file names (manifest.json, policy_bundle.tar.gz, episode.bag2, shield_audit.jsonl, harness_events.jsonl, kpi.json); the run folder keeps its own files and <tag>.replay.tar.gz; <UTC> is the sweep's start stamp",
       "functional_only": true,
       "status": "pass",
@@ -1493,21 +1494,21 @@
           "vertical": 0.5
         },
         "failsafe_instrumented": true,
-        "mean_repair_magnitude_mps": 2.5685,
-        "max_repair_magnitude_mps": 5.7236,
+        "mean_repair_magnitude_mps": 2.5658,
+        "max_repair_magnitude_mps": 5.7248,
         "mean_yaw_repair_dps": 0.0,
         "repaired_ticks": 137,
         "repair_ticks_not_measurable": 0,
         "repair_magnitude_by_priority": {
           "P0": {
             "ticks": 30,
-            "sum_mps": 142.337187,
-            "mean_mps": 4.7446
+            "sum_mps": 142.467491,
+            "mean_mps": 4.7489
           },
           "P1": {
             "ticks": 107,
-            "sum_mps": 209.551883,
-            "mean_mps": 1.9584
+            "sum_mps": 209.045933,
+            "mean_mps": 1.9537
           },
           "P2": {
             "ticks": 0,
@@ -1531,8 +1532,8 @@
           },
           "LateralProjection": {
             "ticks": 23,
-            "sum_mps": 128.337187,
-            "mean_mps": 5.5799,
+            "sum_mps": 128.467491,
+            "mean_mps": 5.5855,
             "sole_ticks": 0,
             "sole_sum_mps": 0.0,
             "sole_mean_mps": null
@@ -1547,11 +1548,11 @@
           },
           "KinematicClamp": {
             "ticks": 137,
-            "sum_mps": 351.889069,
-            "mean_mps": 2.5685,
+            "sum_mps": 351.513425,
+            "mean_mps": 2.5658,
             "sole_ticks": 114,
-            "sole_sum_mps": 223.551883,
-            "sole_mean_mps": 1.961
+            "sole_sum_mps": 223.045933,
+            "sole_mean_mps": 1.9565
           },
           "Recovery": {
             "ticks": 0,
@@ -1592,8 +1593,8 @@
         "time_to_safe_episodes": 0,
         "time_to_safe_censored": 0,
         "time_to_safe_not_measurable": false,
-        "mean_intervention_s": 13.7,
-        "max_intervention_s": 13.7,
+        "mean_intervention_s": 13.699,
+        "max_intervention_s": 13.699,
         "intervention_episodes": 1,
         "intervention_censored": 0,
         "intervention_not_measurable": false,
@@ -1628,11 +1629,11 @@
           "transitions": [
             {
               "tick": 1,
-              "t_s": 0.014148,
+              "t_s": 0.079794,
               "from": "Normal",
               "to": "Brake",
               "edge": "G1",
-              "reason": "nfz-square (hard P0 project_fix) repaired, lat 0.91 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+              "reason": "nfz-square (hard P0 project_fix) repaired, lat 0.92 m / vert 0.00 m vs theta 2.00 / 0.50 m"
             }
           ],
           "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
@@ -1667,7 +1668,7 @@
           "altitude_band": 0
         },
         "ticks_inside_fence_polygon": 0,
-        "min_true_dist_to_fence_m": 1.266,
+        "min_true_dist_to_fence_m": 1.253,
         "polygon_entries": 0,
         "autopilot_polygon_entries": 0,
         "ended_safe": true,
@@ -1712,7 +1713,7 @@
           "rows_after_cap": 0,
           "rows_after_mission_end": 0,
           "rows_flight": 140,
-          "flight_s": 13.914,
+          "flight_s": 13.979,
           "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
         },
         "sim_stressors": [],
@@ -1755,7 +1756,7 @@
       "manifest": null,
       "manifest_extras": null,
       "arm_record": null,
-      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-24T22-54-49Z--midterm-demo-graze--seed1003"
+      "bundle": "demo/out/stress_gazebo_midterm/episode-2026-11-25T00-25-28Z--midterm-demo-graze--seed1003"
     }
   ]
 }

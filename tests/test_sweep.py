@@ -5482,6 +5482,31 @@ def test_a_profile_flies_at_speedup_1_and_only_gazebo_names_a_rail():
             assert prof.rail_physics is None, p.name
 
 
+def test_the_sitl_rail_flies_a_signed_bundle_only_when_the_profile_asks():
+    """rail_signed_bundle (2026-11-25, ARCH-16): off, the sitl rail hands a
+    scenario's YAML as --policy --dev-yaml; on, the YAML's signed bundle with
+    its hash, refused when that bundle is missing or stale; only the mid-term
+    gate's profile asks for it."""
+    from guardrail.scenario_spec import load_profile
+    spec = next(f.first.spec for f in LIBRARY.families
+                if f.first.spec.scenario_id == "midterm-demo-graze")
+    assert spec.policy.path == "policies/sim_demo_policy.yaml"
+    off = S.rail_policy_args(spec, "sitl", signed=False)
+    assert off == ["--policy", spec.policy.path, S.SITL_DEV_YAML_FLAG], off
+    assert S.RAIL_SIGNED_BUNDLE is False
+    assert S.rail_policy_args(spec, "sitl") == off
+    with tempfile.TemporaryDirectory() as empty:
+        try:
+            S.rail_policy_args(spec, "sitl", bundles_dir=empty, signed=True)
+        except S.UnsupportedScenario as e:
+            assert "signed-bundle run" in str(e), e
+        else:
+            raise AssertionError("a missing signed bundle was flown")
+    profs = {p.stem: load_profile(p) for p in
+             sorted((ROOT / "experiments" / "profiles").glob("*.yaml"))}
+    assert [k for k, v in profs.items() if v.rail_signed_bundle] == ["gazebo_midterm"]
+
+
 if __name__ == "__main__":
     # A test that cannot run on this host returns SKIP, counted apart, never
     # as a pass (follow-up #84; the pattern of tests/test_bundle.py).
