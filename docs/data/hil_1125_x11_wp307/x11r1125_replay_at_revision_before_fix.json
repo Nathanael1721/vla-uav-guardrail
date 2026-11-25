@@ -56,7 +56,7 @@
  "worktrees": [
   {
    "sha": "21c2771700015cabdb9ee554149f006a37fe1a5b",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\replay_at_rev_dcyl7k73\\21c277170001",
+   "path": "<tmp>/replay_at_rev_dcyl7k73\\21c277170001",
    "created_s": 0.9,
    "removed": true,
    "git_remove_rc": 0,

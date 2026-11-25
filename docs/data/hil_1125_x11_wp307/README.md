@@ -40,11 +40,12 @@ here with the feed on (`--terrain-feed=on` on the mission line):
   7.8 / 12.3 ms;
 - `tools/replay_from_bag.py`: ticks, trajectory, KPI and manifest_in_bag
   identical 2/2;
-- `tools/replay_at_revision.py`: before the fix of 25 Nov (a75f1f5)
-  not_replayable 2/2, because the open-loop replay built the Shield with no
+- `tools/replay_at_revision.py`: before the fix of 25 Nov (the release's
+  own tool, at 21c2771) not_replayable 2/2, because the open-loop replay built the Shield with no
   ground and the MSL rule refused it (`x11r1125_replay_at_revision_before_fix.json`);
-  with the fix (the Shield rebuilt over the ground file the run named)
-  identical 2/2 (`x11r1125_replay_at_revision_a75f1f5.json`), and the six
+  with the fix (the Shield rebuilt over the ground file the run named;
+  a75f1f5 and 7b6fa63, the records made by the tool at 8a888e8, a clean
+  tree) identical 2/2 (`x11r1125_replay_at_revision_a75f1f5.json`), and the six
   19 Nov msl_dem_hil2 runs identical 6/6
   (`msl_dem_hil2_replay_at_revision_a75f1f5.json`).
 

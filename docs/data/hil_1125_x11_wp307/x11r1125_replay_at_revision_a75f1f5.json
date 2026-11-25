@@ -8,7 +8,7 @@
   "system": "Windows",
   "platform": "Windows-10"
  },
- "tool_revision": "7c62c7ad8250-dirty",
+ "tool_revision": "8a888e8107d4",
  "compared": {
   "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
   "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
@@ -54,8 +54,8 @@
  "worktrees": [
   {
    "sha": "21c2771700015cabdb9ee554149f006a37fe1a5b",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\replay_at_rev_qmsjczsf\\21c277170001",
-   "created_s": 0.88,
+   "path": "<tmp>/replay_at_rev_a1rh9udt\\21c277170001",
+   "created_s": 0.86,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
@@ -64,5 +64,5 @@
   }
  ],
  "worktrees_left_behind": [],
- "per_run_file": "x11.per_run.jsonl.gz"
+ "per_run_file": "x11r1125_replay_at_revision_a75f1f5.per_run.jsonl.gz"
 }

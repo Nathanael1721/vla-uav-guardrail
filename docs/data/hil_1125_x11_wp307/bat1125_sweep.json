@@ -61,7 +61,7 @@
         "wsl_repo": null,
         "mavros_host": "10.42.0.3",
         "store": "F:/vla_drone_offload/hil_runs",
-        "bundles_dir": "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/bundles",
+        "bundles_dir": "<main checkout>/bundles",
         "sitl_settle_s": 20.0,
         "sitl_ready_timeout_s": 120.0,
         "mission_margin_s": 420.0,

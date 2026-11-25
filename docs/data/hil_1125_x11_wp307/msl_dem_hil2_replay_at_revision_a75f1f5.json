@@ -1,14 +1,14 @@
 {
  "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
- "command": "python tools/replay_at_revision.py --root D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/demo/out/hil_smoke --only msl_dem_hil2_ --jobs 2 --out <out>",
- "seconds": 11.2,
+ "command": "python tools/replay_at_revision.py --root <main checkout>/demo/out/hil_smoke --only msl_dem_hil2_ --jobs 2 --out <out>",
+ "seconds": 5.5,
  "replayed_on": {
   "python": "3.10.20",
   "machine": "AMD64",
   "system": "Windows",
   "platform": "Windows-10"
  },
- "tool_revision": "7c62c7ad8250-dirty",
+ "tool_revision": "8a888e8107d4",
  "compared": {
   "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
   "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
@@ -54,15 +54,15 @@
  "worktrees": [
   {
    "sha": "e56d3e713c8e33954e07459c5f4eb5097697a587",
-   "path": "C:\\Users\\natha\\AppData\\Local\\Temp\\replay_at_rev_04z0oefp\\e56d3e713c8e",
-   "created_s": 3.51,
+   "path": "<tmp>/replay_at_rev_rsdxpffo\\e56d3e713c8e",
+   "created_s": 1.46,
    "removed": true,
    "git_remove_rc": 0,
    "reparse_points_unlinked": 0,
    "episodes": 6,
-   "seconds": 10.9
+   "seconds": 5.2
   }
  ],
  "worktrees_left_behind": [],
- "per_run_file": "hil2.per_run.jsonl.gz"
+ "per_run_file": "msl_dem_hil2_replay_at_revision_a75f1f5.per_run.jsonl.gz"
 }
