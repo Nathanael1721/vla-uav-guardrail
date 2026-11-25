@@ -29,7 +29,7 @@ shipped change and recorded as one.
 
 #### Measured (CPU)
 - `tools/replay_from_bag.py` over ntFIN5 (docs/data/replay_from_bag_ntFIN5/): manifest_in_bag and trajectory identical 654/654; ticks and KPI identical 630/654, the 24 others the gps-noise-beyond-margin runs, one inferred "who flew it" tick each, as on sk1122a.
-- docs/data/wp1_roundtrip.json regenerated at 21c2771 (was 4edd5d1): 33 policies (distance_envelope_sitl added), round trip, tamper and both hashes 33/33, negative corpus 39/39, no other hash changed; cold start p95 483 ms.
+- tools/wp1_roundtrip_kpi.py re-run at 21c2771 -> docs/data/wp1_roundtrip_21c2771.json (docs/data/wp1_roundtrip.json keeps the 6 Nov 4edd5d1 record that the October deck data and the public site cite): 33 policies (distance_envelope_sitl added), round trip, tamper and both hashes 33/33, negative corpus 39/39, no other hash changed; cold start p95 483 ms.
 
 #### Changed
 - **Flight bundles rebuilt with their changelog diffs** (X-10 item 2; docs/data/x10_bundle_rebuild_20261125/): on the desktop and on the AGX Orin, re-signed with the same lab-dev keys, each keeping its issued_at and policy_hash; `--check` 12/12 OK on both hosts. The delivered copies are kept (F:/vla_drone_offload/bundles_pre_x10b_20261125/, ~/bundles_pre_x10b_20261125/ on the AGX). Signing under a CA still waits for the PI.

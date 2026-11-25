@@ -1,9 +1,7 @@
 {
- "generated": "2026-11-25T13:08:08Z",
+ "generated": "2026-11-06T14:25:21Z",
  "command": "python tools/wp1_roundtrip_kpi.py",
  "command_args": [
-  "--out",
-  "<elsewhere>/wp1_roundtrip.json",
   "--runs-root",
   "<main checkout>",
   "--reference-repo",
@@ -12,41 +10,41 @@
  "command_env": {
   "VLAGUARD_SIGNING_KEY": "<main checkout>/policies/keys/lab-dev-ed25519.pem"
  },
- "code_revision": "21c277170001",
+ "code_revision": "4edd5d137573",
  "python": "3.10.20",
  "cryptography_available": true,
  "signature_verifier": "cryptography",
  "hash_scheme": "sha256-canonical-v3",
  "kpi": {
-  "round_trip": "33/33",
-  "tamper_refusal": "33/33",
+  "round_trip": "32/32",
+  "tamper_refusal": "32/32",
   "negative_refusal": "39/39",
   "negative_accepted": [],
-  "grant_form_round_trip": "33/33",
+  "grant_form_round_trip": "32/32",
   "reference_documents_loaded": "3/3",
   "reference_bundles_loaded": "1/1",
   "reference_hash_agrees": "3/3",
   "reference_loader_reads_ours": "3/3",
-  "both_hashes_recorded_and_verified": "33/33",
-  "reference_hash_representable": "0/33",
-  "forged_reference_hash_refused": "33/33",
+  "both_hashes_recorded_and_verified": "32/32",
+  "reference_hash_representable": "0/32",
+  "forged_reference_hash_refused": "32/32",
   "reference_form_source_verified": "3/3",
-  "cold_start_50_rules": "p95 483 ms <= 1000 ms (fresh process, imports + verify + parse + IR + Shield (worst bundle), the certified signer's chain check included); whole process incl. interpreter start p95 594 ms; certified signer, chain checked: p95 483 ms",
+  "cold_start_50_rules": "p95 581 ms <= 1000 ms (fresh process, imports + verify + parse + IR + Shield (worst bundle)); whole process incl. interpreter start p95 692 ms",
   "cold_start_within_budget": true
  },
  "null_record_ignored": {
-  "forged_reference_hash_refused": "0/33",
+  "forged_reference_hash_refused": "0/32",
   "why": "10451bc wrote no `hashes` record and read none; the forged reference hash is invisible to such a reader"
  },
  "null_accept_everything": {
-  "round_trip": "33/33",
-  "tamper_refusal": "0/33",
+  "round_trip": "32/32",
+  "tamper_refusal": "0/32",
   "negative_refusal": "0/39",
   "why": "a reader that verifies nothing passes every round trip; only the refusal columns separate it from a real one"
  },
  "null_2026_10_05": {
   "negative_refusal": "20/35 (14/25 on the original 25 cases)",
-  "grant_form_round_trip": "0/33",
+  "grant_form_round_trip": "0/32",
   "reference_documents_loaded": "0/3",
   "reference_bundles_loaded": "0/1",
   "reference_hash_agrees": "0/3",
@@ -56,21 +54,15 @@
   "cold_start_50_rules": "not measured (Shield construction alone: 2.7 ms)"
  },
  "round_trip": {
-  "n": 33,
-  "passed": 33,
+  "n": 32,
+  "passed": 32,
   "rate": 1.0,
   "signatures": {
-   "verified": 33
-  },
-  "signed_by": [
-   "lab-dev:ed25519:6ec75b535ef5c533"
-  ],
-  "chains": {
-   "none": 33
+   "verified": 32
   },
   "tamper_refusal": {
-   "run": 33,
-   "refused": 33,
+   "run": 32,
+   "refused": 32,
    "rate": 1.0
   },
   "rows": [
@@ -84,8 +76,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "corridor_survey.tampered.tar.gz: policy_hash mismatch"
@@ -100,27 +90,9 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "demo_policy.tampered.tar.gz: policy_hash mismatch"
-   },
-   {
-    "file": "distance_envelope_sitl.yaml",
-    "policy_id": "distance-envelope-sitl",
-    "version": "0.1.0",
-    "policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17",
-    "same_hash": true,
-    "same_canonical_ir": true,
-    "same_model_dump": true,
-    "same_rule_count": true,
-    "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
-    "ok": true,
-    "tamper": "refused",
-    "tamper_reason": "distance_envelope_sitl.tampered.tar.gz: policy_hash mismatch"
    },
    {
     "file": "edge_patrol.yaml",
@@ -132,8 +104,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "edge_patrol.tampered.tar.gz: policy_hash mismatch"
@@ -148,8 +118,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car.tampered.tar.gz: policy_hash mismatch"
@@ -164,8 +132,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_citylife.tampered.tar.gz: policy_hash mismatch"
@@ -180,8 +146,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_citylife_nfz.tampered.tar.gz: policy_hash mismatch"
@@ -196,8 +160,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_citylife_nfz3.tampered.tar.gz: policy_hash mismatch"
@@ -212,8 +174,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_citylife_nfz3b.tampered.tar.gz: policy_hash mismatch"
@@ -228,8 +188,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_gap.tampered.tar.gz: policy_hash mismatch"
@@ -244,8 +202,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_car_nfz.tampered.tar.gz: policy_hash mismatch"
@@ -260,8 +216,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "follow_pedestrian.tampered.tar.gz: policy_hash mismatch"
@@ -276,8 +230,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "gui_high_test.tampered.tar.gz: policy_hash mismatch"
@@ -292,8 +244,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "gui_policy.tampered.tar.gz: policy_hash mismatch"
@@ -308,8 +258,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hard_11.tampered.tar.gz: policy_hash mismatch"
@@ -324,8 +272,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hard_21.tampered.tar.gz: policy_hash mismatch"
@@ -340,8 +286,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hard_3.tampered.tar.gz: policy_hash mismatch"
@@ -356,8 +300,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hp_14.tampered.tar.gz: policy_hash mismatch"
@@ -372,8 +314,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hp_30.tampered.tar.gz: policy_hash mismatch"
@@ -388,8 +328,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hp_42.tampered.tar.gz: policy_hash mismatch"
@@ -404,8 +342,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hp_5.tampered.tar.gz: policy_hash mismatch"
@@ -420,8 +356,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "hp_8.tampered.tar.gz: policy_hash mismatch"
@@ -436,8 +370,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "orbit_building.tampered.tar.gz: policy_hash mismatch"
@@ -452,8 +384,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "poly_test.tampered.tar.gz: policy_hash mismatch"
@@ -468,8 +398,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "random_scenario.tampered.tar.gz: policy_hash mismatch"
@@ -484,8 +412,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "rth_poly.tampered.tar.gz: policy_hash mismatch"
@@ -500,8 +426,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "semantic_conflict.tampered.tar.gz: policy_hash mismatch"
@@ -516,8 +440,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "sim_demo_policy.tampered.tar.gz: policy_hash mismatch"
@@ -532,8 +454,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "sitl_pedestrian.tampered.tar.gz: policy_hash mismatch"
@@ -548,8 +468,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "urban_clearance.tampered.tar.gz: policy_hash mismatch"
@@ -564,8 +482,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "urban_demo_policy.tampered.tar.gz: policy_hash mismatch"
@@ -580,8 +496,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "vla_goto_citylife.tampered.tar.gz: policy_hash mismatch"
@@ -596,8 +510,6 @@
     "same_model_dump": true,
     "same_rule_count": true,
     "signature": "verified",
-    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
-    "chain": "none",
     "ok": true,
     "tamper": "refused",
     "tamper_reason": "wgs84_taipei.tampered.tar.gz: policy_hash mismatch"
@@ -964,8 +876,8 @@
   ]
  },
  "grant_form": {
-  "n": 33,
-  "passed": 33,
+  "n": 32,
+  "passed": 32,
   "rows": [
    {
     "file": "corridor_survey.yaml",
@@ -986,16 +898,6 @@
     "extensions": [
      "origin",
      "nfz-square.margin_m"
-    ],
-    "ok": true
-   },
-   {
-    "file": "distance_envelope_sitl.yaml",
-    "anchored_at_doc_anchor": false,
-    "same_document": true,
-    "same_rules": true,
-    "extensions": [
-     "origin"
     ],
     "ok": true
    },
@@ -1390,17 +1292,17 @@
   ]
  },
  "both_hashes": {
-  "n": 33,
-  "passed": 33,
+  "n": 32,
+  "passed": 32,
   "representable": 0,
   "not_representable_because": {
-   "a rule type the reference lacks": 33,
+   "a rule type the reference lacks": 32,
    "a schedule (valid_time)": 2,
    "margin ring": 27,
-   "origin": 33
+   "origin": 32
   },
-  "forged_refused": 33,
-  "forged_run": 33,
+  "forged_refused": 32,
+  "forged_run": 32,
   "null_record_ignored_refused": 0,
   "rows": [
    {
@@ -1429,20 +1331,6 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "origin"
-    ],
-    "ok": true,
-    "forged_reference_hash": "refused"
-   },
-   {
-    "file": "distance_envelope_sitl.yaml",
-    "policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17",
-    "policy_hash_unchanged": true,
-    "both_recorded": true,
-    "both_verified": true,
-    "reference_hash": null,
-    "reference_problems": [
-     "a rule type the reference lacks",
      "origin"
     ],
     "ok": true,
@@ -2008,68 +1896,68 @@
     },
     "scheduled_rules": 0,
     "zones": 48,
-    "geographic": true,
-    "policy_hash": "sha256:d3d36d2b1d86f969a4932181b138f8f03215c900356adc5a4e81092478bd2a17",
-    "bundle_bytes": 3912
+    "geographic": false,
+    "policy_hash": "sha256:0f214fcac9d4c3ea49ae5fcfcbc3e68c64aad054a9b94f737003c26302783805",
+    "bundle_bytes": 3757
    }
   },
   "in_process": {
    "typical": {
     "load_for_flight": {
      "n": 100,
-     "median_ms": 26.748,
-     "p95_ms": 33.621,
-     "min_ms": 25.388,
-     "max_ms": 51.471
+     "median_ms": 51.078,
+     "p95_ms": 65.492,
+     "min_ms": 46.472,
+     "max_ms": 83.839
     },
     "shield": {
      "n": 100,
-     "median_ms": 5.562,
-     "p95_ms": 7.306,
-     "min_ms": 5.207,
-     "max_ms": 10.194
+     "median_ms": 11.924,
+     "p95_ms": 13.543,
+     "min_ms": 10.22,
+     "max_ms": 21.198
     },
     "total": {
      "n": 100,
-     "median_ms": 32.451,
-     "p95_ms": 40.282,
-     "min_ms": 30.83,
-     "max_ms": 57.346
+     "median_ms": 62.786,
+     "p95_ms": 79.706,
+     "min_ms": 56.692,
+     "max_ms": 104.082
     },
-    "first_call_ms": 57.346,
+    "first_call_ms": 72.633,
     "stages_ms_median": {
-     "tar_read": 0.522,
-     "ir_parse_and_validate": 3.915,
-     "signature_verify": 0.298
+     "tar_read": 0.975,
+     "ir_parse_and_validate": 8.127,
+     "signature_verify": 0.561
     }
    },
    "grid": {
     "load_for_flight": {
      "n": 100,
-     "median_ms": 11.1,
-     "p95_ms": 19.342,
-     "min_ms": 10.526,
-     "max_ms": 28.575
+     "median_ms": 18.432,
+     "p95_ms": 20.881,
+     "min_ms": 16.656,
+     "max_ms": 37.466
     },
     "shield": {
      "n": 100,
-     "median_ms": 4.197,
-     "p95_ms": 7.248,
-     "min_ms": 3.91,
-     "max_ms": 9.714
+     "median_ms": 8.841,
+     "p95_ms": 10.145,
+     "min_ms": 7.963,
+     "max_ms": 11.478
     },
     "total": {
      "n": 100,
-     "median_ms": 15.297,
-     "p95_ms": 25.668,
-     "min_ms": 14.458,
-     "max_ms": 35.878
+     "median_ms": 27.379,
+     "p95_ms": 31.449,
+     "min_ms": 25.055,
+     "max_ms": 47.046
     },
-    "first_call_ms": 26.882,
+    "first_call_ms": 34.135,
     "stages_ms_median": {
-     "tar_read": 0.383,
-     "ir_parse_and_validate": 2.815,
-     "signature_verify": 0.27
+     "tar_read": 0.751,
+     "ir_parse_and_validate": 5.118,
+     "signature_verify": 0.517
     }
    }
   },
@@ -2077,20 +1965,20 @@
    "typical": {
     "total": {
      "n": 20,
-     "median_ms": 34.88,
-     "p95_ms": 41.651,
-     "min_ms": 33.444,
-     "max_ms": 41.879
+     "median_ms": 68.202,
+     "p95_ms": 75.546,
+     "min_ms": 64.689,
+     "max_ms": 76.502
     },
     "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
    },
    "grid": {
     "total": {
      "n": 20,
-     "median_ms": 23.659,
-     "p95_ms": 35.281,
-     "min_ms": 17.839,
-     "max_ms": 41.571
+     "median_ms": 31.852,
+     "p95_ms": 32.669,
+     "min_ms": 30.669,
+     "max_ms": 32.929
     },
     "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
    }
@@ -2099,10 +1987,10 @@
    "typical": {
     "yaml_to_signed_bundle": {
      "n": 20,
-     "median_ms": 92.075,
-     "p95_ms": 114.14,
-     "min_ms": 86.987,
-     "max_ms": 128.659
+     "median_ms": 169.165,
+     "p95_ms": 184.98,
+     "min_ms": 163.618,
+     "max_ms": 190.41
     },
     "same_policy_hash": true
    }
@@ -2113,52 +2001,52 @@
     "verifier": "cryptography",
     "import": {
      "n": 20,
-     "median_ms": 411.44,
-     "p95_ms": 419.385,
-     "min_ms": 395.708,
-     "max_ms": 419.949
+     "median_ms": 445.685,
+     "p95_ms": 486.503,
+     "min_ms": 405.822,
+     "max_ms": 542.713
     },
     "load_for_flight": {
      "n": 20,
-     "median_ms": 35.698,
-     "p95_ms": 36.935,
-     "min_ms": 34.774,
-     "max_ms": 40.055
+     "median_ms": 38.217,
+     "p95_ms": 42.622,
+     "min_ms": 36.107,
+     "max_ms": 43.348
     },
     "shield": {
      "n": 20,
-     "median_ms": 5.761,
-     "p95_ms": 6.32,
-     "min_ms": 5.45,
-     "max_ms": 8.959
+     "median_ms": 6.626,
+     "p95_ms": 7.152,
+     "min_ms": 5.953,
+     "max_ms": 7.86
     },
     "path_first_call": {
      "n": 20,
-     "median_ms": 41.436,
-     "p95_ms": 44.971,
-     "min_ms": 40.224,
-     "max_ms": 45.92
+     "median_ms": 44.843,
+     "p95_ms": 49.73,
+     "min_ms": 42.269,
+     "max_ms": 50.175
     },
     "ingest_with_imports": {
      "n": 20,
-     "median_ms": 453.3,
-     "p95_ms": 462.061,
-     "min_ms": 436.908,
-     "max_ms": 462.163
+     "median_ms": 489.575,
+     "p95_ms": 534.715,
+     "min_ms": 448.091,
+     "max_ms": 590.115
     },
     "whole_process_wall": {
      "n": 20,
-     "median_ms": 559.368,
-     "p95_ms": 578.52,
-     "min_ms": 539.155,
-     "max_ms": 580.382
+     "median_ms": 605.981,
+     "p95_ms": 662.673,
+     "min_ms": 563.037,
+     "max_ms": 744.967
     },
     "second_call_same_process": {
      "n": 20,
-     "median_ms": 32.547,
-     "p95_ms": 33.228,
-     "min_ms": 31.662,
-     "max_ms": 33.564
+     "median_ms": 36.174,
+     "p95_ms": 38.444,
+     "min_ms": 34.819,
+     "max_ms": 39.754
     }
    },
    "grid": {
@@ -2166,100 +2054,52 @@
     "verifier": "cryptography",
     "import": {
      "n": 20,
-     "median_ms": 410.706,
-     "p95_ms": 426.54,
-     "min_ms": 397.557,
-     "max_ms": 491.327
+     "median_ms": 445.28,
+     "p95_ms": 562.472,
+     "min_ms": 415.14,
+     "max_ms": 594.449
     },
     "load_for_flight": {
      "n": 20,
-     "median_ms": 16.297,
-     "p95_ms": 16.863,
-     "min_ms": 15.625,
-     "max_ms": 17.238
+     "median_ms": 13.77,
+     "p95_ms": 15.434,
+     "min_ms": 12.675,
+     "max_ms": 16.035
     },
     "shield": {
      "n": 20,
-     "median_ms": 4.5,
-     "p95_ms": 4.671,
-     "min_ms": 4.323,
-     "max_ms": 4.754
+     "median_ms": 4.662,
+     "p95_ms": 4.962,
+     "min_ms": 4.404,
+     "max_ms": 4.964
     },
     "path_first_call": {
      "n": 20,
-     "median_ms": 20.861,
-     "p95_ms": 21.32,
-     "min_ms": 19.949,
-     "max_ms": 21.843
+     "median_ms": 18.375,
+     "p95_ms": 20.396,
+     "min_ms": 17.164,
+     "max_ms": 20.999
     },
     "ingest_with_imports": {
      "n": 20,
-     "median_ms": 431.151,
-     "p95_ms": 447.491,
-     "min_ms": 418.414,
-     "max_ms": 511.646
+     "median_ms": 463.445,
+     "p95_ms": 581.499,
+     "min_ms": 432.304,
+     "max_ms": 615.448
     },
     "whole_process_wall": {
      "n": 20,
-     "median_ms": 521.39,
-     "p95_ms": 550.194,
-     "min_ms": 504.328,
-     "max_ms": 600.363
+     "median_ms": 559.113,
+     "p95_ms": 691.698,
+     "min_ms": 524.209,
+     "max_ms": 725.594
     },
     "second_call_same_process": {
      "n": 20,
-     "median_ms": 15.48,
-     "p95_ms": 16.076,
-     "min_ms": 15.217,
-     "max_ms": 16.666
-    }
-   }
-  },
-  "certified_signer": {
-   "what": "the typical bundle signed by the same fixture key, certified by a throw-away CA made for the timing; load_for_flight chains its leaf (X.509 parse, the CA's signature, the record match) on top of the Ed25519 check",
-   "signed_by": "wp1-cold-start-ca:7aa2395a92e3de4b:ed25519:88cc41d5fedf977b",
-   "chain": "verified",
-   "verifier": "Ed25519 signature by 'wp1-cold-start-ca:7aa2395a92e3de4b:ed25519:88cc41d5fedf977b' verified (cryptography); its certificate chains to authority 'wp1-cold-start-ca' (CA sha256 7aa2395a92e3de4b...)",
-   "runs_failing_a_check": 0,
-   "in_process": {
-    "total": {
-     "n": 100,
-     "median_ms": 32.981,
-     "p95_ms": 42.322,
-     "min_ms": 30.875,
-     "max_ms": 56.778
-    }
-   },
-   "fresh_process": {
-    "runs": 20,
-    "runs_failing_a_check": 0,
-    "import": {
-     "n": 20,
-     "median_ms": 406.146,
-     "p95_ms": 419.638,
-     "min_ms": 395.964,
-     "max_ms": 422.186
-    },
-    "path_first_call": {
-     "n": 20,
-     "median_ms": 65.276,
-     "p95_ms": 67.573,
-     "min_ms": 63.224,
-     "max_ms": 70.724
-    },
-    "ingest_with_imports": {
-     "n": 20,
-     "median_ms": 470.433,
-     "p95_ms": 483.463,
-     "min_ms": 461.824,
-     "max_ms": 487.227
-    },
-    "whole_process_wall": {
-     "n": 20,
-     "median_ms": 579.737,
-     "p95_ms": 593.742,
-     "min_ms": 569.17,
-     "max_ms": 595.52
+     "median_ms": 15.443,
+     "p95_ms": 16.175,
+     "min_ms": 14.032,
+     "max_ms": 16.258
     }
    }
   },
@@ -2285,10 +2125,9 @@
    "bad_signature": "refused"
   },
   "verdict": {
-   "reading": "fresh process, imports + verify + parse + IR + Shield (worst bundle), the certified signer's chain check included",
-   "p95_ms": 483.463,
-   "whole_process_wall_p95_ms": 593.742,
-   "certified_signer_p95_ms": 483.463,
+   "reading": "fresh process, imports + verify + parse + IR + Shield (worst bundle)",
+   "p95_ms": 581.499,
+   "whole_process_wall_p95_ms": 691.698,
    "budget_ms": 1000.0,
    "checks_hold": true,
    "within_budget": true
@@ -2307,10 +2146,10 @@
  },
  "schema_validation": {
   "run": true,
-  "n": 33,
-  "passed": 33,
-  "authored": "33/33",
-  "canonical_ir": "33/33",
+  "n": 32,
+  "passed": 32,
+  "authored": "32/32",
+  "canonical_ir": "32/32",
   "grant_documents": "3/3",
   "negative_refused_by_schema": "22/39",
   "null_401305a_schema": {
@@ -2320,15 +2159,15 @@
   "failures": []
  },
  "stored_runs": {
-  "n": 479,
+  "n": 404,
   "matched_before": 0,
-  "matched_after": 479,
+  "matched_after": 404,
   "after_by_form": {
    "legacy16-exclude-none": 42,
-   "sha256-canonical-v3": 98,
+   "sha256-canonical-v3": 32,
    "sha256-canonical-v3/ir-2.x": 283,
    "legacy16-include-defaults": 34,
-   "run-recorded generation": 22
+   "run-recorded generation": 13
   },
   "unmatched_after": [],
   "set_aside": [
