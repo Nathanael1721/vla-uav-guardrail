@@ -1,0 +1,52 @@
+{
+  "schema": "vlaguard-stack-revisions/1",
+  "run_manifest_schema": 2,
+  "code_revision": "21c277170001",
+  "topology": "hil",
+  "hosts": {
+    "companion": {
+      "hostname": "localhost.localdomain",
+      "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+      "host_arch": "aarch64",
+      "role": "companion",
+      "role_basis": "device tree model 'NVIDIA Jetson AGX Orin Developer Kit'",
+      "code_revision": "21c277170001",
+      "dirty": false,
+      "git_describe": "21c277170001",
+      "source": "git in this host's own checkout (guardrail.manifest.code_revision, git describe)"
+    },
+    "desktop": {
+      "hostname": "AIoT-Nathan",
+      "device_model": null,
+      "host_arch": "AMD64",
+      "role": "desktop",
+      "role_basis": "no Jetson device tree model and no L4T release in the host evidence",
+      "code_revision": "21c277170001",
+      "dirty": false,
+      "git_describe": "v0.7.0",
+      "source": "git in this host's own checkout (guardrail.manifest.code_revision, git describe)"
+    }
+  },
+  "autopilot": {
+    "firmware": "ArduCopter V4.5.7 (2a3dc4b7)",
+    "version": "4.5.7",
+    "git_hash": "2a3dc4b7",
+    "flight_sw_version": "040507ff",
+    "kind": "sitl",
+    "source": "AUTOPILOT_VERSION via /mavros/vehicle_info_get"
+  },
+  "simulator": {
+    "name": "ArduPilot SITL",
+    "build": "ArduCopter V4.5.7 (2a3dc4b7)",
+    "git_hash": "2a3dc4b7",
+    "build_source": "the autopilot's own report (the SITL binary is the autopilot build)",
+    "physics_model": "unresolved",
+    "physics_model_why": "SITL's --model is not reported over MAVLink"
+  },
+  "required_hosts": [
+    "companion",
+    "desktop"
+  ],
+  "single_sha": true,
+  "problems": []
+}

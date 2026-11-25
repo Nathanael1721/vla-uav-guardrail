@@ -1,0 +1,207 @@
+{
+ "schema": "sitl-stress-record/1",
+ "tool": "sitl/sitl_stressors.py",
+ "run_id": "bat1125_001_failsafe-low-battery",
+ "run_nonce": "03697837d492462ba33bdc2182d318ce",
+ "link": "tcp:127.0.0.1:5760",
+ "pid": 866,
+ "sched": {
+  "sysid": 246,
+  "compid": 25
+ },
+ "started_wall": "2026-11-25T21:30:03+0800",
+ "state": "done",
+ "error": null,
+ "autopilot": {
+  "sysid": 1,
+  "compid": 1,
+  "mav_type": 2,
+  "mavlink_version": 3
+ },
+ "boot": {
+  "ok": true,
+  "params": [
+   {
+    "param": "SIM_BATT_VOLTAGE",
+    "set": 12.6,
+    "read_back": 12.600000381469727,
+    "applied": true,
+    "echo": 12.600000381469727,
+    "why": "a full pack until the drop (the quad model's maxVoltage)"
+   }
+  ],
+  "wall": "2026-11-25T21:30:05+0800"
+ },
+ "markers": [
+  {
+   "t": 0.0,
+   "rx_rel_t0": 0.0,
+   "src": [
+    1,
+    191
+   ],
+   "wall": 1795613463.1924083
+  },
+  {
+   "t": 1.061,
+   "rx_rel_t0": 1.0614,
+   "src": [
+    1,
+    191
+   ],
+   "wall": 1795613464.25378
+  },
+  {
+   "t": 2.063,
+   "rx_rel_t0": 2.0642,
+   "src": [
+    1,
+    191
+   ],
+   "wall": 1795613465.2566457
+  },
+  {
+   "t": 3.061,
+   "rx_rel_t0": 3.0615,
+   "src": [
+    1,
+    191
+   ],
+   "wall": 1795613466.2539067
+  },
+  {
+   "t": 4.062,
+   "rx_rel_t0": 4.0644,
+   "src": [
+    1,
+    191
+   ],
+   "wall": 1795613467.2567682
+  }
+ ],
+ "t0": {
+  "markers": 5,
+  "wall": 1795613463.192396,
+  "method": "min(receipt - t) over the node's markers"
+ },
+ "schedule": [
+  {
+   "t": 13.0,
+   "param": "SIM_BATT_VOLTAGE",
+   "value": 10.0,
+   "field": "battery_critical_at_s",
+   "applied": true,
+   "set": 10.0,
+   "read_back": 10.0,
+   "t_sent": 13.0002,
+   "t_echo": 13.0046,
+   "late_s": 0.0002
+  }
+ ],
+ "restore": {
+  "done": true,
+  "params": [
+   {
+    "param": "BATT_LOW_VOLT",
+    "restore_to": 10.5,
+    "restored": true,
+    "set": 10.5,
+    "read_back": 10.5,
+    "applied": true
+   },
+   {
+    "param": "BATT_CRT_VOLT",
+    "restore_to": 0.0,
+    "restored": true,
+    "set": 0.0,
+    "read_back": 0.0,
+    "applied": true
+   },
+   {
+    "param": "BATT_LOW_TIMER",
+    "restore_to": 10.0,
+    "restored": true,
+    "set": 10.0,
+    "read_back": 10.0,
+    "applied": true
+   },
+   {
+    "param": "BATT_FS_LOW_ACT",
+    "restore_to": 0.0,
+    "restored": true,
+    "set": 0.0,
+    "read_back": 0.0,
+    "applied": true
+   },
+   {
+    "param": "BATT_FS_CRT_ACT",
+    "restore_to": 0.0,
+    "restored": true,
+    "set": 0.0,
+    "read_back": 0.0,
+    "applied": true
+   },
+   {
+    "param": "SIM_BATT_VOLTAGE",
+    "restore_to": 12.600000381469727,
+    "restored": true,
+    "set": 12.600000381469727,
+    "read_back": 12.600000381469727,
+    "applied": true
+   }
+  ],
+  "wall": "2026-11-25T21:31:53+0800"
+ },
+ "firmware": {
+  "ok": true,
+  "params": [
+   {
+    "param": "BATT_LOW_VOLT",
+    "set": 10.5,
+    "read_back": 10.5,
+    "applied": true,
+    "echo": 10.5,
+    "why": "above the critical voltage, as ArduPilot's arming check requires"
+   },
+   {
+    "param": "BATT_CRT_VOLT",
+    "set": 10.1,
+    "read_back": 10.100000381469727,
+    "applied": true,
+    "echo": 10.100000381469727,
+    "why": "the copter default 0 never declares CRITICAL"
+   },
+   {
+    "param": "BATT_LOW_TIMER",
+    "set": 1.0,
+    "read_back": 1.0,
+    "applied": true,
+    "echo": 1.0,
+    "why": "CRITICAL 1 s after the voltage falls below BATT_CRT_VOLT (the default 10 s; 0 disables it)"
+   },
+   {
+    "param": "BATT_FS_LOW_ACT",
+    "set": 0.0,
+    "read_back": 0.0,
+    "applied": true,
+    "echo": 0.0,
+    "why": "no action of the autopilot's own at LOW"
+   },
+   {
+    "param": "BATT_FS_CRT_ACT",
+    "set": 0.0,
+    "read_back": 0.0,
+    "applied": true,
+    "echo": 0.0,
+    "why": "no action of the autopilot's own at CRITICAL: the FSM's G6 lands the return"
+   }
+  ],
+  "guard": {
+   "link": "tcp:127.0.0.1:5760",
+   "probe": "SIM_BATT_VOLTAGE",
+   "probe_value": 12.600000381469727,
+   "refused": null
+  }
+ },
+ "ended_wall": "2026-11-25T21:31:16+0800"
+}

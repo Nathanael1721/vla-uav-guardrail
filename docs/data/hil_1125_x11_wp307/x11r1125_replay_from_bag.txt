@@ -1,0 +1,11 @@
+[1/2] identical      x11r1125_001_msl-dem-zone-ridge
+[2/2] identical      x11r1125_002_msl-dem-zone-ridge
+
+2 run(s): 2 identical
+  scope: 2 run(s), not every run of a campaign: a trial, not a campaign's count
+  ticks: 2 identical
+  trajectory: 2 identical
+  kpi: 2 identical
+  manifest_in_the_bag: 2 absent
+  manifest_in_bag: 2 identical
+  written to <rigplan>/post_x11r1125/bag

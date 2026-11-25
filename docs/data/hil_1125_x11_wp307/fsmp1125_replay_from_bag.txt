@@ -1,0 +1,10 @@
+[1/1] identical      fsmp1125_001_failsafe-rtl-from-hold
+
+1 run(s): 1 identical
+  scope: 1 run(s), not every run of a campaign: a trial, not a campaign's count
+  ticks: 1 identical
+  trajectory: 1 identical
+  kpi: 1 identical
+  manifest_in_the_bag: 1 absent
+  manifest_in_bag: 1 identical
+  written to <rigplan>/post_fsmp1125/bag

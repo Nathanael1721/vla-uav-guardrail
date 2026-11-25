@@ -1,0 +1,248 @@
+{
+  "kpi_version": "1.0",
+  "ticks": 676,
+  "shield_ticks": 676,
+  "autopilot_ticks": 0,
+  "outcome": "success",
+  "p0_violation_escape_rate": 0.0,
+  "p0_violation_escape_rate_status": "measured",
+  "p0_escapes": 0,
+  "p0_violation_ticks": 145,
+  "p0_ticks_not_measurable": 0,
+  "p0_ticks_blind": null,
+  "collision_contacts": null,
+  "collision_objects": null,
+  "p0_acted_tick_share": 1.0,
+  "failsafe_trigger_correctness": 1.0,
+  "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+  "failsafe_expected_ticks": 145,
+  "failsafe_correct_ticks": 145,
+  "violation_free_ticks": 531,
+  "false_trigger_ticks": 0,
+  "false_trigger_rate": 0.0,
+  "failsafe_permitted_ticks": 0,
+  "repair_count": 145,
+  "repairs_per_episode": 145,
+  "repair_success_rate": 1.0,
+  "repair_success_status": "measured",
+  "repair_attempt_ticks": 145,
+  "repair_success_ticks": 145,
+  "repair_unmeasured_ticks": 0,
+  "repair_outcomes": {
+    "converged": 145,
+    "converged_via_rescue": 0,
+    "converged_over_theta": 0,
+    "braked": 0,
+    "failsafe": 0,
+    "residual_p0": 0,
+    "residual_other": 0,
+    "not_measurable": 0
+  },
+  "repair_not_applied_ticks": 0,
+  "repair_not_applied_autopilot_ticks": 0,
+  "repair_floored_ticks": 0,
+  "repairs_to_standstill": 0,
+  "repairs_converged_while_unsafe": 0,
+  "repair_success_basis": "recheck_and_theta",
+  "repair_theta_unchecked_ticks": 0,
+  "repair_theta_sources": {
+    "fsm_record": 0,
+    "magnitude_m": 145,
+    "action_per_period": 0,
+    "not_governed": 0,
+    "no_magnitude": 0
+  },
+  "repair_theta_horizon_s": null,
+  "repair_theta_m": {
+    "lateral": 2.0,
+    "vertical": 0.5
+  },
+  "failsafe_instrumented": true,
+  "mean_repair_magnitude_mps": 0.4598,
+  "max_repair_magnitude_mps": 0.5876,
+  "mean_yaw_repair_dps": 0.0,
+  "repaired_ticks": 145,
+  "repair_ticks_not_measurable": 0,
+  "repair_magnitude_by_priority": {
+    "P0": {
+      "ticks": 145,
+      "sum_mps": 66.666118,
+      "mean_mps": 0.4598
+    },
+    "P1": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "P2": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "unattributed": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    }
+  },
+  "repair_magnitude_by_operator_class": {
+    "AltitudeClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "LateralProjection": {
+      "ticks": 145,
+      "sum_mps": 66.666118,
+      "mean_mps": 0.4598,
+      "sole_ticks": 145,
+      "sole_sum_mps": 66.666118,
+      "sole_mean_mps": 0.4598
+    },
+    "PathRepair": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "KinematicClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Recovery": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Fallback": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Sanitise": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "SoftRelax": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    }
+  },
+  "repair_magnitude_breakdown_status": "measured",
+  "mean_time_to_safe_s": null,
+  "max_time_to_safe_s": null,
+  "time_to_safe_episodes": 0,
+  "time_to_safe_censored": 0,
+  "time_to_safe_not_measurable": false,
+  "mean_intervention_s": 14.5,
+  "max_intervention_s": 14.5,
+  "intervention_episodes": 1,
+  "intervention_censored": 0,
+  "intervention_not_measurable": false,
+  "mission_success": true,
+  "mission_fail_reasons": [],
+  "unsafe_p0_ticks": 0,
+  "mission_started_unsafe": false,
+  "mission_goal_status": "reached",
+  "violations_by_risk_level": {
+    "P0": 145
+  },
+  "violations_by_type": {
+    "geofence": 145
+  },
+  "kpi_grade": true,
+  "kpi_grade_reasons": [],
+  "manifest": {
+    "code_revision": "21c277170001",
+    "vla_model_hash": "guardrail.vla_stub.GotoPilot@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+    "policy_hash": "sha256:b80ee30f89eaaf99c9354418f3939fd8a11c29c2206875f162332df5fd3f7a35",
+    "random_seed": 1001,
+    "sim_speedup": 1.0,
+    "topology": "hil"
+  },
+  "policy_source": {
+    "kind": "bundle",
+    "path": "bundles/msl-dem-zone-v0.1.0.tar.gz",
+    "loaded_policy_hash": "sha256:b80ee30f89eaaf99c9354418f3939fd8a11c29c2206875f162332df5fd3f7a35",
+    "declared_policy_hash": "sha256:b80ee30f89eaaf99c9354418f3939fd8a11c29c2206875f162332df5fd3f7a35",
+    "hash_form": "sha256-canonical-v3",
+    "hashes": {
+      "sha256-canonical-v3": "sha256:b80ee30f89eaaf99c9354418f3939fd8a11c29c2206875f162332df5fd3f7a35",
+      "reference-policy-dsl-0.1": null
+    },
+    "issued_at": "2026-11-18T18:38:25Z",
+    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+    "signature": "verified",
+    "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+    "chain": "none",
+    "signer_retired_on": null,
+    "require_chain": false,
+    "ground": {
+      "kind": "grid",
+      "x0": -500.93770856975004,
+      "y0": -499.2951783867013,
+      "cell_m": 9.078094152766951,
+      "shape": [
+        111,
+        112
+      ],
+      "min_msl_m": 580.252,
+      "max_msl_m": 605.2609999990382,
+      "reach_m": 20.0,
+      "quantum_m": 0.5,
+      "origin": [
+        -35.363261,
+        149.16523
+      ],
+      "sha256": "5f684a5ab6f945e5ff3bda822ec8c1d1329e809af069cd5f46de2e7e91405aee",
+      "source": "synthetic ridge about CMAC (tools/msl_dem_rail.py ridge), a declared ground: not survey data",
+      "wgs84_dem": {
+        "kind": "wgs84_grid",
+        "path": "experiments/worlds/dem_cmac_wgs84.json",
+        "sha256": "44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0",
+        "lat0": -35.367761,
+        "lon0": 149.15973,
+        "dlat_deg": 0.0001,
+        "dlon_deg": 0.0001,
+        "shape": [
+          91,
+          111
+        ],
+        "spacing_m": [
+          11.131949,
+          9.078094
+        ],
+        "resample_cell_m": 9.078094,
+        "max_slope": 0.284576,
+        "resample_bound_m": 3.653485,
+        "resample_max_err_sampled_m": 0.008263
+      }
+    },
+    "expected_hash": "sha256:b80ee30f89eaaf99c9354418f3939fd8a11c29c2206875f162332df5fd3f7a35",
+    "expected_hash_ok": true
+  },
+  "episode_id": 1795613199678569937
+}
