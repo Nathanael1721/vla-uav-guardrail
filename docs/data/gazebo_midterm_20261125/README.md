@@ -18,10 +18,13 @@ projection is abandoned and the FSM escalates (Brake, Loiter, RTL).
   Pilot: the rails' StubVLA at 6 m/s (it reads no text). The rail's Shield
   node parses the task "fly to the northeast pad at 6 m/s" and the scenario's
   target moves the pad.
-- **Code:** 7525b36 (branch feat/midterm-gazebo-demo, clean worktree), each
-  run's manifest records `7525b362e2d8`.
+- **Code:** 75a6d45 (branch feat/midterm-gazebo-demo, clean worktree), each
+  run's manifest records `75a6d45be758`. The profile sets
+  `rail_signed_bundle: true`, so the sitl rail hands the nodes the YAML's
+  signed bundle (`--bundle bundles/fase3-sim-demo-v0.1.4.tar.gz
+  --expected-hash ...`) instead of `--policy ... --dev-yaml`.
 - **Command:** `python experiments/sweep_scenarios.py --profile gazebo_midterm
-  --backend sitl --out demo/out/gzmidterm/sweep.json` (284.5 s).
+  --backend sitl --out demo/out/gzmidterm/sweep.json` (289.4 s).
 - **Rail:** Gazebo Harmonic gz_sim 8.11.0, iris_runway.sdf, ArduPilot SITL
   JSON, MAVROS 2, ROS 2 Shield node, topology `dev`, sim_speedup 1.0.
   Functional evidence, not KPI-grade (functional_only, the lab's choice of
@@ -31,9 +34,9 @@ projection is abandoned and the FSM escalates (Brake, Loiter, RTL).
 
 | Step | Evidence, all three seeds (1001-1003) |
 |---|---|
-| 1 signed bundle | `bundles/fase3-sim-demo-v0.1.4.tar.gz` (polygon NFZ nfz-square, envelopes alt-band and kin-caps), `--expected-hash` pinned; kpi.json policy_source: "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified" |
+| 1 signed bundle | `bundles/fase3-sim-demo-v0.1.4.tar.gz` (polygon NFZ nfz-square, envelopes alt-band and kin-caps), `--expected-hash` pinned (sweep.json `rail_signed_bundle: true`); kpi.json policy_source: "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified" |
 | 2 task that wants to enter | the pilot's raw command at tick 1 is (5.88, 1.18) m/s world, its 5 s forecast inside nfz-square's margin |
-| 3 interception + lateral projection | tick 1: G1 "nfz-square (hard P0 project_fix) repaired, lat 0.91 m vs theta 2.00 m"; GeofenceSlide on the first 22-23 ticks, slide 0.91 m falling to 0.03 m, none braked; emitted (0.63, -1.10) m/s at tick 1; the pilot then flies past the corner outside the margin to the pad |
+| 3 interception + lateral projection | tick 1: G1 "nfz-square (hard P0 project_fix) repaired, lat 0.91-0.92 m vs theta 2.00 m"; GeofenceSlide on the first 22-23 ticks, slide at most 0.913-0.919 m and falling, none braked; emitted (0.63, -1.10) m/s at tick 1; the pilot then flies past the corner outside the margin to the pad |
 | 4 policy_hash | every audit record and the run manifest: `sha256:b665adba...f358`, the bundle's hash |
 
 Sweep: 3/3 pass, P0 escape 0, outcome success, no fail-safe (labelled none,
@@ -42,10 +45,14 @@ the grant's six names as written. The FSM enters Brake on tick 1 (G1) and the
 repaired pilot action is flown in it for the rest of the mission (kin-caps
 clamps 6 to 4 m/s on every tick).
 
-The same three missions were first flown at 0cd298d from the unsigned YAML
-(`--dev-yaml`, the sitl backend's default): 3/3 pass, slide 0.91-0.92 m. They
-are kept in demo/out/_gzmidterm_unsigned_0cd298d/ and are not the evidence
-for step 1.
+Earlier flights of the same three missions, kept and not overwritten: at
+0cd298d from the unsigned YAML (`--dev-yaml`, the sitl backend's default; 3/3
+pass, slide 0.91-0.92 m; demo/out/_gzmidterm_unsigned_0cd298d/, not the
+evidence for step 1), and at 7525b36 with the scenario naming the bundle
+itself (the same node command; 3/3 pass; demo/out/_gzmidterm_signed_7525b36/).
+That scenario form failed the library's 'a real policy' test on a clean
+checkout (policy bundles are not committed), so the profile option replaced
+it and the missions were flown again at 75a6d45.
 
 ## Files
 
