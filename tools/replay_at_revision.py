@@ -1232,6 +1232,61 @@ def perceived_poses(rows: list[dict], pos: list[tuple], metrics: dict,
             "limits": limits}
 
 
+def _replayed_ground(run: Path, code_root: Path, grec: dict, policy, params) -> dict:
+    """The Shield's ground keywords (`ground`, `up_ref`) of a run that flew over
+    a declared ground (metrics.json `ground`), rebuilt from the file it named.
+    Refused when the file is missing, hashes to another sha256, or does not
+    rebuild the grid the run recorded."""
+    import hashlib
+    if "ground" not in params:
+        raise Refused("this revision's Shield takes no ground, and the run flew over one "
+                      "(metrics.json ground)")
+    try:
+        from guardrail import terrain as T
+    except ImportError:
+        raise Refused("this revision has no guardrail.terrain, and the run flew over a "
+                      "ground (metrics.json ground)") from None
+    rec = grec.get("ground") if isinstance(grec.get("ground"), dict) else {}
+    frec = grec.get("file") if isinstance(grec.get("file"), dict) else None
+    if rec.get("kind") == "flat" and frec is None:
+        ground = T.FlatGround(rec["elevation_msl_m"], rec.get("source") or "metrics.json")
+    else:
+        if not frec or not frec.get("path") or not frec.get("sha256"):
+            raise Refused("the run flew over a ground and metrics.json names no ground file "
+                          "(ground.file path and sha256)")
+        name = Path(str(frec["path"])).name
+        tar = _replay_tar(run)
+        data = _tar_member(tar, "ground/" + name) if tar is not None else None
+        src = f"{tar.name} (ground/{name})" if data is not None else None
+        if data is None:
+            p = code_root / str(frec["path"])
+            if p.is_file():
+                data, src = p.read_bytes(), f"the revision's {frec['path']}"
+        if data is None:
+            raise Refused(f"the ground file {frec['path']} is neither in the replay bundle "
+                          f"nor at this revision")
+        got = hashlib.sha256(data).hexdigest()
+        if got != frec["sha256"]:
+            raise Refused(f"the ground file from {src} hashes to {got}, the run named "
+                          f"{frec['sha256']}")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / name
+            p.write_bytes(data)
+            ground = T.load_ground(p, getattr(policy, "frame_origin", None))
+        if rec.get("sha256"):
+            built = ground.record().get("sha256") if hasattr(ground, "record") else None
+            if built != rec["sha256"]:
+                raise Refused(f"the ground rebuilt from {src} is grid {built}, the run "
+                              f"recorded {rec['sha256']}")
+    kw = {"ground": ground}
+    up_ref = grec.get("up_ref")
+    if up_ref is not None:
+        if "up_ref" not in params:
+            raise Refused("this revision's Shield takes no up_ref, and the run recorded one")
+        kw["up_ref"] = up_ref
+    return kw
+
+
 def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
     import inspect
     from datetime import datetime as _dt
@@ -1421,6 +1476,18 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
         except (ImportError, TypeError, ValueError) as e:
             raise Refused(f"a Shield configuration this replay does not rebuild "
                           f"(metrics.json shield_forecast clear_response {cr!r}: {e})")
+    # The declared ground (X-11, 2026-11-25): a run over a ground (metrics.json
+    # `ground`, the rails record it since 2026-11-18) is rebuilt over the same
+    # ground, or its MSL rules refuse the Shield. The ground file is the one
+    # the run named (`ground.file`: path and sha256): the replay bundle's
+    # `ground/<name>`, else the revision's own copy, refused unless it hashes
+    # to the recorded sha256; it is placed in the frame of the stored policy,
+    # as the rail placed it (terrain.load_ground), and the result must be the
+    # grid the run recorded (`ground.ground` sha256), else Refused.
+    grec = metrics.get("ground") if isinstance(metrics.get("ground"), dict) else None
+    if grec is not None:
+        kw.update(_replayed_ground(run, code_root, grec, policies[gens[0]], params))
+        cfg["ground"] = {"file": grec.get("file"), "up_ref": grec.get("up_ref")}
     pin: list = [None]
     clock = (lambda: pin[0]) if clocks else None
     # The pipe clock, pinned (2026-11-21): each tick's filter is handed the

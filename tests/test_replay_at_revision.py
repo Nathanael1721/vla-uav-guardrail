@@ -38,6 +38,10 @@ What is pinned here:
     class `decision`; shield_pose on some rows only is refused; without
     trajectory.json the rows' 0.1 mm shield_pose is handed on with a limit;
     the node's own stressed run folder replays identical in process;
+  * a run over a declared ground (the node's own run over the ridge DEM,
+    metrics.json `ground`) replays `identical`, the Shield rebuilt over the
+    ground file the run named and the up_ref it recorded; a ground file
+    named by another sha256, or one that rebuilds another grid, is refused;
   * a subject_standoff run with a DECLARED subject that metrics.json records
     replays identical (set_subject as the node set it); with no record of
     the subject's class it is not_replayable;
@@ -1029,6 +1033,48 @@ def test_a_run_named_relative_to_the_callers_directory_is_found():
     assert rc == 0, buf.getvalue()
     s = json.loads(dst.read_text(encoding="utf-8"))
     assert s["verdicts"]["identical"] == 1 and s["verdicts"]["not_replayable"] == 0, s
+
+
+def test_a_run_over_a_declared_dem_replays_identical_over_the_ground_it_named():
+    """X-11 (2026-11-25): the ROS 2 node's own run over the ridge DEM
+    (tests/test_msl_readers.py _flown_run: --ground named by its sha256, an
+    MSL rule in the policy) replays open loop `identical`, the Shield rebuilt
+    over the ground file the run named (the replay bundle's ground/ member)
+    with the up_ref it recorded; before this the Shield was built with no
+    ground and refused the MSL rule (not_replayable). A ground file named by
+    another sha256, or one that rebuilds another grid, is refused."""
+    import test_msl_readers as TMR
+    node, out = TMR._flown_run()
+    _TMP.append(out)
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["ground"]["file"]["path"] == TMR.DEM and m["ground"]["up_ref"] == "terrain"
+    rec = RA._open_loop(out, ROOT)
+    assert rec["verdict"] == "identical", rec.get("first_difference")
+    assert rec["shield"]["ground"] == {"file": m["ground"]["file"], "up_ref": "terrain"}, \
+        rec["shield"]
+    # Another sha256 named for the same file: refused, never replayed.
+    bad = _tmp("dem_sha_")
+    shutil.copytree(out, bad / out.name)
+    run = bad / out.name
+    m2 = json.loads(json.dumps(m))
+    m2["ground"]["file"]["sha256"] = "0" * 64
+    (run / "metrics.json").write_text(json.dumps(m2), encoding="utf-8")
+    try:
+        RA._open_loop(run, ROOT)
+    except RA.Refused as e:
+        assert "hashes to" in str(e) and "0" * 64 in str(e), str(e)
+    else:
+        raise AssertionError("a ground named by another sha256 was replayed")
+    # The right file, but the run recorded another grid: refused.
+    m3 = json.loads(json.dumps(m))
+    m3["ground"]["ground"]["sha256"] = "f" * 64
+    (run / "metrics.json").write_text(json.dumps(m3), encoding="utf-8")
+    try:
+        RA._open_loop(run, ROOT)
+    except RA.Refused as e:
+        assert "the run recorded " + "f" * 64 in str(e), str(e)
+    else:
+        raise AssertionError("a ground that rebuilds another grid was replayed")
 
 
 if __name__ == "__main__":
