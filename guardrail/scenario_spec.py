@@ -1752,6 +1752,13 @@ class Profile(_Strict):
     # and restored by the simulator side). Not on a KPI-bearing profile until
     # a shakedown flight has shown the cell realised on the rig.
     rail_battery: bool = False
+    # The policy the desktop's sitl rail hands its nodes (2026-11-25, ARCH-16;
+    # experiments/sweep_scenarios.py RAIL_SIGNED_BUNDLE): False, every
+    # profile's default, flies a scenario's YAML as `--policy <yaml>
+    # --dev-yaml`; true flies the YAML's SIGNED bundle (bundles/, built by
+    # tools/build_flight_bundles.py), signature-verified by the node and
+    # refused when missing or stale, as the hil rail always does.
+    rail_signed_bundle: bool = False
 
     @model_validator(mode="after")
     def _range(self) -> "Profile":

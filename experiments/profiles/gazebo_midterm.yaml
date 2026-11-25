@@ -21,6 +21,8 @@ grant_sim_speedup: "1.0 on the sitl rail - NOT met headless (measured speedup >>
 grant_kpi_bearing: false
 rail_physics: gazebo
 rail_sim_speedup: 1.0
+# The gate's step 1: the sitl rail flies the YAML's signed bundle, not --dev-yaml.
+rail_signed_bundle: true
 library: experiments/scenarios.yaml
 seeds: [1001, 1002, 1003]
 samples_per_family: 1

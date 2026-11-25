@@ -4878,8 +4878,18 @@ def rail_ground_args(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -
             f"--ground-home-msl={_num(rail_home_msl(spec, policy, defaults, seed))}"]
 
 
+# The desktop rail flies a YAML policy as `--policy <yaml> --dev-yaml` unless
+# the campaign's profile says `rail_signed_bundle: true` (2026-11-25, ARCH-16:
+# the grant's mid-term demo gate loads a SIGNED bundle). Then the sitl rail
+# takes the hil rail's reference: the YAML's signed bundle, refused when
+# guardrail.manifest.flight_bundle_status says it is missing or stale. Set
+# once by main() from the profile and recorded in sweep.json.
+RAIL_SIGNED_BUNDLE = False
+
+
 def rail_policy_args(spec: ScenarioSpec, backend: str = "sitl",
-                     bundles_dir: str | Path | None = None) -> list[str]:
+                     bundles_dir: str | Path | None = None,
+                     signed: bool | None = None) -> list[str]:
     """The policy reference the nodes fly (build_sitl_cmd, "POLICY
     REFERENCES"): a bundle with the hash it must hold; on the desktop's
     rail a YAML policy as `--policy <yaml> --dev-yaml`, on the hil rail -
@@ -4906,14 +4916,16 @@ def rail_policy_args(spec: ScenarioSpec, backend: str = "sitl",
                     f"({type(e).__name__}: {e}), so its hash cannot be pinned for "
                     f"the rail; give the scenario an expected_hash") from e
         return ["--bundle", spec.policy.bundle_path, SITL_EXPECTED_HASH_FLAG, want]
-    if backend != "hil":
+    signed = RAIL_SIGNED_BUNDLE if signed is None else signed
+    if backend != "hil" and not signed:
         return ["--policy", spec.policy.path, SITL_DEV_YAML_FLAG]
     from guardrail.manifest import flight_bundle_status
     yaml_path = ROOT / spec.policy.path
     st = flight_bundle_status(yaml_path, bundles_dir=bundles_dir)
     if st["matches"] is not True:
         raise UnsupportedScenario(
-            f"the signed bundle of {spec.policy.path} is not usable for a KPI run "
+            f"the signed bundle of {spec.policy.path} is not usable for a "
+            f"{'KPI' if backend == 'hil' else 'signed-bundle'} run "
             f"({st['why'] or 'unreadable'}; {st['bundle']}): build it with "
             f"python tools/build_flight_bundles.py on both hosts")
     rel = f"bundles/{Path(st['bundle']).name}"
@@ -10092,6 +10104,14 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"REFUSED: {e}")
         return 2
+    # The profile's `rail_signed_bundle` (RAIL_SIGNED_BUNDLE): the sitl rail
+    # flies each YAML's signed bundle instead of the YAML; hil always does.
+    global RAIL_SIGNED_BUNDLE
+    RAIL_SIGNED_BUNDLE = bool(profile and profile.rail_signed_bundle)
+    if RAIL_SIGNED_BUNDLE:
+        if args.backend == "headless":
+            print("REFUSED: rail_signed_bundle is for a rail's flights (--backend sitl / hil)")
+            return 2
     if args.backend != "hil" and (args.hil_config or args.hil_dry_run or args.hil_controls
                                   or args.hil_campaign or args.hil_max_s_add is not None):
         print("REFUSED: the --hil-* options are for --backend hil")
@@ -10110,6 +10130,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms,
                             response_arms=rsp_arms)
+    if RAIL_SIGNED_BUNDLE:
+        info["rail_signed_bundle"] = True
     if args.rescore_rail is not None:
         # The offline re-score (2026-11-07): the runs as they were flown, read
         # with this checkout's scorer; nothing is written beside them.
