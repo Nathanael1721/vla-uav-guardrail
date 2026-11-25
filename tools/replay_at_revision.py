@@ -1247,13 +1247,26 @@ def _replayed_ground(run: Path, code_root: Path, grec: dict, policy, params) -> 
         raise Refused("this revision has no guardrail.terrain, and the run flew over a "
                       "ground (metrics.json ground)") from None
     rec = grec.get("ground") if isinstance(grec.get("ground"), dict) else {}
-    frec = grec.get("file") if isinstance(grec.get("file"), dict) else None
-    if rec.get("kind") == "flat" and frec is None:
+    # The file the run names: ground.file (since 2026-11-18 evening), else the
+    # WGS84 DEM's own record (ground.ground.wgs84_dem) - the revision's own
+    # guardrail.replay.run_ground_ref when it has one, the same rule the
+    # replay bundle packed its ground/ member by.
+    try:
+        from guardrail.replay import run_ground_ref
+    except ImportError:
+        run_ground_ref = None
+    if run_ground_ref is not None:
+        frec = run_ground_ref({"ground": grec})
+    else:
+        f = grec.get("file") if isinstance(grec.get("file"), dict) else None
+        frec = ({"path": f.get("path"), "sha256": f.get("sha256")} if f else
+                {"path": None, "sha256": None})
+    if not frec.get("path") and rec.get("kind") == "flat":
         ground = T.FlatGround(rec["elevation_msl_m"], rec.get("source") or "metrics.json")
     else:
-        if not frec or not frec.get("path") or not frec.get("sha256"):
+        if not frec.get("path") or not frec.get("sha256"):
             raise Refused("the run flew over a ground and metrics.json names no ground file "
-                          "(ground.file path and sha256)")
+                          "(ground.file or ground.ground.wgs84_dem, path and sha256)")
         name = Path(str(frec["path"])).name
         tar = _replay_tar(run)
         data = _tar_member(tar, "ground/" + name) if tar is not None else None

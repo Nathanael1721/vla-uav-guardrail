@@ -40,7 +40,8 @@ What is pinned here:
     the node's own stressed run folder replays identical in process;
   * a run over a declared ground (the node's own run over the ridge DEM,
     metrics.json `ground`) replays `identical`, the Shield rebuilt over the
-    ground file the run named and the up_ref it recorded; a ground file
+    ground file the run named (ground.file, or the DEM's own wgs84_dem record
+    of a run before c249cfe) and the up_ref it recorded; a ground file
     named by another sha256, or one that rebuilds another grid, is refused;
   * a subject_standoff run with a DECLARED subject that metrics.json records
     replays identical (set_subject as the node set it); with no record of
@@ -1052,10 +1053,17 @@ def test_a_run_over_a_declared_dem_replays_identical_over_the_ground_it_named():
     assert rec["verdict"] == "identical", rec.get("first_difference")
     assert rec["shield"]["ground"] == {"file": m["ground"]["file"], "up_ref": "terrain"}, \
         rec["shield"]
-    # Another sha256 named for the same file: refused, never replayed.
     bad = _tmp("dem_sha_")
     shutil.copytree(out, bad / out.name)
     run = bad / out.name
+    # A run of 18 Nov before c249cfe names its DEM only in the grid's own
+    # record (ground.ground.wgs84_dem): found the same way, replays identical.
+    m1 = json.loads(json.dumps(m))
+    m1["ground"].pop("file")
+    assert m1["ground"]["ground"]["wgs84_dem"]["path"] == TMR.DEM
+    (run / "metrics.json").write_text(json.dumps(m1), encoding="utf-8")
+    assert RA._open_loop(run, ROOT)["verdict"] == "identical"
+    # Another sha256 named for the same file: refused, never replayed.
     m2 = json.loads(json.dumps(m))
     m2["ground"]["file"]["sha256"] = "0" * 64
     (run / "metrics.json").write_text(json.dumps(m2), encoding="utf-8")
