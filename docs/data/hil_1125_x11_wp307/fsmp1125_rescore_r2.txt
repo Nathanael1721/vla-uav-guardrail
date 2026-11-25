@@ -1,0 +1,17 @@
+  fsmp1125_001_failsafe-rtl-from-hold          before=pass(0)  ideal=pass(0)
+
+fail-safe trigger correctness of 1 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 1, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      unlabelled fsmp1125_001_failsafe-rtl-from-hold  (failsafe-rtl-from-hold, seed 1001)
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 1, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      unlabelled fsmp1125_001_failsafe-rtl-from-hold  (failsafe-rtl-from-hold, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 0, undecided 0, unlabelled 1, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      unlabelled fsmp1125_001_failsafe-rtl-from-hold  (failsafe-rtl-from-hold, seed 1001)
+
+1/1 run(s) re-scored -> <rigplan>/post_fsmp1125/rescore_r2_fsmp1125.json

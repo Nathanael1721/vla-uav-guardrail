@@ -1,0 +1,4 @@
+OK: F:/vla_drone_offload/hil_runs/fsmp1125_001_failsafe-rtl-from-hold/fsmp1125_001_failsafe-rtl-from-hold.replay.tar.gz
+  - rosbag topics with 0 messages: /mavros/altitude, /mavros/setpoint_raw/target_local
+verify fsmp1125_001_failsafe-rtl-from-hold rc=0
+dem members: 0

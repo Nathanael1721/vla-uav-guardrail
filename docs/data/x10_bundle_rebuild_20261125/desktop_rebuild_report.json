@@ -1,0 +1,478 @@
+[
+ {
+  "policy": "sim_demo_policy",
+  "bundle": "fase3-sim-demo-v0.1.4.tar.gz",
+  "flown_in_record_campaigns": true,
+  "rc": 0,
+  "stdout": "SIGNED   fase3-sim-demo-v0.1.4.tar.gz                 policies/sim_demo_policy.yaml  sha256:b665adbaac291862...  by lab-dev:ed25519:6ec75b535ef5c533, diff against fase3-sim-demo-v0.1.3.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "delivered": {
+   "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of sim_demo_policy.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against fase3-sim-demo 0.1.3 (sha256:1a777); changed alt-band (scope); changed kin-caps (scope); changed nfz-square (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+    "policy_id": "fase3-sim-demo",
+    "version": "0.1.3"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "corridor_survey",
+  "bundle": "corridor-survey-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": true,
+  "rc": 0,
+  "stdout": "SIGNED   corridor-survey-v0.1.3.tar.gz                policies/corridor_survey.yaml  sha256:ddb43893eea8b015...  by lab-dev:ed25519:6ec75b535ef5c533, diff against corridor-survey-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
+  "delivered": {
+   "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of corridor_survey.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against corridor-survey 0.1.2 (sha256:fc352); changed corridor-survey-route (scope); changed kin-caps (scope); changed nfz-school (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:fc35249beda5c9a25aa68d55648f2b1a7d03382056ebf3a35f9c3cf2efd3464f",
+    "policy_id": "corridor-survey",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "wgs84_taipei",
+  "bundle": "wgs84-taipei-demo-v0.1.2.tar.gz",
+  "flown_in_record_campaigns": true,
+  "rc": 0,
+  "stdout": "SIGNED   wgs84-taipei-demo-v0.1.2.tar.gz              policies/wgs84_taipei.yaml  sha256:a5f52b5fe0044cb2...  by lab-dev:ed25519:6ec75b535ef5c533, diff against wgs84-taipei-demo-v0.1.1.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
+  "delivered": {
+   "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of wgs84_taipei.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against wgs84-taipei-demo 0.1.1 (sha256:e316a); changed envelope-default (scope); changed kin-caps (scope); changed nfz-school-yard (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:e316a6736564fcd0e0322899d5450e36fef4a26eb944a83477190534a9de28f2",
+    "policy_id": "wgs84-taipei-demo",
+    "version": "0.1.1"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "sitl_pedestrian",
+  "bundle": "sitl-pedestrian-standoff-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": true,
+  "rc": 0,
+  "stdout": "SIGNED   sitl-pedestrian-standoff-v0.1.3.tar.gz       policies/sitl_pedestrian.yaml  sha256:bb58ca54153c3e6b...  by lab-dev:ed25519:6ec75b535ef5c533, diff against sitl-pedestrian-standoff-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
+  "delivered": {
+   "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-07T06:33:39Z",
+   "changelog": "flight bundle of sitl_pedestrian.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-07T06:33:39Z",
+   "changelog": "against sitl-pedestrian-standoff 0.1.2 (sha256:dcf2e); changed alt-band (scope); changed kin-caps (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:dcf2e41dd4910c0cd9c2214ddcb253e00543caebedee914378a69f456d674745",
+    "policy_id": "sitl-pedestrian-standoff",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_car_citylife",
+  "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-citylife-v0.1.3.tar.gz            policies/follow_car_citylife.yaml  sha256:a04669db056f7080...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
+  "delivered": {
+   "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of follow_car_citylife.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against follow-car-citylife 0.1.2 (sha256:67154); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:67154c8d6b3ff1bc23169fff3a4142d0a8bf99d96e1c29f1f65fd4f0efa42097",
+    "policy_id": "follow-car-citylife",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_car_citylife_nfz",
+  "bundle": "follow-car-citylife-nfz-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-citylife-nfz-v0.1.3.tar.gz        policies/follow_car_citylife_nfz.yaml  sha256:a618c08c6256376b...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+  "delivered": {
+   "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of follow_car_citylife_nfz.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against follow-car-citylife-nfz 0.1.2 (sha256:12b62); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed nfz-frontage (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:12b62007c2ea2fa354a2efe14ab8b0a45238778e65c1fe7ef58b9a2bf39abd0f",
+    "policy_id": "follow-car-citylife-nfz",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_car",
+  "bundle": "follow-car-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-v0.1.3.tar.gz                     policies/follow_car.yaml  sha256:6fc2a25be5095660...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
+  "delivered": {
+   "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of follow_car.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against follow-car 0.1.2 (sha256:fa8f5); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:fa8f54afff9cf865185da54783f8baea54d833f95f5077e315275c75f26f0c36",
+    "policy_id": "follow-car",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_car_nfz",
+  "bundle": "follow-car-nfz-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-nfz-v0.1.3.tar.gz                 policies/follow_car_nfz.yaml  sha256:5f6efe9fcdc33c99...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-nfz-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
+  "delivered": {
+   "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of follow_car_nfz.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against follow-car-nfz 0.1.2 (sha256:49381); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed nfz-route (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:49381fad1e5a842596ae9760432622ad91c2207470bb7917dd7ab327d1dc64b3",
+    "policy_id": "follow-car-nfz",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_pedestrian",
+  "bundle": "follow-pedestrian-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-pedestrian-v0.1.3.tar.gz              policies/follow_pedestrian.yaml  sha256:db36c08ad292b1d3...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-pedestrian-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
+  "delivered": {
+   "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of follow_pedestrian.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against follow-pedestrian 0.1.2 (sha256:86e7b); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:86e7bfb5396a6adc1a4cd23254d5b67a330609512aaab67425ff9439cfd96159",
+    "policy_id": "follow-pedestrian",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "vla_goto_citylife",
+  "bundle": "vla-goto-citylife-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   vla-goto-citylife-v0.1.3.tar.gz              policies/vla_goto_citylife.yaml  sha256:1d99b94ed2c9fd1c...  by lab-dev:ed25519:6ec75b535ef5c533, diff against vla-goto-citylife-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+  "delivered": {
+   "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "flight bundle of vla_goto_citylife.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-06T20:26:25Z",
+   "changelog": "against vla-goto-citylife 0.1.2 (sha256:e76c1); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed nfz-frontage (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:e76c102f5477ee207505ca988e99d93f73d6ede9d6baeba47f8647e282eff053",
+    "policy_id": "vla-goto-citylife",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "distance_envelope_sitl",
+  "bundle": "distance-envelope-sitl-v0.1.0.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   distance-envelope-sitl-v0.1.0.tar.gz         policies/distance_envelope_sitl.yaml  sha256:400817312863a117...  by lab-dev:ed25519:6ec75b535ef5c533, first version\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17",
+  "delivered": {
+   "policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-19T00:00:00Z",
+   "changelog": "flight bundle of distance_envelope_sitl.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-19T00:00:00Z",
+   "changelog": "first version: no earlier published version of distance-envelope-sitl (flight bundle of distance_envelope_sitl.yaml)",
+   "has_changelog_diff": false,
+   "changelog_diff_against": null,
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog"
+  ]
+ },
+ {
+  "policy": "follow_car_citylife_nfz3",
+  "bundle": "follow-car-citylife-nfz3-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-citylife-nfz3-v0.1.3.tar.gz       policies/follow_car_citylife_nfz3.yaml  sha256:cc8cff0a7de55b53...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz3-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+  "delivered": {
+   "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-18T00:00:00Z",
+   "changelog": "flight bundle of follow_car_citylife_nfz3.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-18T00:00:00Z",
+   "changelog": "against follow-car-citylife-nfz3 0.1.2 (sha256:411dc); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed nfz-frontage (scope); changed nfz-north-street (scope); changed nfz-south-block (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:411dc340ce8ed5421ba82ed6ad3a6b6d089f942fc17c4b6eef99a786ecd76d01",
+    "policy_id": "follow-car-citylife-nfz3",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ },
+ {
+  "policy": "follow_car_citylife_nfz3b",
+  "bundle": "follow-car-citylife-nfz3b-v0.1.3.tar.gz",
+  "flown_in_record_campaigns": false,
+  "rc": 0,
+  "stdout": "SIGNED   follow-car-citylife-nfz3b-v0.1.3.tar.gz      policies/follow_car_citylife_nfz3b.yaml  sha256:50973396041c6ee8...  by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz3b-v0.1.2.tar.gz\n1 flight bundle(s) in <rebuild dir>",
+  "stderr": "",
+  "yaml_policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+  "delivered": {
+   "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-18T00:00:00Z",
+   "changelog": "flight bundle of follow_car_citylife_nfz3b.yaml",
+   "has_changelog_diff": false
+  },
+  "rebuilt": {
+   "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+   "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+   "issued_at": "2026-11-18T00:00:00Z",
+   "changelog": "against follow-car-citylife-nfz3b 0.1.2 (sha256:b85c1); changed alt-band (scope); changed bld-clearance (scope); changed kin-caps (scope); changed nfz-frontage (scope); changed nfz-north-street (scope); changed nfz-south-block (scope); changed standoff-any (scope); changed standoff-pedestrian (scope); policy version",
+   "has_changelog_diff": true,
+   "changelog_diff_against": {
+    "policy_hash": "sha256:b85c1bac43a5e1b736bd714c0f828591675b609301795765cde32f43f45e70c6",
+    "policy_id": "follow-car-citylife-nfz3b",
+    "version": "0.1.2"
+   },
+   "verified": true,
+   "signature": "verified"
+  },
+  "policy_hash_unchanged": true,
+  "hashes_unchanged": true,
+  "ir_json_bytes_identical": true,
+  "manifest_keys_changed": [
+   "changelog",
+   "changelog_diff"
+  ]
+ }
+]

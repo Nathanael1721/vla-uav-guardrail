@@ -1,0 +1,12 @@
+OK      fase3-sim-demo-v0.1.4.tar.gz                 policies/sim_demo_policy.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against fase3-sim-demo-v0.1.3.tar.gz
+OK      corridor-survey-v0.1.3.tar.gz                policies/corridor_survey.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against corridor-survey-v0.1.2.tar.gz
+OK      follow-car-citylife-v0.1.3.tar.gz            policies/follow_car_citylife.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-v0.1.2.tar.gz
+OK      follow-car-citylife-nfz-v0.1.3.tar.gz        policies/follow_car_citylife_nfz.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz-v0.1.2.tar.gz
+OK      wgs84-taipei-demo-v0.1.2.tar.gz              policies/wgs84_taipei.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against wgs84-taipei-demo-v0.1.1.tar.gz
+OK      follow-car-v0.1.3.tar.gz                     policies/follow_car.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-v0.1.2.tar.gz
+OK      follow-car-nfz-v0.1.3.tar.gz                 policies/follow_car_nfz.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-nfz-v0.1.2.tar.gz
+OK      follow-pedestrian-v0.1.3.tar.gz              policies/follow_pedestrian.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-pedestrian-v0.1.2.tar.gz
+OK      vla-goto-citylife-v0.1.3.tar.gz              policies/vla_goto_citylife.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against vla-goto-citylife-v0.1.2.tar.gz
+OK      distance-envelope-sitl-v0.1.0.tar.gz         policies/distance_envelope_sitl.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, first version
+OK      follow-car-citylife-nfz3-v0.1.3.tar.gz       policies/follow_car_citylife_nfz3.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz3-v0.1.2.tar.gz
+OK      follow-car-citylife-nfz3b-v0.1.3.tar.gz      policies/follow_car_citylife_nfz3b.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, diff against follow-car-citylife-nfz3b-v0.1.2.tar.gz

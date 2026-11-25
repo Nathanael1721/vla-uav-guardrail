@@ -1,0 +1,10 @@
+OK: F:/vla_drone_offload/hil_runs/x11r1125_001_msl-dem-zone-ridge/x11r1125_001_msl-dem-zone-ridge.replay.tar.gz
+  - rosbag topics with 0 messages: /mavros/altitude, /mavros/setpoint_raw/target_local, /shield/intercept
+  - ground experiments/worlds/dem_cmac_wgs84.json carried (sha256 44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0): 667 row height(s) above it re-derived from msl_m
+verify x11r1125_001_msl-dem-zone-ridge rc=0
+dem members: 1
+OK: F:/vla_drone_offload/hil_runs/x11r1125_002_msl-dem-zone-ridge/x11r1125_002_msl-dem-zone-ridge.replay.tar.gz
+  - rosbag topics with 0 messages: /mavros/altitude, /mavros/setpoint_raw/target_local
+  - ground experiments/worlds/dem_cmac_wgs84.json carried (sha256 44ed8a163302625d4bc38fe6823704483fd953fd3f3819edb406d35039fd31e0): 676 row height(s) above it re-derived from msl_m
+verify x11r1125_002_msl-dem-zone-ridge rc=0
+dem members: 1

@@ -1,0 +1,70 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --root F:/vla_drone_offload/hil_runs --only x11r1125_ --jobs 2 --out <out>",
+ "seconds": 2.2,
+ "replayed_on": {
+  "python": "3.10.20",
+  "machine": "AMD64",
+  "system": "Windows",
+  "platform": "Windows-10"
+ },
+ "tool_revision": "21c277170001",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 2,
+ "verdicts": {
+  "identical": 0,
+  "differs": 0,
+  "not_replayable": 2,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "21c277170001": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 2,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {
+  "not_replayable: this revision": 2
+ },
+ "audit_records_compared": 0,
+ "ticks_compared": 0,
+ "differs_by_class": {},
+ "differs": [],
+ "worktrees": [
+  {
+   "sha": "21c2771700015cabdb9ee554149f006a37fe1a5b",
+   "path": "<tmp>/replay_at_rev_dcyl7k73\\21c277170001",
+   "created_s": 0.9,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 2,
+   "seconds": 2.1
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_x11r1125.per_run.jsonl.gz"
+}

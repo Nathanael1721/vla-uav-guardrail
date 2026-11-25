@@ -1,0 +1,12 @@
+BAD     fase3-sim-demo-v0.1.4.tar.gz                 policies/sim_demo_policy.yaml  (its manifest has no changelog_diff, but fase3-sim-demo-v0.1.3.tar.gz (0.1.3) came before it: rebuild it)
+BAD     corridor-survey-v0.1.3.tar.gz                policies/corridor_survey.yaml  (its manifest has no changelog_diff, but corridor-survey-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     follow-car-citylife-v0.1.3.tar.gz            policies/follow_car_citylife.yaml  (its manifest has no changelog_diff, but follow-car-citylife-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     follow-car-citylife-nfz-v0.1.3.tar.gz        policies/follow_car_citylife_nfz.yaml  (its manifest has no changelog_diff, but follow-car-citylife-nfz-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     wgs84-taipei-demo-v0.1.2.tar.gz              policies/wgs84_taipei.yaml  (its manifest has no changelog_diff, but wgs84-taipei-demo-v0.1.1.tar.gz (0.1.1) came before it: rebuild it)
+BAD     follow-car-v0.1.3.tar.gz                     policies/follow_car.yaml  (its manifest has no changelog_diff, but follow-car-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     follow-car-nfz-v0.1.3.tar.gz                 policies/follow_car_nfz.yaml  (its manifest has no changelog_diff, but follow-car-nfz-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     follow-pedestrian-v0.1.3.tar.gz              policies/follow_pedestrian.yaml  (its manifest has no changelog_diff, but follow-pedestrian-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     vla-goto-citylife-v0.1.3.tar.gz              policies/vla_goto_citylife.yaml  (its manifest has no changelog_diff, but vla-goto-citylife-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+OK      distance-envelope-sitl-v0.1.0.tar.gz         policies/distance_envelope_sitl.yaml  verified by lab-dev:ed25519:6ec75b535ef5c533, first version
+BAD     follow-car-citylife-nfz3-v0.1.3.tar.gz       policies/follow_car_citylife_nfz3.yaml  (its manifest has no changelog_diff, but follow-car-citylife-nfz3-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)
+BAD     follow-car-citylife-nfz3b-v0.1.3.tar.gz      policies/follow_car_citylife_nfz3b.yaml  (its manifest has no changelog_diff, but follow-car-citylife-nfz3b-v0.1.2.tar.gz (0.1.2) came before it: rebuild it)

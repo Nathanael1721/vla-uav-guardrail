@@ -16,6 +16,29 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-25 (flown and measured, evening: X-11 zone-ridge with the terrain feed, G6's battery reason, a selected FSM profile; the replay over a declared ground; X-11 to DONE) — three small `hil` campaigns at release 0.7.0 (21c2771) and the items that needed no decision of the PI
+
+#### Flown (hil, AGX Orin + SITL, 21c2771; docs/data/hil_1125_x11_wp307/)
+- **x11r1125** (msl_dem, msl-dem-zone-ridge, target_x -45 and -20, terrain feed on): 2 passed, 0 failed; P0 escape 0, 0 polygon ticks, fail-safe labels 2/2 (both were false triggers on 19 Nov, before the feed); FSM max Normal and Brake; metrics name the pinned DEM (sha256 44ed8a16...), the replay tarballs carry it and verify; kpi_grade true; e2e tick max 7.8 / 12.3 ms.
+- **bat1125** (fsm_edges, failsafe-low-battery, rail_battery): SIM_BATT_VOLTAGE 12.6 -> 10.0 V at t = 13 s, CRITICAL at t = 14.19 s in RTL; edges G11, G6, G10; Land_triggered; gate passed; P0 escape 0; the stressor's parameters restored. It loaded the AGX's rebuilt fase3-sim-demo-v0.1.4 (with a changelog diff).
+- **fsmp1125** (fsm_edges, failsafe-rtl-from-hold, `--rail-fsm-config experiments/fsm_profiles.yaml --rail-fsm-profile grant`): the first flight of a selected FSM profile; fsm_config recorded (sha256:b9103b0d98c7, the `grant` profile is FSMConfig() itself); edges G1, G3, X2, G9; RTL_triggered; gate passed. No run has flown a non-default profile.
+- None of the three profiles is KPI-bearing; the KPI figures of record (ntFIN5, smREL070) are unchanged.
+
+#### Fixed
+- `tools/replay_at_revision.py`: a run over a declared ground (metrics.json `ground`) replays over that ground (a75f1f5, 7b6fa63). The open-loop replay built the Shield with no ground, so every MSL run was not_replayable. The ground file is the one the run named (ground.file, or the DEM's own wgs84_dem record of a run before c249cfe, through guardrail.replay.run_ground_ref), taken from the replay bundle, else the revision; refused unless it hashes to the recorded sha256 and rebuilds the recorded grid; the recorded up_ref is passed. x11r1125 2/2 and msl_dem_hil2 (e56d3e7) 6/6 identical; runs without a ground unchanged. Test: the node's own DEM run replays identical, also when it names its DEM only by wgs84_dem; another sha256 or another grid is refused (tests/test_replay_at_revision.py 25/25).
+
+#### Measured (CPU)
+- `tools/replay_from_bag.py` over ntFIN5 (docs/data/replay_from_bag_ntFIN5/): manifest_in_bag and trajectory identical 654/654; ticks and KPI identical 630/654, the 24 others the gps-noise-beyond-margin runs, one inferred "who flew it" tick each, as on sk1122a.
+- tools/wp1_roundtrip_kpi.py re-run at 21c2771 -> docs/data/wp1_roundtrip_21c2771.json (docs/data/wp1_roundtrip.json keeps the 6 Nov 4edd5d1 record that the October deck data and the public site cite): 33 policies (distance_envelope_sitl added), round trip, tamper and both hashes 33/33, negative corpus 39/39, no other hash changed; cold start p95 483 ms.
+
+#### Changed
+- **Flight bundles rebuilt with their changelog diffs** (X-10 item 2; docs/data/x10_bundle_rebuild_20261125/): on the desktop and on the AGX Orin, re-signed with the same lab-dev keys, each keeping its issued_at and policy_hash; `--check` 12/12 OK on both hosts. The delivered copies are kept (F:/vla_drone_offload/bundles_pre_x10b_20261125/, ~/bundles_pre_x10b_20261125/ on the AGX). Signing under a CA still waits for the PI.
+- **X-11 PARTIAL -> DONE** after an independent review of the row against the grant's wording (policy-dsl.md:17: MSL "supported as an opt-in field on geometry primitives"), three reviewers, all DONE: tests on all six primitives, readers with a ground on every flying rail, the hil re-fly. Counts 110 DONE, 25 PARTIAL, 1 DRIFT, 0 MISSING.
+- Appendix A text that had gone stale corrected (independent audit, each finding checked by a second reviewer): X-01 (the v1.0 DOCX/PDF exist; GitHub green since the fix 11f3f7d was merged), ARCH-19 (v1.0 and ntFIN5 of record; the tick fix flew), X-10 (the builder fix c928a23), X-11 (tests and readers since 6ab8475), WP3-07 (FSM YAML selectable since 5934168; G6's battery reason flown), WP4-01 (v1.0; ntFIN5 report lines), WP1-05 / WP1-17 (the regenerated record), ARCH-22 (the ntFIN5 bag replay); the report's sections 3, 5, 9, 10 and 11 brought in line.
+
+#### Not done
+- Re-signing under a CA (WP1-04, X-10 item 1) and the report's signature (X-01) wait for the PI; AP_DDS (ARCH-08) not run.
+
 ### 2026-11-25 (docs: the final report's body brought up to the 25 Nov evidence) — sections 1, 3, 4.4, 10 and 11 of docs/FINAL-REPORT.md still said one Gazebo seed and a red GitHub smoke; they now state what Appendix A already records, and no count changes (109 DONE / 26 PARTIAL / 1 DRIFT / 0 MISSING)
 
 - Section 1 "cannot claim": the grant's broad sweep at sim_speedup > 1 and a KPI-grade smoke per build, in place of "multi-seed Gazebo sweeps" and "a green CI smoke per build".
