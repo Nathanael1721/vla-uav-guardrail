@@ -1907,7 +1907,8 @@ def _generation_1(payload=None):
     pol0 = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
     sh = Shield(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
     zone = SE.spawn_zone(payload or LATE_ZONE, 0, FAR, (1.0, 0.0))
-    sh.hot_apply(zone, 1.0)
+    from wgs84_fixture import geo     # a metre zone, converted tool side (WP1-14)
+    sh.hot_apply(geo(zone, sh), 1.0)
     live = sh.policy
     return pol0, live.model_copy(update={"constraints": list(live.constraints)})
 

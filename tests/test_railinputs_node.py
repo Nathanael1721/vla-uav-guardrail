@@ -1174,7 +1174,8 @@ def test_the_csp_topic_publishes_each_generation_and_reads_the_pilot_back():
         {"x": 200.0, "y": 200.0}, {"x": 210.0, "y": 200.0},
         {"x": 210.0, "y": 210.0}, {"x": 200.0, "y": 210.0}]}, 0, node.state, (1.0, 0.0))
     with node._lock:
-        node.shield.hot_apply(zone)
+        from wgs84_fixture import geo     # a metre zone, converted tool side (WP1-14)
+        node.shield.hot_apply(geo(zone, node.shield))
         node.rec.hot_applied(zone.id, t=node._t())
     assert len(sent) == 2, sent
     g1 = json.loads(sent[1].data)
