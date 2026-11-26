@@ -60,6 +60,16 @@ WHAT EVERY RUN RECORDS (WP2-11, WP2-15, WP1-24, WP4-13, WP4-20, WP3-11, WP3-17)
                     dict manifest.json is written from (guardrail.manifest
                     manifest_frame). metrics.json `manifest_frames` says what
                     was published and when.
+  /shield/csp       (2026-11-26, WP4-19; --csp-topic on only) each
+                    generation's policy and CSP, latched (reliable,
+                    transient_local, depth 1) std_msgs/String JSON, published
+                    after its policy_g<N>.json and csp_g<N>.json are written
+                    (take-off and every accepted hot-apply), for the VLA
+                    stub's prefix consumer (guardrail/csp_topic.py). The
+                    node reads the stub's /vla/prefix_csp back, stamps every
+                    row with `pilot_csp_generation` (the generation the pilot
+                    last announced) and keeps both in metrics.json
+                    `prefix_csp_topic`. Without the flag none of this runs.
   <tag>.replay.tar.gz  written here, and re-packed by run_ros2_demo.sh once
                     the rosbag is closed so it carries bag/ as well.
 
@@ -583,6 +593,7 @@ for _p in (ROOT, ROOT / "sitl"):
 
 from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E402
 from guardrail import scenario_events as SE                               # noqa: E402
+from guardrail import csp_topic as CT                                     # noqa: E402
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler, prewarm_templates      # noqa: E402
@@ -3399,6 +3410,38 @@ if HAVE_ROS:
                 target=self._publish_start_frame, name="manifest-start-frame",
                 args=(self.policy.policy_hash, self.args.seed), daemon=True)
             self._manifest_start.start()
+            # GENERATION N'S CSP AT THE PILOT (--csp-topic on, 2026-11-26,
+            # WP4-19; guardrail/csp_topic.py): each generation's policy and
+            # CSP on /shield/csp, latched, published by the episode record's
+            # generation hook after its files are written (take-off here,
+            # every hot-apply after its setpoint, THE HOT-APPLY TICK); the
+            # stub's announcements read back. A topic SROS 2 refuses (a
+            # keystore made before sitl/sros2_policy.xml granted it) is
+            # recorded and the node flies without it; the harness then
+            # finds no pilot generation on the rows and refuses the arm.
+            # Without the flag nothing here exists.
+            self.csp_topic = getattr(args, "csp_topic", "off") == "on"
+            self.csp_topic_rec: dict | None = None
+            self.pilot_csp_gen: int | None = None
+            self.pub_csp = None
+            if self.csp_topic:
+                self.csp_topic_rec = {"topic": CT.CSP_TOPIC,
+                                      "pilot_topic": CT.PILOT_CSP_TOPIC,
+                                      "refused": None, "published": [], "errors": [],
+                                      "pilot": []}
+                try:
+                    self.pub_csp = self.create_publisher(String, CT.CSP_TOPIC, MANIFEST_QOS)
+                    self.create_subscription(String, CT.PILOT_CSP_TOPIC,
+                                             self._on_pilot_csp, LATCHED)
+                except Exception as e:                           # noqa: BLE001
+                    self.pub_csp = None
+                    self.csp_topic_rec["refused"] = f"{type(e).__name__}: {e}"
+                    self.get_logger().error(f"{CT.CSP_TOPIC} not served: "
+                                            f"{self.csp_topic_rec['refused']}")
+                else:
+                    self.rec.on_generation = self._publish_csp
+                    if self.rec.generations:
+                        self._publish_csp(self.rec.generations[0], self.policy, None)
 
             self.cli_mode = self.create_client(SetMode, "/mavros/set_mode")
             self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
@@ -3771,6 +3814,61 @@ if HAVE_ROS:
                 trigger = self._sched.on_message(rx_ns / 1e9)
                 if trigger is not None:
                     self._run_tick(trigger)
+
+        def _publish_csp(self, row: dict, policy, t: float | None) -> None:
+            """One generation on /shield/csp (--csp-topic on): its policy as
+            written to policy_g<N>.json, its csp_g<N>.json (None where the
+            compile failed: the stub compiles its own from the policy), the
+            rule clock reading and the hot-apply's mission time
+            (guardrail.csp_topic.shield_csp_message). The episode record
+            calls it after the generation's files are written - on the tick
+            thread after the setpoint, or on the REST thread for a REST
+            hot-apply. A failure is recorded in metrics.json
+            (`prefix_csp_topic.errors`), never raised: the files and the
+            Shield's rules are already in place, and the harness refuses an
+            arm whose pilot did not follow."""
+            rec = self.csp_topic_rec
+            if rec is None or self.pub_csp is None:
+                return
+            g = row.get("generation")
+            try:
+                csp_doc = None
+                if row.get("csp"):
+                    with open(self.rec.dir / f"csp_g{g}.json", encoding="utf-8") as fh:
+                        csp_doc = json.load(fh)
+                doc = CT.shield_csp_message(row, policy, t=t, csp_doc=csp_doc)
+                self.pub_csp.publish(String(data=json.dumps(doc)))
+            except Exception as e:                               # noqa: BLE001
+                rec["errors"].append({"generation": g, "t": t,
+                                      "error": f"{type(e).__name__}: {e}"})
+                self.get_logger().error(f"{CT.CSP_TOPIC} generation {g} not published: "
+                                        f"{type(e).__name__}: {e}")
+                return
+            rec["published"].append({"generation": g, "policy_hash": doc["policy_hash"],
+                                     "t": t, "rule_clock_reading": doc["rule_clock_reading"],
+                                     "csp": csp_doc is not None})
+
+        def _on_pilot_csp(self, msg: String) -> None:
+            """The VLA stub's /vla/prefix_csp (--csp-topic on): the CSP
+            generation its prefix consumer flies, or one it refused. Kept in
+            metrics.json `prefix_csp_topic.pilot` with this node's mission
+            time of receipt; a flown generation stamps every later row
+            (`pilot_csp_generation`)."""
+            rec = self.csp_topic_rec
+            if rec is None:
+                return
+            try:
+                doc = json.loads(msg.data)
+            except ValueError:
+                doc = None
+            if not isinstance(doc, dict):
+                rec["pilot"].append({"malformed": str(msg.data)[:200], "t_rx": self._t()})
+                return
+            if len(rec["pilot"]) < 200:
+                rec["pilot"].append(dict(doc, t_rx=self._t()))
+            g = doc.get("generation")
+            if (not doc.get("refused") and isinstance(g, int) and not isinstance(g, bool)):
+                self.pilot_csp_gen = g
 
         def _on_identity(self, msg: String) -> None:
             try:
@@ -5582,6 +5680,11 @@ if HAVE_ROS:
                 # The pose the Shield was handed (THE PERCEPTION STRESSORS);
                 # only on a stressed flight's rows.
                 self.rows[-1].update(self.perception.row_fields(seen))
+            pilot_gen = getattr(self, "pilot_csp_gen", None)
+            if pilot_gen is not None:
+                # The CSP generation the pilot last announced (--csp-topic
+                # on, WP4-19); only once it has announced one.
+                self.rows[-1]["pilot_csp_generation"] = pilot_gen
             if transit is not None:
                 # The moved hold's transit, world frame (North, East, up);
                 # only on such rows (guardrail/hold_flight.py).
@@ -6165,6 +6268,12 @@ if HAVE_ROS:
                 "hil_evidence": self.hil_evidence,
                 "policy_source": self.policy_source,
             }
+            csp_topic_rec = getattr(self, "csp_topic_rec", None)
+            if csp_topic_rec is not None:
+                # --csp-topic on only (WP4-19): what /shield/csp carried and
+                # what the pilot announced back; the stress harness checks it
+                # (sweep_scenarios.prefix_generation_problems).
+                metrics["prefix_csp_topic"] = json.loads(json.dumps(csp_topic_rec))
             if self.perception.active:
                 # What was applied to the Shield's view (THE PERCEPTION
                 # STRESSORS), read by the stress harness's rail_stress_check;
@@ -6483,6 +6592,12 @@ def make_parser() -> argparse.ArgumentParser:
                          "guardrail.scenario_spec.ScenarioEvent), each applied to "
                          "the flying Shield once the mission time reaches its "
                          "at_sim_t (guardrail.scenario_events)")
+    ap.add_argument("--csp-topic", choices=("on", "off"), default="off",
+                    help="on: publish each generation's policy and CSP on /shield/csp "
+                         "(latched) for the VLA stub's prefix consumer, read its "
+                         "/vla/prefix_csp back and stamp rows with the pilot's CSP "
+                         "generation (guardrail/csp_topic.py, WP4-19). Default off: "
+                         "none of this runs, as before 2026-11-26")
     ap.add_argument("--world", default=None, metavar="FILE",
                     help="a declared world (guardrail/world_map.py, repo-relative): the "
                          "buildings and roads maps the Shield measures a "

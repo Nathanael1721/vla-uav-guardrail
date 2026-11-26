@@ -23,3 +23,17 @@
   depth: 10
   reliability: reliable
   durability: transient_local
+# Generation N's CSP (2026-11-26, WP4-19; guardrail/csp_topic.py): both
+# publishers are latched (reliable, transient_local, depth 1) and publish
+# their take-off sample before the recorder may have discovered the topic.
+# Published only on a mission sent --csp-topic on.
+/shield/csp:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: transient_local
+/vla/prefix_csp:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: transient_local

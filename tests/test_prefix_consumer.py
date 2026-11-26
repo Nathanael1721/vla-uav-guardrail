@@ -20,8 +20,12 @@ What these guard:
     the nearest admissible heading of a fixed fan, stops when no heading is
     admissible, hands on what it cannot repair, and without a CSP returns
     the law's action untouched;
-  * one CSP for the whole flight: a policy whose action sets change in
-    flight is refused, and so is a scenario with mid-flight events;
+  * one CSP per generation: a policy whose action sets change with the
+    clock is refused; since 2026-11-26 (WP4-19) a mid-flight event's
+    generation is swapped in (headless at the event; on a rail from the
+    Shield node's /shield/csp, guardrail/csp_topic.py), the pilot's
+    following is measured and checked, and an event whose rules go on
+    changing with the clock stays refused;
   * NOTHING MOVES WITHOUT THE KEY: a run with no prefix consumer builds the
     episodes, arm records, rail arguments, scenario records and identity it
     always did (the KPI-grade campaign ntFIN2 must stay reproducible);
@@ -1014,35 +1018,52 @@ def test_the_two_arms_are_one_pilot_with_and_without_its_prefix():
             raise AssertionError("flown on a CSP that is not the arm record's")
 
 
-def test_a_scenario_with_events_is_refused_and_an_injected_event_stops_the_episode():
-    """The consumer flies generation 0's CSP: a scenario that declares
-    mid-flight events is refused before take-off (the arm record, the rail
-    refusal), and an event injected into a stepped consumer episode stops it
-    rather than fly on under rules the CSP does not hold."""
+def test_a_clock_driven_event_is_refused_and_an_injected_event_is_followed():
+    """Since 2026-11-26 (WP4-19) the consumer flies one CSP per generation:
+    a scenario whose event leaves its rules changing with the CLOCK (a zone
+    set moving, a windowed switch) is still refused before take-off (the arm
+    record, the rail refusal), while an event-driven change injected into a
+    stepped consumer episode is followed - generation 1's CSP swapped in on
+    the event's tick - and a clock-driven one injected stops the episode
+    rather than fly on under rules no CSP holds."""
     cell = FAMILIES["dyn-nfz-translate"].first
     ep = Episode(cell=cell, seed=1001, prefix="on", ab=True, prefix_consumer="action_set")
     why = S.prefix_consumer_refusal(cell.spec)
-    assert why and "WP4-19" in why and "event" in why
+    assert why and "WP4-19" in why and "moving" in why and "clock" in why, why
     try:
         S.build_arm(ep, defaults=DEFAULTS)
     except ValueError as e:
         assert "WP4-19" in str(e)
     else:
-        raise AssertionError("an arm record was built for a scenario with events")
+        raise AssertionError("an arm record was built for a zone set moving")
     refusal = S.rail_refusal(cell.spec, "hil", episode=ep, defaults=DEFAULTS)
     assert refusal and "WP4-19" in refusal
     arms = _arms("nfz-head-on")
     spec = arms["prefix-on"].cell.spec
+    zone = {"id": "late", "vertices": [{"x": 200, "y": 200}, {"x": 210, "y": 200},
+                                       {"x": 210, "y": 210}, {"x": 200, "y": 210}]}
+    r = S.EpisodeRunner(spec, DEFAULTS, 1001, S.build_arm(arms["prefix-on"], defaults=DEFAULTS))
+    r.inject({"at_sim_t": 0.5, "type": "spawn_polygon_fence", "payload": zone})
+    run = r.finish()
+    rec = run.extra["prefix_consumer"]
+    assert run.extra["policy_generation_final"] == 1
+    assert [(s["from_generation"], s["generation"], s["t"]) for s in rec["csp_generations"]] \
+        == [(0, 1, 0.5)], rec["csp_generations"]
+    assert rec["generation_ticks"] == {"0": 5, "1": len(run.rows) - 5}, rec["generation_ticks"]
+    # the take-off identity is still the one the arm record names
+    assert rec["action_set_sha256"] == \
+        S.build_arm(arms["prefix-on"], defaults=DEFAULTS)["consumer"]["action_set_sha256"]
+    # A zone spawned MOVING, injected: refused on its tick, never flown past.
     r = S.EpisodeRunner(spec, DEFAULTS, 1001, S.build_arm(arms["prefix-on"], defaults=DEFAULTS))
     r.inject({"at_sim_t": 0.5, "type": "spawn_polygon_fence",
-              "payload": {"id": "late", "vertices": [{"x": 200, "y": 200}, {"x": 210, "y": 200},
-                                                     {"x": 210, "y": 210}, {"x": 200, "y": 210}]}})
+              "payload": dict(zone, motion={"vx_mps": 1.0, "vy_mps": 0.0,
+                                            "yaw_rate_dps": 0.0})})
     try:
         r.finish()
-    except ValueError as e:
-        assert "WP4-19" in str(e), e
+    except (ValueError, RuntimeError) as e:
+        assert "WP4-19" in str(e) and "moving" in str(e), e
     else:
-        raise AssertionError("the episode flew on past an injected event")
+        raise AssertionError("the episode flew on past a clock-driven event")
 
 
 def test_the_prefix_on_arm_is_scored_without_the_cells_labels():
@@ -1846,6 +1867,551 @@ def test_the_grpc_harness_flies_the_profiles_arms_as_the_sweep_does():
             raise AssertionError("an A/A repeat the profile does not fly was started")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# GENERATION N: the Shield's hot-applied generation's CSP at the pilot
+# (audit card WP4-19, 2026-11-26; guardrail/csp_topic.py)
+# --------------------------------------------------------------------------- #
+
+from guardrail import csp_topic as CT                             # noqa: E402
+
+# One event-driven cell of each of three of the grant's dynamic templates:
+# dynamic_nfz_movement, corridor_swap and time_window_switch (an
+# unscheduled switch; the profile, experiments/profiles/prefix_dyn.yaml,
+# flies radius_scaling in its place - see its header).
+DYN_CELLS = ("dyn-nfz-spawn-ahead", "corridor-swap-narrowed", "rule-deactivated-mid-run")
+LATE_ZONE = {"id": "late", "vertices": [{"x": -90.0, "y": -110.0}, {"x": -80.0, "y": -110.0},
+                                        {"x": -80.0, "y": -90.0}, {"x": -90.0, "y": -90.0}]}
+FAR = State(x=-100.0, y=-100.0, up=15.0, yaw_deg=0.0)
+
+
+def _dyn_ep(cell_id: str, arm: str, seed: int = 1001) -> Episode:
+    return Episode(cell=FAMILIES[cell_id].first, seed=seed, prefix=arm, ab=True,
+                   prefix_consumer="action_set")
+
+
+def _generation_1(payload=None):
+    """(generation 0 policy, generation 1 policy): a fresh sim_demo policy
+    with a static zone hot-applied by a Shield, snapshot as a rail's
+    generation writer takes it."""
+    from guardrail import scenario_events as SE
+    from guardrail.shield import Shield
+    pol0 = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    sh = Shield(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
+    zone = SE.spawn_zone(payload or LATE_ZONE, 0, FAR, (1.0, 0.0))
+    sh.hot_apply(zone, 1.0)
+    live = sh.policy
+    return pol0, live.model_copy(update={"constraints": list(live.constraints)})
+
+
+def test_a_swap_is_one_assignment_and_refuses_what_it_cannot_fly():
+    """PrefixConsumer.swap: generation 1's CSP (a zone hot-applied across the
+    law's path) is flown from the next tick - the action the take-off CSP
+    passed straight is turned after it - in one assignment; a CSP of another
+    policy, one not newer, and the off arm's swap are refused and nothing
+    changes. The record keeps the take-off identity and, after a swap only,
+    the swaps and the ticks per generation."""
+    pol0, pol1 = _generation_1()
+    mission = PC.consumer_mission((-100.0, -100.0, 15.0), (100.0, -100.0, 15.0), 4.0)
+    csp0 = PC.static_csp(pol0, mission)
+    csp1 = CT.generation_csp(pol1, mission, clock=None, t_s=1.0, max_s=60.0)
+    assert (csp0.generation, csp1.generation) == (0, 1)
+    assert "late" in csp1.forbidden_action_set.no_translate_into_polygons
+    c = PC.PrefixConsumer(_Law(Action4D(vx=4.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)), csp0,
+                          pol0, wraps=VS.MODEL_IDS["goto"])
+    plain = c.record()
+    a0 = c.act(FAR)
+    assert (a0.vx, a0.vy) == (4.0, 0.0), a0
+    view0 = c._view
+    for bad, why in (((csp1, pol0), "CSP is for"), ((csp0, pol0), "not newer")):
+        try:
+            c.swap(*bad)
+        except ValueError as e:
+            assert why in str(e), e
+        else:
+            raise AssertionError(f"swap {why!r} accepted")
+        assert c._view is view0 and c.generation == 0 and not c.swaps
+    rec = c.swap(csp1, pol1, t=1.0, source="test")
+    assert c.generation == 1 and c.csp is csp1 and c.policy is pol1 and c._view is not view0
+    assert rec["from_generation"] == 0 and rec["generation"] == 1 and rec["t"] == 1.0
+    assert rec["action_set_sha256"] == PC.action_set_sha256(csp1)
+    a1 = c.act(FAR)
+    assert math.hypot(a1.vx, a1.vy) > 3.9 and abs(a1.vy) > 1.0, a1   # turned round "late"
+    out = c.record()
+    assert {k: out[k] for k in plain} == plain, "the take-off identity changed"
+    assert out["csp_generations"] == [rec] and out["generation_ticks"] == {"0": 1, "1": 1}
+    assert set(out) - set(plain) == {"csp_generations", "generation_ticks"}
+    off = PC.PrefixConsumer(_Law(Action4D(vx=4.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)))
+    try:
+        off.swap(csp1, pol1)
+    except ValueError as e:
+        assert "off arm" in str(e)
+    else:
+        raise AssertionError("the off arm swapped in a CSP")
+    # A moving zone is refused by the CSP itself (static policies only).
+    _, moving = _generation_1(dict(LATE_ZONE, motion={"vx_mps": 1.0, "vy_mps": 0.0,
+                                                       "yaw_rate_dps": 0.0}))
+    try:
+        PC.static_csp(moving, mission)
+    except ValueError as e:
+        assert "moving zone" in str(e), e
+    else:
+        raise AssertionError("a CSP was compiled for a moving zone")
+
+
+def test_the_follower_flies_the_shields_generation_from_the_message():
+    """GenerationFollower, the stub's side: the Shield's /shield/csp document
+    (JSON round trip, as the topic carries it) of a newer generation is
+    compiled for the pilot's own mission and swapped in; the same document
+    again, or an older one, is ignored; a forged hash, a non-document or a
+    generation whose rules still switch with the clock is announced refused
+    and the consumer keeps its CSP. The off arm follows nothing."""
+    pol0, pol1 = _generation_1()
+    mission = PC.consumer_mission((-100.0, -100.0, 15.0), (100.0, -100.0, 15.0), 4.0)
+    c = PC.PrefixConsumer(_Law(Action4D(vx=4.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)),
+                          PC.static_csp(pol0, mission), pol0)
+    f = CT.GenerationFollower(c, mission, max_s=60.0)
+    ann0 = f.announcement()
+    assert ann0["generation"] == 0 and ann0["source"] == "take-off"
+    assert ann0["action_set_sha256"] == PC.action_set_sha256(c.csp)
+
+    def msg(pol, g, **kw):
+        row = {"generation": g, "policy_hash": pol.policy_hash, "reason": "hot_apply late",
+               "rule_clock_reading": kw.pop("clock", None), "csp": True}
+        doc = CT.shield_csp_message(row, pol, t=kw.pop("t", 1.0), **kw)
+        return json.loads(json.dumps(doc))
+    shield_csp = ConstraintCompiler(pol1).compile_csp(mission)
+    doc1 = msg(pol1, 1, csp_doc=json.loads(shield_csp.model_dump_json()))
+    assert doc1["schema"] == CT.SCHEMA and doc1["policy_hash"] == pol1.policy_hash
+    assert f.take(msg(pol0, 0)) is None and c.generation == 0
+    forged = dict(doc1, policy_hash="sha256:" + "0" * 64)
+    for bad in (forged, "not json", {"schema": "other"}):
+        ann = f.take(bad)
+        assert ann["refused"] and ann["flying_generation"] == 0 and c.generation == 0, ann
+    ann = f.take(doc1)
+    want = CT.generation_csp(pol1, mission, clock=None, t_s=1.0, max_s=60.0)
+    assert ann["generation"] == 1 and c.generation == 1 and "refused" not in ann, ann
+    assert ann["action_set_sha256"] == PC.action_set_sha256(want)
+    assert ann["shield_csp_content_hash"] == csp_content_hash(shield_csp)
+    assert ann["t_shield"] == 1.0 and ann["source"] == CT.CSP_TOPIC
+    assert f.take(doc1) is None and len(c.swaps) == 1
+    # A generation whose rule switches with the clock after it: refused.
+    from guardrail.models import TimeWindowSwitch
+    from guardrail.shield import Shield
+    sh = Shield(load_policy(ROOT / "policies" / "corridor_survey.yaml"))
+    m2 = PC.consumer_mission((60.0, 0.0, 15.0), (60.0, 55.0, 15.0), 4.0)
+    start = datetime(2026, 9, 7, 11, 59, 50)
+    c2 = PC.PrefixConsumer(_Law(Action4D(vx=0.0, vy=4.0, vz_up=0.0, yaw_rate=0.0)),
+                           PC.static_csp(sh.policy, m2, now=start, duration_s=40.0),
+                           sh.policy.model_copy(update={"constraints":
+                                                        list(sh.policy.constraints)}))
+    sh.hot_apply(TimeWindowSwitch.model_validate({
+        "id": "lunch-release", "type": "time_window_switch", "target_id": "nfz-school",
+        "active": False, "constraint_type": "hard", "priority": "P0",
+        "violation_action": "project_fix", "scope": "mission",
+        "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+                                      "start_time": "12:00", "end_time": "12:30"}}}), 1.0)
+    f2 = CT.GenerationFollower(c2, m2, max_s=40.0)
+    ann = f2.take(msg(sh.policy, 1, clock="2026-09-07T11:59:51", t=1.0))
+    assert ann["refused"] and "not those at" in ann["refused"] and c2.generation == 0, ann
+    try:
+        CT.GenerationFollower(PC.PrefixConsumer(_Law(Action4D(vx=1.0, vy=0.0, vz_up=0.0,
+                                                              yaw_rate=0.0))), mission)
+    except ValueError as e:
+        assert "prefix-on" in str(e)
+    else:
+        raise AssertionError("the off arm follows the Shield")
+
+
+def test_the_lag_is_measured_on_the_rows_and_a_pilot_that_did_not_follow_is_caught():
+    """guardrail.csp_topic.generation_lag / tracking_problems over rows that
+    carry the Shield's `generation` and the pilot's `pilot_csp_generation`:
+    a pilot one tick behind passes; one over LAG_MAX_S behind, one that never
+    follows (on a flight long enough to show it), one ahead of the Shield,
+    one that refused a generation, one that announced nothing, and one whose
+    announced CSP is not the one the run's policy compiles to are caught."""
+    def rows(shield, pilot):
+        return [{"t": round(0.1 * i, 4), "generation": g,
+                 **({} if p is None else {"pilot_csp_generation": p})}
+                for i, (g, p) in enumerate(zip(shield, pilot))]
+    ok = rows([0, 0, 1, 1, 1, 1], [0, 0, 0, 1, 1, 1])
+    lag = CT.generation_lag(ok)
+    assert lag["generations"] == [{"generation": 1, "shield_t": 0.2, "pilot_t": 0.3,
+                                   "lag_s": 0.1, "lag_rows": 1}], lag
+    assert lag["stale_rows"] == 1 and lag["ahead_rows"] == 0 and lag["pilot_rows"] == 6
+    assert CT.tracking_problems(ok) == []
+    slow = rows([0] + [1] * 20, [0] * 13 + [1] * 8)              # 1.2 s behind
+    assert any("over 1 s" in p for p in CT.tracking_problems(slow)), \
+        CT.tracking_problems(slow)
+    never = rows([0] + [1] * 20, [0] * 21)
+    assert any("never flew generation 1" in p for p in CT.tracking_problems(never))
+    # ...but a flight that ends within the bound after the hot-apply cannot show it
+    assert CT.tracking_problems(rows([0, 1, 1, 1], [0, 0, 0, 0])) == []
+    # a later generation reached first counts for the earlier one
+    jump = rows([0, 1, 2, 2], [0, 0, 2, 2])
+    assert [e["lag_rows"] for e in CT.generation_lag(jump)["generations"]] == [1, 0]
+    assert CT.tracking_problems(jump) == []
+    assert any("above the Shield's" in p
+               for p in CT.tracking_problems(rows([0, 0, 1], [0, 1, 1])))
+    assert "announced none" in CT.tracking_problems(rows([0, 1, 1], [None] * 3))[0]
+    refused = [{"generation": 1, "refused": "ValueError: x", "flying_generation": 0}]
+    assert any("refused generation 1" in p
+               for p in CT.tracking_problems(ok, announcements=refused))
+    # The binding: the announced CSP against the run's own policy_g1.json.
+    pol0, pol1 = _generation_1()
+    mission = PC.consumer_mission((-100.0, -100.0, 15.0), (100.0, -100.0, 15.0), 4.0)
+
+    def csp_for(pol, clock, t):
+        return CT.generation_csp(pol, mission, clock=clock, t_s=t, max_s=60.0)
+    good = {"generation": 1, "policy_hash": pol1.policy_hash, "rule_clock_reading": None,
+            "t_shield": 0.2, "action_set_sha256": PC.action_set_sha256(csp_for(pol1, None, 0.2))}
+    gens = {0: pol0, 1: pol1}
+    assert CT.tracking_problems(ok, announcements=[good], generations=gens,
+                                csp_for=csp_for) == []
+    for bad, why in ((dict(good, action_set_sha256="sha256:" + "0" * 64), "compiles to"),
+                     (dict(good, policy_hash=pol0.policy_hash), "policy_g1.json is"),
+                     (dict(good, generation=2), "do not hold")):
+        got = CT.tracking_problems(ok, announcements=[bad], generations=gens, csp_for=csp_for)
+        assert any(why in p for p in got), (why, got)
+
+
+def test_the_three_grant_template_cells_fly_headless_with_the_consumer_following():
+    """dyn-nfz-spawn-ahead (dynamic_nfz_movement), corridor-swap-narrowed
+    (corridor_swap) and rule-deactivated-mid-run (time_window_switch, an
+    event-driven switch): the arm records build, and headless the prefix-on
+    arm swaps generation 1's CSP in on the event's tick (lag 0 rows), with
+    no P0 escape on either arm; the off arm holds no CSP and is the cell's
+    plain flight. time-window-switch-event, whose switch has a weekly window
+    (a clock-driven edge after the event), stays refused - its generation 1
+    really is not static over the rest of the flight."""
+    for cid in DYN_CELLS:
+        spec = FAMILIES[cid].first.spec
+        assert S.prefix_consumer_refusal(spec) is None, cid
+        recs = {arm: S.build_arm(_dyn_ep(cid, arm), defaults=DEFAULTS) for arm in ("on", "off")}
+        on = S.run_episode(spec, DEFAULTS, 1001, arm=recs["on"])
+        off = S.run_episode(spec, DEFAULTS, 1001, arm=recs["off"])
+        plain = S.run_episode(spec, DEFAULTS, 1001)
+        assert off.rows == plain.rows, f"{cid}: the off arm is not the plain flight"
+        ev_t = spec.events[0].at_sim_t
+        pc = on.extra["prefix_consumer"]
+        assert [(s["from_generation"], s["generation"], s["t"]) for s in pc["csp_generations"]] \
+            == [(0, 1, ev_t)], (cid, pc["csp_generations"])
+        tr = pc["generation_tracking"]
+        assert tr["generations"] == [{"generation": 1, "shield_t": ev_t, "pilot_t": ev_t,
+                                      "lag_s": 0.0, "lag_rows": 0}], (cid, tr)
+        assert tr["stale_rows"] == 0 and tr["ahead_rows"] == 0
+        assert all("pilot_csp_generation" in r for r in on.rows)
+        assert not any("pilot_csp_generation" in r for r in off.rows)
+        assert "csp_generations" not in off.extra["prefix_consumer"]
+        for run, ep in ((on, _dyn_ep(cid, "on")), (off, _dyn_ep(cid, "off"))):
+            k = S.score(S.scoring_spec(spec, ep), run.rows, run.extra, run.policy,
+                        run.priorities)
+            assert k["p0_escapes"] == 0, (cid, ep.prefix, k["p0_escapes"])
+    why = S.prefix_consumer_refusal(FAMILIES["time-window-switch-event"].first.spec)
+    assert why and "window" in why and "clock" in why and "WP4-19" in why, why
+    # ...and that is not a guess: its generation 1 has a schedule edge ahead.
+    spec = FAMILIES["time-window-switch-event"].first.spec
+    run = S.run_episode(spec, DEFAULTS, 1001)
+    try:
+        S.prefix_generation_csp(spec, run.policy, DEFAULTS, 1001,
+                                clock="2026-09-07T11:59:51", t_s=1.0)
+    except ValueError as e:
+        assert "not those at" in str(e), e
+    else:
+        raise AssertionError("time-window-switch-event's generation 1 compiled static")
+
+
+def test_the_corridor_swap_reaches_the_consumers_geometry():
+    """corridor-swap-narrowed: after the swap the consumer judges against the
+    10 m corridor (the CorridorSwap's own tube under its id), not the 40 m
+    one it took off with, so the Shield repairs nothing it asks for. THE
+    NULL: the same arm with the swap disabled (the take-off CSP flown
+    throughout, as before 2026-11-26) keeps asking out of the narrowed
+    corridor, and the Shield repairs it. The consumer's take-off policy is
+    its own copy: the Shield's hot-apply does not change it."""
+    spec = FAMILIES["corridor-swap-narrowed"].first.spec
+    rec = S.build_arm(_dyn_ep("corridor-swap-narrowed", "on"), defaults=DEFAULTS)
+    t_ev = spec.events[0].at_sim_t
+
+    def repaired_after(run):
+        return sum(len(r["repairs"]) for r in run.rows if r["t"] >= t_ev)
+    on = S.run_episode(spec, DEFAULTS, 1001, arm=rec)
+    assert repaired_after(on) == 0, repaired_after(on)
+    assert on.extra["prefix_consumer"]["stats"]["no_admissible"] == 0
+    real = PC.PrefixConsumer.swap
+    PC.PrefixConsumer.swap = lambda self, *a, **kw: {}
+    try:
+        null = S.run_episode(spec, DEFAULTS, 1001, arm=rec)
+    finally:
+        PC.PrefixConsumer.swap = real
+    assert repaired_after(null) > 0, "the null repaired nothing: the test shows nothing"
+
+
+def test_the_stub_compiles_the_generation_the_harness_swapped_in():
+    """For each dynamic cell the arguments the harness sends - now with
+    --csp-topic=on before --prefix, on both arms - give the stub a follower
+    on the prefix-on arm only; fed the Shield's message of the headless
+    flight's generation 1 (its policy, the event's time and clock), the
+    stub's CSP is the one the harness swapped in, to the action set. Both
+    nodes declare the flag; a stub without it is refused, not flown."""
+    import ros2_shield_node as N
+    for cid in DYN_CELLS:
+        spec = FAMILIES[cid].first.spec
+        for arm in ("on", "off"):
+            ep = _dyn_ep(cid, arm)
+            args = S.rail_node_args(spec, 1001, DEFAULTS, backend="sitl", episode=ep)
+            assert args[-2:] == ["--csp-topic=on", f"--prefix={arm}"], args
+            assert S.rail_refusal(spec, "hil", episode=ep, defaults=DEFAULTS) is None
+            ns, _ = N.make_parser().parse_known_args(args)
+            vs, _ = V.make_parser().parse_known_args(args)
+            assert ns.csp_topic == vs.csp_topic == "on"
+            vs.policy = str(ROOT / vs.policy)
+            V.check_args(vs)
+            policy, _ = V.stub_policy(vs)
+            mission = ConstraintCompiler(policy).parse_command(vs.command)
+            mission, target, start = V.mission_from_args(vs, mission)
+            pilot, rec = V.pilot_from_args(vs, mission, target)
+            flown, rec, prefix, csp = V.prefix_pilot(vs, policy, mission, pilot, rec, start)
+            fol = V.generation_follower(vs, flown, mission, start)
+            if arm == "off":
+                assert fol is None
+                continue
+            run = S.run_episode(spec, DEFAULTS, 1001,
+                                arm=S.build_arm(ep, defaults=DEFAULTS))
+            swap = run.extra["prefix_consumer"]["csp_generations"][0]
+            row = {"generation": 1, "policy_hash": run.policy.policy_hash,
+                   "reason": "hot_apply", "csp": False,
+                   "rule_clock_reading": swap["rule_clock_reading"]}
+            doc = json.loads(json.dumps(CT.shield_csp_message(row, run.policy,
+                                                               t=swap["t"])))
+            ann = fol.take(doc)
+            assert ann and not ann.get("refused") and ann["generation"] == 1, (cid, ann)
+            assert ann["action_set_sha256"] == swap["action_set_sha256"], (cid, ann, swap)
+        vs.csp_topic = "off"
+        vs.prefix = "on"
+        assert V.generation_follower(vs, flown, mission, start) is None
+    assert "--csp-topic" in S.sitl_node_flags(ROOT / S.SITL_NODE)
+    assert "--csp-topic" in S.sitl_node_flags(ROOT / S.SITL_STUB)
+    saved = S.sitl_node_flags
+    S.sitl_node_flags = lambda script=None: saved(script) - (
+        {"--csp-topic"} if script is not None and Path(script).name == Path(S.SITL_STUB).name
+        else set())
+    try:
+        S.rail_node_args(FAMILIES[DYN_CELLS[0]].first.spec, 1001, DEFAULTS, backend="sitl",
+                         episode=_dyn_ep(DYN_CELLS[0], "on"))
+    except S.UnsupportedScenario as e:
+        assert "--csp-topic" in str(e), e
+    else:
+        raise AssertionError("a stub without --csp-topic was sent a dynamic prefix arm")
+    finally:
+        S.sitl_node_flags = saved
+
+
+def test_a_rail_flight_of_a_dynamic_cell_is_checked_for_following():
+    """prefix_generation_problems on a scenario WITH events: the off arm's
+    generation change is its scenario's (no problem); the on arm passes when
+    its rows show the pilot following within the bound and its announced CSP
+    is the one the run's policy compiles to, and is not the arm's flight when
+    the rows carry no pilot generation (an old stub, the flag dropped) or the
+    pilot fell behind. prefix_flight_record then carries the measured lag."""
+    cid = "rule-deactivated-mid-run"
+    spec = FAMILIES[cid].first.spec
+    metas = {arm: S.rail_meta(spec, _dyn_ep(cid, arm), 1001, "hil", "t_001", "n", None,
+                              "c", DEFAULTS) for arm in ("on", "off")}
+    assert metas["on"]["events"] == 1
+    run = S.run_episode(spec, DEFAULTS, 1001,
+                        arm=S.build_arm(_dyn_ep(cid, "on"), defaults=DEFAULTS))
+    swap = run.extra["prefix_consumer"]["csp_generations"][0]
+    gens = {0: CORRIDOR, 1: run.policy}
+
+    def csp_for(pol, clock, t):
+        return S.prefix_generation_csp(spec, pol, DEFAULTS, 1001, clock=clock, t_s=t)
+    ann = {"schema": CT.PILOT_SCHEMA, "generation": 1, "policy_hash": run.policy.policy_hash,
+           "action_set_sha256": swap["action_set_sha256"],
+           "rule_clock_reading": swap["rule_clock_reading"], "t_shield": swap["t"]}
+    metrics = {"prefix_csp_topic": {"pilot": [ann]}}
+    follow = [{"t": 0.1 * i, "generation": int(i >= 60),
+               "pilot_csp_generation": int(i >= 62)} for i in range(100)]
+    assert S.prefix_generation_problems(metas["off"], gens, follow) == []
+    assert S.prefix_generation_problems(metas["on"], gens, follow, metrics, csp_for) == []
+    blind = [{k: v for k, v in r.items() if k != "pilot_csp_generation"} for r in follow]
+    got = S.prefix_generation_problems(metas["on"], gens, blind, metrics, csp_for)
+    assert len(got) == 1 and "WP4-19" in got[0] and "announced none" in got[0], got
+    late = [dict(r, pilot_csp_generation=int(r["t"] >= 7.5)) for r in follow]
+    got = S.prefix_generation_problems(metas["on"], gens, late, metrics, csp_for)
+    assert any("over 1 s" in p for p in got), got
+    forged = {"prefix_csp_topic": {"pilot": [dict(ann, action_set_sha256="sha256:" + "1" * 64)]}}
+    got = S.prefix_generation_problems(metas["on"], gens, follow, forged, csp_for)
+    assert any("compiles to" in p for p in got), got
+    rec = S.prefix_flight_record({"vla_identity": {}, **metrics}, metas["on"], follow)
+    assert rec["generation_tracking"]["lag"]["generations"][0]["lag_rows"] == 2
+    assert rec["generation_tracking"]["lag_max_s"] == CT.LAG_MAX_S
+    assert "generation_tracking" not in S.prefix_flight_record({}, metas["off"], follow)
+    assert "generation_tracking" not in S.prefix_flight_record({}, metas["on"])
+
+
+def test_sros2_lets_only_the_shield_publish_the_csp_and_only_the_stub_answer():
+    """sitl/sros2_policy.xml: /shield/csp is published by the Shield node
+    alone and read by the VLA stub (and the bag recorder's /shield/*);
+    /vla/prefix_csp is published by the stub alone and read by the Shield
+    node. Without these grants SROS 2 Enforce refuses both topics."""
+    import fnmatch
+    import xml.etree.ElementTree as ET
+    tree = ET.parse(ROOT / "sitl" / "sros2_policy.xml")
+
+    def grants(topic):
+        out = {"publish": set(), "subscribe": set()}
+        for prof in tree.iter("profile"):
+            for topics in prof.findall("topics"):
+                for way in out:
+                    if topics.get(way) == "ALLOW" and any(
+                            fnmatch.fnmatchcase(topic, (t.text or "").strip())
+                            for t in topics.findall("topic")):
+                        out[way].add(prof.get("node"))
+        return out
+    g = grants(CT.CSP_TOPIC)
+    assert g["publish"] == {"safety_shield"}, g
+    assert {"vla_stub", "rosbag2_recorder"} <= g["subscribe"], g
+    g = grants(CT.PILOT_CSP_TOPIC)
+    assert g["publish"] == {"vla_stub"}, g
+    assert {"safety_shield", "rosbag2_recorder"} <= g["subscribe"], g
+
+
+def test_the_dynamic_profile_flies_three_template_cells_on_and_off():
+    """experiments/profiles/prefix_dyn.yaml: one cell of three of the grant's
+    templates, prefix on and off, every pair a consumer pair, each cell's
+    gates safety invariants only (no "the rule was exercised" lower bound,
+    which a consuming pilot does not trip); nothing in it is refused for the
+    consumer or for the hil rail, and every episode is sent --csp-topic."""
+    prof = load_profile(ROOT / "experiments" / "profiles" / "prefix_dyn.yaml")
+    assert prof.prefix_consumer == "action_set" and prof.prefix_ab
+    assert prof.grant_kpi_bearing is False
+    eps, info = S.expand(LIBRARY, prof, 1001, None)
+    by_cell: dict[str, set] = {}
+    for ep in eps:
+        spec = ep.cell.spec
+        by_cell.setdefault(spec.scenario_id, set()).add(ep.prefix)
+        assert ep.prefix_consumer == "action_set" and spec.events
+        assert S.rail_refusal(spec, "hil", episode=ep, defaults=DEFAULTS) is None
+        exercise = [k for k, g in (spec.expected_kpis or {}).items()
+                    if isinstance(g, dict) and "min" in g and "violation_ticks" in k]
+        assert not exercise, (spec.scenario_id, exercise)
+        args = S.rail_node_args(spec, ep.seed, DEFAULTS, backend="sitl", episode=ep)
+        assert args[-2:] == ["--csp-topic=on", f"--prefix={ep.prefix}"], args
+    cells = ("dyn-nfz-spawn-ahead", "corridor-swap-narrowed", "radius-scaling-grow")
+    assert by_cell == {cid: {"on", "off"} for cid in cells}, by_cell
+    assert {FAMILIES[c].first.spec.template for c in cells} == {
+        "dynamic_nfz_movement", "corridor_swap", "radius_scaling"}
+
+
+def test_the_binding_compiles_from_the_run_s_own_record_not_the_pilot_s_claim():
+    """tracking_problems with `records` (the run's events.jsonl
+    policy_generation of N): an announcement whose rule clock or hot-apply
+    time is not the recorded one is caught BEFORE compiling - a pilot that
+    compiled generation N at a wrong clock and announced that clock would
+    otherwise pass, since the harness would compile at the same wrong clock
+    - and so is one of a generation the run records nothing of. The
+    recorded time may differ from the message's by its rounding (3 vs 4
+    decimals). The harness compiles from the recorded inputs."""
+    pol0, pol1 = _generation_1()
+    mission = PC.consumer_mission((-100.0, -100.0, 15.0), (100.0, -100.0, 15.0), 4.0)
+    seen = []
+
+    def csp_for(pol, clock, t):
+        seen.append((clock, t))
+        return CT.generation_csp(pol, mission, clock=clock, t_s=t, max_s=60.0)
+    clock = "2026-11-26T10:00:05"
+    good = {"generation": 1, "policy_hash": pol1.policy_hash, "rule_clock_reading": clock,
+            "t_shield": 0.2001,
+            "action_set_sha256": PC.action_set_sha256(csp_for(pol1, clock, 0.2001))}
+    rows = [{"t": round(0.1 * i, 4), "generation": int(i >= 2),
+             "pilot_csp_generation": int(i >= 3)} for i in range(6)]
+    gens = {0: pol0, 1: pol1}
+    records = {1: {"kind": "policy_generation", "generation": 1, "t": 0.2,
+                   "rule_clock_reading": clock}}
+    seen.clear()
+    assert CT.tracking_problems(rows, announcements=[good], generations=gens,
+                                csp_for=csp_for, records=records) == []
+    assert seen == [(clock, 0.2)], seen                    # the recorded inputs
+    forged_clock = dict(good, rule_clock_reading="2026-11-26T03:00:05")
+    forged_clock["action_set_sha256"] = PC.action_set_sha256(
+        csp_for(pol1, forged_clock["rule_clock_reading"], 0.2001))
+    # Without the record, the forged clock is compiled from and passes...
+    assert CT.tracking_problems(rows, announcements=[forged_clock], generations=gens,
+                                csp_for=csp_for) == []
+    # ...with it, it is caught.
+    got = CT.tracking_problems(rows, announcements=[forged_clock], generations=gens,
+                               csp_for=csp_for, records=records)
+    assert len(got) == 1 and "the run recorded generation 1" in got[0], got
+    got = CT.tracking_problems(rows, announcements=[dict(good, t_shield=3.0)],
+                               generations=gens, csp_for=csp_for, records=records)
+    assert len(got) == 1 and "t=3.0" in got[0], got
+    got = CT.tracking_problems(rows, announcements=[good], generations=gens,
+                               csp_for=csp_for, records={})
+    assert len(got) == 1 and "records no policy_generation" in got[0], got
+
+
+def test_a_generation_no_scenario_event_made_is_refused_on_both_arms():
+    """prefix_generation_problems with `made_by` (run_generation_events: the
+    generations the run's own accepted scenario_event records made): a
+    generation above 0 that none made - a REST hot-apply, which the Shield
+    node publishes to the pilot like any other - is not the arm's flight, on
+    the off arm as on the on arm. One the scenario's event made passes the
+    off arm as before."""
+    cid = "rule-deactivated-mid-run"
+    spec = FAMILIES[cid].first.spec
+    metas = {arm: S.rail_meta(spec, _dyn_ep(cid, arm), 1001, "hil", "t_001", "n", None,
+                              "c", DEFAULTS) for arm in ("on", "off")}
+    gens = {0: CORRIDOR, 1: CORRIDOR, 2: CORRIDOR}
+    rows = [{"t": 0.1 * i, "generation": min(2, i // 30), "pilot_csp_generation": 0}
+            for i in range(100)]
+    for arm in ("on", "off"):
+        got = S.prefix_generation_problems(metas[arm], gens, rows, made_by={1})
+        assert len(got) == 1 and "[2]" in got[0] and "scenario_event" in got[0], (arm, got)
+    one = [dict(r, generation=min(1, r["generation"])) for r in rows]
+    assert S.prefix_generation_problems(metas["off"], {0: CORRIDOR, 1: CORRIDOR}, one,
+                                        made_by={1}) == []
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        assert S.run_generation_events(d) == ({}, set())
+        lines = [{"kind": "policy_generation", "generation": 0, "t": None},
+                 {"kind": "policy_generation", "generation": 1, "t": 6.0,
+                  "rule_clock_reading": "2026-11-26T10:00:06"},
+                 {"kind": "scenario_event", "generation": 1, "rule_id": "nfz-school"},
+                 {"kind": "scenario_event", "generation": 1, "refused": True},
+                 {"kind": "policy_generation", "generation": 2, "t": 7.0},
+                 {"kind": "policy_generation", "generation": 1, "t": 99.0}]
+        (d / "events.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines)
+                                        + "not json\n", encoding="utf-8")
+        records, made_by = S.run_generation_events(d)
+        assert sorted(records) == [0, 1, 2] and records[1]["t"] == 6.0, records
+        assert made_by == {1}, made_by
+
+
+def test_a_rescore_checks_a_prefix_consumer_run_as_the_campaign_did():
+    """rescore_rail_run on a prefix-consumer run fails closed as run_hil
+    does (prefix_flight_problems, prefix_generation_problems), so a re-score
+    never scores a flight that was not its arm's: here the VLA node
+    announced no prefix arm."""
+    cid = "rule-deactivated-mid-run"
+    ep = _dyn_ep(cid, "on")
+    spec = ep.cell.spec
+    meta = S.rail_meta(spec, ep, 1001, "hil", "t_001", "n", None, "c", DEFAULTS)
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "metrics.json").write_text(json.dumps({"scenario": meta, "vla_identity": {}}),
+                                        encoding="utf-8")
+        (d / "flight_log.jsonl").write_text(
+            "".join(json.dumps({"t": 0.1 * i, "generation": 0}) + "\n" for i in range(5)),
+            encoding="utf-8")
+        (d / "events.jsonl").write_text("", encoding="utf-8")
+        try:
+            S.rescore_rail_run(d, ep, DEFAULTS)
+        except RuntimeError as e:
+            assert "not the prefix arm's flight" in str(e) and "no prefix arm" in str(e), e
+        else:
+            raise AssertionError("a rescore scored a prefix run whose node announced no arm")
 
 
 if __name__ == "__main__":

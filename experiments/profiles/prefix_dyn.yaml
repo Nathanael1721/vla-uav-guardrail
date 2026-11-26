@@ -1,0 +1,106 @@
+# Prefix A/B on the grant's dynamic templates: all four components in one flight.
+#
+# WHY THIS PROFILE EXISTS (2026-11-26, contract item WP4-19)
+#
+# The final demo gate (recommendation.md): "All four components in the
+# implementation plan [Policy DSL, Prefix Compiler, Safety Shield, Stress
+# Testing], exercised by a non-trivial scenario from the Stress Testing
+# scenario suite." The suite's templates (stress-testing.md:
+# dynamic_nfz_movement, time_window_switch, radius_scaling, corridor_swap)
+# all change the rules in flight. experiments/profiles/prefix_ab.yaml flies
+# the Prefix Compiler's CSP through a consuming pilot on static cells only,
+# because until this date nothing carried generation N's CSP to the pilot
+# after a hot-apply. Now the Shield node publishes each generation on
+# /shield/csp and the VLA stub's prefix consumer swaps it in
+# (guardrail/csp_topic.py; headless, the harness swaps it at the event), and
+# the harness checks the pilot followed (sweep_scenarios.
+# prefix_generation_problems: every generation reached within
+# csp_topic.LAG_MAX_S, its CSP the one the run's policy_g<N>.json compiles
+# to).
+#
+# WHAT IT FLIES
+#
+# One cell of each of three of the grant's templates, each with event-driven
+# hot-applies, prefix on and off on the same seed, two seeds:
+# 3 cells x 2 arms x 2 seeds = 12 flights.
+#
+#   dyn-nfz-spawn-ahead     dynamic_nfz_movement  a zone hot-applied 12 m ahead
+#                                                 at 4 m/s at 5 s (the smoke
+#                                                 cell); generation 0 -> 1.
+#                                                 A STATIONARY mid-flight
+#                                                 spawn: the zone never moves
+#                                                 (see NOT HERE)
+#   corridor-swap-narrowed  corridor_swap         the 40 m corridor swapped for
+#                                                 a 10 m one at 3 s, a pilot
+#                                                 pulling out at 2 m/s; 0 -> 1
+#   radius-scaling-grow     radius_scaling        a zone spawned at take-off,
+#                                                 grown x3.3 at 10 s (the smoke
+#                                                 cell); 0 -> 1 -> 2
+#
+# Each cell's gates are safety invariants only (P0 escapes, breaches, polygon
+# entries, time to safe, corridor offset), as prefix_ab.yaml's cells are; the
+# prefix-on arm is scored on them, without the outcome and fail-safe labels.
+#
+# NOT HERE: a MOVING zone. The dynamic_nfz_movement cell flown is a
+# stationary mid-flight spawn. The template's worked example
+# (stress-testing.md dyn-nfz-translate-001; the library's dyn-nfz-translate:
+# a spawn and a continuous translate) and dyn-nfz-rotate-spin are refused for
+# the consumer: a zone set moving changes its polygon with the clock under
+# one rule id, which a CSP static over the rest of the flight cannot serve
+# (sweep_scenarios.consumer_event_refusal). dyn-nfz-rotate-step (a 90 degree
+# step rotation at 8 s, event-driven) IS followed, but carries a gate that
+# the bar was hit by the rule-ignorant pilot (`phase2_violation_ticks_bar:
+# {min: 1}`): measured headless 2026-11-26 (seeds 1001 and 1002, one distinct
+# flight pair), its prefix-on arm failed only that gate (0 repairs, P0
+# escape 0, mission success) and its prefix-off arm passed (219 repairs, P0
+# escape 0). It is left out for the same scoring decision as below.
+#
+# NOT HERE: the fourth template, time_window_switch. time-window-switch-event
+# (the smoke's row) is refused for the consumer: its switch carries a weekly
+# window, so the rules change again with the clock after the event, and the
+# consumer flies one CSP per generation, static over the rest of the flight
+# (prefix_consumer.static_csp; sweep_scenarios.prefix_consumer_refusal). The
+# event-driven cells of the template (rule-deactivated-mid-run,
+# rule-activated-mid-run) ARE followed - tests/test_prefix_consumer.py flies
+# rule-deactivated-mid-run headless - but each carries a gate that the rule
+# was exercised by the rule-ignorant pilot (`phaseN_violation_ticks_*: {min:
+# 1}`), which a pilot that reads the CSP does not trip, so its prefix-on arm
+# would be scored a FAIL by design. Whether such a gate applies to a consuming
+# pilot is a scoring decision this profile does not take.
+#
+# WHAT IT IS NOT
+#
+# Not a grant scheduling row and not part of the KPI campaign's figure
+# (`grant_kpi_bearing: false`): it flies the prefix consumer, another pilot
+# than the nightly's, and prefix-off arms. Its runs are reported on their own
+# (tools/kpi_report.py --campaign <its store>). The pilot is the hand-written
+# action-set adapter (guardrail/prefix_consumer.py), not a learned VLA: it
+# reads the polygons the Shield enforces, so part of any on / off delta holds
+# by construction. The prefix-on arm is scored without the cells' outcome and
+# fail-safe labels (they were derived for the rule-ignorant pilot); the gates,
+# the safety invariants, apply to both arms.
+#
+#   python experiments/sweep_scenarios.py --profile prefix_dyn --keep-logs
+#   python experiments/sweep_scenarios.py --profile prefix_dyn --backend hil --hil-dry-run
+
+profile: prefix_dyn
+cadence: on demand (WP4-19, the four components on the grant's dynamic templates)
+grant_scope: "not a grant row: the Prefix A/B (prefix on / off, same seed) on three dynamic template cells, generation N's CSP at the pilot"
+grant_sim_speedup: "1.0 on the hil rail - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001, 1002]
+samples_per_family: 1
+families: [dyn-nfz-spawn-ahead, corridor-swap-narrowed, radius-scaling-grow]
+sweep_overrides:
+  dyn-nfz-spawn-ahead:
+    vehicle_speed_mps: [4]
+    ahead_m: [12]
+  corridor-swap-narrowed:
+    ask_mps: [2]
+  radius-scaling-grow:
+    factor: [3.3]
+expected_cells: [3, 3]
+paraphrase_k: 0
+prefix_ab: true
+prefix_consumer: action_set
