@@ -1563,12 +1563,16 @@ def diff_text(diff: dict[str, Any]) -> str:
 
 def _previous_policy(previous) -> Policy | None:
     """`previous` as a Policy: None, a Policy, a bundle (.tar.gz, read with
-    the signature checks load_bundle makes) or a policy YAML/JSON file."""
+    the signature checks load_bundle makes) or a policy YAML/JSON file.
+    The previous bundle is a recorded artefact the diff is taken against,
+    not a policy about to fly: its load is a declared legacy read
+    (legacy_read=True), so an older version issued in local metres or with
+    x/y beside lat/lon still gives its diff (WP1-14, 2026-11-26)."""
     if previous is None or isinstance(previous, Policy):
         return previous
     p = Path(previous)
     if p.name.endswith(".tar.gz"):
-        return load_bundle(p)
+        return load_bundle(p, legacy_read=True)
     from guardrail import load_policy
     return load_policy(p, runtime=False)
 
@@ -2370,7 +2374,8 @@ def _refuse_for_flight(chk: BundleCheck, name: str, ground=None) -> None:
 
 def load_bundle(path: str | Path, *, require_signature: bool = True,
                 trust_store: str | Path | dict | None = None,
-                runtime: bool = True, ground=None) -> Policy:
+                runtime: bool = True, ground=None,
+                legacy_read: bool | None = None) -> Policy:
     """Load a bundle, rebuild the Policy, and REFUSE it if it is not the policy
     that was issued. `ground`: the MSL opt-in (models.load_policy).
 
@@ -2391,9 +2396,26 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     reference-form bundle with one returns the source policy it rebuilds
     (`BundleCheck.flight_policy`). Until 2026-10-07 this
     function skipped that gate, so a bundle with a dynamic_nfz loaded here and
-    the Shield then ignored the zone without a word - and
-    guardrail/scenario_spec.py loads its `bundle_path` scenarios through it.
+    the Shield then ignored the zone without a word (guardrail/scenario_spec.py
+    loaded its `bundle_path` scenarios through it then; it uses
+    load_for_flight since that day).
     `runtime=False` returns the declaration, for tools that only read it.
+
+    WGS84 ONLY, as load_for_flight (WP1-14, since 2026-11-26). With
+    `runtime=True` a bundle whose policy stores its points in local metres
+    (LEGACY_POINT_FORMS) or whose archived ir.json writes x/y beside lat/lon
+    (BundleCheck.projected_points, the bundles hashed before 2026-10-06) is
+    refused (LegacyPointFormRefused, the messages load_for_flight gives)
+    unless the load is a declared read: `legacy_read=True`, or None with
+    VLAGUARD_LEGACY_READ=1 in the environment, as load_for_flight reads it.
+    The policy of a declared read is labelled (models.mark_legacy_read), so
+    a Shield can be built on it. Until then this function, whose docstring
+    said it applied load_for_flight's gate, applied neither refusal (review
+    2026-11-26). It returns a Policy only, so the read is not recorded
+    here: a flight entry point uses load_for_flight, whose record says it.
+    Its one caller in the code is _previous_policy (write_bundle's
+    `previous`, a recorded bundle the diff is taken against), which declares
+    the read.
 
     The signature default changed on 2026-10-06 (it used to accept the
     placeholder signer). A caller that writes a bundle and reads it straight
@@ -2408,7 +2430,19 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
             f"{Path(path).name}: signature {chk.signature}: {chk.detail}. "
             f"Refusing to treat it as signed. Load with "
             f"require_signature=False only if the run is recorded as UNSIGNED.")
-    return chk.flight_policy if runtime else chk.policy
+    if not runtime:
+        return chk.policy
+    pol = chk.flight_policy
+    if legacy_read is None:
+        legacy_read = os.environ.get(LEGACY_READ_ENV, "").strip().lower()             not in ("", "0", "false", "no")
+    # The two point-form refusals of load_for_flight (docstring).
+    if chk.projected_points and not legacy_read:
+        raise LegacyPointFormRefused(_xy_beside_message(chk.projected_points, pol, path))
+    if pol.point_form in LEGACY_POINT_FORMS and not legacy_read:
+        raise LegacyPointFormRefused(_not_wgs84_message(pol, path, is_bundle=True))
+    if chk.projected_points or pol.point_form in LEGACY_POINT_FORMS:
+        mark_legacy_read(pol)
+    return pol
 
 
 def load_for_flight(bundle: str | Path | None = None,
@@ -2465,9 +2499,12 @@ def load_for_flight(bundle: str | Path | None = None,
     is one (wgs84_successor; tools/bundle_census.py lists them all). Until
     2026-11-18 such a policy flew, labelled, and a spawned zone was then
     refused mid-flight. `legacy_read=True` (None reads VLAGUARD_LEGACY_READ,
-    1 = on) is the one exception, and it is a READ: re-running a recorded
-    flight under the policy it flew. The record then carries
-    `legacy_read: true`, `point_form` and `point_note`.
+    1 = on) is the one exception, and it is meant as a READ: re-running a
+    recorded flight under the policy it flew. It is a declaration, not a
+    check: nothing verifies that the policy was recorded, and the
+    environment variable declares it for every load_for_flight in the
+    process. The record then carries `legacy_read: true`, `point_form` and
+    `point_note`, so a run loaded under it says so.
 
     Since 2026-11-26 a bundle whose archived ir.json writes x/y beside
     lat/lon (BundleCheck.projected_points: the dump of the bundles hashed
@@ -2589,8 +2626,9 @@ def load_yaml_for_flight(path: str | Path, *, say=print) -> tuple[Policy, dict]:
     stored in local metres (models.LEGACY_POINT_FORMS) flew through them
     without a word, while every other rail refused it at load. Now they get
     the same refusal (LegacyPointFormRefused) and the same one exception: a
-    declared read of a recorded flight (VLAGUARD_LEGACY_READ=1), which is
-    announced through `say` so the console says the run was a read. A
+    declared read, meant for a recorded flight (VLAGUARD_LEGACY_READ=1, a
+    declaration for every load in the process that nothing checks), which
+    is announced through `say` so the console says the run was a read. A
     WGS84 or point-free policy loads exactly as load_policy loaded it (same
     rules, same flight_problems refusal, same hash), so a run of these
     scripts on any policies/*.yaml is unchanged.
