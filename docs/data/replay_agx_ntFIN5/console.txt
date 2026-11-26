@@ -1,0 +1,27 @@
+21c277170001: 654 episode(s) {'identical': 654, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+{
+ "episodes": 654,
+ "verdicts": {
+  "identical": 654,
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 654,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "worktrees_left_behind": [],
+ "seconds": 223.6
+}
