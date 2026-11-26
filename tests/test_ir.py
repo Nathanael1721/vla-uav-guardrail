@@ -286,7 +286,7 @@ def _shields(pol: Policy, smap, cls_new=Shield, now_new=None, now_old=None,
     r = m if pol.by_type(DistanceEnvelope) else None
     return (cls_new(pol.model_copy(deep=True), lookahead_s=lookahead_s, dt=dt,
                     obstacle_map=m, now=now_new, escalation=False, recovery_law="cap",
-                    road_map=r, path_repair=False),
+                    road_map=r, path_repair=False, legacy_metres=True),
             LegacyFenceShield(pol.model_copy(deep=True), lookahead_s=lookahead_s,
                               dt=dt, obstacle_map=m, now=now_old, escalation=False,
                               recovery_law="cap", road_map=r, path_repair=False))
@@ -394,7 +394,7 @@ def test_an_erased_ring_is_never_returned_and_never_fires():
     f = next(r for r in ir.fences if r.rule.id == "f")
     assert f.buffered.is_empty
     assert f not in ir.fences_in_box(-100, -100, 100, 100)
-    sh = Shield(pol.model_copy(deep=True))
+    sh = Shield(pol.model_copy(deep=True), legacy_metres=True)
     old = LegacyFenceShield(pol.model_copy(deep=True))
     st = State(x=-10.5, y=5.5, up=5.0)         # inside the authored polygon of f
     assert sh._check(st, Action4D()) == old._check(st, Action4D())
@@ -438,7 +438,7 @@ def test_shield_rebuilds_the_ir_on_hot_apply():
     zone would be enforced by nothing (test_shield.py's hot-apply test is the
     behavioural half of this)."""
     pol = _overlap_policy()
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     assert sh.ir.is_current_for(sh.policy)
     sh.hot_apply(geo(_square("hot", 100, 100, 5), sh))
     assert sh.ir.is_current_for(sh.policy)
@@ -714,7 +714,7 @@ def test_a_circle_fence_compiles_to_a_ring_that_holds_the_whole_disc():
         ang = 2 * math.pi * k / 720
         p = Point(10.0 + 19.999 * math.cos(ang), -5.0 + 19.999 * math.sin(ang))
         assert rec.buffered.contains(p), k
-    sh = Shield(Policy(policy_id="c", constraints=[c]))
+    sh = Shield(Policy(policy_id="c", constraints=[c]), legacy_metres=True)
     assert sh.state_is_unsafe(State(x=10.0 + 19.9, y=-5.0, up=10.0))
     assert not sh.state_is_unsafe(State(x=10.0 + 20.2, y=-5.0, up=10.0))
 
@@ -737,7 +737,7 @@ def test_an_event_recompiles_only_the_zone_it_changed():
     """The grant's hot path re-derives "the affected spatial-index entries":
     after a spawn every other zone keeps its compiled record (no re-buffer)."""
     pol = _overlap_policy()
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     before = {r.rule.id: r.buffered for r in sh.ir.fences}
     sh.hot_apply(geo(as_dynamic_nfz(_square("hot", 100, 100, 5)), sh))
     after = {r.rule.id: r.buffered for r in sh.ir.fences}

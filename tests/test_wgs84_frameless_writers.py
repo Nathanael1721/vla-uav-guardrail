@@ -63,7 +63,8 @@ from guardrail.models import (POINTS_LEGACY_METRES, POINTS_NONE,   # noqa: E402
                               Action4D,
                               POINTS_WGS84, CircleFence, CorridorSwap,
                               DynamicNFZ, NoFrameOrigin, Policy, PolygonFence,
-                              State, TimeWindowSwitch, load_policy, no_frame_message,
+                              State, TimeWindowSwitch, load_policy, mark_legacy_read,
+                              no_frame_message,
                               rule_in_wgs84, wgs84_from_metres)
 from guardrail.scenario_events import EventState, apply_event      # noqa: E402
 from guardrail.scenario_spec import ScenarioEvent                  # noqa: E402
@@ -130,7 +131,7 @@ def test_the_shield_refuses_every_write_with_points_on_a_frameless_policy():
     for make in (_metre, _pointfree):
         pol = make()
         assert pol.frame_origin is None
-        sh = Shield(pol)
+        sh = Shield(pol, legacy_metres=True)
         before = (sh.policy.policy_hash, sh.policy.generation)
         form = sh.policy.point_form
         assert form in (POINTS_LEGACY_METRES, POINTS_NONE), form
@@ -152,7 +153,7 @@ def test_the_shield_refuses_every_write_with_points_on_a_frameless_policy():
         _unchanged(sh, before)
         assert sh.policy.point_form == form
     # the metre policy's own zone and corridor: edits and a swap are refused
-    sh = Shield(_metre())
+    sh = Shield(_metre(), legacy_metres=True)
     sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D())
     before = (sh.policy.policy_hash, sh.policy.generation)
     for fn in (lambda: sh.translate_nfz("zone", 3.0, 0.0),
@@ -196,7 +197,7 @@ def test_with_a_frame_the_same_writes_store_wgs84():
 
 def test_rest_answers_422_naming_the_missing_origin():
     for make in (_metre, _pointfree):
-        sh = Shield(make())
+        sh = Shield(make(), legacy_metres=True)
         before = (sh.policy.policy_hash, sh.policy.generation)
         body = {"id": "rest-z", **RULE, "margin_m": 1.0, "vertices": SQUARE}
         calls = [lambda: rest(api.apply_dynamic_nfz, sh, copy.deepcopy(body)),
@@ -223,7 +224,7 @@ def test_rest_answers_422_naming_the_missing_origin():
 def test_a_scenario_event_is_refused_or_recorded_as_refused():
     st = State(x=0.0, y=0.0, up=15.0)
     for make in (_metre, _pointfree):
-        sh = Shield(make())
+        sh = Shield(make(), legacy_metres=True)
         before = (sh.policy.policy_hash, sh.policy.generation)
         ev = ScenarioEvent(at_sim_t=1.0, type="spawn_polygon_fence",
                            payload={"vertices": SQUARE, "id": "harness-z"})
@@ -232,7 +233,7 @@ def test_a_scenario_event_is_refused_or_recorded_as_refused():
         _unchanged(sh, before)
     # on the metre policy: a translate of its zone is refused, and a corridor
     # swap a scenario expects to be refused is recorded as refused, for this
-    sh = Shield(_metre())
+    sh = Shield(_metre(), legacy_metres=True)
     before = (sh.policy.policy_hash, sh.policy.generation)
     tr = ScenarioEvent(at_sim_t=1.0, type="translate_polygon_fence",
                        payload={"id": "zone", "dx_m": 2.0, "dy_m": 0.0})
@@ -253,7 +254,9 @@ def test_the_grpc_hot_apply_dry_run_refuses_the_body():
     body = {"type": "dynamic_nfz", "id": "grpc-z", **RULE, "margin_m": 1.0,
             "vertices": SQUARE}
     for make in (_metre, _pointfree):
-        e = SimpleNamespace(policy=make())
+        # As bundle.load_for_flight legacy_read hands a recorded metre policy
+        # over: the one way one reaches an episode (WP1-14).
+        e = SimpleNamespace(policy=mark_legacy_read(make()))
         new = _HotBody(at=1.0, index=0, body=dict(body))
         try:
             Harness._dry_shield(None, e, [], new)

@@ -221,8 +221,8 @@ def test_a_violation_a_window_edge_causes_is_time_window():
     st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=3.0)
     edge = datetime(2026, 10, 12, 7, 29, 58)                  # a Monday
     later = datetime(2026, 10, 12, 8, 30, 0)
-    d_edge = Shield(pol.model_copy(deep=True), now=lambda: edge).filter(st, a)
-    d_later = Shield(pol.model_copy(deep=True), now=lambda: later).filter(st, a)
+    d_edge = Shield(pol.model_copy(deep=True), now=lambda: edge, legacy_metres=True).filter(st, a)
+    d_later = Shield(pol.model_copy(deep=True), now=lambda: later, legacy_metres=True).filter(st, a)
     assert d_edge.trace["window_edge"] == ["school"] and d_later.trace["window_edge"] == []
     r_edge, r_later = _log([d_edge])[0], _log([d_later])[0]
     assert [v["category"] for v in r_edge["violations"]] == ["time-window"]
@@ -232,7 +232,7 @@ def test_a_violation_a_window_edge_causes_is_time_window():
     # now (17:29:57) and until 17:30:00, and the forecast from x = 5 m enters
     # its ring at t + 1.3 s, before it closes. Geometric, not time-window.
     closing = datetime(2026, 10, 12, 17, 29, 57)
-    d_close = Shield(pol.model_copy(deep=True), now=lambda: closing).filter(
+    d_close = Shield(pol.model_copy(deep=True), now=lambda: closing, legacy_metres=True).filter(
         State(x=5.0, y=0.0, up=10.0), a)
     assert [v.rule_id for v in d_close.violations] == ["school"], d_close.violations
     assert d_close.trace["window_edge"] == [], d_close.trace["window_edge"]

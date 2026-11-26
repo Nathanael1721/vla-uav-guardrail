@@ -1576,10 +1576,24 @@ class Policy(BaseModel):
     # validated (_bind_frame): the stated origin, else the derived one.
     # Not a field: never in the IR, the hash or the schema.
     _frame_origin: tuple[float, float] | None = PrivateAttr(default=None)
+    # True when this policy came from a DECLARED read of the legacy metre
+    # form (mark_legacy_read: load_legacy_metre_policy / legacy_metre_policy_
+    # from_raw, bundle.load_for_flight legacy_read, bundle.derive legacy_read,
+    # a Shield's comparison mode wgs84_writes=False). Read by Shield.__init__,
+    # which builds no Shield on a policy stored in local metres without it
+    # (WP1-14, 2026-11-26). Kept by model_copy (a hot-applied generation);
+    # not a field: never in the IR, the hash or the schema.
+    _legacy_read: bool = PrivateAttr(default=False)
 
     @property
     def shipped_multiscale(self) -> dict | None:
         return self._shipped_multiscale
+
+    @property
+    def legacy_read(self) -> bool:
+        """Did this policy come from a declared read of the legacy metre form
+        (mark_legacy_read)?"""
+        return self._legacy_read
 
     @model_validator(mode="before")
     @classmethod
@@ -2602,6 +2616,37 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 # (Policy.model_validate) in guardrail/replay.py. A bundle's IR is read through
 # the IR as before; a lock recipe through bundle.derive legacy_read.
 
+#
+# WHICH LAYER ENFORCES IT (since 2026-11-26, the four residuals of the
+# 26 Nov review closed). "The DSL never carries projected coordinates" holds
+# at every entry a user or a tool reaches, each refusing a metre point AND a
+# lat/lon point with an x or y key beside it (point_gives_metres):
+#   * the published contract: policies/policy_dsl.schema.json offers a point
+#     as {lat, lon} only (bundle.ir_json_schema);
+#   * the DSL entries: load_policy / policy_from_raw / load_layered
+#     (refuse_projected_policy, on the raw document and on the model);
+#   * REST and gRPC: api._points on every body, top level and inside the
+#     grant's `geometry:` block (api._body_points); gRPC HotApply runs the
+#     same handler (api.apply_event);
+#   * the Shield's events (Shield._in_frame, _given_ring) and a new
+#     bundle.derive (refuse_metre_rule);
+#   * Shield construction: no Shield is built on a policy stored in local
+#     metres unless the read is declared (Policy.legacy_read, set by
+#     mark_legacy_read in the legacy readers, or Shield(..., legacy_metres=
+#     True); shield_policy_problem); bundle.load_for_flight refuses the form
+#     for flight before that.
+# The TYPE (Policy.model_validate, the rule and point models) still accepts
+# the legacy form: every recorded artefact is read through it (a run's
+# policy_g<N>.json, an old bundle's ir.json, a lock recipe), and refusing it
+# there would make those unreadable. Measured 2026-11-26 at a3d616e (every
+# tests/test_*.py run with Shield.__init__ instrumented): 1413 Shields over a
+# metre policy, from 29 of 190 test files (175 call sites, one a shared test
+# helper), reaching two demo constructors (follow_vlm.flight_shield,
+# policy_hud) only through those fixtures, and one tool that wrote metre
+# zones into a WGS84 policy (tools/profile_shield_tick.py design_load_policy,
+# now converted tool side). The fixtures, laid out in metres, now declare
+# the read.
+
 TOOL_SIDE_CONVERSION = "guardrail.models.wgs84_from_metres"
 
 
@@ -3546,8 +3591,36 @@ def legacy_metre_policy_from_raw(raw, *, source: str = "<policy>", runtime: bool
     harness_service._blob_is, experiments/sweep_scenarios.run_generations) -
     never for a new document: the DSL never carries projected coordinates. A
     WGS84 or point-free document loads exactly as policy_from_raw loads it."""
-    return _policy_from_raw(raw, source=source, runtime=runtime, ground=ground,
-                            context=context, legacy_read=True)
+    return mark_legacy_read(_policy_from_raw(raw, source=source, runtime=runtime,
+                                             ground=ground, context=context,
+                                             legacy_read=True))
+
+
+def mark_legacy_read(pol: Policy) -> Policy:
+    """Label `pol` as read through a DECLARED read of the legacy metre form
+    (Policy.legacy_read), and return it. The label only lets a Shield be
+    built on it while it stores local metres (Shield.__init__, WP1-14); it
+    changes nothing a WGS84 policy does, and nothing that is hashed."""
+    pol._legacy_read = True
+    return pol
+
+
+def shield_policy_problem(pol: Policy) -> str | None:
+    """Why a Shield may not be built on `pol` (Shield.__init__, WP1-14,
+    since 2026-11-26), or None: a policy that stores a point in local metres
+    (Policy.point_form a legacy form) is refused unless it came from a
+    declared legacy read (Policy.legacy_read) or the caller declares one
+    (Shield(..., legacy_metres=True))."""
+    form = pol.point_form
+    if form not in LEGACY_POINT_FORMS or pol.legacy_read:
+        return None
+    return (f"no Shield is built on {pol.policy_id}@{pol.version}: its points are "
+            f"stored as {form}. " + projected_input_message("the policy")
+            + ". Fly its WGS84 form (tools/convert_policies_wgs84.py). To re-read "
+              "a recorded document in the legacy form, read it with "
+              "models.load_legacy_metre_policy / legacy_metre_policy_from_raw "
+              "(or bundle.load_for_flight legacy_read), or declare the read with "
+              "Shield(..., legacy_metres=True)")
 
 
 def _policy_from_raw(raw, *, source: str, runtime: bool, ground, context: dict | None,

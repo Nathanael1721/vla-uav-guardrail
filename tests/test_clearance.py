@@ -299,7 +299,7 @@ def test_wedged_between_a_wall_and_a_zone_still_recovers():
         KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     sh = Shield(pol, lookahead_s=3.0, dt=0.5,
-                obstacle_map={"occ": occ, "res": RES, "ox": OX, "oy": OY})
+                obstacle_map={"occ": occ, "res": RES, "ox": OX, "oy": OY}, legacy_metres=True)
     x, y = 0.0, -4.0
     frozen = 0
     for _ in range(40):                                    # 4 s at 10 Hz

@@ -175,7 +175,7 @@ from .bundle import (LEGACY_PLACEHOLDER_SIGNER, SIG_BAD, SIG_VERIFIED,
                      _resolve_signer, manifest_for, parse_signature,
                      signature_text, verify_signer)
 from .kpi import compute, rule_priorities
-from .models import Policy, era_context
+from .models import Policy, era_context, mark_legacy_read
 
 INDEX_NAME = "replay.json"
 # The keyless legacy signer, kept under its old name for importers.
@@ -387,7 +387,9 @@ def generation_table(files: dict[str, bytes]) -> tuple[list[dict], dict, list[st
                 # as written, so one from before IR schema 4.0.0 that leaves a
                 # rule's `scope` out loads and hashes as it was recorded
                 # (models.era_context).
-                pol = Policy.model_validate(doc, context=era_context(None))
+                # A recorded artefact: read in the form it was recorded in,
+                # the legacy metre form included (Shield.__init__, WP1-14).
+                pol = mark_legacy_read(Policy.model_validate(doc, context=era_context(None)))
             except Exception as exc:                       # noqa: BLE001
                 problems.append(f"{name} is not a policy IR ({type(exc).__name__})")
                 continue
@@ -961,6 +963,9 @@ def read_replay(path: str | Path,
     policy = Policy.model_validate(
         _json(POLICY + "ir.json"),
         context=era_context(pman.get("ir_schema_version") if isinstance(pman, dict) else None))
+    # A recorded episode is re-flown as it flew, in the legacy metre form if
+    # it was stored in it: a declared read (Shield.__init__, WP1-14).
+    mark_legacy_read(policy)
     form = policy.hash_form(index.get("policy_hash"))
     if form is None:
         raise ValueError(

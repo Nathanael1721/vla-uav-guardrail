@@ -196,7 +196,7 @@ def _thin_wall() -> tuple[Shield, State]:
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
         fence("high", -20, -20, 1.5, 20, floor=9, ceil=100),
         fence("wall", 2.4, -20, 3.2, 20)]})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     st = State(x=0.0, y=0.0, up=3.0)
     sh.filter(st, Action4D(), t=0.0)
     return sh, st
@@ -387,7 +387,7 @@ def _corridor_shield() -> Shield:
             "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}], "width_m": 4.0,
             "altitude_floor_m": 10.0, "altitude_ceiling_m": 20.0}
     return Shield(Policy.model_validate({"policy_id": "tube", "constraints": [tube, KIN]}),
-                  escalation=False)
+                  escalation=False, legacy_metres=True)
 
 
 def test_leaving_a_corridor_is_judged_by_the_shields_own_depth():
@@ -514,7 +514,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
         t0 = edge - timedelta(seconds=rng.uniform(-1.0, 6.0))
         now = (lambda t0=t0: t0)
     sh = Shield(Policy.model_validate({"policy_id": kind, "origin": FRAME, "constraints": cons}),
-                escalation=False, obstacle_map=omap, now=now)
+                escalation=False, obstacle_map=omap, now=now, legacy_metres=True)
     if kind == "zones" or rng.random() < 0.3:
         for j in range(rng.randint(1, 3)):
             cx, cy = rng.uniform(-12, 12), rng.uniform(-12, 12)
@@ -590,7 +590,7 @@ def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None,
         "vertices": [{"x": -half, "y": -half}, {"x": half, "y": -half},
                      {"x": half, "y": half}, {"x": -half, "y": half}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 100}, *extra]})
-    sh = Shield(pol, escalation=False, now=(lambda: now) if now else None)
+    sh = Shield(pol, escalation=False, now=(lambda: now) if now else None, legacy_metres=True)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
     return sh
 
@@ -606,7 +606,7 @@ def _overlapping(k: int) -> Shield:
                            {"x": 0.5 * j - 100 - j, "y": -0.5 * j + 100 + j}],
               "altitude_floor_m": 0, "altitude_ceiling_m": 100} for j in range(k)]
     sh = Shield(Policy.model_validate({"policy_id": "over", "constraints": [KIN, *zones]}),
-                escalation=False)
+                escalation=False, legacy_metres=True)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
     return sh
 
@@ -767,7 +767,7 @@ def _nested(k: int) -> Shield:
                                    {"x": -h, "y": h}],
                       "altitude_floor_m": 0, "altitude_ceiling_m": 100})
     sh = Shield(Policy.model_validate({"policy_id": "nest", "constraints": [KIN, *zones]}),
-                escalation=False)
+                escalation=False, legacy_metres=True)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
     return sh
 

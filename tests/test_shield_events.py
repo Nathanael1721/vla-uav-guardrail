@@ -253,7 +253,7 @@ def test_a_turning_zone_is_seen_where_it_turns_to():
         "vertices": [{"x": -1, "y": -20}, {"x": 1, "y": -20},
                      {"x": 1, "y": 20}, {"x": -1, "y": 20}],
         "motion": {"yaw_rate_dps": 30.0}})
-    sh = Shield(Policy(policy_id="r", constraints=[bar]))
+    sh = Shield(Policy(policy_id="r", constraints=[bar]), legacy_metres=True)
     d = sh.filter(State(x=15.0, y=0.0, up=5.0), Action4D(), t=0.0)
     assert [(v.rule_id, round(v.predicted_at_s, 6)) for v in d.violations] == [("bar", 2.9)], \
         d.violations
@@ -263,7 +263,7 @@ def test_escaping_a_moving_zone_is_judged_relative_to_it():
     """Inside a zone that moves north at 2 m/s, flying north at 1 m/s is NOT
     leaving it. The Shield says so, and its escape outpaces the zone."""
     z = _zone(zid="mz", cx=0.0, cy=0.0, half=5.0, motion={"vx_mps": 2.0})
-    sh = Shield(Policy(policy_id="m", constraints=[z]))
+    sh = Shield(Policy(policy_id="m", constraints=[z]), legacy_metres=True)
     d = sh.filter(State(x=4.0, y=0.0, up=5.0), Action4D(vx=1.0), t=0.0)
     assert [(v.rule_id, v.detail) for v in d.violations] == [
         ("mz", "currently INSIDE zone and not escaping")], d.violations
@@ -322,7 +322,7 @@ def test_the_moving_zone_prefilter_never_changes_an_answer():
                            "yaw_rate_dps": rng.choice([0.0, 0.0, rng.uniform(-40, 40)])})
              for i in range(8)]
     pol = Policy(policy_id="m", constraints=zones)
-    a_sh, b_sh = Shield(pol.model_copy(deep=True)), NoSkip(pol.model_copy(deep=True))
+    a_sh, b_sh = Shield(pol.model_copy(deep=True), legacy_metres=True), NoSkip(pol.model_copy(deep=True), legacy_metres=True)
     hits = 0
     for k in range(600):
         t = 0.1 * k
@@ -392,7 +392,7 @@ def _swap(sid, cy):
 
 
 def test_a_corridor_swap_replaces_the_corridor():
-    sh = Shield(_lanes())
+    sh = Shield(_lanes(), legacy_metres=True)
     on_a = State(x=0, y=0, up=10)
     assert not sh.filter(on_a, Action4D(vx=2.0)).touched
     sh.hot_apply(geo(_swap("lane-b", 40.0), sh))
@@ -418,7 +418,7 @@ def test_declared_events_are_enforced_from_the_policy():
         {"id": "off", "type": "time_window_switch", **HARD_P0, "target_id": "nfz", "active": False},
         {"id": "drift", "type": "dynamic_nfz", **HARD_P0, "margin_m": 0, "vertices": _sq(0, 3, 1),
          "motion": {"vx_mps": 1.0}}]})
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     d = sh.filter(State(x=44, y=0, up=5), Action4D(vx=3.0), t=0.0)
     assert "nfz" not in [v.rule_id for v in d.violations]    # switched off
     sh.filter(State(x=-50, y=0, up=5), Action4D(), t=0.0)
@@ -454,7 +454,7 @@ def test_an_event_that_would_leave_the_policy_inconsistent_is_refused():
 
 
 def test_every_generation_an_event_sequence_produces_lints_clean():
-    sh = Shield(_lanes())
+    sh = Shield(_lanes(), legacy_metres=True)
     sh.filter(State(x=0, y=0, up=10), Action4D())
     steps = [lambda: sh.hot_apply(geo(_zone(cx=50.0, cy=50.0), sh)),
              lambda: sh.translate_nfz("dyn", 3.0, 0.0),
@@ -496,7 +496,7 @@ def test_an_event_the_shield_would_not_enforce_is_refused():
     Shield(sh.policy)                               # still a policy it can be built on
     assert sh.spawn_nfz(geo(_zone(zid="agl", altitude_floor_m=20.0,
                               altitude_ceiling_m=200.0), sh))["generation"] == 1
-    lanes = Shield(_lanes())
+    lanes = Shield(_lanes(), legacy_metres=True)
     lanes.filter(State(x=0, y=0, up=10), Action4D())
     swap = CorridorSwap.model_validate({**_swap("lane-b", 40.0).model_dump(),
                                         "altitude_ref": "MSL"})
@@ -749,7 +749,7 @@ def _layered(extra_reg=(), extra_mis=()):
 
 
 def test_a_switch_may_not_turn_off_a_hard_rule_of_another_layer():
-    sh = Shield(_layered())
+    sh = Shield(_layered(), legacy_metres=True)
     st, a = State(x=0, y=15, up=4), Action4D(vx=4.0)
     sh.filter(st, a)
     g = sh.policy.generation
@@ -766,7 +766,7 @@ def test_a_switch_may_not_turn_off_a_hard_rule_of_another_layer():
     assert sh.set_rule_active("nfz-airport", True)["op"] == "switch_on"
     assert sh.set_rule_active("nfz-park", False)["op"] == "switch_off"
     assert sh.set_rule_active("nfz-mission", False)["op"] == "switch_off"
-    reg = Shield(_layered())
+    reg = Shield(_layered(), legacy_metres=True)
     assert reg.set_rule_active("nfz-airport", False, layer="regulation")["op"] == "switch_off"
 
 
@@ -785,7 +785,7 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
                                "vertices": big}])
     airport = next(c for c in pol.constraints if c.id == "nfz-airport")
     assert (airport.effective_layer, airport.locked_by) == ("mission", ["regulation"])
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     st, a = State(x=0, y=15, up=4), Action4D(vx=4.0)
     sh.filter(st, a)
     for layer in ("mission", "regulation"):
@@ -802,7 +802,7 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
         {**tfr, "layer": "regulation"}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         tfr, {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
-    sh = Shield(merge_layers([reg, mis]))
+    sh = Shield(merge_layers([reg, mis]), legacy_metres=True)
     sh.filter(State(x=0, y=15, up=4), Action4D())
     _raises(LayerRelaxation, sh.expire_nfz, "tfr")
     _raises(LayerRelaxation, sh.scale_nfz, "tfr", 0.1)
@@ -815,7 +815,7 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
         {**lane, "layer": "regulation"}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         lane]})
-    sh = Shield(merge_layers([reg, mis]))
+    sh = Shield(merge_layers([reg, mis]), legacy_metres=True)
     sh.filter(State(x=0, y=0, up=10), Action4D())
     wide = CorridorSwap.model_validate({
         "id": "wide", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 500,
@@ -835,7 +835,7 @@ def test_a_switch_may_not_override_another_layers_switch_holding_a_rule_on():
     after a regulation switch that holds the rule on would overrule it."""
     sh = Shield(_layered(extra_reg=[{"id": "hold", "type": "time_window_switch", **HARD_P0,
                                      "layer": "regulation", "target_id": "nfz-mission",
-                                     "active": True}]))
+                                     "active": True}]), legacy_metres=True)
     e = _raises(LayerRelaxation, sh.set_rule_active, "nfz-mission", False)
     assert "held on by ['hold']" in str(e)
 
@@ -852,7 +852,7 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
          "altitude_floor_m": 5, "altitude_ceiling_m": 30}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
-    sh = Shield(merge_layers([reg, mis]))
+    sh = Shield(merge_layers([reg, mis]), legacy_metres=True)
     sh.filter(State(x=0, y=0, up=10), Action4D())
     wide = CorridorSwap.model_validate({
         "id": "wide", "type": "corridor_swap", "target_id": "lane", "width_m": 2000,
@@ -881,7 +881,7 @@ def test_a_zone_of_another_layer_cannot_be_moved_reshaped_or_expired():
         {"id": "tfr", "type": "dynamic_nfz", **HARD_P0, "layer": "regulation", "vertices": _SQ}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "origin": FRAME, "constraints": [
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
-    sh = Shield(merge_layers([reg, mis]))
+    sh = Shield(merge_layers([reg, mis]), legacy_metres=True)
     sh.filter(State(x=0, y=15, up=4), Action4D())
     for fn, args in ((sh.translate_nfz, ("tfr", 100.0, 0.0)), (sh.scale_nfz, ("tfr", 0.1)),
                      (sh.rotate_nfz, ("tfr", 45.0)), (sh.expire_nfz, ("tfr",)),

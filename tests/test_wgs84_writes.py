@@ -629,7 +629,7 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
         {"policy_id": "metres", "version": "0.1.0",
          "constraints": [{"id": "f", "type": "polygon_fence", **RULE,
                           "vertices": [{"x": 0, "y": 0}, {"x": 9, "y": 0}, {"x": 9, "y": 9}],
-                          "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}))
+                          "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}), legacy_metres=True)
     assert legacy.policy.frame_origin is None
     legacy.wgs84_writes = False
     rest(api.apply_dynamic_nfz, legacy, {**ZONE, "vertices": OFF_GRID})

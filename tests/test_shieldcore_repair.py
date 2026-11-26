@@ -285,7 +285,7 @@ def test_path_repair_sits_right_after_the_lateral_projection():
     assert R.with_path_repair(R.FIRST_FEASIBLE) == (
         "KinematicClamp", "AltitudeClamp", "LateralProjection", "PathRepair",
         "CorridorProjection", "StandoffProjection", "ClearanceProjection")
-    d = Shield(_square_policy(), escalation=False, path_repair=True).filter(
+    d = Shield(_square_policy(), escalation=False, path_repair=True, legacy_metres=True).filter(
         State(x=3.0, y=0.5, up=10.0), Action4D(vx=2.0))
     assert [a["operator"] for a in d.trace["passes"][1]["attempts"]] == \
         list(R.with_path_repair(R.CHAIN_LOOP))
@@ -296,21 +296,21 @@ def test_path_repair_is_in_the_default_chain_in_the_grants_order():
     order (Safety Shield p3: AltitudeClamp -> LateralProjection -> PathRepair):
     PathRepair right after the lateral projection in every pass, and the
     audit's flags say so. path_repair=False is the chain flown before."""
-    sh = Shield(_square_policy(), escalation=False)
+    sh = Shield(_square_policy(), escalation=False, legacy_metres=True)
     assert sh.path_repair is True
     d = sh.filter(State(x=3.0, y=0.5, up=10.0), Action4D(vx=2.0))
     ops = [a["operator"] for a in d.trace["passes"][1]["attempts"]]
     assert ops == list(R.with_path_repair(R.CHAIN_LOOP)), ops
     assert ops.index("LateralProjection") + 1 == ops.index("PathRepair")
     assert R.CHAIN_PRE.index("AltitudeClamp") == 1          # before the loop
-    off = Shield(_square_policy(), escalation=False, path_repair=False).filter(
+    off = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True).filter(
         State(x=3.0, y=0.5, up=10.0), Action4D(vx=2.0))
     assert "PathRepair" not in [a["operator"] for a in off.trace["passes"][1]["attempts"]]
     assert isinstance(R.REGISTRY["PathRepair"], R.RepairOperator)   # the Protocol
     # In chain mode it detours round stand-off rings only; a zone is left to
     # the projection (zone detours: PathRepair(chain_categories=...)).
     assert R.REGISTRY["PathRepair"].chain_categories == ("standoff",)
-    d = Shield(_square_policy(), escalation=False).filter(
+    d = Shield(_square_policy(), escalation=False, legacy_metres=True).filter(
         State(x=5.0, y=9.0, up=10.0), Action4D(vx=2.0))
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and "standoff only" in pr[0]["reason"], pr
@@ -342,11 +342,11 @@ def test_path_repair_magnitude_is_on_thetas_decided_depth_basis():
     assert R.PathRepair.depth_magnitude(0.3, [_R(0.5), _R(0.4)]) == 0.9
     assert R.PathRepair.depth_magnitude(2.5, []) == 2.5          # over theta: capped
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    sh = _zones(Shield(_square_policy(), escalation=False))
+    sh = _zones(Shield(_square_policy(), escalation=False, legacy_metres=True))
     d = sh.filter(st, a)
     pr = [r for r in d.repairs if r.operator == "PathRepair"]
     assert len(pr) == 1, d.repairs
-    base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
+    base = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True).filter(st, a)
     slide = sum(r.magnitude_m for r in base.repairs if r.operator == "GeofenceSlide")
     zone = next(v.rule_id for v in base.violations if v.category == "geofence")
     depth = R.PathRepair()._zone_waypoints(sh, st, a, zone)[1]
@@ -368,17 +368,17 @@ def test_path_repair_takes_no_detour_without_a_position_fix_or_during_a_recovery
     push away keeps the margin for the drift - nor while a recovery is under
     way (the aircraft already inside a rule)."""
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    base = Shield(_square_policy(), escalation=False, path_repair=False)
-    on = _zones(Shield(_square_policy(), escalation=False))
+    base = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True)
+    on = _zones(Shield(_square_policy(), escalation=False, legacy_metres=True))
     assert "PathRepair" in [r.operator for r in on.filter(st, a).repairs]
     lost = st.model_copy(update={"fix_ok": False})
-    d = _zones(Shield(_square_policy(), escalation=False)).filter(lost, a)
+    d = _zones(Shield(_square_policy(), escalation=False, legacy_metres=True)).filter(lost, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and pr[0]["result"] == "skip" and "position fix" in pr[0]["reason"], pr
     assert d.emitted == base.filter(lost, a).emitted
     # Inside the square's margin ring: GeofenceEscape is a recovery.
     inside = State(x=9.5, y=0.0, up=10.0)
-    d = _zones(Shield(_square_policy(), escalation=False)).filter(inside, Action4D(vx=2.0))
+    d = _zones(Shield(_square_policy(), escalation=False, legacy_metres=True)).filter(inside, Action4D(vx=2.0))
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert all(x["result"] == "skip" for x in pr), pr
     assert "PathRepair" not in [r.operator for r in d.repairs], d.repairs
@@ -396,8 +396,8 @@ def test_path_repair_does_not_overrule_theta_or_lead_deeper():
     those, so the theta gate is lifted (50 m) to reach the depth gate."""
     from guardrail import fsm as F
     st, a = State(x=3.0, y=0.5, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
-    rail = _zones(Shield(_square_policy(), escalation=False))
+    base = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True).filter(st, a)
+    rail = _zones(Shield(_square_policy(), escalation=False, legacy_metres=True))
     d = rail.filter(st, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and "2.00 m over theta" in pr[0]["reason"], pr       # 4.0 m vs 2.0 m
@@ -440,7 +440,7 @@ def test_an_operator_with_the_grants_signature_registers_and_runs_where_named():
         assert isinstance(op, R.RepairOperator)
         st, a = State(x=3.0, y=0.0, up=10.0), Action4D(vx=2.0)
         d = Shield(_square_policy(), escalation=False,
-                   repair_order=("Slower", "KinematicClamp")).filter(st, a)
+                   repair_order=("Slower", "KinematicClamp"), legacy_metres=True).filter(st, a)
         p1 = d.trace["passes"][1]["attempts"]
         assert [(x["operator"], x["result"]) for x in p1[:2]] == [("Slower", "ok"),
                                                                    ("KinematicClamp", "skip")]
@@ -451,14 +451,14 @@ def test_an_operator_with_the_grants_signature_registers_and_runs_where_named():
         assert [r.operator for r in d.repairs] == ["Slower", "Brake"], d.repairs
         assert d.trace["repair_iterations"] == [1, None]
         try:
-            Shield(_square_policy(), repair_order=("Slower", "NoSuchOperator"))
+            Shield(_square_policy(), repair_order=("Slower", "NoSuchOperator"), legacy_metres=True)
             raise AssertionError("an unregistered name was accepted")
         except ValueError:
             pass
     finally:
         del R.REGISTRY["Slower"]
     # The default Shield never runs it: the stacks name it nowhere.
-    assert "Slower" not in Shield(_square_policy()).repair_operators
+    assert "Slower" not in Shield(_square_policy(), legacy_metres=True).repair_operators
 
 
 def test_a_subclass_override_of_a_repair_hook_is_the_one_that_runs():
@@ -584,7 +584,7 @@ def test_path_repair_and_first_feasible_hand_back_the_body_action():
     from guardrail.frames import body_action
     h = 30.0
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=h), Action4D(vx=2.0)
-    sh, log = _spied(_zones(Shield(_square_policy(), escalation=False, path_repair=True)))
+    sh, log = _spied(_zones(Shield(_square_policy(), escalation=False, path_repair=True, legacy_metres=True)))
     d = sh.filter(st, a)
     pr = [att for n, _, att, _ in log if n == "PathRepair" and att.result == "ok"]
     assert pr and [r.operator for r in d.repairs if r.operator == "PathRepair"], d.repairs
@@ -720,7 +720,8 @@ def test_the_last_resorts_act_on_the_body_action_and_decide_as_before():
              lambda cls: cls(pedestrian.model_copy(deep=True), obstacle_map=smap),
              State(x=-2.67, y=27.61, up=10.75, yaw_deg=h), Action4D(vx=2.0, vy=-3.58)),
             ("ClearanceEscape", "fallback", R.RESCUE_BEST_EFFORT,
-             lambda cls: cls(conflict.model_copy(deep=True), escalation=False),
+             lambda cls: cls(conflict.model_copy(deep=True), escalation=False,
+                             legacy_metres=True),
              State(x=18.5, y=10.0, up=10.0, yaw_deg=h), Action4D(vx=2.0)),
         )
         for name, result, detail, make, st, raw in cases:
@@ -774,11 +775,11 @@ def test_first_feasible_will_not_apply_a_repair_over_theta():
     magnitude is over theta (2.0 m lateral): LateralProjection fails, no
     operator wins, and the fallback stops (a stop is legal here)."""
     st, a = State(x=3.0, y=0.0, up=10.0), Action4D(vx=4.0)
-    chain = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
+    chain = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True).filter(st, a)
     assert [r.operator for r in chain.repairs] == ["GeofenceSlide"] and not chain.braked
     assert chain.repairs[0].magnitude_m > 2.0
     ff = Shield(_square_policy(), escalation=False, repair_mode="first_feasible",
-                path_repair=False).filter(st, a)
+                path_repair=False, legacy_metres=True).filter(st, a)
     assert ff.braked and ff.emitted == Action4D(), ff
     lat = [x for p in ff.trace["passes"] for x in p["attempts"]
            if x["operator"] == "LateralProjection"]
@@ -815,7 +816,7 @@ def test_first_feasible_targets_the_earliest_violation_first():
     theta, and the result re-checks clean."""
     pol = _square_policy(extra=[_ALT])
     st, a = State(x=8.5, y=0.0, up=5.1), Action4D(vx=0.2, vy=2.0, vz_up=-0.1)
-    sh = Shield(pol, escalation=False, repair_mode="first_feasible", path_repair=False)
+    sh = Shield(pol, escalation=False, repair_mode="first_feasible", path_repair=False, legacy_metres=True)
     assert [(v.rule_id, round(v.predicted_at_s, 1)) for v in sh._check(st, a)] == \
         [("alt", 1.1), ("sq", 2.6)]
     d = sh.filter(st, a)
@@ -832,11 +833,11 @@ def test_first_feasible_holds_a_vertical_repair_to_the_vertical_theta():
     vertical theta (0.5 m, not the lateral 2.0 m), refuses it, and the
     fallback stops (a hover at 5.1 m is legal)."""
     st, a = State(x=0.0, y=0.0, up=5.1), Action4D(vx=0.5, vz_up=-0.4)
-    chain = Shield(_square_policy(extra=[_ALT]), escalation=False).filter(st, a)
+    chain = Shield(_square_policy(extra=[_ALT]), escalation=False, legacy_metres=True).filter(st, a)
     assert [(r.operator, r.axis) for r in chain.repairs] == [("AltitudeFix", "vertical")]
     assert 0.5 < chain.repairs[0].magnitude_m < 2.0 and not chain.braked
     ff = Shield(_square_policy(extra=[_ALT]), escalation=False,
-                repair_mode="first_feasible", path_repair=False).filter(st, a)
+                repair_mode="first_feasible", path_repair=False, legacy_metres=True).filter(st, a)
     alt = [x for p in ff.trace["passes"] for x in p["attempts"]
            if x["operator"] == "AltitudeClamp"]
     assert alt[0]["result"] == "fail" and "over theta (vertical)" in alt[0]["reason"], alt
@@ -861,7 +862,7 @@ def test_first_feasible_reads_theta_as_the_fsm_sums_it():
     selection had accepted."""
     from guardrail import fsm as F
     sh = Shield(_square_policy(extra=[_SQ2]), escalation=False, repair_mode="first_feasible",
-                path_repair=False)
+                path_repair=False, legacy_metres=True)
     a = Action4D(vx=2.6, vy=2.0)
     d = sh.filter(State(x=-3.0, y=0.5, up=10.0), a)
     lat = F.magnitude_from_repairs([r for r in d.repairs if r.operator != "Brake"]).lateral_m
@@ -876,7 +877,7 @@ def test_first_feasible_reads_theta_as_the_fsm_sums_it():
     st, a = State(x=4.9, y=3.3, up=10.0), Action4D(vx=1.9, vy=2.3)
     for esc in (False, True):
         sh = Shield(_square_policy(extra=[ring]), escalation=esc,
-                    repair_mode="first_feasible", path_repair=False)
+                    repair_mode="first_feasible", path_repair=False, legacy_metres=True)
         sh.set_subject(1.7, 11.5, "vehicle")
         d = sh.filter(st, a)
         wins = [(p["pass"], x["operator"]) for p in d.trace["passes"]
@@ -896,7 +897,7 @@ def test_first_feasible_exempts_a_recovery_from_theta():
     reference's "brake while inside = deadlock"), so it wins."""
     st, a = State(x=15.0, y=0.0, up=10.0), Action4D(vx=0.5)
     ff = Shield(_square_policy(), escalation=False, repair_mode="first_feasible",
-                path_repair=False).filter(st, a)
+                path_repair=False, legacy_metres=True).filter(st, a)
     assert [(r.operator, r.recovery) for r in ff.repairs] == [("GeofenceEscape", True)]
     assert ff.repairs[0].magnitude_m > 2.0 and not ff.braked and not ff.emitted_violations
 
@@ -910,7 +911,7 @@ def test_first_feasible_fails_an_ok_that_leaves_the_target_violated():
     try:
         st, a = State(x=3.0, y=0.0, up=10.0), Action4D(vx=2.0)
         d = Shield(_square_policy(), escalation=False, repair_mode="first_feasible",
-                   path_repair=False, repair_order=("Slower",)).filter(st, a)
+                   path_repair=False, repair_order=("Slower",), legacy_metres=True).filter(st, a)
     finally:
         del R.REGISTRY["Slower"]
     att = d.trace["passes"][1]["attempts"][0]
@@ -990,10 +991,10 @@ def test_path_repair_detours_round_a_zone_projection_slides_along():
     the corner detour would lead deeper and is refused:
     test_path_repair_does_not_overrule_theta_or_lead_deeper.)"""
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
+    base = Shield(_square_policy(), escalation=False, path_repair=False, legacy_metres=True).filter(st, a)
     assert [r.operator for r in base.repairs] == ["GeofenceSlide"]
     assert base.emitted.vx < 1e-9                       # no progress north
-    d = _zones(Shield(_square_policy(), escalation=False, path_repair=True)).filter(st, a)
+    d = _zones(Shield(_square_policy(), escalation=False, path_repair=True, legacy_metres=True)).filter(st, a)
     pr = [r for r in d.repairs if r.operator == "PathRepair"]
     assert pr and "body frame" in pr[0].detail and pr[0].axis == "lateral"
     assert d.emitted.vx > 0.7 and not d.emitted_violations, d
@@ -1005,7 +1006,7 @@ def test_path_repair_offers_only_corners_it_can_see():
     1 m out: (8, +-12) and (32, +-12). From (3, 0.5) the far two lie behind
     the zone (the straight leg would cross it), so only the near two are
     offered."""
-    sh = Shield(_square_policy(), escalation=False, path_repair=True)
+    sh = Shield(_square_policy(), escalation=False, path_repair=True, legacy_metres=True)
     pr = R.PathRepair()
     assert sorted(pr._zone_corners(sh, sh.ir.fences[0])) == \
         [(8.0, -12.0), (8.0, 12.0), (32.0, -12.0), (32.0, 12.0)]
@@ -1026,9 +1027,9 @@ def test_path_repair_never_takes_a_detour_that_breaks_another_rule():
                            {"x": 7.5, "y": 11.0}, {"x": 7.0, "y": 11.0}]}]
     st, a = State(x=5.0, y=9.0, up=10.0), Action4D(vx=2.0)
     base = Shield(_square_policy(extra=flank), escalation=False,
-                  path_repair=False).filter(st, a)
+                  path_repair=False, legacy_metres=True).filter(st, a)
     d = _zones(Shield(_square_policy(extra=flank), escalation=False,
-                      path_repair=True)).filter(st, a)
+                      path_repair=True, legacy_metres=True)).filter(st, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and all(x["result"] == "skip" for x in pr), pr
     # (8, -12) would also lead deeper (2.0 -> 2.20 m); (8, 12) re-checks into
@@ -1068,9 +1069,9 @@ def _wall_policy():
 
 def test_the_segment_check_catches_a_zone_thinner_than_one_step():
     st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=12.0)
-    plain = Shield(_wall_policy(), escalation=False)
+    plain = Shield(_wall_policy(), escalation=False, legacy_metres=True)
     assert plain._check(st, a) == [], "the poses at x = 3.6 and 4.8 straddle the ring"
-    seg = Shield(_wall_policy(), escalation=False, segment_check=True, path_repair=False)
+    seg = Shield(_wall_policy(), escalation=False, segment_check=True, path_repair=False, legacy_metres=True)
     vs = seg._check(st, a)
     assert [v.rule_id for v in vs] == ["wall"], vs
     assert abs(vs[0].predicted_at_s - 3.85 / 12.0) < 1e-9, vs[0]
@@ -1094,7 +1095,7 @@ def test_the_segment_check_reads_the_zones_altitude_band():
     """The same thin wall, 5 m tall: a segment 10 m up passes over it; one
     4 m up goes through."""
     a = Action4D(vx=12.0)
-    seg = Shield(_wall(altitude_ceiling_m=5.0), escalation=False, segment_check=True)
+    seg = Shield(_wall(altitude_ceiling_m=5.0), escalation=False, segment_check=True, legacy_metres=True)
     assert seg._check(State(x=0.0, y=0.0, up=10.0), a) == []
     assert [v.rule_id for v in seg._check(State(x=0.0, y=0.0, up=4.0), a)] == ["wall"]
 
@@ -1108,9 +1109,9 @@ def test_the_segment_check_judges_a_step_in_which_the_zone_comes_into_force():
     st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=12.0)
     now = datetime(2026, 10, 12, 7, 29, 59, 630000)
     pol = _wall(valid_time={"recurrence": {"start_time": "07:30", "end_time": "17:30"}})
-    assert Shield(pol, escalation=False, now=lambda: now).filter(st, a).violations == []
+    assert Shield(pol, escalation=False, now=lambda: now, legacy_metres=True).filter(st, a).violations == []
     d = Shield(pol.model_copy(deep=True), escalation=False, segment_check=True,
-               now=lambda: now).filter(st, a)
+               now=lambda: now, legacy_metres=True).filter(st, a)
     assert [(v.rule_id, round(v.predicted_at_s, 9)) for v in d.violations] == \
         [("wall", round(3.85 / 12.0, 9))], d.violations
     assert d.trace["window_edge"] == ["wall"]
@@ -1135,8 +1136,8 @@ def test_the_segment_check_does_not_flag_a_forecast_inside_a_round_join():
     assert not line.buffer(1.0, quad_segs=16).covers(Point(x, y))    # not in GEOS's join
     st = State(x=x, y=y, up=10.0)
     a = Action4D(vx=-0.001 * math.sin(th), vy=0.001 * math.cos(th))  # along the edge
-    assert Shield(pol, escalation=False)._check(st, a) == []
-    assert Shield(pol, escalation=False, segment_check=True)._check(st, a) == []
+    assert Shield(pol, escalation=False, legacy_metres=True)._check(st, a) == []
+    assert Shield(pol, escalation=False, segment_check=True, legacy_metres=True)._check(st, a) == []
 
 
 def test_the_segment_check_catches_a_forecast_jumping_a_corridor_u_turn():
@@ -1148,9 +1149,9 @@ def test_the_segment_check_catches_a_forecast_jumping_a_corridor_u_turn():
          "centerline": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10},
                         {"x": 0, "y": 10}]}]})
     st, a = State(x=10.0, y=0.0, up=10.0), Action4D(vy=20.0)
-    assert Shield(pol, lookahead_s=0.5, dt=0.5, escalation=False)._check(st, a) == []
+    assert Shield(pol, lookahead_s=0.5, dt=0.5, escalation=False, legacy_metres=True)._check(st, a) == []
     vs = Shield(pol, lookahead_s=0.5, dt=0.5, escalation=False,
-                segment_check=True)._check(st, a)
+                segment_check=True, legacy_metres=True)._check(st, a)
     assert [v.rule_id for v in vs] == ["u"] and "leaves the corridor" in vs[0].detail, vs
     assert 0.0 < vs[0].predicted_at_s < 0.5
 

@@ -688,6 +688,14 @@ def design_load_policy(policy, xy: list[tuple[float, float]],
                       {"x": gx, "y": gy + LOAD_SIDE_M}],
             altitude_floor_m=0.0, altitude_ceiling_m=LOAD_CEILING_M,
             margin_m=LOAD_MARGIN_M))
+    if policy.frame_origin is not None:
+        # WP1-14: the zones are laid out in local metres, and the DSL never
+        # carries projected coordinates, so they go into a policy with a frame
+        # in WGS84, converted here, tool side. Their corners are on the
+        # micrometre grid, so the Shield's view of each is exactly the metres
+        # laid out and every timed tick checks the same geometry as before.
+        from guardrail.models import wgs84_from_metres
+        added = [wgs84_from_metres(f, policy.frame_origin) for f in added]
     out = policy.model_copy(deep=True)
     out.constraints = list(out.constraints) + added
     out.policy_id = f"{policy.policy_id}+design-load-{total}"

@@ -160,11 +160,14 @@ from .models import (
     SubjectStandoff,
     TimeWindowSwitch,
     _not_looser,
+    mark_legacy_read,
     no_frame_message,
     projected_input_message,
+    ProjectedCoordinatesRefused,
     projected_rule_problem,
     rule_in_wgs84,
     rule_metre_points,
+    shield_policy_problem,
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -2177,7 +2180,8 @@ class Shield:
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
                  dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False,
                  up_ref: str | None = None, people_source: str | None = None,
-                 clear_response: "_response.VelocityResponse | None" = None):
+                 clear_response: "_response.VelocityResponse | None" = None,
+                 legacy_metres: bool = False):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -2350,7 +2354,26 @@ class Shield:
         frame while the heading turns at the yaw rate (`_arc_offset`) -
         instead of along its world direction at t = 0. `filter()` (a
         world-frame action, flown as a LOCAL_NED velocity that does not
-        turn with the heading) is never arced."""
+        turn with the heading) is never arced.
+
+        legacy_metres: declares a read of the legacy metre form. WGS84 ONLY
+        (WP1-14, since 2026-11-26; grant, Policy DSL page: "the DSL itself
+        never carries projected coordinates"): a Shield is not built on a
+        policy that stores a point in local metres (Policy.point_form a
+        legacy form) - ProjectedCoordinatesRefused - unless the policy came
+        from a declared legacy read (Policy.legacy_read: models.load_legacy_
+        metre_policy / legacy_metre_policy_from_raw, bundle.load_for_flight
+        legacy_read, bundle.derive legacy_read) or this is True: a re-read of
+        a recorded run, or a test of the local-frame geometry itself. A WGS84
+        or point-free policy is untouched by it. This is the layer that
+        enforces the clause for an in-process caller; the type (Policy.
+        model_validate) still READS the legacy form, because every recorded
+        artefact is read through it (replay, the lock recipes, the bundles of
+        before 2026-11-03), and the DSL entries (load_policy / policy_from_raw
+        / load_layered), REST / gRPC and the Shield's events refuse it."""
+        problem = None if legacy_metres else shield_policy_problem(policy)
+        if problem:
+            raise ProjectedCoordinatesRefused(problem, policy=policy)
         if recovery_law not in RECOVERY_LAWS:
             raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
                              f"got {recovery_law!r}")
@@ -6859,6 +6882,12 @@ class Shield:
         # In place: callers (the REST app, the audit logger) hold this Policy.
         self.policy.constraints = constraints
         self.policy.generation = cand.generation
+        if not self.wgs84_writes:
+            # The comparison switch stores metres as the writes of before
+            # 2026-11-17 did: a declared legacy form, so a Shield built on
+            # this generation (the compiler's, a hold search's) re-reads it
+            # as this one wrote it (Shield.__init__, WP1-14).
+            mark_legacy_read(self.policy)
         self._anchors = anchors
         self._rt = rt
         ev = {"op": op, "type": rule_type, "rule_id": rule_id,

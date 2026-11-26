@@ -1049,7 +1049,7 @@ def test_a_soft_brake_rule_beside_a_hard_nfz_never_loiters_with_the_real_shield(
 
     st, raw = State(x=0, y=15, up=4), Action4D(vx=1.5, vz_up=0.6)
     for env in (False, True):
-        sh = Shield(pol(env))
+        sh = Shield(pol(env), legacy_metres=True)
         for k in range(3):
             d = sh.filter(st, raw, t=0.1 * k)
             assert {v.rule_id for v in d.violations} >= {"nfz"}, d.violations

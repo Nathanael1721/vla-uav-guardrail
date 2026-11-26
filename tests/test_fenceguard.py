@@ -419,7 +419,7 @@ def test_a_zone_outside_its_window_is_not_a_reason_to_brake():
         "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}}]})
     for hhmm, braked in (("12:00", True), ("18:00", False)):
         when = datetime(2026, 10, 7, int(hhmm[:2]), int(hhmm[3:]))
-        g = FenceGuard(pol, shield=Shield(pol, now=lambda w=when: w, escalation=False))
+        g = FenceGuard(pol, shield=Shield(pol, now=lambda w=when: w, escalation=False, legacy_metres=True))
         assert (g.gate(10.0, -40.0, *NORTH)[0] < 1.0) is braked, hhmm
 
 

@@ -835,7 +835,7 @@ def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None,
     from guardrail.shield import Shield
     pol = policy or _tw_policy()
     edge = clock or datetime(2026, 10, 12, 7, 29, 58)
-    sh = Shield(pol, now=lambda: edge, escalation=False)
+    sh = Shield(pol, now=lambda: edge, escalation=False, legacy_metres=True)
     run = root / name
     run.mkdir(parents=True)
     al = AuditLogger(run / "audit.jsonl", pol)
@@ -978,7 +978,7 @@ def _advised_run(root: Path, name: str, vx_list, advised) -> tuple[Path, list]:
     from guardrail.models import Action4D, State
     from guardrail.shield import Shield
     pol = _tw_policy()
-    sh = Shield(pol, now=lambda: datetime(2026, 10, 12, 7, 29, 58), escalation=False)
+    sh = Shield(pol, now=lambda: datetime(2026, 10, 12, 7, 29, 58), escalation=False, legacy_metres=True)
     run = root / name
     run.mkdir(parents=True)
     al = AuditLogger(run / "audit.jsonl", pol)

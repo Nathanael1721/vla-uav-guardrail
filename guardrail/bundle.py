@@ -196,7 +196,8 @@ from typing import Any
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
                      LEGACY_POINT_FORMS, ProjectedCoordinatesRefused, era_context,
-                     ir2_rule_view, load_legacy_metre_policy, load_policy)
+                     ir2_rule_view, load_legacy_metre_policy, load_policy,
+                     mark_legacy_read)
 from .projection import LOCAL_QUANTUM_M
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -2535,6 +2536,8 @@ def load_for_flight(bundle: str | Path | None = None,
         rec["legacy_read"] = True
         rec["point_form"] = form
         rec["point_note"] = LEGACY_POINT_NOTE
+        # The declared read is what lets a Shield be built on it (WP1-14).
+        mark_legacy_read(pol)
     return pol, rec
 
 
@@ -3167,7 +3170,8 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     Before 4.0.0 a recipe may leave `scope` out, and it stays absent, as it
     flew (models.era_context); under 4.0.0 a recipe states it."""
     from pydantic import TypeAdapter
-    from .models import IR2_RULE_DEFAULTS, Constraint, refuse_metre_rule, rule_in_wgs84
+    from .models import (IR2_RULE_DEFAULTS, Constraint, mark_legacy_read,
+                         refuse_metre_rule, rule_in_wgs84)
     if not wgs84_writes and not legacy_read:
         raise ValueError("derive(wgs84_writes=False) rebuilds a recorded run's metre "
                          "writes, a read of the legacy form: pass legacy_read=True; "
@@ -3193,6 +3197,10 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     if generations is not None and pol.generation != base.generation + generations:
         raise ValueError(f"derivation expected {generations} generation(s), "
                          f"got {pol.generation - base.generation}")
+    if legacy_read:
+        # A rebuild of a recorded run: a Shield may re-fly it as it flew,
+        # metres and all (Shield.__init__, WP1-14).
+        mark_legacy_read(pol)
     return pol
 
 

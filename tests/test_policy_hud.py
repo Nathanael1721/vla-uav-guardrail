@@ -616,10 +616,12 @@ def test_the_shields_zone_reading_matches_the_panels_old_one_off_the_rim():
 def test_a_circle_fence_is_drawn_and_judged_like_any_zone():
     """circle_fence is enforced (a derived 32-gon); the panel ignored it: no
     row status beyond OK, nothing on the map."""
-    from guardrail.models import Policy
-    pol = Policy.model_validate({"policy_id": "c", "constraints": [
+    from guardrail.models import Policy, mark_legacy_read
+    # Laid out in local metres: a declared legacy read, so the panel's own
+    # Shield may be built on it (WP1-14).
+    pol = mark_legacy_read(Policy.model_validate({"policy_id": "c", "constraints": [
         {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 0, "y": 50},
-         "radius_m": 10, "margin_m": 1.0}]})
+         "radius_m": 10, "margin_m": 1.0}]}))
     ind = PolicyIndicator(pol)
     snap = ind.update(0.0, _dec(), State(x=0, y=45, up=8))
     r = _row(snap, "disc")
@@ -690,7 +692,7 @@ def test_a_zone_outside_its_window_is_idle():
         "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}}]})
     for hhmm, status, drawn in (("12:00", "breach", ["yard"]), ("18:00", "idle", [])):
         when = datetime(2026, 10, 7, int(hhmm[:2]), int(hhmm[3:]))
-        sh = Shield(pol, now=lambda w=when: w)
+        sh = Shield(pol, now=lambda w=when: w, legacy_metres=True)
         snap = PolicyIndicator(pol, shield=sh).update(0.0, _dec(), State(x=0, y=0, up=8))
         assert _row(snap, "yard")["status"] == status, (hhmm, _row(snap, "yard"))
         # ...and the map draws only the zones in force (2026-10-07 review: a
@@ -718,7 +720,7 @@ def _monitor_only_policy():
 
 
 def test_a_monitor_only_rule_is_watched_never_shown_as_corrected():
-    sh = Shield(_monitor_only_policy(), escalation=False)
+    sh = Shield(_monitor_only_policy(), escalation=False, legacy_metres=True)
     ind = PolicyIndicator(sh.policy, shield=sh)
     st = State(x=0, y=15, up=4)
     d = sh.filter(st, Action4D(vx=3.0))

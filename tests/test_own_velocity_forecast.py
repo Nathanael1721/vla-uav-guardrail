@@ -680,12 +680,12 @@ def test_the_segment_check_walks_each_forecast_path_never_the_connectors():
     st = State(x=0.0, y=0.0, up=10.0, velocity=(0.0, 4.0, 0.0))
     a = Action4D(vx=4.0, vy=0.0)
     sq = [(0.55, 0.55), (0.65, 0.55), (0.65, 0.65), (0.55, 0.65)]
-    assert not Shield(_seg_policy(sq), escalation=False)._check(st, a), "no pose inside"
-    sh = Shield(_seg_policy(sq), escalation=False, segment_check=True)
+    assert not Shield(_seg_policy(sq), escalation=False, legacy_metres=True)._check(st, a), "no pose inside"
+    sh = Shield(_seg_policy(sq), escalation=False, segment_check=True, legacy_metres=True)
     assert sh._check(st, a) == [], "a zone neither forecast path enters is not broken"
     assert sh.filter(st, a).emitted == a
     # (B) the strip, placed on the Shield's own forecast.
-    probe = Shield(_seg_policy([(50, 50), (51, 50), (51, 51)]), escalation=False)
+    probe = Shield(_seg_policy([(50, 50), (51, 50), (51, 51)]), escalation=False, legacy_metres=True)
     poses = {round(t, 3): p for t, p in probe.forecast(st, a)}
     p0, p1 = poses[1.5], poses[1.6]
     mx, my = (p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0
@@ -693,8 +693,8 @@ def test_the_segment_check_walks_each_forecast_path_never_the_connectors():
     ux, uy = (p1.x - p0.x) / L, (p1.y - p0.y) / L
     strip = [(mx + sn * 0.1 * uy + sd * 0.01 * ux, my - sn * 0.1 * ux + sd * 0.01 * uy)
              for sn, sd in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-    assert not Shield(_seg_policy(strip), escalation=False)._check(st, a), "no pose inside"
-    sh = Shield(_seg_policy(strip), escalation=False, segment_check=True)
+    assert not Shield(_seg_policy(strip), escalation=False, legacy_metres=True)._check(st, a), "no pose inside"
+    sh = Shield(_seg_policy(strip), escalation=False, segment_check=True, legacy_metres=True)
     com = sh._committed(st)
     assert com is not None and not com[1] and not com[3], "the stop path must not cross it"
     vs = sh._check(st, a)

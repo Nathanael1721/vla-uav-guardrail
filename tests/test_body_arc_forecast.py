@@ -259,7 +259,7 @@ def _alternating_yaw_loop(arc: bool, w: float, max_ticks: int = 60):
          "margin_m": 1.0, "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0,
          "vertices": [{"x": 20, "y": -10}, {"x": 40, "y": -10}, {"x": 40, "y": 10},
                       {"x": 20, "y": 10}]}]})
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     x = y = yaw = 0.0
     for i in range(max_ticks):
         body = Action4D(vx=4.0, vy=0.0, vz_up=0.0, yaw_rate=w if i % 2 == 0 else -w)

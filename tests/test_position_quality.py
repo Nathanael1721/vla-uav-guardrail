@@ -69,6 +69,7 @@ class Shield(_Shield):
     test_shieldcore_repair.py."""
 
     def __init__(self, *a, path_repair=False, **kw):
+        kw.setdefault("legacy_metres", True)    # scenes laid out in local metres
         super().__init__(*a, path_repair=path_repair, **kw)
 
 

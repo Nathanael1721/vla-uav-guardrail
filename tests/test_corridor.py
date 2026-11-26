@@ -55,7 +55,7 @@ def _corridor(**kw):
 
 def _shield(*constraints, now=None, **kw):
     return Shield(Policy(policy_id="t", constraints=list(constraints)),
-                  lookahead_s=3.0, dt=0.5, now=now, **kw)
+                  lookahead_s=3.0, dt=0.5, now=now, **kw, legacy_metres=True)
 
 
 # --------------------------------------------------------------------------- #

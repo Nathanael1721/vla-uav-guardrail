@@ -60,6 +60,9 @@ class LegacyFenceShield(Shield):
     a fresh buffer() per point test."""
 
     def __init__(self, policy, *args, **kwargs):
+        # The comparison copies are laid out in local metres, as the pre-IR
+        # loops were: a declared legacy read (Shield.__init__, WP1-14).
+        kwargs.setdefault("legacy_metres", True)
         super().__init__(policy, *args, **kwargs)
         # Pre-build shapely polygons once (grant: pre-compute at ingest,
         # never rebuild per tick).

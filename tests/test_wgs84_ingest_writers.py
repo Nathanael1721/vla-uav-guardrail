@@ -352,7 +352,7 @@ def test_gui_writer_round_trip_and_same_enforcement():
         assert worst <= MICRO_M, worst
         old = Policy.model_validate({"policy_id": "gui-mission", "version": doc["version"],
                                      "constraints": metres})
-        a, b = Shield(new), Shield(old)
+        a, b = Shield(new, legacy_metres=True), Shield(old, legacy_metres=True)
         assert _rings(a) == _rings(b)
         # fly both through the first zone, tick for tick
         x0, x1, y0, y1 = rects[0]
@@ -445,7 +445,7 @@ def test_point_form_labels_every_form():
     # an event on a metre-only policy is refused since 2026-11-18 (no WGS84
     # frame to write it in; tests/test_wgs84_frameless_writers.py), so the
     # policy stays as it was loaded
-    leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)))
+    leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)), legacy_metres=True)
     try:
         rest(api.apply_dynamic_nfz, leg, {"id": "z", **RULE, "margin_m": 1.0,
                                     "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
