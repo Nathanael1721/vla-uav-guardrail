@@ -831,9 +831,9 @@ def test_no_tick_of_the_cells_pays_for_two_kinds_of_hold_work():
     from guardrail import shield as SH
     ticks = []
     cur = {"path": 0, "request": 0, "slice": 0.0}
-    orig_hb, orig_rq, orig_tick, orig_filter = (
+    orig_hb, orig_rq, orig_tick, orig_filter, orig_filter_body = (
         SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
-        SH.Shield.filter)
+        SH.Shield.filter, SH.Shield.filter_body)
 
     def hb(self, *a, **kw):
         cur["path"] += 1
@@ -849,21 +849,33 @@ def test_no_tick_of_the_cells_pays_for_two_kinds_of_hold_work():
         finally:
             cur["slice"] += self.slice
 
-    def filt(self, *a, **kw):
-        cur.update(path=0, request=0, slice=0.0)
-        d = orig_filter(self, *a, **kw)
+    def record(d):
         rec = getattr(d, "fsm_record", None) or {}
         ticks.append((cur["path"], cur["request"], cur["slice"], rec.get("handback_refused"),
                       rec.get("handback_unsafe")))
+
+    def filt(self, *a, **kw):
+        cur.update(path=0, request=0, slice=0.0)
+        d = orig_filter(self, *a, **kw)
+        record(d)
         return d
+
+    # The harness hands the flying Shield the body frame (filter_body), which
+    # does not go through filter, so both entries are counted.
+    def filt_body(self, *a, **kw):
+        cur.update(path=0, request=0, slice=0.0)
+        d, eb = orig_filter_body(self, *a, **kw)
+        record(d)
+        return d, eb
     (SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
-     SH.Shield.filter) = hb, rq, ptick, filt
+     SH.Shield.filter, SH.Shield.filter_body) = hb, rq, ptick, filt, filt_body
     try:
         for dps in (3, 6):
             _spin("rail", dps)
     finally:
         (SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
-         SH.Shield.filter) = orig_hb, orig_rq, orig_tick, orig_filter
+         SH.Shield.filter, SH.Shield.filter_body) = (orig_hb, orig_rq, orig_tick, orig_filter,
+                                                     orig_filter_body)
     n = [sum(1 for t in ticks if t[k]) for k in (0, 1, 2)]
     assert min(n) > 5 and n[0] > 20 and n[1] > 20, n
     two = [t for t in ticks if (t[0] > 0) + (t[1] > 0) + (t[2] > 0) > 1]

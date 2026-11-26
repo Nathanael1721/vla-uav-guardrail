@@ -269,8 +269,13 @@ def test_the_frames_docstring_names_every_module_that_crosses_the_boundary():
             if pat.search(p.read_text(encoding="utf-8", errors="replace")):
                 users.append(p.relative_to(ROOT).as_posix())
     # The grant's boundary: since 2026-11-04 the Shield's own filter_body
-    # (until then sitl/ros2_shield_node.py, which now turns nothing).
-    assert "guardrail/shield.py" in users, users
+    # (until then sitl/ros2_shield_node.py, which now turns nothing); since
+    # 2026-11-26 through the projection's one rotation pair in
+    # guardrail/repair.py (BodyFrame), guardrail/shield.py importing none.
+    assert "guardrail/repair.py" in users, users
+    assert "guardrail/shield.py" not in users, (
+        "the Shield rotates the action itself again; its stack carries the body "
+        "action and reads it in the world frame through repair.BodyFrame")
     assert "sitl/ros2_shield_node.py" not in users, (
         "the ROS 2 Shield node rotates the action again; the Shield takes the "
         "body frame itself (Shield.filter_body)")
@@ -283,14 +288,18 @@ def _policy():
     return load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
 
 
-def test_filter_body_is_filter_between_the_two_exact_rotations():
+def test_filter_body_decides_as_filter_on_the_world_reading():
     """WP3-04 / ARCH-04 (2026-11-04). The Shield takes the body frame at its
-    own boundary: filter_body is filter() on the action turned into the world
-    frame at the state's heading, with the emitted action turned back at the
-    same heading - the same decision, the same rules broken, to the bit.
-    Shown failing with the heading taken as 0 inside filter_body: the first
-    random case (heading 86.6 degrees) parts, and the zone test below finds
-    no violation."""
+    own boundary: filter_body makes the decision filter() makes on the
+    action's world reading at the state's heading - the same raw and emitted
+    world actions, the same rules broken, to the bit - and its emitted body
+    action is the decision's at that heading: to the bit where the stack
+    repaired the action, and where it did not, the very body action handed in
+    (since 2026-11-26 the stack carries the body action; until then filter_body
+    turned it around filter() and an untouched action came back as its round
+    trip, a few ulp away at most headings). Shown failing with the heading
+    taken as 0 inside filter_body: the first random case (heading 86.6
+    degrees) parts, and the zone test below finds no violation."""
     from guardrail.models import State
     from guardrail.shield import Shield
     rng = random.Random(20261104)
@@ -306,8 +315,14 @@ def test_filter_body_is_filter_between_the_two_exact_rotations():
         assert d_body.raw == d_world.raw and d_body.emitted == d_world.emitted, (k, yaw)
         assert ([v.rule_id for v in d_body.violations]
                 == [v.rule_id for v in d_world.violations]), k
-        assert em_body == Action4D(**dict(zip(("vx", "vy", "vz_up", "yaw_rate"),
-                                              to_body(d_world.emitted, yaw)))), k
+        turned = Action4D(**dict(zip(("vx", "vy", "vz_up", "yaw_rate"),
+                                     to_body(d_world.emitted, yaw))))
+        if d_world.touched:
+            assert em_body == turned, k
+        else:
+            assert em_body == body, k
+            assert max(abs(getattr(em_body, c) - getattr(turned, c))
+                       for c in ("vx", "vy", "vz_up", "yaw_rate")) <= 4e-15, k
 
 
 def test_filter_body_checks_the_zone_the_body_action_points_at():

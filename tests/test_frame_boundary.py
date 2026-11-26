@@ -39,10 +39,12 @@ Pinned here:
     turns a body action from its capture heading to a later one.
   * ONE CROSSING. Parsed from the source of every module outside tests/ and
     the reference checkout: `from_body` / `to_local_ned` are referenced only
-    by guardrail/frames.py, by the Shield's projection (filter_body,
-    advise_body, check_body; and the repair-operator interface inside it,
-    guardrail/repair.py RepairContext.to_world, since 2026-11-21) and by
-    one named record helper;
+    by guardrail/frames.py, by the projection's one rotation pair
+    (guardrail/repair.py `to_world`: the tick's frame and every operator
+    context, through which the Shield reads its carried body action in the
+    world frame where a rule judges it; since 2026-11-26 guardrail/
+    shield.py references no rotation itself) and by one named record
+    helper;
     `body_to_local_ned` - the adapter function - is called only by the
     listed adapters, and each of them calls it; no velocity command,
     Action4D or vx / vy assignment uses cos(E) and sin(E) of one angle E,
@@ -223,11 +225,132 @@ def test_the_same_body_action_in_the_same_body_scene_is_repaired_the_same_at_eve
     assert n_zone >= 10 and n_repaired >= 20, (n_zone, n_repaired)
 
 
+# WP3-04, since 2026-11-26: the Shield's stack CARRIES the body action -
+# Sanitise on it, the chain and the last resorts handing it on - and reads
+# it in the world frame only where a rule judges it (repair.BodyFrame). The
+# three tests below fail on 9a5239c, where filter_body turned the action into
+# the world frame around the whole stack and back: an untouched body action
+# came back as a re-rotation of itself, the first operator was handed one,
+# and one non-finite body channel took the other horizontal one with it.
+
+class _FirstHanded(Shield):
+    """Records the action the first chain operator is handed, per tick."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.first_handed = []
+        ops = dict(self.repair_operators)
+        first = ops["KinematicClamp"]
+        log = self.first_handed
+
+        class Spy:
+            name, categories = first.name, first.categories
+
+            def repair(self, action, violation, ir, *, ctx):
+                if not log or log[-1][0] is not ctx.shield._tick_ctx():
+                    log.append((ctx.shield._tick_ctx(), action))
+                return first.repair(action, violation, ir, ctx=ctx)
+        ops["KinematicClamp"] = Spy()
+        self.repair_operators = ops
+
+
+def test_the_stack_carries_the_body_action_handed_in_at_any_heading():
+    """filter_body at headings that are not quarter turns: an action no rule
+    touches is handed back as the very body action handed in, bit for bit
+    (not its re-rotation, which differs in the last bits on most of these
+    ticks); on a repaired tick the chain's first operator is handed that
+    very body action, and the world readings the decision records are the
+    body actions' (frames.from_body at the heading), so the logs read what
+    they read before."""
+    rng = random.Random(20261126)
+    n_pass = n_rot_differs = n_repaired = 0
+    for k in range(300):
+        h = rng.uniform(-180.0, 180.0)
+        x0, y0 = rng.uniform(-50, 50), rng.uniform(-50, 50)
+        sh = _FirstHanded(_scene(x0, y0, h), escalation=False)
+        body = Action4D(vx=rng.uniform(-2.0, 7.0), vy=rng.uniform(-3.0, 3.0),
+                        vz_up=rng.uniform(-1.5, 1.5), yaw_rate=rng.uniform(-0.5, 0.5))
+        st = State(x=x0, y=y0, up=rng.uniform(6.0, 30.0), yaw_deg=h)
+        d, eb = sh.filter_body(st, body)
+        w = from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, h)
+        assert _same(_ch(d.raw), _ch(w)), (k, d.raw, w)
+        if not d.touched:
+            n_pass += 1
+            assert _same(_ch(eb), _ch(body)), (k, eb, body)
+            assert _same(_ch(d.emitted), _ch(w)), (k, d.emitted, w)
+            n_rot_differs += not _same(to_body(w, h), _ch(body))
+        else:
+            n_repaired += 1
+            assert sh.first_handed and sh.first_handed[-1][1] == body, (k, sh.first_handed)
+            assert _same(_ch(d.emitted), _ch(from_body(eb.vx, eb.vy, eb.vz_up, eb.yaw_rate,
+                                                       h))) or \
+                max(abs(a - b) for a, b in zip(_ch(d.emitted), _ch(
+                    from_body(eb.vx, eb.vy, eb.vz_up, eb.yaw_rate, h)))) <= 4e-15, (k, d, eb)
+    assert n_pass >= 60 and n_repaired >= 60, (n_pass, n_repaired)
+    assert n_rot_differs >= 20, n_rot_differs     # the old round trip was not exact here
+
+
+def _ch(a):
+    return (a.vx, a.vy, a.vz_up, a.yaw_rate) if hasattr(a, "vx") else tuple(a)
+
+
+def test_sanitise_runs_on_the_body_action_one_channel_at_a_time():
+    """A non-finite BODY channel is zeroed alone, at every heading: forward
+    NaN with 2 m/s right flies 2 m/s right (world reading: 2 m/s at the
+    heading's right), the action-finite violation names the body channel,
+    and Sanitise is the repair. Until 2026-11-26 Sanitise ran on the world
+    reading, where the NaN had spread to both horizontal channels at a
+    heading that is not a quarter turn, so both were zeroed (a stop) and the
+    violation named vx,vy; at a quarter turn only one was. The world-frame
+    wrapper `filter` still sanitises the world action it is handed."""
+    nan = float("nan")
+    for h in (0.0, 37.3, 90.0, -123.4):
+        sh = Shield(_scene(500.0, 500.0, h), escalation=False)     # nothing near
+        d, eb = sh.filter_body(State(x=0.0, y=0.0, up=15.0, yaw_deg=h),
+                               Action4D(vx=nan, vy=2.0))
+        assert _same(_ch(eb), (0.0, 2.0, 0.0, 0.0)), (h, eb)
+        right = from_body(0.0, 2.0, 0.0, 0.0, h)
+        assert _same(_ch(d.emitted), _ch(right)), (h, d.emitted, right)
+        fin = [v for v in d.violations if v.rule_id == "action-finite"]
+        assert fin and fin[0].detail == "non-finite channel(s) vx zeroed", (h, d.violations)
+        assert [r.operator for r in d.repairs] == ["Sanitise"], (h, d.repairs)
+    # The world-frame wrapper: the world channel, as before.
+    d = Shield(_scene(500.0, 500.0, 37.3), escalation=False).filter(
+        State(x=0.0, y=0.0, up=15.0, yaw_deg=37.3), Action4D(vx=nan, vy=2.0))
+    assert _same(_ch(d.emitted), (0.0, 2.0, 0.0, 0.0)), d.emitted
+    assert "non-finite channel(s) vx zeroed" in [v.detail for v in d.violations]
+
+
+def test_a_non_finite_heading_zeroes_the_horizontal_channels_as_before():
+    """A non-finite heading cannot turn a finite body action into the world
+    frame (its reading is NaN, which every check would pass): the two
+    horizontal channels are zeroed in both frames and named vx,vy - the tick
+    Sanitise made of it when it ran on the world reading - and nothing
+    non-finite reaches a check or the decision's records. The emitted body
+    action has no body reading at such a heading: its horizontal channels
+    are the rotation's NaN, as they were (no rail's adapter can turn a body
+    action into NED without the heading either). An infinite heading raises
+    in the rotation (math.cos), before and after."""
+    nan = float("nan")
+    for heading in (nan,):
+        sh = Shield(_scene(500.0, 500.0, 0.0), escalation=False)
+        d, eb = sh.filter_body(State(x=0.0, y=0.0, up=15.0, yaw_deg=heading),
+                               Action4D(vx=3.0, vy=1.0, vz_up=0.5))
+        assert _same(_ch(d.raw), (0.0, 0.0, 0.5, 0.0)), d.raw
+        assert _same(_ch(d.emitted), (0.0, 0.0, 0.5, 0.0)), d.emitted
+        assert math.isnan(eb.vx) and math.isnan(eb.vy) and (eb.vz_up, eb.yaw_rate) == (0.5, 0.0)
+        fin = [v.detail for v in d.violations if v.rule_id == "action-finite"]
+        assert fin == ["non-finite channel(s) vx,vy zeroed"], d.violations
+
+
 def test_filter_world_as_body_hands_over_every_tick_in_the_body_frame():
     """A world-frame producer's action is handed to the Shield in the BODY
     frame on every tick (no fall-back to Shield.filter), and what the rail
     streams is body frame: the emitted body action, a stop, or with the
-    Shield off the body action handed in."""
+    Shield off the body action handed in. Since 2026-11-26 filter_body does
+    not go through the world-frame `filter` either (WP3-04: no rotation
+    around the stack; `filter` is the world-frame wrapper of the same
+    stack), so `filter` is never called."""
     calls = []
 
     class Spy(Shield):
@@ -246,14 +369,14 @@ def test_filter_world_as_body_hands_over_every_tick_in_the_body_frame():
         w = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6), vz_up=rng.uniform(-2, 2))
         st = State(x=rng.uniform(-5, 5), y=rng.uniform(-5, 5), up=15.0, yaw_deg=h)
         d, b_in, eb = filter_world_as_body(sh, st, w, t=0.1 * i)
-        assert calls[-2:] == [("filter_body", h, b_in), "filter"], calls[-2:]
+        assert calls[-1:] == [("filter_body", h, b_in)], calls[-2:]
         assert b_in == body_action(w, h)
         want = {None: eb, "pass": eb, "brake": BODY_STOP, "none": None}[d.setpoint]
         assert streamed_body(d, eb) == want, (d.setpoint, streamed_body(d, eb), want)
         assert streamed_body(d, eb, shield_on=False, body_in=b_in) is b_in
     assert streamed_body(type("D", (), {"setpoint": "brake"})(), eb) == BODY_STOP
     assert streamed_body(type("D", (), {"setpoint": "none"})(), eb) is None
-    assert sum(1 for c in calls if c == "filter") == 50
+    assert "filter" not in calls and len(calls) == 50, calls[:3]
 
 
 # Every rule family, the same way: a scene built in the aircraft's own
@@ -555,12 +678,13 @@ SCAN_EXCLUDE = ("tests/", "kuanting-vla-uav-guardrail/", ".claude/", "reference/
 # Modules allowed to reference the body -> world rotation itself, and where.
 ROTATION_USERS = {
     "guardrail/frames.py": None,                         # the definitions
-    # The Shield's projection: its internal world frame between from_body
-    # and to_body (body in, body out at its interface).
-    "guardrail/shield.py": {"filter_body", "advise_body", "check_body"},
-    # The repair-operator interface inside the projection (WP3-04, since
-    # 2026-11-21): operators take and return the body action, and
-    # RepairContext.to_world turns it into the projection's world frame.
+    # The projection's one rotation pair (WP3-04): the tick's frame and every
+    # repair-operator context (repair.BodyFrame / RepairContext, since
+    # 2026-11-21; the Shield's own stack since 2026-11-26) read the carried
+    # body action in the world frame through `to_world`. guardrail/shield.py
+    # itself references no rotation since 2026-11-26 (until then
+    # filter_body, advise_body and check_body turned the action around the
+    # whole stack).
     "guardrail/repair.py": {"to_world"},
     # A RECORD: the step log's world_action and its offline replay; the
     # flight hands the Shield the body action.
