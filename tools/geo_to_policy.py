@@ -59,11 +59,24 @@ Reads one source and emits a signed bundle, through the same DSL entry point:
     http:// or https:// URL, fetched with GET; added 2026-10-07, so the tool
     "reads files + REST endpoint" as the grant's Outputs table says), in
     the shapes guardrail/api.py speaks: a zone body of POST /nfz or POST
-    /dynamic_nfz ({id, vertices: [{x, y}], altitude_floor_m,
+    /dynamic_nfz ({id, vertices: [{lat, lon}], altitude_floor_m,
     altitude_ceiling_m, margin_m, motion?}), ingested as the dynamic_nfz the
     API spawns from it, or the body GET /policy returns (a whole policy). A
     single DSL rule (with `type`, the POST /hot_apply body) is accepted as a
     patch too.
+
+WGS84 ONLY, as REST (WP1-14, since 2026-11-26). Every absolute point a source
+gives - a zone body's vertices, a rule's centre / vertices / centerline, top
+level or inside the grant's `geometry:` block - is {lat, lon}. A point in
+local metres ({x, y}) or a lat/lon point with an x or y key beside it is
+REFUSED (models.ProjectedCoordinatesRefused; the CLI prints REFUSED and
+exits 2), with the same wording guardrail/api.py answers the same body with
+(HTTP 422), naming the tool-side conversion the operator runs first:
+models.wgs84_from_metres(<rule or body>, <the base's frame origin>). On a
+base with no frame origin the refusal is the no-frame one, as on REST
+(models.no_frame_message). From 2026-11-17 until then the tool converted such
+points itself about the base's frame origin, the "convert metre input at
+ingest" form the grant's DSL does not have (deviation 1 of the final report).
 
 With `--base`, new rules are APPENDED to the base policy and its generation is
 bumped once per rule - exactly what the API's hot-apply does to a live policy,
@@ -72,11 +85,10 @@ MOVING dynamic_nfz is a declaration (guardrail/models.py, FLIGHT_HELD_TYPES);
 one whose zones do not move flies since 2026-11-15 (C-16). Geographic zones
 cannot be appended to a base written in local metres without an origin: their
 position in that frame is unknown, and guessing it would misplace every zone.
-Since 2026-11-17 (WP1-14) metre points appended to a base WITH a frame are
-written as WGS84 about its frame origin, as the API's hot-apply writes them
-(Shield._in_frame), so the result is stored and hashed in WGS84 and has the
-hash the live policy has (tests/test_wgs84_writes.py). Also since that date,
-rules that would MOVE a base's derived frame origin (a base with a frame but
+The rules appended are stored and hashed in WGS84, as the API's hot-apply
+stores them, so the bundle has the hash the live policy has after the same
+lat/lon body (tests/test_geo_to_policy.py, tests/test_wgs84_writes.py).
+Since 2026-11-17, rules that would MOVE a base's derived frame origin (a base with a frame but
 no stated `origin`, whose frame comes from its first polygon_fence) are
 refused - metre or lat/lon alike, so a GeoJSON / KML zone that master
 accepted onto such a base is now refused - because every WGS84 point of the
@@ -88,7 +100,8 @@ refused (models.no_frame_message), as the live Shield refuses them, where
 until then they were appended in metres; and a whole policy with any point
 in metres is refused rather than bundled, with the converter to use
 (tools/convert_policies_wgs84.py states the origin and raises the version;
-converting here would give one id@version two contents).
+converting here would give one id@version two contents). Since 2026-11-26
+metre rules for a base WITH a frame are refused too (above).
 """
 from __future__ import annotations
 
@@ -105,9 +118,11 @@ sys.path.insert(0, str(ROOT))
 import yaml                                                         # noqa: E402
 
 from guardrail.models import (IR2_RULE_DEFAULTS, DynamicNFZ, Policy,  # noqa: E402
-                              load_policy, no_frame_message, parse_policy_text,
-                              policy_from_raw, wgs84_from_metres)
-from guardrail.projection import geo_points, metre_point_count      # noqa: E402
+                              ProjectedCoordinatesRefused, load_policy,
+                              no_frame_message, parse_policy_text, policy_from_raw,
+                              projected_input_message)
+from guardrail.projection import (geo_points, metre_point_count,      # noqa: E402
+                                  xy_beside_latlon_count)
 
 DSL_PROPERTIES = ("priority", "constraint_type", "violation_action", "layer",
                   "scope", "margin_m", "altitude_floor_m", "altitude_ceiling_m",
@@ -375,6 +390,29 @@ def rules_from_payload(obj, defaults: dict | None = None) -> list[dict] | None:
     return None
 
 
+_POINT_KEYS = ("vertices", "centerline")
+
+
+def _pair_point_count(node) -> int:
+    """How many absolute points under `node` are written as a bare [x, y]
+    pair (a vertex or centerline item, or a `center`), depth first: local
+    metres in the only form a pair can have, which REST refuses as such
+    (api._points). The DSL's own refusal of a pair is a type error that
+    does not say so."""
+    if isinstance(node, list):
+        return sum(_pair_point_count(v) for v in node)
+    if not isinstance(node, dict):
+        return 0
+    n = 0
+    for k, v in node.items():
+        if k in _POINT_KEYS and isinstance(v, list):
+            n += sum(1 for p in v if isinstance(p, (list, tuple)))
+        elif k == "center" and isinstance(v, (list, tuple)):
+            n += 1
+        n += _pair_point_count(v)
+    return n
+
+
 def fetch(url: str, timeout_s: float = 10.0):
     """GET a REST endpoint and parse its body: JSON / YAML, or KML (a body that
     starts with "<"). An HTTP error or an unreadable body raises
@@ -438,17 +476,31 @@ def ingest(source, base: Policy | None = None, defaults: dict | None = None,
                 f"coordinates (grant, Policy DSL page; WP1-14), so this tool does "
                 f"not bundle it: convert it first with tools/convert_policies_"
                 f"wgs84.py (it states the origin and raises the version), or "
-                f"ingest its rules with --base onto a policy that has a frame")
+                f"write its rules as {{lat, lon}} (models.wgs84_from_metres about "
+                f"the frame origin of the base) and ingest them with --base")
         return policy_from_raw(obj, source=where, runtime=runtime)
     if base is None:
         raise ConversionError(
             f"{where} carries {len(new)} rule(s) but no policy to add them to; "
             f"pass --base (a payload alone has no policy_id, version or frame)")
-    if base.frame_origin is None and metre_point_count(new):
+    metres = metre_point_count(new) + _pair_point_count(new)
+    beside = xy_beside_latlon_count(new)
+    if base.frame_origin is None and (metres or beside):
         # WP1-14 (2026-11-18): no frame, so no WGS84 position for a metre
-        # point; until then they were appended in metres.
+        # point; until then they were appended in metres. REST answers a
+        # point with x/y on a frameless policy the same way (api._points).
         raise ConversionError(no_frame_message(f"{where} ({len(new)} rule(s) for "
                                                f"{base.policy_id})"))
+    if metres or beside:
+        # WP1-14 (2026-11-26): WGS84 only, as REST refuses the same body with
+        # 422 (api._points). Until then the metres were converted here about
+        # the base's frame origin (models.wgs84_from_metres).
+        what = f"{where} ({len(new)} rule(s) for {base.policy_id})"
+        if not metres:
+            what += f": {beside} point(s) carry x/y beside lat/lon"
+        raise ProjectedCoordinatesRefused(
+            projected_input_message(what)
+            + f". {base.policy_id}'s frame origin is {base.frame_origin}")
     geo_new = bool(geo_points(new))
     if geo_new and base.origin is None and not base.is_geographic and any(
             getattr(c, "vertices", None) or getattr(c, "centerline", None)
@@ -457,10 +509,6 @@ def ingest(source, base: Policy | None = None, defaults: dict | None = None,
             f"{where}: geographic zones cannot be placed in {base.policy_id}'s "
             f"frame - it is written in local metres and states no origin. Add "
             f"`origin: {{lat, lon}}` to the base policy first")
-    if base.frame_origin is not None:
-        # WP1-14: what is appended to a policy with a frame is WGS84, as the
-        # live hot-apply writes it (Shield._in_frame).
-        new = wgs84_from_metres(new, base.frame_origin)       # the tool-side conversion
     raw = base.canonical_ir()
     raw["constraints"] = raw["constraints"] + new
     raw["generation"] = base.generation + len(new)      # one bump per rule, as hot_apply

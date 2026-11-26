@@ -32,8 +32,9 @@ and leaves the policy as it was; this file checks every one:
     are metres is not bundled (allow_legacy_metres only for rebuilding a
     recorded bundle or a fixture standing for one);
   * tools/geo_to_policy.py ingest: metre rules onto a frameless base and a
-    whole metre document are refused; metre rules onto a base with a frame
-    are converted (as before);
+    whole metre document are refused; since 2026-11-26 metre rules onto a
+    base with a frame are refused too (ProjectedCoordinatesRefused, as REST),
+    and the same rules written as {lat, lon} tool side are ingested;
   * demo/gen_random_scenario.py --metres is refused by name, writing nothing;
   * bundle.load_for_flight refuses a legacy metre bundle at load, naming
     the flight-ready WGS84 bundle beside it; legacy_read (or
@@ -64,7 +65,7 @@ from guardrail.models import (POINTS_LEGACY_METRES, POINTS_NONE,   # noqa: E402
                               POINTS_WGS84, CircleFence, CorridorSwap,
                               DynamicNFZ, NoFrameOrigin, Policy, PolygonFence,
                               State, TimeWindowSwitch, load_policy, mark_legacy_read,
-                              no_frame_message,
+                              ProjectedCoordinatesRefused, no_frame_message,
                               rule_in_wgs84, wgs84_from_metres)
 from guardrail.scenario_events import EventState, apply_event      # noqa: E402
 from guardrail.scenario_spec import ScenarioEvent                  # noqa: E402
@@ -413,7 +414,7 @@ def _geo_tool():
     return geo_to_policy
 
 
-def test_the_ingest_tool_refuses_metres_with_no_frame_and_converts_with_one():
+def test_the_ingest_tool_refuses_metres_with_no_frame_and_with_one():
     G = _geo_tool()
     payload = {"id": "ingest-z", **RULE, "margin_m": 1.0, "vertices": SQUARE,
                "altitude_floor_m": 0, "altitude_ceiling_m": 100}
@@ -426,7 +427,14 @@ def test_the_ingest_tool_refuses_metres_with_no_frame_and_converts_with_one():
         assert "local metres" in str(e) and "convert_policies_wgs84" in str(e), e
     else:
         raise AssertionError("a whole metre document was ingested")
-    pol = G.ingest(copy.deepcopy(payload), _framed())
+    framed = _framed()
+    try:
+        G.ingest(copy.deepcopy(payload), framed)
+    except ProjectedCoordinatesRefused as e:
+        assert "wgs84_from_metres" in str(e), e
+    else:
+        raise AssertionError("metre rules were ingested onto a framed base")
+    pol = G.ingest(wgs84_from_metres(copy.deepcopy(payload), framed.frame_origin), framed)
     assert pol.point_form == POINTS_WGS84 and pol.generation == 1
 
 

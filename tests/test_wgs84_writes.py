@@ -42,7 +42,9 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
   * the evidence in docs/data/wgs84_bind_default_20261117 says what its
     README says, and its diff tool drops only wall-clock keys;
   * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
-    agree with the Shield's writes; the 1-um consistency guard fires;
+    agree with the Shield's writes (since 2026-11-26 the ingest tool, like
+    REST, takes the body as {lat, lon} only, converted tool side); the 1-um
+    consistency guard fires;
   * since 2026-11-26 every entry takes an absolute position in WGS84 only
     (the DSL loaders, the REST bodies, the Shield's spawn / move / swap /
     pre-start add, a new derive): metres are refused naming the tool-side
@@ -785,13 +787,24 @@ def _geo_tool():
 
 
 def test_geo_to_policy_ingest_matches_the_live_hash():
-    """tools/geo_to_policy.py ingest of a POST /dynamic_nfz metre body onto
-    a framed base: stored in WGS84 (no x/y in the canonical IR) and the same
-    hash as api.apply_dynamic_nfz gives the live policy - off-grid metres
-    included."""
+    """tools/geo_to_policy.py ingest of a POST /dynamic_nfz body laid out in
+    metres onto a framed base: since 2026-11-26 (WP1-14) the tool, like
+    REST, takes it as {lat, lon} only, converted tool side (wgs84_from_
+    metres about the base's frame origin), and refuses the metre body
+    itself. What it stores is WGS84 (no x/y in the canonical IR) with the
+    same hash as api.apply_dynamic_nfz gives the live policy - off-grid
+    metres included."""
+    from guardrail.models import ProjectedCoordinatesRefused
     G = _geo_tool()
     body = {**ZONE, "vertices": OFF_GRID}
-    pol = G.ingest(copy.deepcopy(body), load_policy(SITL))
+    base = load_policy(SITL)
+    try:
+        G.ingest(copy.deepcopy(body), base)
+    except ProjectedCoordinatesRefused as e:
+        assert TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("the ingest tool took a metre body REST refuses")
+    pol = G.ingest(wgs84_from_metres(copy.deepcopy(body), base.frame_origin), base)
     live = Shield(load_policy(SITL))
     rest(api.apply_dynamic_nfz, live, copy.deepcopy(body))
     assert pol.policy_hash == live.policy.policy_hash
@@ -802,8 +815,9 @@ def test_geo_to_policy_ingest_matches_the_live_hash():
 def test_geo_to_policy_refuses_to_move_a_derived_origin():
     """A base with no stated origin derives its frame from its first
     polygon_fence. Appending one that would become that fence would move
-    every WGS84 point: refused, for a metre rule and - a change from master
-    47b3fde, which accepted it - for a pure lat/lon GeoJSON zone."""
+    every WGS84 point: refused, for a DSL rule (laid out in metres, sent as
+    lat/lon since 2026-11-26) and - a change from master 47b3fde, which
+    accepted it - for a pure lat/lon GeoJSON zone."""
     G = _geo_tool()
     o = (35.6895, 139.6917)
     cl = [dict(zip(("lat", "lon"), metres_to_wgs84(o, x, y))) for x, y in ((0, 0), (80, 0))]
@@ -819,7 +833,7 @@ def test_geo_to_policy_refuses_to_move_a_derived_origin():
     geo = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "properties": {"name": "yard", **RULE},
          "geometry": {"type": "Polygon", "coordinates": [ring]}}]}
-    for src in (fence, geo):
+    for src in (wgs84_from_metres(copy.deepcopy(fence), base.frame_origin), geo):
         try:
             G.ingest(copy.deepcopy(src), base)
         except G.ConversionError as e:

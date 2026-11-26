@@ -24,12 +24,21 @@ sys.path.insert(0, str(ROOT / "tools"))
 import geo_to_policy as G                                         # noqa: E402
 from guardrail.bundle import check_bundle                          # noqa: E402
 from guardrail.models import (Policy, ProjectedCoordinatesRefused,  # noqa: E402
-                              State, load_policy)
+                              State, load_policy, wgs84_from_metres)
 from guardrail.shield import Shield                                # noqa: E402
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 WGS84 = ROOT / "policies" / "wgs84_taipei.yaml"
 SKIP = "SKIP"
+
+
+def _on_demo(body):
+    """`body` with its {x, y} points (metres in DEMO's frame) written as
+    {lat, lon}: the tool-side conversion an operator runs before ingest
+    (models.wgs84_from_metres about the base's frame origin), since the
+    Ingest CLI, like REST, takes WGS84 only (WP1-14, 2026-11-26)."""
+    return wgs84_from_metres(json.loads(json.dumps(body)),
+                             load_policy(DEMO).frame_origin)
 
 # A school yard near NTUT, 80 m east-west by 22 m north-south, in RFC 7946
 # order [lon, lat]. Longer east-west ON PURPOSE: a swapped axis would make it
@@ -244,9 +253,12 @@ def test_a_post_nfz_payload_is_hot_applied_onto_its_base():
     dynamic_nfz, the grant's only hot-applicable zone class."""
     from guardrail import api
     base = load_policy(DEMO)
-    payload = {"id": "nfz-landslide", "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6},
-                                                    {"x": 31, "y": 14}],
-               "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0}
+    # Laid out in metres, sent as {lat, lon} (WP1-14, 2026-11-26): the Ingest
+    # CLI takes what REST takes.
+    payload = _on_demo({"id": "nfz-landslide",
+                        "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}],
+                        "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0})
+    assert all(set(v) == {"lat", "lon"} for v in payload["vertices"]), payload
     pol = G.ingest(payload, base)
     assert pol.generation == base.generation + 1
     assert pol.policy_hash != base.policy_hash
@@ -258,11 +270,9 @@ def test_a_post_nfz_payload_is_hot_applied_onto_its_base():
     stated = {**payload, "constraint_type": "hard", "priority": "P0",
               "violation_action": "project_fix", "scope": "mission"}
     assert pol.constraints[-1].scope == "mission"
-    from guardrail.models import wgs84_from_metres
     for route, body in ((api.apply_legacy_nfz, payload), (api.apply_dynamic_nfz, stated)):
         live = Shield(load_policy(DEMO))
-        # over REST the body is WGS84 (WP1-14, 2026-11-26): converted tool side
-        route(live, wgs84_from_metres(dict(body), live.policy.frame_origin))
+        route(live, json.loads(json.dumps(body)))           # the same lat/lon body
         assert live.policy.policy_hash == pol.policy_hash, (route.__name__,
                                                              "ingest and the API disagree")
     assert G.ingest(stated, base).policy_hash == pol.policy_hash
@@ -328,9 +338,9 @@ def test_ingest_reads_the_rest_endpoint_itself():
     the same policy, a POST /nfz-shaped body served at a URL is appended to its
     base, and an endpoint that fails is refused by name, never read as empty."""
     pol = load_policy(DEMO)
-    nfz = {"id": "nfz-landslide", "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6},
-                                                {"x": 31, "y": 14}],
-           "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0}
+    nfz = _on_demo({"id": "nfz-landslide",
+                    "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}],
+                    "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0})
     url, stop = _serve({"/policy": json.dumps(pol.model_dump(
                             mode="json", context={"points": "stored"})).encode(),
                         "/nfz-body": json.dumps(nfz).encode(), "/empty": b""})
@@ -349,21 +359,117 @@ def test_ingest_reads_the_rest_endpoint_itself():
 
 
 def test_a_payload_without_a_base_is_refused():
-    _refused(lambda: G.ingest({"id": "z", "vertices": [{"x": 0, "y": 0}]}), "--base")
+    _refused(lambda: G.ingest(_on_demo({"id": "z", "vertices": [{"x": 0, "y": 0}]})),
+             "--base")
 
 
 def test_an_unknown_key_in_a_post_nfz_payload_is_refused():
-    _refused(lambda: G.ingest({"id": "z", "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0},
-                                                       {"x": 1, "y": 1}],
-                               "altitude_cieling_m": 40}, load_policy(DEMO)),
+    _refused(lambda: G.ingest(_on_demo({"id": "z", "vertices": [{"x": 0, "y": 0},
+                                                                {"x": 1, "y": 0},
+                                                                {"x": 1, "y": 1}],
+                                        "altitude_cieling_m": 40}), load_policy(DEMO)),
              "unknown keys")
 
 
 def test_a_duplicate_id_against_the_base_is_refused():
     base = load_policy(DEMO)
-    dup = {"id": base.constraints[0].id,
-           "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}]}
+    dup = _on_demo({"id": base.constraints[0].id,
+                    "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}]})
     _refused(lambda: G.ingest(dup, base), "used by 2 rules")
+
+
+# The same zone in each projected form REST refuses with 422 (api._points):
+# {x, y} metres, a bare [x, y] pair, and x/y beside lat/lon - top level and
+# inside the grant's `geometry:` block, as a zone body and as a DSL rule.
+_METRES = [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}]
+_RULE_FIELDS = {"constraint_type": "hard", "priority": "P0",
+                "violation_action": "project_fix", "scope": "mission"}
+
+
+def _projected_sources():
+    ll = _on_demo({"vertices": _METRES})["vertices"]
+    beside = [{**ll[0], "x": 23, "y": 6}] + ll[1:]
+    only_x = [{**ll[0], "x": None}] + ll[1:]
+    out = []
+    for name, verts in (("metres", _METRES), ("pairs", [[23, 6], [31, 6], [31, 14]]),
+                        ("x/y beside lat/lon", beside), ("an x key beside lat/lon", only_x)):
+        out += [(f"POST /nfz body, {name}", {"id": "z", "vertices": verts}),
+                (f"POST /dynamic_nfz body, {name}",
+                 {"id": "z", **_RULE_FIELDS, "vertices": verts}),
+                (f"DSL rule, {name}",
+                 {"id": "z", "type": "dynamic_nfz", **_RULE_FIELDS, "vertices": verts}),
+                (f"DSL rule, geometry block, {name}",
+                 {"id": "z", "type": "dynamic_nfz", **_RULE_FIELDS,
+                  "geometry": {"vertices": verts}})]
+    out.append(("corridor_swap centerline in metres",
+                {"id": "swap", "type": "corridor_swap", **_RULE_FIELDS, "corridor_id": "c1",
+                 "width_m": 10, "centerline": [{"x": 0, "y": 0}, {"x": 50, "y": 0}]}))
+    return out
+
+
+def test_the_ingest_tool_refuses_projected_points_as_rest_does():
+    """WP1-14 (2026-11-26), the Ingest CLI (WP1-16) is a DSL entry and takes
+    what REST takes: every absolute point {lat, lon}. A point in local metres
+    or with an x / y key beside lat/lon is refused (ProjectedCoordinatesRefused,
+    exit 2 from the CLI) with the REST wording, naming the tool-side
+    conversion and the base's frame origin, and no bundle is written. Shown
+    failing before: the tool converted {x, y} itself (models.wgs84_from_
+    metres) and emitted a bundle that bundle.load_for_flight flies, while REST
+    answered the same body 422 (independent re-review, 26 Nov)."""
+    from guardrail import api
+    base = load_policy(DEMO)
+    fo = str(base.frame_origin)
+    for name, src in _projected_sources():
+        try:
+            G.ingest(json.loads(json.dumps(src)), base)
+        except ProjectedCoordinatesRefused as e:
+            for w in ("local metres", "wgs84_from_metres", "{lat, lon}", fo):
+                assert w in str(e), (name, w, str(e))
+        else:
+            raise AssertionError(f"{name}: ingested")
+        d = Path(tempfile.mkdtemp(prefix="geo_"))
+        f, out = d / "body.json", d / "out.tar.gz"
+        f.write_text(json.dumps(src), encoding="utf-8")
+        assert G.main(["ingest", str(f), "--base", str(DEMO), "-o", str(out),
+                       "--unsigned"]) == 2, name
+        assert not out.exists(), name
+    # REST answers the zone bodies the same way (a 422, nothing stored).
+    for name, src in _projected_sources():
+        route = (api.apply_legacy_nfz if name.startswith("POST /nfz")
+                 else api.apply_dynamic_nfz if name.startswith("POST /dynamic_nfz")
+                 else None)
+        if route is None:
+            continue
+        live = Shield(load_policy(DEMO))
+        before = live.policy.policy_hash
+        try:
+            route(live, json.loads(json.dumps(src)))
+        except api.ApiError as e:
+            assert e.status == 422, (name, e.status)
+        else:
+            raise AssertionError(f"REST took {name}")
+        assert live.policy.policy_hash == before, name
+
+
+def test_the_ingest_tool_takes_lat_lon_converted_tool_side():
+    """The other half: the same zone written as {lat, lon} first (models.
+    wgs84_from_metres, about the base's frame origin) is ingested - zone
+    body, DSL rule, and the rule's `geometry:` block - to one policy, the one
+    POST /dynamic_nfz leaves on the live Shield."""
+    from guardrail import api
+    base = load_policy(DEMO)
+    ll = _on_demo({"vertices": _METRES})["vertices"]
+    # stated in full: the geometry form has its own defaults (0-200 m, margin 0)
+    band = {"altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0}
+    hashes = {G.ingest(json.loads(json.dumps(src)), base).policy_hash
+              for src in ({"id": "z", **_RULE_FIELDS, **band, "margin_m": 1.0, "vertices": ll},
+                          {"id": "z", "type": "dynamic_nfz", **_RULE_FIELDS, **band,
+                           "vertices": ll},
+                          {"id": "z", "type": "dynamic_nfz", **_RULE_FIELDS,
+                           "margin_m": 1.0, "geometry": {**band, "vertices": ll}})}
+    live = Shield(load_policy(DEMO))
+    api.apply_dynamic_nfz(live, {"id": "z", **_RULE_FIELDS, **band, "vertices": ll})
+    assert hashes == {live.policy.policy_hash}, hashes
 
 
 def test_geographic_zones_are_refused_onto_a_metre_base_with_no_origin():
@@ -390,15 +496,22 @@ def test_geographic_zones_land_in_a_geographic_base():
 
 def test_the_ingest_cli_emits_a_bundle_that_reloads():
     out = Path(tempfile.mkdtemp(prefix="geo_")) / "b.tar.gz"
-    src = _write({"id": "nfz-x", "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},
-                                              {"x": 45, "y": 45}]}, "nfz.json")
+    zone = {"id": "nfz-x", "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},
+                                        {"x": 45, "y": 45}]}
+    src = _write(_on_demo(zone), "nfz.json")                 # {lat, lon}
     assert G.main(["ingest", str(src), "--base", str(DEMO), "-o", str(out),
                    "--unsigned"]) == 0
     chk = check_bundle(out)
     assert chk.policy.constraints[-1].id == "nfz-x" and chk.policy.generation == 1
-    bad = _write({"id": "nfz-x", "vertices": [{"x": 0, "y": 0}]}, "bad.json")
+    assert chk.projected_points == 0
+    bad = _write(_on_demo({"id": "nfz-x", "vertices": [{"x": 0, "y": 0}]}), "bad.json")
     assert G.main(["ingest", str(bad), "--base", str(DEMO), "-o", str(out),
                    "--unsigned"]) == 2
+    # The same zone in metres: refused (WP1-14, 2026-11-26), nothing written.
+    out2 = out.with_name("metres.tar.gz")
+    assert G.main(["ingest", str(_write(zone, "metres.json")), "--base", str(DEMO),
+                   "-o", str(out2), "--unsigned"]) == 2
+    assert not out2.exists()
 
 
 if __name__ == "__main__":
