@@ -752,7 +752,10 @@ def test_the_backstop_is_capped_by_an_msl_ceiling_in_force_all_flight():
     assert A.policy_ceiling_m(no_env, 20.0, ground=g, home_msl_m=584.0) == (
         20.0, "mission cruise altitude (no altitude_envelope)")
     # A corridor a corridor_swap can switch off, or a soft one, caps nothing.
-    raw = cor.model_dump(mode="json", by_alias=True, exclude_none=True)
+    # As stored: points {lat, lon} only (a plain dump writes each point's
+    # local view beside them, which the DSL entry refuses: WP1-14).
+    raw = cor.model_dump(mode="json", by_alias=True, exclude_none=True,
+                         context={"points": "stored"})
     corridor = next(cc for cc in raw["constraints"] if cc["id"] == "msl-corridor")
     swap = dict(corridor, id="swap-west", type="corridor_swap", target_id="msl-corridor",
                 valid_time={"recurrence": {"days": ["Mon"], "start_time": "07:00",
@@ -785,7 +788,8 @@ def test_the_fence_column_reads_an_msl_zone_above_home():
     assert zones == [] and skipped[0]["id"] == "msl-ridge-nfz"
     assert "22-116 m above home" in skipped[0]["why"], skipped
     # An MSL zone from below the ground to above the column is exported.
-    raw = pol.model_dump(mode="json", by_alias=True, exclude_none=True)
+    raw = pol.model_dump(mode="json", by_alias=True, exclude_none=True,
+                         context={"points": "stored"})       # {lat, lon} only (WP1-14)
     for cc in raw["constraints"]:
         if cc["id"] == "msl-ridge-nfz":
             cc.update(altitude_floor_m=500, altitude_ceiling_m=700)

@@ -2504,7 +2504,9 @@ def load_for_flight(bundle: str | Path | None = None,
             try:
                 pol = load_policy(yaml_path, ground=ground)
             except ProjectedCoordinatesRefused as exc:
-                if exc.policy is None:
+                if exc.policy is None or exc.policy.point_form not in LEGACY_POINT_FORMS:
+                    # Not the legacy metre form (since 2026-11-26: a lat/lon
+                    # point with x/y beside it): the refusal says what it is.
                     raise
                 raise LegacyPointFormRefused(
                     _not_wgs84_message(exc.policy, yaml_path, is_bundle=False)) from None

@@ -225,6 +225,22 @@ def metre_point_count(node) -> int:
     return 0
 
 
+def xy_beside_latlon_count(node) -> int:
+    """How many points under `node` are written in WGS84 AND carry an `x` or
+    `y` key beside lat/lon (whatever its value), depth first: a projected
+    coordinate written into the document, which the DSL never carries
+    (WP1-14, since 2026-11-26). Counted on the RAW document because
+    project_raw drops those keys before validation (after checking them
+    against the frame), so the validated policy no longer shows them."""
+    if _is_geo_point(node) and ("x" in node or "y" in node):
+        return 1
+    if isinstance(node, dict):
+        return sum(xy_beside_latlon_count(v) for v in node.values())
+    if isinstance(node, list):
+        return sum(xy_beside_latlon_count(v) for v in node)
+    return 0
+
+
 def geo_points(node) -> list[tuple[float, float]]:
     """Every (lat, lon) under `node`, depth first, in document order."""
     out: list[tuple[float, float]] = []

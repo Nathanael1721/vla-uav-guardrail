@@ -299,7 +299,9 @@ def test_a_rule_that_reads_what_the_log_lacks_is_refused_not_guessed():
 
 def _scheduled_demo(tmp: Path):
     """The demo policy with its speed cap in force weekdays 07:30-17:30 only."""
-    doc = load_policy(DEMO).model_dump(mode="json", exclude_none=True)
+    # As stored: points {lat, lon} only (WP1-14; a plain dump adds the local view).
+    doc = load_policy(DEMO).model_dump(mode="json", exclude_none=True,
+                                       context={"points": "stored"})
     for c in doc["constraints"]:
         if c["id"] == "kin-caps":
             c["valid_time"] = {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],

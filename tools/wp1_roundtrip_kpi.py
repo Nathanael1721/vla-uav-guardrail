@@ -935,7 +935,10 @@ def grid_fifty_rule_policy(metre_grid):
     if fo is not None and (abs(fo[0] - DOC_ANCHOR[0]) > 1e-12
                            or abs(fo[1] - DOC_ANCHOR[1]) > 1e-12):
         raise ValueError(f"grid policy framed about {fo}, not DOC_ANCHOR {DOC_ANCHOR}")
-    doc = metre_grid.model_dump(mode="json", exclude_none=True)
+    # The stored form: a point as written ({lat, lon}, or the legacy {x, y}),
+    # without the local view a plain dump writes beside lat/lon, which the
+    # DSL entry refuses as projected coordinates (WP1-14).
+    doc = metre_grid.model_dump(mode="json", exclude_none=True, context={"points": "stored"})
     doc["origin"] = {"lat": DOC_ANCHOR[0], "lon": DOC_ANCHOR[1]}
     doc["constraints"] = raw_points_in_wgs84(doc["constraints"], DOC_ANCHOR)
     return policy_from_raw(doc, source="wp1-cold-start-grid")

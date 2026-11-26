@@ -40,7 +40,9 @@ def _windowed_policy_file() -> Path:
     pol = load_policy(POLICY)
     zone = next(c for c in pol.constraints if c.id == "nfz-square")
     assert zone.valid_time is None
-    doc = pol.model_dump(mode="json", exclude_none=True)
+    # As stored: points {lat, lon} only (a plain dump adds each point's local
+    # view beside them, which the DSL entry refuses since 2026-11-26, WP1-14).
+    doc = pol.model_dump(mode="json", exclude_none=True, context={"points": "stored"})
     for c in doc["constraints"]:
         if c["id"] == "nfz-square":
             c["valid_time"] = {"recurrence": {"start_time": "08:00",

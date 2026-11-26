@@ -23,7 +23,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import geo_to_policy as G                                         # noqa: E402
 from guardrail.bundle import check_bundle                          # noqa: E402
-from guardrail.models import Policy, State, load_policy            # noqa: E402
+from guardrail.models import (Policy, ProjectedCoordinatesRefused,  # noqa: E402
+                              State, load_policy)
 from guardrail.shield import Shield                                # noqa: E402
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
@@ -285,8 +286,19 @@ def test_a_post_nfz_payload_is_hot_applied_onto_its_base():
 def test_a_get_policy_body_ingests_to_the_same_policy():
     for f in (DEMO, WGS84):
         pol = load_policy(f)
-        body = json.loads(json.dumps(pol.model_dump()))       # what GET /policy sends
+        # What GET /policy sends since 2026-11-26: every point {lat, lon} only.
+        body = json.loads(json.dumps(pol.model_dump(mode="json", context={"points": "stored"})))
         assert G.ingest(body).policy_hash == pol.policy_hash, f.name
+        # The body it sent before (each point's local-metre view beside its
+        # lat/lon) carries projected coordinates: refused since 2026-11-26
+        # (WP1-14), naming the tool-side conversion.
+        old = json.loads(json.dumps(pol.model_dump()))
+        try:
+            G.ingest(old)
+        except ProjectedCoordinatesRefused as e:
+            assert "x/y beside lat/lon" in str(e), e
+        else:
+            raise AssertionError(f"{f.name}: a body with x/y beside lat/lon was ingested")
 
 
 def _serve(routes: dict):
@@ -319,7 +331,8 @@ def test_ingest_reads_the_rest_endpoint_itself():
     nfz = {"id": "nfz-landslide", "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6},
                                                 {"x": 31, "y": 14}],
            "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0}
-    url, stop = _serve({"/policy": json.dumps(pol.model_dump()).encode(),
+    url, stop = _serve({"/policy": json.dumps(pol.model_dump(
+                            mode="json", context={"points": "stored"})).encode(),
                         "/nfz-body": json.dumps(nfz).encode(), "/empty": b""})
     try:
         assert G.ingest(url + "/policy").policy_hash == pol.policy_hash

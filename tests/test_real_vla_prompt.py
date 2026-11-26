@@ -183,7 +183,10 @@ def _nothing_in_region():
 
 def _policy_file(pol):
     p = Path(tempfile.mkdtemp()) / f"{pol.policy_id}.yaml"
-    p.write_text(yaml.safe_dump(pol.model_dump(mode="json")), encoding="utf-8")
+    # As stored: points {lat, lon} only. A plain dump writes each point's
+    # local view beside them, which load_policy refuses (WP1-14).
+    p.write_text(yaml.safe_dump(pol.model_dump(mode="json", context={"points": "stored"})),
+                 encoding="utf-8")
     return p
 
 

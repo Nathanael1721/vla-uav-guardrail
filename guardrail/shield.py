@@ -162,6 +162,7 @@ from .models import (
     _not_looser,
     no_frame_message,
     projected_input_message,
+    projected_rule_problem,
     rule_in_wgs84,
     rule_metre_points,
 )
@@ -6759,6 +6760,9 @@ class Shield:
     # refusal (it is checked first). With wgs84_writes off (the comparison
     # switch above) nothing is refused or converted, as before: metres are
     # stored as given, and a rule given in lat/lon is placed in the frame.
+    # Since 2026-11-26 a lat/lon point given with an x or y key beside it is
+    # refused the same way (models.point_gives_metres; until then its x/y
+    # were checked to 1 um and dropped), as REST refuses it with 422.
     wgs84_writes: bool = True
 
     def _in_frame(self, rule, op: str, *, computed: bool = False):
@@ -6774,10 +6778,12 @@ class Shield:
                 return rule_in_wgs84(rule, frame)
             except ValueError as e:                 # pydantic ValidationError too
                 raise HotApplyRefused(f"{op} {getattr(rule, 'id', '?')!r}: {e}") from None
-        if (not computed and self.policy.frame_origin is not None
-                and rule_metre_points(rule)):
-            raise HotApplyRefused(projected_input_message(
-                f"{op} {getattr(rule, 'id', '?')!r}"))
+        if not computed and self.policy.frame_origin is not None:
+            # A metre point, or (since 2026-11-26) a lat/lon point with x/y
+            # beside it, as REST answers both with 422 (api._points).
+            problem = projected_rule_problem(rule, f"{op} {getattr(rule, 'id', '?')!r}")
+            if problem:
+                raise HotApplyRefused(problem)
         try:
             return rule_in_wgs84(rule, self.policy.frame_origin)
         except ValueError as e:                     # pydantic ValidationError too
@@ -7108,7 +7114,7 @@ class Shield:
                     and v.get("lon") is not None):
                 raise HotApplyRefused(projected_input_message(
                     f"move {zone_id!r}: vertex {v!r}"))
-            if v.get("x") is not None or v.get("y") is not None:
+            if "x" in v or "y" in v:            # any x/y key, as api._points
                 raise HotApplyRefused(projected_input_message(
                     f"move {zone_id!r}: vertex {v!r} carries x/y beside lat/lon"))
             pts.append({"lat": v["lat"], "lon": v["lon"]})

@@ -700,8 +700,10 @@ def test_a_lat_lon_body_is_bound_too():
     """A rule in lat/lon with metres beside them: the metres are checked
     against the frame and dropped, so the live view is the frame's. Since
     2026-11-26 (WP1-14) such a body is refused over REST (a body carries no
-    projected coordinate); a rule handed to the Shield in process (a dump
-    that keeps the view) is still bound."""
+    projected coordinate), and since the review of that day (residual 2) so
+    is such a rule handed to the Shield in process; the tool-side conversion (wgs84_from_metres)
+    checks those metres against the frame, drops them, and its rule is
+    bound."""
     sh = Shield(load_policy(SITL))
     o = sh.policy.frame_origin
     verts = []
@@ -715,7 +717,14 @@ def test_a_lat_lon_body_is_bound_too():
         assert e.status == 422 and TOOL_SIDE_CONVERSION in e.detail, e.detail
     else:
         raise AssertionError("a REST body with x/y beside lat/lon was accepted")
-    sh.spawn_nfz(DynamicNFZ.model_validate({**body, "type": "dynamic_nfz"}))
+    rule = DynamicNFZ.model_validate({**body, "type": "dynamic_nfz"})
+    try:
+        sh.spawn_nfz(rule)
+    except HotApplyRefused as e:
+        assert "x/y beside lat/lon" in str(e) and TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("an in-process rule with x/y beside lat/lon was accepted")
+    sh.spawn_nfz(wgs84_from_metres(rule, o))
     z = sh.policy.constraints[-1]
     assert [(v.x, v.y) for v in z.vertices] == \
         [local_metres(o, v.lat, v.lon) for v in z.vertices]
@@ -1001,9 +1010,19 @@ def test_the_dsl_entry_takes_a_wgs84_document_only():
         assert read.policy_hash == legacy_metre_policy_from_raw(
             copy.deepcopy(METRE_DOC), runtime=False).policy_hash
     pol = load_policy(SITL)
-    raw = json.loads(pol.model_dump_json())
+    raw = pol.model_dump(mode="json", context={"points": "stored"})
     assert policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
     assert legacy_metre_policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
+    # A plain dump writes each point's local view beside its lat/lon: refused
+    # at the entry since 2026-11-26, read as before by the legacy read.
+    dumped = json.loads(pol.model_dump_json())
+    try:
+        policy_from_raw(copy.deepcopy(dumped))
+    except ProjectedCoordinatesRefused as e:
+        assert "x/y beside lat/lon" in str(e), e
+    else:
+        raise AssertionError("a document with x/y beside lat/lon was loaded")
+    assert legacy_metre_policy_from_raw(copy.deepcopy(dumped)).policy_hash == pol.policy_hash
     broken = copy.deepcopy(METRE_DOC)
     broken["constraints"].append(copy.deepcopy(broken["constraints"][0]))   # same id twice
     try:
