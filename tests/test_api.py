@@ -19,6 +19,7 @@ POST /nfz had never run under a test. Shown failing first: against the
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -387,6 +388,12 @@ def test_routes_refuse_a_metre_position_with_422():
     r = c.patch("/dynamic_nfz/nfz-geo", json={"op": "move", "vertices": ZONE["vertices"]})
     assert r.status_code == 422 and TOOL_SIDE_CONVERSION in r.json()["detail"], r.text
     assert c.get("/health").json()["generation"] == 1
+    # GET /policy is the policy as stored: lat/lon only, no metre view, and
+    # it reloads to the live hash
+    doc = c.get("/policy").json()
+    assert '"x"' not in json.dumps(doc["constraints"]), doc["constraints"]
+    from guardrail.models import Policy
+    assert Policy.model_validate(doc).policy_hash == sh.policy.policy_hash
 
 
 # ---------------------------------------------------------------------- routes

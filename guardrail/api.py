@@ -11,7 +11,7 @@ hot-applicable classes can change in flight (Policy DSL page, "Mid-flight
 update model"); every route below is one of them:
 
     GET    /health                  liveness, policy id / hash / generation
-    GET    /policy                  the full active policy
+    GET    /policy                  the full active policy, as stored (lat/lon)
     GET    /events                  every event applied so far, in order
     POST   /dynamic_nfz             spawn a dynamic no-fly zone ("add")
     PATCH  /dynamic_nfz/{id}        move / translate / rotate / scale it
@@ -420,8 +420,10 @@ def build_app(shield: Shield, *, lock=None,
 
     @app.get("/policy")
     def get_policy():
+        # As stored (WP1-14, 2026-11-26): a WGS84 point is {lat, lon} only;
+        # until then the dump added each point's local-metre view beside it.
         with lock:
-            return shield.policy.model_dump(mode="json")
+            return shield.policy.model_dump(mode="json", context={"points": "stored"})
 
     @app.get("/events")
     def get_events():
