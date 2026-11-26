@@ -1,0 +1,134 @@
+{
+  "csp_version": "1.0",
+  "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "generation": 0,
+  "issued_at": "2026-11-26T10:27:49",
+  "mission_id": "m-5b9807cb2942",
+  "lookahead_s": 5.0,
+  "P0_constraints": [
+    {
+      "id": "alt-band",
+      "type": "altitude_envelope",
+      "geometry_ref": "param:alt-band@v0.1.4/g0",
+      "violation_action": "project_fix",
+      "constraint_type": "hard",
+      "in_force": "always"
+    },
+    {
+      "id": "nfz-square",
+      "type": "polygon_fence",
+      "geometry_ref": "fine:nfz-square@v0.1.4/g0",
+      "violation_action": "project_fix",
+      "constraint_type": "hard",
+      "in_force": "always"
+    }
+  ],
+  "P1_summary": "speed <= 4 m/s, climb <= 2 m/s, turn <= 45 deg/s.",
+  "P2_summary": null,
+  "allowed_action_set": {
+    "frame": "body",
+    "vx_range_mps": [
+      -4.0,
+      4.0
+    ],
+    "vy_range_mps": [
+      -4.0,
+      4.0
+    ],
+    "vz_range_mps": [
+      -2.0,
+      2.0
+    ],
+    "yaw_rate_max_dps": 45.0,
+    "altitude_band_m_agl": [
+      10.0,
+      20.0
+    ],
+    "horizontal_speed_max_mps": 4.0,
+    "source_rules": [
+      "kin-caps",
+      "alt-band"
+    ]
+  },
+  "forbidden_action_set": {
+    "no_translate_into_polygons": [
+      "nfz-square"
+    ],
+    "no_translate_out_of_corridors": []
+  },
+  "cost_map_ref": null,
+  "natural_language_prompt": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+  "relevance_explanations": {
+    "nfz-square": "this zone is 8.9 m from the straight path to the target and 36.7 m from the target itself; cruise altitude 15 m is inside its 0-100 m band",
+    "alt-band": "requested cruise altitude 15 m is inside the 10-20 m band",
+    "kin-caps": "requested speed 6 m/s is above the 4 m/s cap, so the Shield will cut it; the climb and turn caps bound every manoeuvre"
+  },
+  "policy_id": "fase3-sim-demo",
+  "selection": {
+    "budget_tokens": 256,
+    "tokens_used": 63,
+    "p0_tokens": 32,
+    "token_counter": "openvla-table-v1",
+    "weights": {
+      "severity": 0.5,
+      "proximity": 0.3,
+      "time_critical": 0.2
+    },
+    "now": "2026-11-26T10:27:49",
+    "time_filter": true,
+    "region": {
+      "x_min": -250.0,
+      "x_max": 220.0,
+      "y_min": -220.0,
+      "y_max": 250.0
+    },
+    "region_margin_m": 200.0,
+    "reach_m": 20.0,
+    "show_priority": false,
+    "issued_at_source": "clock",
+    "rules": [
+      {
+        "id": "nfz-square",
+        "type": "polygon_fence",
+        "priority": "P0",
+        "constraint_type": "hard",
+        "decision": "kept",
+        "severity": 1.0,
+        "proximity": 0.9595,
+        "time_critical": 0.0,
+        "risk": 0.7878,
+        "tokens": 17,
+        "sentence": "Never enter zone 'nfz-square'.",
+        "reason": "this zone is 8.9 m from the straight path to the target and 36.7 m from the target itself; cruise altitude 15 m is inside its 0-100 m band"
+      },
+      {
+        "id": "alt-band",
+        "type": "altitude_envelope",
+        "priority": "P0",
+        "constraint_type": "hard",
+        "decision": "kept",
+        "severity": 1.0,
+        "proximity": 1.0,
+        "time_critical": 0.0,
+        "risk": 0.8,
+        "tokens": 15,
+        "sentence": "Stay between 10 m and 20 m altitude.",
+        "reason": "requested cruise altitude 15 m is inside the 10-20 m band"
+      },
+      {
+        "id": "kin-caps",
+        "type": "kinematic_envelope",
+        "priority": "P1",
+        "constraint_type": "hard",
+        "decision": "kept",
+        "severity": 0.6,
+        "proximity": 1.0,
+        "time_critical": 0.0,
+        "risk": 0.6,
+        "tokens": 31,
+        "sentence": "Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "reason": "requested speed 6 m/s is above the 4 m/s cap, so the Shield will cut it; the climb and turn caps bound every manoeuvre"
+      }
+    ]
+  }
+}

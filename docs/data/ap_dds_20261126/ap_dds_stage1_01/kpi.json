@@ -1,0 +1,217 @@
+{
+  "kpi_version": "1.0",
+  "ticks": 636,
+  "shield_ticks": 2,
+  "autopilot_ticks": 634,
+  "outcome": "RTL_triggered",
+  "p0_violation_escape_rate": 0.0,
+  "p0_violation_escape_rate_status": "measured",
+  "p0_escapes": 0,
+  "p0_violation_ticks": 2,
+  "p0_ticks_not_measurable": 0,
+  "p0_ticks_blind": null,
+  "collision_contacts": null,
+  "collision_objects": null,
+  "p0_acted_tick_share": 1.0,
+  "failsafe_trigger_correctness": 1.0,
+  "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+  "failsafe_expected_ticks": 2,
+  "failsafe_correct_ticks": 2,
+  "violation_free_ticks": 0,
+  "false_trigger_ticks": 0,
+  "false_trigger_rate": null,
+  "failsafe_permitted_ticks": 0,
+  "repair_count": 4,
+  "repairs_per_episode": 4,
+  "repair_success_rate": 0.0,
+  "repair_success_status": "measured",
+  "repair_attempt_ticks": 2,
+  "repair_success_ticks": 0,
+  "repair_unmeasured_ticks": 0,
+  "repair_outcomes": {
+    "converged": 0,
+    "converged_via_rescue": 0,
+    "converged_over_theta": 0,
+    "braked": 2,
+    "failsafe": 0,
+    "residual_p0": 0,
+    "residual_other": 0,
+    "not_measurable": 0
+  },
+  "repair_not_applied_ticks": 0,
+  "repair_not_applied_autopilot_ticks": 634,
+  "repair_floored_ticks": 0,
+  "repairs_to_standstill": 0,
+  "repairs_converged_while_unsafe": 0,
+  "repair_success_basis": null,
+  "repair_theta_unchecked_ticks": 0,
+  "repair_theta_sources": {
+    "fsm_record": 0,
+    "magnitude_m": 0,
+    "action_per_period": 0,
+    "not_governed": 0,
+    "no_magnitude": 0
+  },
+  "repair_theta_horizon_s": null,
+  "repair_theta_m": {
+    "lateral": 2.0,
+    "vertical": 0.5
+  },
+  "failsafe_instrumented": true,
+  "mean_repair_magnitude_mps": 7.2058,
+  "max_repair_magnitude_mps": 7.2058,
+  "mean_yaw_repair_dps": 0.0,
+  "repaired_ticks": 2,
+  "repair_ticks_not_measurable": 0,
+  "repair_magnitude_by_priority": {
+    "P0": {
+      "ticks": 2,
+      "sum_mps": 14.411557,
+      "mean_mps": 7.2058
+    },
+    "P1": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "P2": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "unattributed": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    }
+  },
+  "repair_magnitude_by_operator_class": {
+    "AltitudeClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "LateralProjection": {
+      "ticks": 2,
+      "sum_mps": 14.411557,
+      "mean_mps": 7.2058,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "PathRepair": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "KinematicClamp": {
+      "ticks": 2,
+      "sum_mps": 14.411557,
+      "mean_mps": 7.2058,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Recovery": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Fallback": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Sanitise": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "SoftRelax": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    }
+  },
+  "repair_magnitude_breakdown_status": "measured",
+  "mean_time_to_safe_s": null,
+  "max_time_to_safe_s": null,
+  "time_to_safe_episodes": 0,
+  "time_to_safe_censored": 1,
+  "time_to_safe_not_measurable": false,
+  "mean_intervention_s": null,
+  "max_intervention_s": null,
+  "intervention_episodes": 0,
+  "intervention_censored": 1,
+  "intervention_not_measurable": false,
+  "mission_success": false,
+  "mission_fail_reasons": [
+    "dwell:alt_violation_s",
+    "unsafe_never_recovered",
+    "goal_missed",
+    "follow_proxy",
+    "failsafe:RTL_triggered"
+  ],
+  "unsafe_p0_ticks": 220,
+  "mission_started_unsafe": false,
+  "mission_goal_status": "missed",
+  "violations_by_risk_level": {
+    "P1": 2,
+    "P0": 2
+  },
+  "violations_by_type": {
+    "kinematic": 2,
+    "geofence": 2
+  },
+  "kpi_grade": false,
+  "kpi_grade_reasons": [
+    "topology is 'dev': the grant's desktop configuration, which it does not use for reported KPI numbers - those come from 'hil' (Jetson Orin). A dev run counts only under a written PI waiver, and none is recorded (PQ1)",
+    "code_revision is '9a5239cd905e-dirty': the working tree had uncommitted changes or untracked files git does not ignore (`git status --porcelain` names them), so checking out that commit does not reproduce this run"
+  ],
+  "manifest": {
+    "code_revision": "9a5239cd905e-dirty",
+    "vla_model_hash": "guardrail.vla_stub.StubVLA@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "random_seed": 0,
+    "sim_speedup": 1.0,
+    "topology": "dev"
+  },
+  "policy_source": {
+    "kind": "bundle",
+    "path": "<repo>/bundles/fase3-sim-demo-v0.1.4.tar.gz",
+    "loaded_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "declared_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "hash_form": "sha256-canonical-v3",
+    "hashes": {
+      "sha256-canonical-v3": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reference-policy-dsl-0.1": null
+    },
+    "issued_at": "2026-11-06T20:26:25Z",
+    "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+    "signature": "verified",
+    "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)",
+    "chain": "none",
+    "signer_retired_on": null,
+    "require_chain": false,
+    "default_bundle": true
+  },
+  "episode_id": 1795659197474140789
+}
