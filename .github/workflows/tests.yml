@@ -343,6 +343,8 @@
 #        Videos of camera-less SITL runs: test_render_track_video.
 #        Cross-node hops read from a run's rosbag2 (the pairing, no ROS):
 #          test_bag_hops.
+#        The ticks that publish no setpoint, timed from a run's flight log
+#          (tick_phases_ms, no ROS): test_nonsetpoint_ticks.
 #      END OF THE LIST
 #
 #      Added 2026-10-13: the wave-A files (shieldcore, railinputs, wp4outputs,
@@ -944,7 +946,8 @@ jobs:
               tests/test_make_demo_video.py \
               tests/test_ci_local.py \
               tests/test_render_track_video.py \
-              tests/test_bag_hops.py; do
+              tests/test_bag_hops.py \
+              tests/test_nonsetpoint_ticks.py; do
             echo "::group::$t"
             python "$t" 2>&1 | tee "$out"
             rc=${PIPESTATUS[0]}
