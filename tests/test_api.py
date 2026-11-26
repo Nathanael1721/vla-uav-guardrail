@@ -434,6 +434,10 @@ def test_routes_refuse_an_edit_key_the_op_does_not_define():
                  {"op": "scale", "factor": 1.5, "X": 1}):
         r = c.patch("/dynamic_nfz/nfz-landslide", json=body)
         assert r.status_code == 422 and "unknown key" in r.json()["detail"], r.text
+    # an op that is not a string (a list is unhashable) is a 422 too, not a 500
+    for op in (["translate"], {"op": "translate"}, None, 3):
+        r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": op, "dx": 1})
+        assert r.status_code == 422 and "one of move" in r.json()["detail"], r.text
     assert c.get("/health").json()["generation"] == 1
     r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": "rotate", "angle_deg": 20})
     assert r.status_code == 200 and r.json()["generation"] == 2, r.text

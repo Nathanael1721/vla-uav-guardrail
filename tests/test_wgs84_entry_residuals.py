@@ -950,6 +950,44 @@ def test_a_projected_rendering_of_a_wgs84_only_version_is_refused():
     assert B.recorded_as(cur, projected=True) is None
 
 
+def test_the_pre_6_oct_wgs84_version_reads_in_its_recorded_metres():
+    """The residual the verifications of the fourth fix (2026-11-26)
+    disclosed, pinned so the report's WP1-14 row stays exact:
+    wgs84-taipei-demo@0.1.0 was written in WGS84 but locked on 6 Oct with no
+    hash_scheme of its own, under the v2 scheme that digested the projected
+    metres, so it is in projected_era_keys (criterion (a)), and its
+    never-written metre rendering and an x/y-beside YAML of it read under
+    VLAGUARD_LEGACY_READ=1 labelled as that version: the lock's record of it
+    is the hash of exactly those metres. A point moved 5 m is refused, so
+    no new point flies."""
+    import os
+    key = "wgs84-taipei-demo@0.1.0"
+    lock = B.load_lock()
+    assert key in B.projected_era_keys(lock) and not lock["policies"][key].get("hash_scheme")
+    old = dict(B.policy_candidates())[f"wgs84_taipei.yaml as {key}"]
+    assert old.point_form == "wgs84"
+    raw = _metre_rendering(old)
+    moved = copy.deepcopy(raw)
+    _first_rule_point(moved)["x"] += 5.0
+    os.environ.pop(B.LEGACY_READ_ENV, None)
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        y, xy, mv = d / "metre.yaml", d / "xy.yaml", d / "moved.yaml"
+        y.write_text(json.dumps(raw), encoding="utf-8")
+        xy.write_text(json.dumps(old.model_dump(mode="json", exclude_none=True)),
+                      encoding="utf-8")
+        mv.write_text(json.dumps(moved), encoding="utf-8")
+        os.environ[B.LEGACY_READ_ENV] = "1"
+        try:
+            for p in (y, xy):
+                pol, rec = B.load_yaml_for_flight(p, say=lambda s: None)
+                assert rec["recorded_as"] == key and pol.legacy_read, p.name
+            _refused(lambda: B.load_yaml_for_flight(mv, say=lambda s: None),
+                     B.LegacyPointFormRefused)
+        finally:
+            os.environ.pop(B.LEGACY_READ_ENV, None)
+
+
 def test_rest_refuses_any_point_key_but_lat_lon():
     """The published schema's point is {lat, lon} with additionalProperties
     false, and a document's point refuses another key (extra_forbidden), but

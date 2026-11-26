@@ -321,6 +321,11 @@ def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
     op = body.get("op")
+    if not isinstance(op, str):
+        # a list or object op is unhashable: checked here, so the EDIT_KEYS
+        # lookup below answers 422, not a TypeError (500)
+        raise ApiError(422, f"op {op!r}: one of move, translate, rotate, scale "
+                            f"(DELETE expires a zone)")
     if op == "move":
         if "geometry" in body:
             _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
