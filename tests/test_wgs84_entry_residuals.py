@@ -28,6 +28,14 @@ still got in. Each is closed here, and valid lat/lon input is unchanged:
      legacy read (Shield(..., legacy_metres=True), or a policy that came
      from models.load_legacy_metre_policy / legacy_metre_policy_from_raw).
 
+A second review of that fix (2026-11-26) found more, closed here too: a
+bundle hashed before 2026-10-06 whose archived ir.json writes x/y beside
+lat/lon flew through load_for_flight / InjectPolicy; the legacy-read label
+followed the Policy object, not its content; as_dynamic_nfz dumped the x/y
+view and so its own migration was refused; POST /nfz ignored a `geometry:`
+block; and the lock's rewound metre versions (bundle.policy_candidates)
+could no longer build a Shield.
+
 The REST checks call the guardrail.api handlers the routes call; the FastAPI
 routes are exercised by tests/test_api.py where FastAPI is installed.
 """
@@ -445,6 +453,210 @@ def test_a_lock_rebuild_and_the_comparison_switch_are_declared_reads():
     sh.spawn_nfz(DynamicNFZ.model_validate(zone))
     assert sh.policy.point_form != "wgs84" and sh.policy.legacy_read
     Shield(sh.policy)
+
+
+# --------------------------------------------------------------------------- #
+# The second review (2026-11-26): the bundle entry, the label's scope, the
+# migration helper, POST /nfz, and the readers of recorded artefacts.
+# --------------------------------------------------------------------------- #
+
+def _legacy16_xy_bundles(pol, folder: Path) -> list[Path]:
+    """Bundles as written before 2026-10-06: a 16-hex legacy hash over the
+    rebuilt object, the archived ir.json a plain model_dump - which writes
+    each WGS84 point's local x/y view beside its lat/lon. Unsigned."""
+    import gzip
+    import io
+    import tarfile
+    from guardrail.models import _prune_nulls
+    good = B.write_bundle(pol, folder / "good.tar.gz", signer=None,
+                          issued_at="2026-11-26T00:00:00Z")
+    with tarfile.open(good, "r:gz") as t:
+        man = json.loads(t.extractfile(B.MANIFEST_NAME).read())
+    for k in ("hashes", "reference_projection", "multiscale_sha256"):
+        man.pop(k, None)
+    ir_bytes = json.dumps(_prune_nulls(pol.model_dump(mode="json"), frozenset()),
+                          sort_keys=True).encode()
+    out = []
+    for name, h in sorted(set(pol.legacy_hashes().items())):
+        mb = json.dumps(dict(man, policy_hash=h), indent=2, sort_keys=True).encode()
+        p = folder / f"xy_{name}.tar.gz"
+        with open(p, "wb") as fh, \
+                gzip.GzipFile(fileobj=fh, mode="wb", mtime=0, filename="") as gz, \
+                tarfile.open(fileobj=gz, mode="w") as tar:
+            for nm, data in ((B.IR_NAME, ir_bytes), (B.MANIFEST_NAME, mb),
+                             (B.SIGNATURE_NAME, f"{h} {B.UNSIGNED}\n".encode())):
+                ti = tarfile.TarInfo(nm)
+                ti.size, ti.mtime = len(data), 0
+                tar.addfile(ti, io.BytesIO(data))
+        out.append(p)
+    return out
+
+
+def test_a_legacy16_bundle_writing_xy_beside_latlon_is_a_read_only():
+    """The archived ir.json of a bundle hashed before 2026-10-06 is a plain
+    model_dump, which writes x/y beside lat/lon. The model checks those x/y
+    to 1 um and drops them, so until this fix such a bundle flew through
+    load_for_flight - a rail's --bundle, the harness's InjectPolicy archive
+    (allow_unverified) - as a WGS84 policy, with no declared read (failed
+    then: all three legacy16 forms ACCEPTED). Now it is refused for flight
+    as a metre bundle is (LegacyPointFormRefused), read only under
+    legacy_read, and the record says so."""
+    import os
+    os.environ.pop(B.LEGACY_READ_ENV, None)
+    pol = load_policy(SITL)
+    n_points = sum(len(c.vertices) for c in pol.constraints if hasattr(c, "vertices"))
+    with tempfile.TemporaryDirectory() as tmp:
+        bundles = _legacy16_xy_bundles(pol, Path(tmp))
+        assert bundles
+        assert B.check_bundle(Path(tmp) / "good.tar.gz").projected_points == 0
+        for b in bundles:
+            chk = B.check_bundle(b)
+            assert chk.hash_form.startswith("legacy16"), chk.hash_form
+            assert chk.projected_points == n_points > 0, chk.projected_points
+            assert chk.policy.point_form == "wgs84"      # the x/y were dropped
+            msg = _refused(lambda: B.load_for_flight(bundle=b, allow_unverified=True),
+                           B.LegacyPointFormRefused, names_conversion=False)
+            assert "x/y beside lat/lon" in msg and B.LEGACY_READ_ENV in msg, msg
+            got, rec = B.load_for_flight(bundle=b, allow_unverified=True,
+                                         legacy_read=True)
+            assert rec["legacy_read"] is True and rec["projected_points"] == n_points
+            assert rec["point_note"] == B.XY_BESIDE_NOTE and got.legacy_read
+            assert got.policy_hash == pol.policy_hash
+        # The harness's InjectPolicy, uploaded archive bytes: refused.
+        from guardrail import harness_service as H
+        h = H.Harness(runs_dir=Path(tmp) / "runs")
+        s = h.start_session()["session_id"]
+        try:
+            h.inject_policy(s, bundle_bytes=bundles[0].read_bytes(),
+                            expected_hash=pol.policy_hash)
+        except H.HarnessError as e:
+            assert e.code == "INVALID_ARGUMENT" and "LegacyPointFormRefused" in e.message, e
+        else:
+            raise AssertionError("InjectPolicy flew a bundle with x/y beside lat/lon")
+        # A bundle written today (lat/lon only) is injected as before.
+        ack = h.inject_policy(s, bundle_bytes=(Path(tmp) / "good.tar.gz").read_bytes(),
+                              expected_hash=pol.policy_hash)
+        assert ack["policy_hash"] == pol.policy_hash, ack
+
+
+def test_the_legacy_read_label_covers_the_content_it_was_made_on():
+    """The declared read is bound to the metre points the policy held when
+    it was declared (Policy.legacy_read_covers), not to the Policy object.
+    Failed before (probe A4): a WGS84 policy read through a legacy reader,
+    then given metre constraints with model_copy, still built a Shield."""
+    from guardrail.models import Policy, mark_legacy_read, read_recorded_policy
+    wgs = legacy_metre_policy_from_raw(
+        json.loads(json.dumps(load_policy(SITL).model_dump(
+            mode="json", exclude_none=True, context={"points": "stored"}))))
+    assert wgs.legacy_read and wgs.point_form == "wgs84"
+    metre_rule = PolygonFence.model_validate(
+        {"id": "late", "type": "polygon_fence", **RULE,
+         "vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]})
+    grown = wgs.model_copy(update={"constraints": list(wgs.constraints) + [metre_rule]})
+    assert grown.legacy_read and not grown.legacy_read_covers()
+    msg = _refused(lambda: Shield(grown))
+    assert "put in after" in msg, msg
+    # A marked metre policy given ANOTHER metre rule: not covered either ...
+    metre = mark_legacy_read(Policy.model_validate(copy.deepcopy(METRE_DOC)))
+    more = metre.model_copy(update={"constraints": list(metre.constraints) + [metre_rule]})
+    _refused(lambda: Shield(more))
+    # ... nor a metre point moved in place; dropping a rule keeps it covered.
+    moved = metre.model_copy(deep=True)
+    v0 = moved.constraints[0].vertices
+    moved.constraints[0].vertices = [type(v0[0]).model_validate({"x": v0[0].x + 1.0,
+                                                                 "y": v0[0].y})] + v0[1:]
+    assert moved.legacy_read
+    _refused(lambda: Shield(moved))
+    Shield(metre.model_copy(update={"constraints": metre.constraints[1:]}))
+    Shield(metre)
+    # The label does not survive a dump / model_validate round trip: a
+    # re-read declares again (read_recorded_policy).
+    again = Policy.model_validate(metre.model_dump(mode="json"))
+    assert not again.legacy_read
+    _refused(lambda: Shield(again))
+    Shield(read_recorded_policy(metre.model_dump(mode="json")))
+    # The Shield's own events keep the declaration over the covered content
+    # they leave: a mixed generation (a metre zone stored by the comparison
+    # switch), then WGS84 events on it, re-read by a new Shield each time.
+    zone = {"id": "z", "type": "dynamic_nfz", **RULE,
+            "vertices": [{"x": 40, "y": 0}, {"x": 45, "y": 0}, {"x": 45, "y": 5}],
+            "altitude_floor_m": 0, "altitude_ceiling_m": 100}
+    sh = Shield(load_policy(SITL))
+    sh.wgs84_writes = False
+    sh.spawn_nfz(DynamicNFZ.model_validate(zone))
+    sh.wgs84_writes = True
+    assert sh.policy.point_form != "wgs84"
+    sh.spawn_nfz(DynamicNFZ.model_validate(
+        {**zone, "id": "z2", "vertices": [_ll(sh, 60, 0), _ll(sh, 65, 0), _ll(sh, 65, 5)]}))
+    Shield(sh.policy)
+    sh.translate_nfz("z", 2.0, 1.0)      # written back in WGS84 (the frame exists)
+    Shield(sh.policy)
+
+
+def test_as_dynamic_nfz_migrates_a_wgs84_fence():
+    """MIGRATION_NOTE tells a caller to hot-apply as_dynamic_nfz(fence). Its
+    vertices were a plain model_dump, which for a WGS84 point bound to a
+    frame writes the local x/y beside lat/lon, so the Shield refused the
+    rule (failed before: HotApplyRefused, '4 point(s) carry x/y beside
+    lat/lon'). Now the vertices are copied as stored, lat/lon only."""
+    from guardrail.shield import as_dynamic_nfz
+    pol = load_policy(SURVEY)
+    sh = Shield(pol)
+    fence = next(c for c in pol.constraints if isinstance(c, PolygonFence))
+    dyn = as_dynamic_nfz(fence.model_copy(update={"id": fence.id + "-dyn"}))
+    assert all(set(v.model_fields_set) == {"lat", "lon"} for v in dyn.vertices)
+    ev = sh.hot_apply(dyn)
+    assert ev["rule_id"] == fence.id + "-dyn", ev
+    got = sh.policy.constraints[-1]
+    assert [(v.lat, v.lon) for v in got.vertices] == [(v.lat, v.lon) for v in fence.vertices]
+    # A legacy metre fence still migrates in the form it is stored in.
+    m = PolygonFence.model_validate({"id": "m", "type": "polygon_fence", **RULE,
+                                     "vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0},
+                                                  {"x": 5, "y": 5}]})
+    assert [(v.x, v.y) for v in as_dynamic_nfz(m).vertices] == [(0, 0), (5, 0), (5, 5)]
+
+
+def test_post_nfz_refuses_a_geometry_block():
+    """POST /nfz (the 2026-07 body) ignored any key NfzRequest does not
+    define, so a `geometry:` block with x/y beside lat/lon was dropped
+    without a word while /dynamic_nfz and /hot_apply answered 422 (failed
+    before: ACCEPTED, the zone applied from the top-level vertices)."""
+    sh = Shield(load_policy(SITL))
+    top = [_ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]
+    beside = [{**p, "x": 0.0, "y": 0.0} for p in top]
+    for geometry, conversion in (({"vertices": beside}, True), ({"vertices": top}, False)):
+        try:
+            api.apply_legacy_nfz(sh, {"id": "old", "vertices": top, "geometry": geometry})
+        except api.ApiError as e:
+            assert e.status == 422, e.status
+            assert (TOOL_SIDE_CONVERSION in e.detail) == conversion, e.detail
+        else:
+            raise AssertionError("POST /nfz ignored a geometry block")
+    assert sh.policy.generation == 0
+    # The 2026-07 body itself is applied as before.
+    res = api.apply_legacy_nfz(sh, {"id": "old", "vertices": top})
+    assert res["type"] == "dynamic_nfz" and sh.policy.generation == 1
+
+
+def test_every_run_resolution_candidate_builds_a_shield():
+    """bundle.policy_candidates offers each policy a stored run may have
+    flown under, the old metre versions the lock rewinds to included
+    (Policy.metre_form). Resolving a stored run is a declared read, so a
+    Shield can be built on every candidate (failed before: Shield refused
+    the 52 rewound metre versions, ProjectedCoordinatesRefused)."""
+    from guardrail.models import LEGACY_POINT_FORMS
+    metre = 0
+    for label, pol in B.policy_candidates():
+        if pol.point_form in LEGACY_POINT_FORMS:
+            metre += 1
+        try:
+            Shield(pol)
+        except ProjectedCoordinatesRefused as e:
+            raise AssertionError(f"{label}: {e}") from None
+        except ValueError:
+            pass                 # a rule needing a ground / map source: not WP1-14
+    assert metre > 0, "no metre candidate: the test checks nothing"
+    assert load_policy(SITL).metre_form().legacy_read
 
 
 if __name__ == "__main__":

@@ -699,6 +699,13 @@ def design_load_policy(policy, xy: list[tuple[float, float]],
     out = policy.model_copy(deep=True)
     out.constraints = list(out.constraints) + added
     out.policy_id = f"{policy.policy_id}+design-load-{total}"
+    if policy.frame_origin is None:
+        # A recorded flight whose policy has no WGS84 frame (stored in local
+        # metres, or point-free with no origin): the zones stay in the metres
+        # it flew in, so the design load is a declared read of that legacy
+        # form (models.mark_legacy_read; a Shield is built on it, WP1-14).
+        from guardrail.models import mark_legacy_read
+        mark_legacy_read(out)
     return out, len(added)
 
 
@@ -800,6 +807,10 @@ def pack_flight(d: Path, max_ticks: int = DEFAULT_MAX_TICKS) -> dict:
     if policy is None:
         raise PackRefused(f"{d.name}: recorded policy_hash {manifest.get('policy_hash')!r} "
                           f"matches no policy on disk; refusing to pick the nearest")
+    # The policy a recorded run flew, read as it flew (the legacy metre form
+    # included): a declared read, so the replay can build its Shield (WP1-14).
+    from guardrail.models import mark_legacy_read
+    mark_legacy_read(policy)
     rows = [json.loads(line) for line in log.open(encoding="utf-8") if line.strip()]
     if not rows:
         raise PackRefused(f"{d.name}: flight_log.jsonl is empty")
@@ -903,7 +914,7 @@ def load_pack(path: Path) -> dict:
     from the packed value is loaded with a warning in `pack["warnings"]`: that
     means the fingerprint function changed, not the policy."""
     from guardrail.manifest import normalize_topology
-    from guardrail.models import Policy, era_context
+    from guardrail.models import read_recorded_policy
     pack = json.loads(Path(path).read_text(encoding="utf-8"))
     if pack.get("schema") != PACK_SCHEMA:
         raise ValueError(f"{path}: schema {pack.get('schema')!r}, expected {PACK_SCHEMA!r}")
@@ -923,8 +934,12 @@ def load_pack(path: Path) -> dict:
             raise ValueError(f"{path}: flight {f['tag']}: stored policy hashes to "
                              f"{got[:16]}, packed as {str(want)[:16]}: the pack was edited")
         # A stored document (the pack records no IR version): read as written,
-        # scope absent where a run before IR schema 4.0.0 left it out.
-        pol = Policy.model_validate(f["policy"], context=era_context(None))
+        # scope absent where a run before IR schema 4.0.0 left it out, and in
+        # the point form it flew in - the legacy metre form included, as a
+        # declared read (models.read_recorded_policy), so replay() can build
+        # its Shield on it (WP1-14: until then 3 of the 4 committed flights,
+        # stored in local metres, were refused there).
+        pol = read_recorded_policy(f["policy"])
         if pol.policy_hash != f["policy_hash"]:
             pack["warnings"].append(
                 f"{f['tag']}: Policy.policy_hash is now {pol.policy_hash}, packed as "

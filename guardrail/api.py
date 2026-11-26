@@ -143,7 +143,11 @@ from .shield import (HOT_APPLICABLE, HotApplyRefused, LockedRuleClass, RuleIdCon
 
 
 class NfzRequest(BaseModel):
-    """The 2026-07 POST /nfz body."""
+    """The 2026-07 POST /nfz body. A `geometry:` block (the grant's form) is
+    refused with 422 by apply_legacy_nfz, not ignored (WP1-14, 2026-11-26).
+    Other keys it does not define are ignored, as they always were: callers
+    send this body with the four rule fields beside it, which it reads as
+    the fixed hard / P0 / project_fix / mission it always meant."""
     id: str
     vertices: list[XY] = Field(min_length=3)
     altitude_floor_m: float = 0.0
@@ -359,7 +363,21 @@ def apply_event(shield: Shield, body: dict) -> dict:
 
 
 def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
-    """POST /nfz, the 2026-07 body: now a dynamic_nfz spawn (same zone)."""
+    """POST /nfz, the 2026-07 body: now a dynamic_nfz spawn (same zone).
+
+    The body's zone is its top-level `vertices`, {lat, lon} only (_points).
+    A `geometry:` block is refused (422), its points checked first as every
+    other route checks them (_body_points): until 2026-11-26 NfzRequest
+    ignored it without a word, so a nested block with x/y beside lat/lon
+    was silently dropped here while /dynamic_nfz and /hot_apply answered
+    422 (review 2026-11-26, WP1-14)."""
+    if isinstance(body, dict) and "geometry" in body:
+        _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
+                     "vertices")
+        raise ApiError(422, "POST /nfz takes the 2026-07 body: the zone's top-level "
+                            "`vertices` as {lat, lon} points, no `geometry:` block. "
+                            "Send a rule in the grant's geometry form to POST "
+                            "/dynamic_nfz")
     try:
         req = NfzRequest.model_validate(body)
     except ValidationError as e:

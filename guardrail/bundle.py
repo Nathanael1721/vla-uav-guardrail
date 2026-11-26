@@ -198,7 +198,7 @@ from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2,
                      LEGACY_POINT_FORMS, ProjectedCoordinatesRefused, era_context,
                      ir2_rule_view, load_legacy_metre_policy, load_policy,
                      mark_legacy_read)
-from .projection import LOCAL_QUANTUM_M
+from .projection import LOCAL_QUANTUM_M, xy_beside_latlon_count
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
     from cryptography.exceptions import InvalidSignature
@@ -1823,6 +1823,14 @@ class BundleCheck:
     # bundle was accepted under it because its manifest says it was issued
     # before: SignatureCheck.retired_on.
     retired_on: str | None = None
+    # How many points of the ARCHIVED ir.json carry an x or y key beside
+    # lat/lon (projection.xy_beside_latlon_count; WP1-14, 2026-11-26): the
+    # dump of the bundles hashed before 2026-10-06 (their legacy hash
+    # compares the archived bytes with a plain model_dump, which writes that
+    # local view). The model checks those x/y to 1 um and drops them, so the
+    # rebuilt policy no longer shows them; load_for_flight refuses such a
+    # bundle unless the load is a declared read (legacy_read).
+    projected_points: int = 0
 
     @property
     def verified(self) -> bool:
@@ -1923,7 +1931,9 @@ def check_bundle(path: str | Path,
     # written before may leave a rule's `scope` out, and it stays absent, so
     # the IR hashes as it was issued; one written since must state it.
     try:
-        policy = Policy.model_validate(json.loads(ir_bytes), context=_manifest_era(manifest))
+        ir_doc = json.loads(ir_bytes)
+        projected = xy_beside_latlon_count(ir_doc)
+        policy = Policy.model_validate(ir_doc, context=_manifest_era(manifest))
     except ValueError as exc:
         first = str(exc).strip().splitlines()
         raise ValueError(
@@ -2034,7 +2044,7 @@ def check_bundle(path: str | Path,
                        signature=status, signed_by=signed_by, detail=detail,
                        hashes=hashes, source_policy=source,
                        chain=res.chain, authority=res.authority,
-                       retired_on=res.retired_on)
+                       retired_on=res.retired_on, projected_points=projected)
 
 
 def _match_signer_record(name: str, manifest: dict, cert_bytes: bytes | None,
@@ -2459,6 +2469,15 @@ def load_for_flight(bundle: str | Path | None = None,
     flight under the policy it flew. The record then carries
     `legacy_read: true`, `point_form` and `point_note`.
 
+    Since 2026-11-26 a bundle whose archived ir.json writes x/y beside
+    lat/lon (BundleCheck.projected_points: the dump of the bundles hashed
+    before 2026-10-06, whose legacy hash compares the archived bytes with a
+    plain model_dump) is refused the same way and read the same way under
+    `legacy_read` (the record adds `projected_points`). The model checks
+    those x/y to 1 um and drops them, so until then such a bundle flew as a
+    WGS84 policy without a word - the harness's InjectPolicy archives, a
+    rail's --bundle, any old signed bundle.
+
     NOT refused: a point-free policy with no frame origin (envelopes only, no
     stated `origin`). It carries no projected coordinate and flies as before,
     but no zone can be written into it in flight (models.NoFrameOrigin:
@@ -2494,6 +2513,18 @@ def load_for_flight(bundle: str | Path | None = None,
         if not chk.verified:
             rec["accepted_unverified"] = True
         pol = chk.flight_policy
+        if chk.projected_points:
+            # x/y beside lat/lon in the archived IR (BundleCheck.projected_
+            # points): projected coordinates the DSL never carries, refused as
+            # the metre form is (WP1-14, 2026-11-26) unless this is a read.
+            if not legacy_read:
+                raise LegacyPointFormRefused(
+                    _xy_beside_message(chk.projected_points, pol, bundle))
+            rec["legacy_read"] = True
+            rec["point_form"] = pol.point_form
+            rec["projected_points"] = chk.projected_points
+            rec["point_note"] = XY_BESIDE_NOTE
+            mark_legacy_read(pol)
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
@@ -2586,6 +2617,24 @@ def refuse_or_load_yaml(path: str | Path, *, say=print) -> tuple[Policy, dict]:
         raise SystemExit(f"[policy] REFUSING TO FLY: {exc}") from None
 
 
+def _xy_beside_message(n: int, pol: Policy, path) -> str:
+    msg = (f"{Path(path).name} ({pol.policy_id}@{pol.version}): its ir.json writes "
+           f"x/y beside lat/lon on {n} point(s) (the dump of a bundle hashed "
+           f"before 2026-10-06). A flight flies a policy whose points are "
+           f"{{lat, lon}} only; the DSL never carries projected coordinates "
+           f"(grant, Policy DSL page; WP1-14). ")
+    succ = wgs84_successor(path, pol)
+    if succ is not None:
+        msg += f"Fly its WGS84 bundle {succ.name} instead. "
+    else:
+        msg += (f"Rebuild the bundle from its current policies/ version "
+                f"(tools/build_flight_bundles.py), which writes lat/lon only; a "
+                f"tool that has metres converts them with "
+                f"models.wgs84_from_metres. ")
+    return msg + (f"To re-run a recorded flight under the policy it flew, a read, "
+                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read).")
+
+
 def _not_wgs84_message(pol: Policy, path, *, is_bundle: bool) -> str:
     what = f"its points are stored as {pol.point_form}"
     if pol.frame_origin is None:
@@ -2628,10 +2677,15 @@ def wgs84_successor(path: str | Path, pol: Policy) -> Path | None:
         if cand.name.endswith(".replay.tar.gz") or cand.resolve() == Path(path).resolve():
             continue
         try:
-            other = check_bundle(cand).policy
+            other_chk = check_bundle(cand)
         except Exception:                                     # noqa: BLE001
             continue
-        if other.policy_id != pol.policy_id or not flight_ready(other):
+        other = other_chk.policy
+        # A bundle whose ir.json writes x/y beside lat/lon is refused for
+        # flight too (BundleCheck.projected_points): never named as the one
+        # to fly instead.
+        if (other.policy_id != pol.policy_id or not flight_ready(other)
+                or other_chk.projected_points):
             continue
         key = _semver_key(other.version)
         if key > _semver_key(pol.version) and (best is None or key > best[0]):
@@ -2639,6 +2693,13 @@ def wgs84_successor(path: str | Path, pol: Policy) -> Path | None:
     return None if best is None else best[1]
 
 
+# What a flight record says of a bundle whose archived ir.json writes x/y
+# beside lat/lon, read under legacy_read (load_for_flight).
+XY_BESIDE_NOTE = (
+    "the archived ir.json writes x/y beside lat/lon (the dump of a bundle "
+    "hashed before 2026-10-06), checked against the frame to 1 um and dropped; "
+    "read as a re-run of a recorded flight, not flown as a new policy (grant: "
+    "'the DSL itself never carries projected coordinates'; WP1-14)")
 # What a flight record says of a policy stored in the legacy metre form.
 LEGACY_POINT_NOTE = (
     "points stored as local metres: the legacy read form, kept loading for the "
@@ -3241,6 +3302,11 @@ def policy_candidates(policies_dir: str | Path | None = None,
             ent = entries.get(old_key)
             got = rewind(base, old_key, _pin_for(ent or {}, f.name))
             old = got[0] if got is not None else as_version(base, old_key.rpartition("@")[2])
+            # Resolving a stored run is a READ of the version it flew, the
+            # metre form included (WP1-14): a Shield may be built on it to
+            # re-fly or judge the run (Shield.__init__). Policy.metre_form
+            # marks its result already; this covers every older step too.
+            mark_legacy_read(old)
             out.append((f"{f.name} as {old_key}", old))
             by_key.setdefault(old_key, old)
             base = old
@@ -3306,7 +3372,8 @@ def ir_json_schema() -> dict:
         xy["description"] = (
             "A point: WGS84 {lat, lon} in degrees, the only point form the DSL "
             "carries. Local metres ({x, y}, or x/y beside lat/lon) are refused "
-            "at every entry: a tool that works in metres converts them with "
+            "at the DSL, REST / gRPC, Shield-event and flight-loader entries: a "
+            "tool that works in metres converts them with "
             "guardrail.models.wgs84_from_metres about the policy's `origin`. "
             "The ENU/NED view is computed lazily by the Safety Shield and the "
             "Prefix Compiler.")

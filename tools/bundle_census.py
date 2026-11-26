@@ -105,7 +105,11 @@ def bundle_row(path: Path) -> dict:
         "frame": _frame(pol),
         "frame_origin": None if fo is None else [fo[0], fo[1]],
         "legacy": form in LEGACY_POINT_FORMS,
-        "flight_ready": flight_ready(pol),
+        # x/y beside lat/lon in the archived ir.json (the dump of a bundle
+        # hashed before 2026-10-06): refused for flight by load_for_flight
+        # since 2026-11-26 (BundleCheck.projected_points, WP1-14).
+        "projected_points": chk.projected_points,
+        "flight_ready": flight_ready(pol) and not chk.projected_points,
         "signature": chk.signature, "signed_by": chk.signed_by,
         "hash_form": chk.hash_form,
         "issued_at": chk.manifest.get("issued_at"),
@@ -215,6 +219,7 @@ def _print(c: dict) -> None:
             print(f"  ERROR   {r['file']}: {r['error']}")
         else:
             tag = ("LEGACY" if r["legacy"] else
+                   "XYSIDE" if r.get("projected_points") else
                    "NOFRAM" if not r["flight_ready"] else "ok    ")
             print(f"  {tag}  {r['file']:44s} {r['point_form']:38s} frame={r['frame']:7s} "
                   f"{r['signature']}")

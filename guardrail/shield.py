@@ -367,9 +367,17 @@ def as_dynamic_nfz(fence: PolygonFence, motion: dict | None = None) -> DynamicNF
     A circle_fence keeps its derived 32-gon as the vertices.
 
     This is the one-line migration for every caller that used to hot-apply a
-    PolygonFence: `shield.hot_apply(as_dynamic_nfz(fence))`."""
+    PolygonFence: `shield.hot_apply(as_dynamic_nfz(fence))`.
+
+    The vertices are copied in the form they are STORED (WP1-14): lat/lon
+    for a WGS84 point, {x, y} for a legacy metre one. A plain model_dump of
+    a point bound to a frame also writes its local x/y view beside lat/lon,
+    which the Shield's event entry refuses as projected coordinates
+    (point_gives_metres); until 2026-11-26 this dumped that view, so the
+    migration this names was refused for every WGS84 fence."""
     data = {"id": fence.id, "type": "dynamic_nfz",
-            "vertices": [v.model_dump(exclude_none=True) for v in fence.vertices],
+            "vertices": [v.model_dump(exclude_none=True, context={"points": "stored"})
+                         for v in fence.vertices],
             "altitude_floor_m": fence.altitude_floor_m,
             "altitude_ceiling_m": fence.altitude_ceiling_m,
             "margin_m": fence.margin_m, "constraint_type": fence.constraint_type,
@@ -2360,20 +2368,28 @@ class Shield:
         (WP1-14, since 2026-11-26; grant, Policy DSL page: "the DSL itself
         never carries projected coordinates"): a Shield is not built on a
         policy that stores a point in local metres (Policy.point_form a
-        legacy form) - ProjectedCoordinatesRefused - unless the policy came
-        from a declared legacy read (Policy.legacy_read: models.load_legacy_
-        metre_policy / legacy_metre_policy_from_raw, bundle.load_for_flight
-        legacy_read, bundle.derive legacy_read) or this is True: a re-read of
-        a recorded run, or a test of the local-frame geometry itself. A WGS84
-        or point-free policy is untouched by it. This is the layer that
-        enforces the clause for an in-process caller; the type (Policy.
-        model_validate) still READS the legacy form, because every recorded
-        artefact is read through it (replay, the lock recipes, the bundles of
-        before 2026-11-03), and the DSL entries (load_policy / policy_from_raw
-        / load_layered), REST / gRPC and the Shield's events refuse it."""
+        legacy form) - ProjectedCoordinatesRefused - unless a declared legacy
+        read covers that content (Policy.legacy_read_covers: models.read_
+        recorded_policy, load_legacy_metre_policy / legacy_metre_policy_from_
+        raw, bundle.load_for_flight legacy_read, bundle.derive legacy_read,
+        Policy.metre_form) or this is True: a re-read of a recorded run, or a
+        test of the local-frame geometry itself. The declaration is a private
+        label bound to the metre points the policy held when it was made: a
+        model_copy with new metre constraints is not covered, and a dump /
+        model_validate round trip drops it (declare it again after a
+        re-read). A WGS84 or point-free policy is untouched by it. This
+        checks the metre FORMS for an in-process caller; a lat/lon point that
+        a document gave with x/y beside it is dropped by the type before a
+        Shield sees it, and is refused at the entries instead. The type
+        (Policy.model_validate) still READS the legacy form, because every
+        recorded artefact is read through it (replay, the lock recipes, the
+        bundles of before 2026-11-03), and the DSL entries (load_policy /
+        policy_from_raw / load_layered), REST / gRPC, the Shield's events and
+        the flight loader refuse it."""
         problem = None if legacy_metres else shield_policy_problem(policy)
         if problem:
             raise ProjectedCoordinatesRefused(problem, policy=policy)
+        self._legacy_metres = bool(legacy_metres)
         if recovery_law not in RECOVERY_LAWS:
             raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
                              f"got {recovery_law!r}")
@@ -6879,14 +6895,24 @@ class Shield:
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the runtime could not "
                                   f"compile the policy it would leave: "
                                   f"{type(e).__name__}: {e}") from e
+        # A declared legacy read that covered the policy before this event
+        # (Policy.legacy_read_covers, or this Shield built with legacy_metres)
+        # still covers what the event derives from it: the event entry takes
+        # absolute points in WGS84 only, so the only metre points it can
+        # leave are covered ones moved by a relative edit (translate, rotate,
+        # scale) or written by the comparison switch below.
+        covered = (getattr(self, "_legacy_metres", False)
+                   or self.policy.legacy_read_covers())
         # In place: callers (the REST app, the audit logger) hold this Policy.
         self.policy.constraints = constraints
         self.policy.generation = cand.generation
-        if not self.wgs84_writes:
+        if not self.wgs84_writes or covered:
             # The comparison switch stores metres as the writes of before
             # 2026-11-17 did: a declared legacy form, so a Shield built on
             # this generation (the compiler's, a hold search's) re-reads it
-            # as this one wrote it (Shield.__init__, WP1-14).
+            # as this one wrote it (Shield.__init__, WP1-14). The declaration
+            # is bound to content (mark_legacy_read), so it is made again on
+            # the content this event leaves.
             mark_legacy_read(self.policy)
         self._anchors = anchors
         self._rt = rt

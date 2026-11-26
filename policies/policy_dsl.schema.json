@@ -3609,7 +3609,7 @@
     },
     "IR.XY": {
       "additionalProperties": false,
-      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at every entry: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
+      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at the DSL, REST / gRPC, Shield-event and flight-loader entries: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
       "properties": {
         "lat": {
           "maximum": 90.0,
@@ -4728,7 +4728,7 @@
     },
     "XY": {
       "additionalProperties": false,
-      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at every entry: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
+      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at the DSL, REST / gRPC, Shield-event and flight-loader entries: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
       "properties": {
         "lat": {
           "maximum": 90.0,

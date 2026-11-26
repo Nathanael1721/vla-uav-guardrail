@@ -887,6 +887,30 @@ def test_the_committed_pack_loads_and_still_matches_its_sources():
         return SKIP
 
 
+def test_every_committed_pack_flight_replays_under_every_arm():
+    """WP1-14 (2026-11-26): a packed flight is a RECORDED document, read in
+    the point form it flew in (models.read_recorded_policy), the legacy metre
+    form included, so profile() can build its Shields on it. Failed before
+    the fix: the Shield refused 3 of the 4 committed flights (stored in local
+    metres) under as_flown, and every flight under design_load (whose zones
+    stay in metres on a policy with no frame origin), with
+    ProjectedCoordinatesRefused. A few rows per flight, every arm, no host
+    calibration: this checks that the replay runs, not how fast."""
+    if not COMMITTED_PACK.is_file():
+        return SKIP
+    pack = P.load_pack(COMMITTED_PACK)
+    forms = {f["tag"]: f["_policy"].point_form for f in pack["flights"]}
+    assert any(v != "wgs84" for v in forms.values()), forms
+    for f in pack["flights"]:
+        assert f["_policy"].legacy_read, f["tag"]
+        f["rows"] = f["rows"][:4]
+    res = P.profile(pack, "dev", calibrate_host=False, warmup=0)
+    assert res.get("failures") == [], res.get("failures")
+    assert {e["tag"] for e in res["flights"]} == set(forms), res["flights"]
+    for e in res["flights"]:
+        assert set(e["arms"]) == set(P.ARMS), (e["tag"], sorted(e["arms"]))
+
+
 def test_the_committed_desktop_baselines_match_the_committed_pack():
     profiles = sorted(COMMITTED_DEV_PROFILE.parent.glob("shield_tick_profile*.json"))
     if not (profiles and COMMITTED_PACK.is_file()):
