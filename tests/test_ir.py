@@ -57,6 +57,7 @@ from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E40
                               Policy, PolygonFence, State,
                               SubjectStandoff)
 from guardrail.shield import Shield, as_dynamic_nfz                 # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 from legacy_fence_loop import LegacyFenceShield                     # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
@@ -227,8 +228,8 @@ def compare(new: Shield, old: Shield, pairs, tally: Tally, label: str,
         if hot_apply_at is not None and i == hot_apply_at:
             # Mid-run, so the grant's hot-applicable form (a polygon_fence is
             # locked once the mission has started; see test_shield.py).
-            new.hot_apply(as_dynamic_nfz(hot_fence))
-            old.hot_apply(as_dynamic_nfz(hot_fence))
+            new.hot_apply(geo(as_dynamic_nfz(hot_fence), new))
+            old.hot_apply(geo(as_dynamic_nfz(hot_fence), old))
         if tick_clock is not None:
             tick_clock.advance()
         bad = bool(nonfinite_every) and i % nonfinite_every == nonfinite_every - 1
@@ -439,7 +440,7 @@ def test_shield_rebuilds_the_ir_on_hot_apply():
     pol = _overlap_policy()
     sh = Shield(pol)
     assert sh.ir.is_current_for(sh.policy)
-    sh.hot_apply(_square("hot", 100, 100, 5))
+    sh.hot_apply(geo(_square("hot", 100, 100, 5), sh))
     assert sh.ir.is_current_for(sh.policy)
     st, a = State(x=90.0, y=102.0, up=5.0), Action4D(vx=4.0)
     assert any(v.rule_id == "hot" for v in sh._check(st, a))
@@ -691,7 +692,7 @@ def test_a_geometry_ref_names_one_scale_of_one_generation():
             raise AssertionError(f"{bad!r} resolved")
     sh = Shield(pol)
     sh.filter(State(x=-20.0, y=-20.0, up=4.0), Action4D())
-    sh.hot_apply(as_dynamic_nfz(_square("hot", 100, 100, 5)))
+    sh.hot_apply(geo(as_dynamic_nfz(_square("hot", 100, 100, 5)), sh))
     try:
         sh.ir.resolve_geometry_ref(ref)       # minted for generation 0
     except ValueError:
@@ -738,7 +739,7 @@ def test_an_event_recompiles_only_the_zone_it_changed():
     pol = _overlap_policy()
     sh = Shield(pol)
     before = {r.rule.id: r.buffered for r in sh.ir.fences}
-    sh.hot_apply(as_dynamic_nfz(_square("hot", 100, 100, 5)))
+    sh.hot_apply(geo(as_dynamic_nfz(_square("hot", 100, 100, 5)), sh))
     after = {r.rule.id: r.buffered for r in sh.ir.fences}
     assert set(after) == set(before) | {"hot"}
     assert all(after[k] is before[k] for k in before)

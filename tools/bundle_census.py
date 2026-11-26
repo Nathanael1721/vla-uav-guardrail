@@ -64,7 +64,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from guardrail.bundle import check_bundle, flight_ready               # noqa: E402
-from guardrail.models import (LEGACY_POINT_FORMS, load_policy)         # noqa: E402
+from guardrail.models import (LEGACY_POINT_FORMS,                     # noqa: E402
+                              load_legacy_metre_policy)
 
 REPLAY_SUFFIX = ".replay.tar.gz"
 POLICY_DIRS = (ROOT / "policies", ROOT / "experiments" / "policies")
@@ -119,7 +120,9 @@ def current_versions(dirs=POLICY_DIRS) -> dict[str, dict]:
     for d in dirs:
         for f in sorted(Path(d).glob("*.yaml")):
             try:
-                pol = load_policy(f, runtime=False)
+                # A census READS every form, the legacy metre one included
+                # (a declared re-read, WP1-14): it reports point_form.
+                pol = load_legacy_metre_policy(f, runtime=False)
             except Exception:                                 # noqa: BLE001
                 continue
             shown = f.resolve()

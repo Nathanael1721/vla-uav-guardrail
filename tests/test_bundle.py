@@ -61,6 +61,7 @@ from guardrail.compiler import ConstraintCompiler                  # noqa: E402
 from guardrail.models import State                                 # noqa: E402
 from guardrail.projection import LocalProjection, project_raw      # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -584,10 +585,10 @@ def test_a_hot_applied_rule_is_carried_into_the_next_bundle():
     before_hash, before_n = pol.policy_hash, len(pol.constraints)
 
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
-    sh.hot_apply(PolygonFence(
+    sh.hot_apply(geo(PolygonFence(
         id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=-25, y=-25), XY(x=-15, y=-25),
-                  XY(x=-15, y=-15), XY(x=-25, y=-15)], margin_m=1.0))
+                  XY(x=-15, y=-15), XY(x=-25, y=-15)], margin_m=1.0), sh))
 
     assert pol.policy_hash != before_hash, "the hash must restamp"
     assert pol.generation == 1, pol.generation

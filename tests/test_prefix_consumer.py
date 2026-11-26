@@ -221,12 +221,13 @@ def test_inside_a_zone_the_candidate_is_handed_on_and_a_dead_end_stops():
     assert c.stats["turned"] == 0 and c.stats["stopped"] == 0
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "tube.yaml"
-        p.write_text(
+        from wgs84_fixture import wgs84_text   # WGS84 only since 2026-11-26 (WP1-14)
+        p.write_text(wgs84_text(
             "policy_id: short-tube\nversion: 0.0.1\nconstraints:\n"
             "  - id: tube\n    type: corridor\n    constraint_type: hard\n"
             "    scope: mission\n    priority: P0\n    violation_action: project_fix\n"
             "    centerline: [{x: 0.0, y: 0.0}, {x: 6.0, y: 0.0}]\n    width_m: 4.0\n"
-            "    altitude_floor_m: 10.0\n    altitude_ceiling_m: 20.0\n", encoding="utf-8")
+            "    altitude_floor_m: 10.0\n    altitude_ceiling_m: 20.0\n"), encoding="utf-8")
         tube = load_policy(p)
     csp2 = _csp(tube, start=(3.0, 0.0, 15.0), target=(5.0, 0.0, 15.0))
     c2 = PC.PrefixConsumer(_Law(Action4D(vx=4.0)), csp2, tube)
@@ -1366,10 +1367,16 @@ def test_a_consumer_episode_takes_no_mid_flight_rule_change():
     Shield validates generation 1."""
     from types import SimpleNamespace
     from guardrail import harness_service as H
-    zone = {"type": "dynamic_nfz", "constraint_type": "hard", "scope": "mission",
-            "priority": "P0", "violation_action": "project_fix", "id": "late-zone",
-            "vertices": [{"x": 210, "y": 230}, {"x": 220, "y": 230},
-                         {"x": 220, "y": 250}, {"x": 210, "y": 250}]}
+    from guardrail import load_policy
+    from guardrail.models import wgs84_from_metres
+    # A hot-apply body in WGS84 (WP1-14, 2026-11-26): laid out in metres in the
+    # cell's policy frame (nfz-head-on flies sim_demo_policy) and converted.
+    sim = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").frame_origin
+    zone = wgs84_from_metres(
+        {"type": "dynamic_nfz", "constraint_type": "hard", "scope": "mission",
+         "priority": "P0", "violation_action": "project_fix", "id": "late-zone",
+         "vertices": [{"x": 210, "y": 230}, {"x": 220, "y": 230},
+                      {"x": 220, "y": 250}, {"x": 210, "y": 250}]}, sim)
     fence = {"id": "late", "vertices": [{"x": 200, "y": 200}, {"x": 210, "y": 200},
                                         {"x": 210, "y": 210}, {"x": 200, "y": 210}]}
 

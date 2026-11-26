@@ -11,7 +11,7 @@ hot-applicable classes can change in flight (Policy DSL page, "Mid-flight
 update model"); every route below is one of them:
 
     GET    /health                  liveness, policy id / hash / generation
-    GET    /policy                  the full active policy
+    GET    /policy                  the full active policy, as stored (lat/lon)
     GET    /events                  every event applied so far, in order
     POST   /dynamic_nfz             spawn a dynamic no-fly zone ("add")
     PATCH  /dynamic_nfz/{id}        move / translate / rotate / scale it
@@ -22,28 +22,39 @@ update model"); every route below is one of them:
     POST   /nfz                     the 2026-07 body, kept for its callers: it
                                     now spawns a dynamic_nfz (see below)
 
-POST /dynamic_nfz body (metres in the policy frame, or lat/lon for a policy
-with a frame; the DSL's own field names). Since 2026-11-17 (WP1-14) metres
-sent to a policy with a frame - every stored policy - are written into it as
-WGS84 about its frame origin (Shield._in_frame, models.rule_in_wgs84), as is
-the ring a PATCH computes, so /policy, the generation's hash and its snapshot
-carry no projected coordinate. The zone enforced LIVE is the lazy
-projection of the stored lat/lon (the rule is bound to the policy's frame
-as it is written), bit for bit what the snapshot, reloaded, enforces: the
-metres sent, for values on the micrometre grid (at most six decimals),
-else within 0.6 um of them. A policy with no frame origin (written wholly
-in metres, the legacy read form, or with no point and no stated origin)
-has no WGS84 position for the metres sent: since 2026-11-18 such a body is
-refused with a 422 naming the missing origin (models.NoFrameOrigin), where
-until then it was stored in metres:
+POST /dynamic_nfz body (the DSL's own field names; every vertex WGS84
+{lat, lon}):
 
     {"id": "nfz-landslide-007", "scope": "mission",
      "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix",
-     "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}],
+     "vertices": [{"lat": 25.0423, "lon": 121.5312}, {"lat": 25.0424, "lon": 121.5312},
+                  {"lat": 25.0424, "lon": 121.5313}],
      "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0,
      "motion": {"vx_mps": 0.5, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}
 
-PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [...]},
+WGS84 ONLY (WP1-14, 2026-11-26). The grant's Policy DSL page: "WGS84
+latitude / longitude is canonical ... the DSL itself never carries projected
+coordinates". Every absolute position a body gives - a dynamic_nfz's or a
+PATCH move's vertices, a corridor_swap's centerline, the deprecated POST
+/nfz's vertices - is {lat, lon}; a point in local metres ({x, y}, an [x, y]
+pair, or x/y beside lat/lon) is refused with 422, and the refusal names the
+tool-side conversion: a client that works in metres converts them itself
+with models.wgs84_from_metres(<body>, <origin>), about the policy's frame
+origin (GET /policy `origin`), before it sends them. From 2026-11-17 until
+2026-11-26 such metres were accepted and written as WGS84 at ingest
+(deviation 1 of the final report); before 2026-11-17 they were stored in
+metres. The RELATIVE edits stay in metres, as in the grant's own scenario
+events: translate (dx North, dy East), rotate and scale, and the ring the
+Shield computes from them is written as WGS84 about the frame origin
+(Shield._in_frame), so /policy, the generation's hash and its snapshot carry
+no projected coordinate. The zone enforced LIVE is the lazy projection of
+the stored lat/lon (the rule is bound to the policy's frame as it is
+written), bit for bit what the snapshot, reloaded, enforces. A policy with
+no frame origin (no point in lat/lon and no stated origin) cannot place a
+point: since 2026-11-18 such a body is refused with a 422 naming the missing
+origin (models.NoFrameOrigin).
+
+PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [{lat, lon}, ...]},
 {"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate", "angle_deg": 30} or
 {"op": "scale", "factor": 1.5}.
 
@@ -126,8 +137,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, Field, ValidationError
 
 from .models import (DEFAULT_LAYER, IR2_RULE_DEFAULTS, XY, CorridorSwap, DynamicNFZ,
-                     TimeWindowSwitch)
-from .projection import local_metres
+                     TimeWindowSwitch, no_frame_message, projected_input_message)
 from .shield import (HOT_APPLICABLE, HotApplyRefused, LockedRuleClass, RuleIdConflict,
                      Shield, UnknownRule)
 
@@ -163,43 +173,42 @@ def _refuse(e: Exception) -> ApiError:
 
 
 def _points(shield: Shield, pts: Any) -> list[dict]:
-    """Vertices as the DSL's point dicts. A lat/lon point is placed in the
-    policy's own frame (its stated or derived origin); a policy written only in
-    metres has no frame for it, and the request is refused."""
+    """Vertices / a centerline as the DSL's point dicts, {lat, lon} only.
+
+    WGS84 ONLY (WP1-14, 2026-11-26): a point in local metres - {x, y}, an
+    [x, y] pair, or x/y beside lat/lon - is refused with 422, naming the
+    tool-side conversion (models.wgs84_from_metres, about the policy's
+    `origin` from GET /policy). Until then such a point was accepted and
+    written as WGS84 at ingest (deviation 1 of the final report). The point
+    is placed in the policy's frame when the Shield writes it (a policy with
+    no frame origin refuses it: models.NoFrameOrigin, 422)."""
     if not isinstance(pts, list):
-        raise ApiError(422, "vertices / centerline must be a list of points")
+        raise ApiError(422, "vertices / centerline must be a list of {lat, lon} points")
     out = []
-    proj = None
     for p in pts:
-        if isinstance(p, (list, tuple)) and len(p) == 2:
-            p = {"x": p[0], "y": p[1]}
         if not isinstance(p, dict):
-            raise ApiError(422, f"point {p!r} is neither {{x, y}} nor {{lat, lon}}")
-        if "x" in p and "y" in p:
-            out.append({k: v for k, v in p.items() if k in ("x", "y", "lat", "lon")})
-            continue
-        if "lat" in p and "lon" in p:
-            if proj is None:
-                proj = shield.policy.projection()
-                if proj is None:
-                    raise ApiError(422, f"{shield.policy.policy_id} is written in metres "
-                                        f"and has no frame for a lat/lon point; send x/y")
-            # A lat/lon that is not a number ("abc", null, or an integer too
-            # big for a float) is the client's mistake: 422, as the module
-            # docstring promises. Until 2026-10-19 float() raised here
-            # unhandled and FastAPI answered 500 (the harness: INTERNAL, or a
-            # retryable UNAVAILABLE for a forwarded body).
-            try:
-                lat, lon = float(p["lat"]), float(p["lon"])
-                # The policy's own view of the point (rounded to the
-                # micrometre, IR schema 3.1.0), so a zone sent in lat/lon is
-                # the same metres it would be if the policy were reloaded.
-                x, y = local_metres((proj.origin_lat, proj.origin_lon), lat, lon)
-            except (TypeError, ValueError, OverflowError):
-                raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
-            out.append({"x": x, "y": y, "lat": lat, "lon": lon})
-            continue
-        raise ApiError(422, f"point {p!r} is neither {{x, y}} nor {{lat, lon}}")
+            raise ApiError(422, projected_input_message(
+                f"point {p!r}") if isinstance(p, (list, tuple))
+                else f"point {p!r} is not a {{lat, lon}} object")
+        if "x" in p or "y" in p:
+            if shield.policy.frame_origin is None:
+                # As the Shield checks it: no frame refuses any point first.
+                raise ApiError(422, no_frame_message(f"point {p!r}"))
+            raise ApiError(422, projected_input_message(f"point {p!r}"))
+        if "lat" not in p or "lon" not in p:
+            raise ApiError(422, f"point {p!r} is not a {{lat, lon}} object")
+        # A lat/lon that is not a number ("abc", null, or an integer too
+        # big for a float) is the client's mistake: 422, as the module
+        # docstring promises. Until 2026-10-19 float() raised here
+        # unhandled and FastAPI answered 500 (the harness: INTERNAL, or a
+        # retryable UNAVAILABLE for a forwarded body).
+        try:
+            lat, lon = float(p["lat"]), float(p["lon"])
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
+        out.append({"lat": lat, "lon": lon})
     return out
 
 
@@ -411,8 +420,10 @@ def build_app(shield: Shield, *, lock=None,
 
     @app.get("/policy")
     def get_policy():
+        # As stored (WP1-14, 2026-11-26): a WGS84 point is {lat, lon} only;
+        # until then the dump added each point's local-metre view beside it.
         with lock:
-            return shield.policy.model_dump(mode="json")
+            return shield.policy.model_dump(mode="json", context={"points": "stored"})
 
     @app.get("/events")
     def get_events():

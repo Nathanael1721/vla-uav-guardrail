@@ -54,6 +54,7 @@ from guardrail.models import (CorridorSwap, DynamicNFZ, State,          # noqa: 
                               policy_from_raw)
 from guardrail.projection import raw_points_in_wgs84                    # noqa: E402
 from guardrail.shield import HotApplyRefused, Shield                    # noqa: E402
+from wgs84_fixture import geo, geo_ring, wgs84_doc             # noqa: E402
 
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
@@ -153,21 +154,21 @@ def test_every_primitive_with_altitude_ref_is_covered():
 def test_each_primitive_is_refused_without_a_ground():
     for t, (rule, extra, _) in CASES.items():
         raw = _raw(rule, extra)
-        _refused(lambda: policy_from_raw(raw), "r: altitude_ref MSL", "ground")
-        pol = policy_from_raw(raw, runtime=False)
+        _refused(lambda: policy_from_raw(wgs84_doc(raw)), "r: altitude_ref MSL", "ground")
+        pol = policy_from_raw(wgs84_doc(raw), runtime=False)
         _refused(lambda: Shield(pol), "altitude_ref MSL")
 
 
 def test_each_primitive_judges_its_msl_band_over_a_flat_ground():
     n = 0
     for t, (rule, extra, pts) in CASES.items():
-        sh = Shield(policy_from_raw(_raw(rule, extra), ground=G40), ground=G40,
+        sh = Shield(policy_from_raw(wgs84_doc(_raw(rule, extra)), ground=G40), ground=G40,
                     escalation=False)
         for x, y, up, want in pts:
             assert _breach(sh, "r", x, y, up) is want, (t, x, y, up, want)
             n += 1
         # The same numbers as AGL are another rule: at least one point flips.
-        agl = Shield(policy_from_raw(_raw(_agl(rule), extra)), escalation=False)
+        agl = Shield(policy_from_raw(wgs84_doc(_raw(_agl(rule), extra))), escalation=False)
         assert any(_breach(agl, "r", x, y, up) is not want for x, y, up, want in pts), t
     assert n == 16, n
 
@@ -178,7 +179,7 @@ def test_the_shield_repairs_an_msl_keep_out_breach_at_its_agl_band():
     climb under the band is not touched."""
     from guardrail.models import Action4D
     rule, extra, _ = CASES["dynamic_nfz"]
-    sh = Shield(policy_from_raw(_raw(rule, extra), ground=G40), ground=G40,
+    sh = Shield(policy_from_raw(wgs84_doc(_raw(rule, extra)), ground=G40), ground=G40,
                 escalation=False)
     into = sh.filter(State(x=25.0, y=0.0, up=105.0), Action4D(vz_up=3.0))
     assert into.touched and "r" in [v.rule_id for v in into.violations], into
@@ -196,11 +197,12 @@ def test_msl_dynamic_nfz_and_corridor_swap_hot_apply_over_the_shields_ground():
                                     {"x": 30, "y": 45}, {"x": 20, "y": 45}]})
     sw = CorridorSwap(**{**CASES["corridor_swap"][0], "id": "sw"})
     for ev in (dz, sw):
-        _refused(lambda: Shield(policy_from_raw(base_raw)).hot_apply(ev), "MSL")
-    sh = Shield(policy_from_raw(base_raw), ground=G40, escalation=False)
-    sh.hot_apply(dz)
+        bare = Shield(policy_from_raw(wgs84_doc(base_raw)))
+        _refused(lambda: bare.hot_apply(geo(ev, bare)), "MSL")
+    sh = Shield(policy_from_raw(wgs84_doc(base_raw)), ground=G40, escalation=False)
+    sh.hot_apply(geo(dz, sh))
     assert _breach(sh, "dz", 25, 40, 130) and not _breach(sh, "dz", 25, 40, 170)
-    sh.hot_apply(sw)
+    sh.hot_apply(geo(sw, sh))
     assert _breach(sh, "sw", 0, 40, 90) and not _breach(sh, "sw", 0, 40, 110)
     assert _breach(sh, "sw", 0, 40, 165)
 
@@ -210,7 +212,7 @@ def test_each_primitive_converts_over_a_dem_band_the_safe_way():
     a keep-out band grows by the spread, a keep-in band shrinks by it."""
     keep_out = {"polygon_fence", "circle_fence", "dynamic_nfz"}
     for t, (rule, extra, _) in CASES.items():
-        pol = policy_from_raw(_raw(rule, extra), runtime=False)
+        pol = policy_from_raw(wgs84_doc(_raw(rule, extra)), runtime=False)
         r = pol.constraints[-1]
         lo_f, hi_f = terrain.band_fields(r)
         got = terrain.agl_rule(r, G40, band=(30.0, 50.0))
@@ -297,11 +299,11 @@ def test_the_ground_record_reads_as_the_ros2_nodes_and_the_replay_reads_it():
 
 
 def test_agl_rules_is_the_identity_without_msl_and_fails_closed_without_a_ground():
-    pol = policy_from_raw(_raw(_agl(CASES["altitude_envelope"][0]), []))
+    pol = policy_from_raw(wgs84_doc(_raw(_agl(CASES["altitude_envelope"][0]), [])))
     rules = pol.constraints
     out = terrain.agl_rules(rules, None)
     assert all(a is b for a, b in zip(out, rules)) and len(out) == len(rules)
-    msl = policy_from_raw(_raw(CASES["altitude_envelope"][0], []), runtime=False)
+    msl = policy_from_raw(wgs84_doc(_raw(CASES["altitude_envelope"][0], [])), runtime=False)
     _refused(lambda: terrain.agl_rules(msl.constraints, None), "altitude_ref MSL")
     got = terrain.agl_rules(msl.constraints, G40)[0]
     assert (got.alt_min_m, got.alt_max_m) == (10.0, 120.0)

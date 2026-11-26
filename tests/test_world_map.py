@@ -47,6 +47,7 @@ from guardrail.scenario_spec import (Library, ScenarioSpec, expand,     # noqa: 
                                      load_profile)
 from guardrail.shield import Shield                                     # noqa: E402
 from guardrail.world_map import load_world, missing_maps                # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 
 WORLD = "experiments/worlds/de_block.yaml"
 POLICY = ROOT / "policies" / "distance_envelope_sitl.yaml"
@@ -385,12 +386,12 @@ def _street_dir():
 
 
 def _roads_policy():
-    return policy_from_raw({
+    return policy_from_raw(wgs84_doc({
         "policy_id": "de-roads-test", "version": "0.1.0",
         "constraints": [{"id": "de-roads", "type": "distance_envelope",
                          "constraint_type": "hard", "scope": "mission",
                          "priority": "P1", "violation_action": "project_fix",
-                         "object_class": "roads", "min_distance_m": 3.0}]})
+                         "object_class": "roads", "min_distance_m": 3.0}]}))
 
 
 def test_the_city_rails_road_map_helper():
@@ -450,12 +451,12 @@ def test_vla_fly_and_the_pas_rail_pass_the_road_map_to_their_shield():
 def test_the_pas_rail_loads_the_obstacle_map_for_a_buildings_envelope():
     sys.path.insert(0, str(ROOT / "demo" / "pas_ardupilot"))
     import perception_node as pn
-    pol = policy_from_raw({
+    pol = policy_from_raw(wgs84_doc({
         "policy_id": "de-b-test", "version": "0.1.0",
         "constraints": [{"id": "de-b", "type": "distance_envelope",
                          "constraint_type": "hard", "scope": "mission",
                          "priority": "P0", "violation_action": "project_fix",
-                         "object_class": "buildings", "min_distance_m": 4.0}]})
+                         "object_class": "buildings", "min_distance_m": 4.0}]}))
     d = Path(tempfile.mkdtemp(prefix="occ_"))
     occ = np.zeros((20, 20), dtype=np.uint8)
     occ[8:12, 8:12] = 1
@@ -470,16 +471,16 @@ def test_the_pas_rail_loads_the_obstacle_map_for_a_buildings_envelope():
     assert none is None and "INERT" not in why, why
     assert "de-b" in why and "Shield refuses this policy" in why, why
     # ...and an obstacle_clearance-only policy still runs inert, said so.
-    oc = policy_from_raw({"policy_id": "oc", "version": "0.1.0", "constraints": [
+    oc = policy_from_raw(wgs84_doc({"policy_id": "oc", "version": "0.1.0", "constraints": [
         {"id": "oc", "type": "obstacle_clearance", "constraint_type": "hard",
          "scope": "mission", "priority": "P0", "violation_action": "project_fix",
-         "min_clearance_m": 4.0}]})
+         "min_clearance_m": 4.0}]}))
     assert "obstacle_clearance is INERT" in pn.load_obstacle_map(oc, d / "missing.npz")[1]
     # A policy with neither rule: no map, as before.
-    plain = policy_from_raw({"policy_id": "p", "version": "0.1.0", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "version": "0.1.0", "constraints": [
         {"id": "a", "type": "altitude_envelope", "constraint_type": "hard",
          "scope": "mission", "priority": "P0", "violation_action": "project_fix",
-         "alt_min_m": 5, "alt_max_m": 30}]})
+         "alt_min_m": 5, "alt_max_m": 30}]}))
     assert pn.load_obstacle_map(plain, d / "occ_day.npz")[0] is None
 
 
@@ -489,12 +490,12 @@ def test_people_binds_every_reported_person_not_only_the_tracked_subject():
     """Before (17 Nov, test_people_binds_the_tracked_subject_only_the_recorded_
     limit): a person beside a tracked car was not passed to the Shield, so
     nothing bound. Now the rail reports every person (Shield.set_people)."""
-    pol = policy_from_raw({
+    pol = policy_from_raw(wgs84_doc({
         "policy_id": "de-p-test", "version": "0.1.0",
         "constraints": [{"id": "de-people", "type": "distance_envelope",
                          "constraint_type": "hard", "scope": "mission",
                          "priority": "P0", "violation_action": "project_fix",
-                         "object_class": "people", "min_distance_m": 10.0}]})
+                         "object_class": "people", "min_distance_m": 10.0}]}))
     sh = Shield(pol, people_source="test")
     st = State(x=0.0, y=0.0, up=10.0)
     # A tracked car 5 m away binds nothing on its own...

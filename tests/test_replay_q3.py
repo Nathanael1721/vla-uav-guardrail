@@ -54,6 +54,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import replay_q3 as Q                                              # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, State, load_policy   # noqa: E402
 from guardrail.replay import rail_shield                           # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 CITY = ROOT / "policies" / "follow_car_citylife_nfz.yaml"
@@ -113,7 +114,7 @@ def _fly(run: Path, *, ticks: int = 90, spawn_at: int = 25, when: str = "2026-10
                                         {"x": x + 11, "y": y + 6}, {"x": x + 9, "y": y + 6}],
                               altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
                               motion={"vx_mps": -0.3, "vy_mps": 0.1})
-            sh.hot_apply(zone)
+            sh.hot_apply(geo(zone, sh))
         if k in events:
             events[k](sh, x, y)
         if sh.policy.generation != g_before:
@@ -362,11 +363,11 @@ def test_a_moving_zone_edited_mid_flight_is_re_anchored_where_the_flight_did():
     # the spawn's anchor would place it 1 m/s x the time since the spawn
     # further along, and the repairs against it would differ.
     def spawn(sh, x, y):
-        sh.hot_apply(DynamicNFZ(id="mover", type="dynamic_nfz", **HARD_P0,
+        sh.hot_apply(geo(DynamicNFZ(id="mover", type="dynamic_nfz", **HARD_P0,
                                 vertices=[{"x": x + 30, "y": y - 8}, {"x": x + 33, "y": y - 8},
                                           {"x": x + 33, "y": y + 8}, {"x": x + 30, "y": y + 8}],
                                 altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
-                                motion={"vx_mps": -1.0, "vy_mps": 0.0}))
+                                motion={"vx_mps": -1.0, "vy_mps": 0.0}), sh))
     run = _tmp("q3_") / "ros2_like_edit"
     rows = _fly(run, ticks=110, spawn_at=999, events={
         5: spawn,
@@ -397,7 +398,7 @@ def test_a_generation_todays_hot_apply_refuses_is_not_replayable():
         fence = next(c for c in sh.policy.constraints if c.id == "nfz-square")
         late = fence.model_copy(update={"id": "nfz-late"})
         try:
-            sh.hot_apply(late)
+            sh.hot_apply(geo(late, sh))
             raise AssertionError("today's hot_apply took a fence after the first tick")
         except Exception as e:                                   # noqa: BLE001
             assert type(e).__name__ == "LockedRuleClass", e

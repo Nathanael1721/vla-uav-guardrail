@@ -43,6 +43,7 @@ from guardrail.audit import AuditLogger                              # noqa: E40
 from guardrail.frames import body_to_local_ned                       # noqa: E402
 from guardrail.models import Action4D, PolygonFence, State, XY       # noqa: E402
 from guardrail.shield import Shield                                  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 SITL = ROOT / "sitl"
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
@@ -928,7 +929,7 @@ def test_run_demo_sends_its_dynamic_zone_as_a_dynamic_nfz():
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
     shield.filter(State(x=0.0, y=0.0, up=15.0), Action4D(vx=1.0))   # mission start
     try:
-        shield.hot_apply(RD.DYNAMIC_FENCE)            # what main() did until today
+        shield.hot_apply(geo(RD.DYNAMIC_FENCE, shield))            # what main() did until today
     except LockedRuleClass:
         pass
     else:
@@ -1918,7 +1919,7 @@ def test_the_mission_node_writes_the_six_field_manifest_beside_its_metrics():
                           vertices=[XY(x=-4, y=18), XY(x=4, y=18), XY(x=4, y=22),
                                     XY(x=-4, y=22)])
         with node._lock:                    # as the REST hot-apply thread does
-            node.shield.hot_apply(zone)
+            node.shield.hot_apply(geo(zone, node.shield))
             node.rec.hot_applied(zone.id, t=node._t())
         for _ in range(3):
             clk.t += 0.1

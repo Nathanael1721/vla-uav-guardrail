@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail.bundle import (LEGACY_READ_ENV, LEGACY_YAML_RAILS,   # noqa: E402
                               LegacyPointFormRefused, load_yaml_for_flight)
 from guardrail.models import (POINTS_LEGACY_METRES, POINTS_WGS84,   # noqa: E402
+                              ProjectedCoordinatesRefused, load_legacy_metre_policy,
                               load_policy)
 
 RULE = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
@@ -108,7 +109,15 @@ def test_the_six_rails_are_named():
 
 def test_the_shared_loader_refuses_metres_and_reads_them_only_as_a_read():
     with _metre_yaml() as p, _legacy_read(None):
-        assert load_policy(p).point_form == POINTS_LEGACY_METRES   # what flew before
+        # what flew before; since 2026-11-26 load_policy refuses it too, and
+        # only the declared legacy read reads it
+        assert load_legacy_metre_policy(p).point_form == POINTS_LEGACY_METRES
+        try:
+            load_policy(p)
+        except ProjectedCoordinatesRefused as e:
+            assert "WP1-14" in str(e), e
+        else:
+            raise AssertionError("load_policy read a metre policy")
         try:
             load_yaml_for_flight(p, say=lambda s: None)
         except LegacyPointFormRefused as e:

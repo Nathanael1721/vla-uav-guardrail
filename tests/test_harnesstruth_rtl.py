@@ -324,7 +324,8 @@ def test_zones_and_band_skip_what_the_shield_does_not_enforce():
     from guardrail import Shield, State, load_policy
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "p.yaml"
-        p.write_text(_POLICY_MIXED, encoding="utf-8")
+        from wgs84_fixture import wgs84_text   # WGS84 only since 2026-11-26 (WP1-14)
+        p.write_text(wgs84_text(_POLICY_MIXED), encoding="utf-8")
         pol = load_policy(p)
     noon = Shield(pol, now=lambda: datetime(2026, 9, 7, 12, 0, 0))
     assert [z.rule_id for z in RP.zones_from_shield(noon)] == ["hard-p0"]

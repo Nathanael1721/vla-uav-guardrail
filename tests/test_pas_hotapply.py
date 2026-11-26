@@ -66,11 +66,17 @@ assert FRAMED_CAP_POLICY != T.CAP_POLICY
 
 
 def _zone(zid, x0, y0, x1, y1, **kw):
-    """A POST /dynamic_nfz body: a static zone over the whole fence column."""
-    return {"id": zid, **HARD_P0, "altitude_floor_m": 0, "altitude_ceiling_m": 100,
-            "margin_m": 1.0, **kw,
-            "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0},
-                         {"x": x1, "y": y1}, {"x": x0, "y": y1}]}
+    """A POST /dynamic_nfz body: a static zone over the whole fence column,
+    laid out in metres and sent in WGS84 about the policy's frame origin
+    (WP1-14, 2026-11-26: the endpoint takes {lat, lon} only; the client
+    converts tool side with models.wgs84_from_metres)."""
+    from guardrail.models import wgs84_from_metres
+    return wgs84_from_metres(
+        {"id": zid, **HARD_P0, "altitude_floor_m": 0, "altitude_ceiling_m": 100,
+         "margin_m": 1.0, **kw,
+         "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0},
+                      {"x": x1, "y": y1}, {"x": x0, "y": y1}]},
+        (35.6895, 139.6917))
 
 
 def _free_port() -> int:

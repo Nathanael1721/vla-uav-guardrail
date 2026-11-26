@@ -26,6 +26,7 @@ from guardrail.fsm import (HOLD_HORIZON_CAP_S, EscalationFSM, FSMConfig,  # noqa
 from guardrail.hold_flight import REACHED_M, HoldFlight, transit_velocity  # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
@@ -45,7 +46,7 @@ def _slow_bar(half_len: float = 3.0, speed: float = 1.0, x0: float = 12.0) -> Sh
                      altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
                      motion={"vx_mps": -speed, "vy_mps": 0.0})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(bar, t=0.0)
+    sh.spawn_nfz(geo(bar, sh), t=0.0)
     sh.filter(HERE, Action4D(), t=0.0)
     return sh
 

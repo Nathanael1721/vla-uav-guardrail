@@ -64,6 +64,7 @@ for _p in (ROOT, ROOT / "sitl", ROOT / "tools"):
 from guardrail import terrain                                           # noqa: E402
 from guardrail.models import Action4D, State, policy_from_raw           # noqa: E402
 from guardrail.shield import DEM_BAND_MARGIN_M, Shield                  # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
@@ -91,7 +92,7 @@ def _agl_policy(lo: float = 8.0, hi: float = 60.0, msl=None):
     if msl is not None:
         cons.insert(0, {"id": "msl-ceiling", "type": "altitude_envelope", **H,
                         "alt_min_m": msl[0], "alt_max_m": msl[1], "altitude_ref": "MSL"})
-    return policy_from_raw({"policy_id": "terrain-forecast-test", "constraints": cons},
+    return policy_from_raw(wgs84_doc({"policy_id": "terrain-forecast-test", "constraints": cons}),
                            runtime=False)
 
 

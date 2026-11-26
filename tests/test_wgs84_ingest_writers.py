@@ -61,6 +61,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import api                                          # noqa: E402
+from wgs84_fixture import rest                                  # noqa: E402
 from guardrail.bundle import (LEGACY_POINT_NOTE, check_lock,       # noqa: E402
                               LegacyPointFormRefused,
                               load_for_flight, load_lock, policy_candidates)
@@ -158,27 +159,35 @@ def test_rest_writers_store_wgs84_on_every_shipped_policy():
         cx, cy = rng.uniform(300, 400), rng.uniform(300, 400)
         # POST /dynamic_nfz
         t1 = _tri(rng, cx, cy)
-        api.apply_dynamic_nfz(sh, {"id": "rest-dyn", **RULE, "margin_m": 1.0,
+        rest(api.apply_dynamic_nfz, sh, {"id": "rest-dyn", **RULE, "margin_m": 1.0,
                                    "vertices": [{"x": x, "y": y} for x, y in t1]})
         worst = max(worst, _err(sh.policy, _rule(sh.policy, "rest-dyn"), t1))
-        # POST /hot_apply (dynamic_nfz)
+        # POST /hot_apply (dynamic_nfz); an [x, y] pair is refused since
+        # 2026-11-26 (WP1-14), so the client sends {lat, lon} points
         t2 = _tri(rng, cx + 40, cy)
-        api.apply_event(sh, {"type": "dynamic_nfz", "id": "rest-hot", **RULE,
-                             "margin_m": 1.0, "vertices": [[x, y] for x, y in t2]})
+        try:
+            api.apply_event(sh, {"type": "dynamic_nfz", "id": "rest-hot", **RULE,
+                                 "margin_m": 1.0, "vertices": [[x, y] for x, y in t2]})
+        except api.ApiError as e:
+            assert e.status == 422 and "WP1-14" in e.detail, e.detail
+        else:
+            raise AssertionError(f"{p.name}: an [x, y] pair was accepted")
+        rest(api.apply_event, sh, {"type": "dynamic_nfz", "id": "rest-hot", **RULE,
+                             "margin_m": 1.0, "vertices": [{"x": x, "y": y} for x, y in t2]})
         worst = max(worst, _err(sh.policy, _rule(sh.policy, "rest-hot"), t2))
         # the deprecated POST /nfz (the 2026-07 body)
         t3 = _tri(rng, cx, cy + 40)
-        api.apply_legacy_nfz(sh, {"id": "rest-legacy",
+        rest(api.apply_legacy_nfz, sh, {"id": "rest-legacy",
                                   "vertices": [{"x": x, "y": y} for x, y in t3]})
         worst = max(worst, _err(sh.policy, _rule(sh.policy, "rest-legacy"), t3))
         # PATCH move, then translate by an off-grid offset
         t4 = _tri(rng, cx - 40, cy)
-        api.apply_nfz_edit(sh, "rest-dyn", {"op": "move",
+        rest(api.apply_nfz_edit, sh, "rest-dyn", {"op": "move",
                                             "vertices": [{"x": x, "y": y} for x, y in t4]})
         worst = max(worst, _err(sh.policy, _rule(sh.policy, "rest-dyn"), t4))
         before = [(v.x, v.y) for v in _rule(sh.policy, "rest-dyn").vertices]
         dx, dy = rng.uniform(-3, 3), rng.uniform(-3, 3)
-        api.apply_nfz_edit(sh, "rest-dyn", {"op": "translate", "dx": dx, "dy": dy})
+        rest(api.apply_nfz_edit, sh, "rest-dyn", {"op": "translate", "dx": dx, "dy": dy})
         worst = max(worst, _err(sh.policy, _rule(sh.policy, "rest-dyn"),
                                 [(x + dx, y + dy) for x, y in before]))
         _assert_wgs84(sh.policy, p.name)
@@ -202,7 +211,7 @@ def test_rest_corridor_swap_stores_wgs84():
         for c in cors:
             line = [(x + rng.uniform(-0.5, 0.5), y + rng.uniform(-0.5, 0.5))
                     for x, y in ((v.x, v.y) for v in c.centerline)]
-            api.apply_corridor_swap(sh, {"id": f"swap-{c.id}", "target_id": c.id,
+            rest(api.apply_corridor_swap, sh, {"id": f"swap-{c.id}", "target_id": c.id,
                                          **RULE, "width_m": float(c.width_m),
                                          "altitude_floor_m": float(c.altitude_floor_m),
                                          "altitude_ceiling_m": float(c.altitude_ceiling_m),
@@ -258,7 +267,7 @@ def test_grpc_harness_forward_path_keeps_the_zone():
         p = ROOT / "policies" / name
         dry, flying = Shield(load_policy(p)), Shield(load_policy(p))
         sent = _tri(rng, 250.0, -120.0)
-        out = api.apply_event(dry, {"type": "dynamic_nfz", "id": "grpc-zone", **RULE,
+        out = rest(api.apply_event, dry, {"type": "dynamic_nfz", "id": "grpc-zone", **RULE,
                                     "margin_m": 1.0,
                                     "vertices": [{"x": x, "y": y} for x, y in sent]})
         rule = _rule(dry.policy, out["applied"])
@@ -428,7 +437,7 @@ def test_point_form_labels_every_form():
     # a snapshot written by the metre writes of before 2026-11-17
     sh = Shield(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
     sh.wgs84_writes = False
-    api.apply_dynamic_nfz(sh, {"id": "old-write", **RULE, "margin_m": 1.0,
+    rest(api.apply_dynamic_nfz, sh, {"id": "old-write", **RULE, "margin_m": 1.0,
                                "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6},
                                             {"x": 31, "y": 14}]})
     snap = Policy.model_validate(json.loads(sh.policy.model_dump_json()))
@@ -438,7 +447,7 @@ def test_point_form_labels_every_form():
     # policy stays as it was loaded
     leg = Shield(Policy.model_validate(copy.deepcopy(METRE_DOC)))
     try:
-        api.apply_dynamic_nfz(leg, {"id": "z", **RULE, "margin_m": 1.0,
+        rest(api.apply_dynamic_nfz, leg, {"id": "z", **RULE, "margin_m": 1.0,
                                     "vertices": [{"x": 50, "y": 0}, {"x": 60, "y": 0},
                                                  {"x": 60, "y": 9}]})
     except api.ApiError as e:

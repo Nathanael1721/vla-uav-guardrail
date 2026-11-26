@@ -49,6 +49,7 @@ from guardrail.fsm import (HOLD_ARRIVAL_SLACK_S, HOLD_MIN_REPLAN_S,  # noqa: E40
                            TickInput)
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -319,7 +320,7 @@ def test_a_look_ahead_view_ages_moving_zones_and_advances_a_moving_subject():
                       altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
                       motion={"vx_mps": -2.0, "vy_mps": 0.0})
     sh = Shield(pol, escalation=False)
-    sh.spawn_nfz(zone, t=0.0)
+    sh.spawn_nfz(geo(zone, sh), t=0.0)
     sh.filter(State(x=-50.0, y=0.0, up=15.0), Action4D(), t=0.0)
     p = State(x=30.0, y=0.0, up=15.0)
     # The zone's near edge (40 - 0.5) reaches x = 30 at t = 4.75 s.
@@ -423,7 +424,7 @@ def _closing_bar(half_len: float, speed: float) -> Shield:
                      altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
                      motion={"vx_mps": -speed, "vy_mps": 0.0})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(bar, t=0.0)
+    sh.spawn_nfz(geo(bar, sh), t=0.0)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
     return sh
 

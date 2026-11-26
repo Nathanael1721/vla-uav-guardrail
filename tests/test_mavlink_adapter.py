@@ -28,6 +28,7 @@ from guardrail import load_policy                                   # noqa: E402
 from guardrail.frames import from_body, to_local_ned                # noqa: E402
 from guardrail.models import PolygonFence, XY                       # noqa: E402
 from guardrail.projection import LocalProjection                    # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -577,8 +578,8 @@ def test_a_switch_hot_applied_mid_flight_takes_its_zone_off_the_next_export():
     assert [f["id"] for f in A.policy_fences(pol, column_m=30.0)[0]] == ["plain"]
     sh = Shield(pol, escalation=False)
     sh.filter(State(x=-50, y=-50, up=10), Action4D())
-    sh.hot_apply(TimeWindowSwitch(id="sw", type="time_window_switch", **HARD_P0,
-                                  target_id="plain", active=False))
+    sh.hot_apply(geo(TimeWindowSwitch(id="sw", type="time_window_switch", **HARD_P0,
+                                  target_id="plain", active=False), sh))
     fences, skipped = A.policy_fences(sh.policy, column_m=30.0)
     assert fences == [] and skipped[0]["id"] == "plain" and "sw" in skipped[0]["why"]
 
@@ -724,9 +725,9 @@ def test_the_mission_shield_replaces_an_illegal_leg_by_its_stop_short_point():
     assert legs[0]["legal"] is False and legs[0]["rules"] == ["nfz-square"]
     assert wps[0]["hold_s"] == M.HOLD_S and wps[0]["x"] < 6.0 and wps[0]["y"] < 6.0, wps[0]
     assert legs[1]["legal"] is None and wps[1]["hold_s"] == 0.0
-    sh.hot_apply(DynamicNFZ(id="hot", type="dynamic_nfz", **HARD_P0,
+    sh.hot_apply(geo(DynamicNFZ(id="hot", type="dynamic_nfz", **HARD_P0,
                             vertices=[XY(x=-4, y=18), XY(x=4, y=18), XY(x=4, y=22),
-                                      XY(x=-4, y=22)], margin_m=1.0))
+                                      XY(x=-4, y=22)], margin_m=1.0), sh))
     v = M.leg_check(sh, (0.0, 5.0, 15.0), (0.0, 30.0, 15.0))
     assert v["legal"] is False and v["rules"] == ["hot"] and 16.5 <= v["first_illegal"][1] <= 17.5
     p = M.stop_short((0.0, 5.0, 15.0), v)

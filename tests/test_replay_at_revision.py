@@ -92,6 +92,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "experiments"))
 
 import replay_at_revision as RA                                   # noqa: E402
+from wgs84_fixture import geo, geo_ring                           # noqa: E402
 
 SKIP = "SKIP"
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
@@ -192,17 +193,17 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     held = (x, y)
     for k in range(ticks):
         if k == spawn_at:
-            sh.hot_apply(DynamicNFZ(
+            sh.hot_apply(geo(DynamicNFZ(
                 id="bar", type="dynamic_nfz", **HARD_P0,
                 vertices=[{"x": x + 9, "y": y - 6}, {"x": x + 11, "y": y - 6},
                           {"x": x + 11, "y": y + 6}, {"x": x + 9, "y": y + 6}],
                 altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
-                motion={"vx_mps": -0.3, "vy_mps": 0.1}))
+                motion={"vx_mps": -0.3, "vy_mps": 0.1}), sh))
             (run / f"policy_g{sh.policy.generation}.json").write_bytes(
                 sh.policy.canonical_bytes())
             if two_edits:
-                sh.move_nfz("bar", [(x + 10, y - 7), (x + 12, y - 7), (x + 12, y + 7),
-                                    (x + 10, y + 7)],
+                sh.move_nfz("bar", geo_ring([(x + 10, y - 7), (x + 12, y - 7), (x + 12, y + 7),
+                                    (x + 10, y + 7)], sh),
                             motion={"vx_mps": -0.25, "vy_mps": 0.05})
                 (run / f"policy_g{sh.policy.generation}.json").write_bytes(
                     sh.policy.canonical_bytes())

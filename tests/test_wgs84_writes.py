@@ -42,7 +42,14 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
   * the evidence in docs/data/wgs84_bind_default_20261117 says what its
     README says, and its diff tool drops only wall-clock keys;
   * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
-    agree with the Shield's writes; the 1-um consistency guard fires.
+    agree with the Shield's writes; the 1-um consistency guard fires;
+  * since 2026-11-26 every entry takes an absolute position in WGS84 only
+    (the DSL loaders, the REST bodies, the Shield's spawn / move / swap /
+    pre-start add, a new derive): metres are refused naming the tool-side
+    conversion (models.wgs84_from_metres), which stores what the ingest
+    stored; the legacy metre read is load_legacy_metre_policy. The REST
+    checks below send what a client sends since then: metres converted tool
+    side (tests/wgs84_fixture.py `rest`).
 
 The REST checks call the guardrail.api functions the routes call
 (api.apply_dynamic_nfz, apply_nfz_edit, apply_corridor_swap); the FastAPI
@@ -63,13 +70,15 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import api                                          # noqa: E402
 from guardrail.compiler import ConstraintCompiler, Mission         # noqa: E402
-from guardrail.models import (Action4D, DynamicNFZ, Policy, State,  # noqa: E402
-                              _rule_points, load_policy, rule_in_wgs84)
+from guardrail.models import (TOOL_SIDE_CONVERSION, Action4D,      # noqa: E402
+                              DynamicNFZ, Policy, State, _rule_points, load_policy,
+                              rule_in_wgs84, wgs84_from_metres)
 from guardrail.projection import (LocalProjection, local_metres,  # noqa: E402
                                   metres_to_wgs84)
 from guardrail.scenario_events import EventState, apply_event      # noqa: E402
 from guardrail.scenario_spec import ScenarioEvent                  # noqa: E402
 from guardrail.shield import HotApplyRefused, Shield               # noqa: E402
+from wgs84_fixture import geo, geo_ring, rest                  # noqa: E402
 
 SITL = ROOT / "policies" / "sim_demo_policy.yaml"      # CMAC origin, SITL rails
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"    # a corridor, PAS origin
@@ -181,8 +190,8 @@ def test_roundtrip_metres_wgs84_metres():
 def test_rest_spawn_stores_wgs84_same_zone():
     new, old = _pair()
     h0 = new.policy.policy_hash
-    api.apply_dynamic_nfz(new, copy.deepcopy(ZONE))
-    api.apply_dynamic_nfz(old, copy.deepcopy(ZONE))
+    rest(api.apply_dynamic_nfz, new, copy.deepcopy(ZONE))
+    rest(api.apply_dynamic_nfz, old, copy.deepcopy(ZONE))
     z = new.policy.constraints[-1]
     assert all(v.geographic for v in z.vertices)
     assert [(v.x, v.y) for v in z.vertices] == \
@@ -198,7 +207,7 @@ def test_rest_spawn_stores_wgs84_same_zone():
 def test_rest_patch_edits_store_wgs84():
     new, old = _pair()
     for sh in (new, old):
-        api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
+        rest(api.apply_dynamic_nfz, sh, copy.deepcopy(ZONE))
     edits = [{"op": "translate", "dx": 5, "dy": -2.5},
              {"op": "move", "vertices": [{"x": 40, "y": 0}, {"x": 48, "y": 0},
                                          {"x": 48, "y": 9.25}, {"x": 40, "y": 9.25}]},
@@ -206,7 +215,7 @@ def test_rest_patch_edits_store_wgs84():
              {"op": "rotate", "angle_deg": 30}]
     for body in edits:
         for sh in (new, old):
-            api.apply_nfz_edit(sh, ZONE["id"], dict(body))
+            rest(api.apply_nfz_edit, sh, ZONE["id"], dict(body))
         _all_wgs84(new.policy)
         _reload_same(new.policy)
         # the live rings: the same floats while every point is on the
@@ -231,7 +240,7 @@ def test_rest_lat_lon_spawn_unchanged():
     verts = [dict(zip(("lat", "lon"), metres_to_wgs84(o, x, y)))
              for x, y in ((10, 10), (18, 10), (18, 17))]
     for sh in (new, old):
-        api.apply_dynamic_nfz(sh, {**ZONE, "id": "ll", "vertices": verts})
+        rest(api.apply_dynamic_nfz, sh, {**ZONE, "id": "ll", "vertices": verts})
     assert _stored(new.policy) == _stored(old.policy)
     assert new.policy.policy_hash == old.policy.policy_hash
     _all_wgs84(new.policy)
@@ -243,7 +252,7 @@ def test_rest_corridor_swap_stores_wgs84():
             "centerline": [{"x": 0, "y": 0}, {"x": 60, "y": 0}, {"x": 60, "y": 75.5}],
             "width_m": 30, "altitude_floor_m": 10, "altitude_ceiling_m": 60}
     for sh in (new, old):
-        api.apply_corridor_swap(sh, copy.deepcopy(body))
+        rest(api.apply_corridor_swap, sh, copy.deepcopy(body))
     sp = new.policy.constraints[-1]
     assert sp.type == "corridor_swap" and all(v.geographic for v in sp.centerline)
     assert list(sp.points()) == list(old.policy.constraints[-1].points())
@@ -259,8 +268,8 @@ def test_prestart_fences_store_wgs84():
               "center": {"x": -40.5, "y": 12}, "radius_m": 6}
     from guardrail.models import CircleFence, PolygonFence
     for sh in (new, old):
-        sh.hot_apply(PolygonFence.model_validate(fence))
-        sh.hot_apply(CircleFence.model_validate(circle))
+        sh.hot_apply(geo(PolygonFence.model_validate(fence), sh))
+        sh.hot_apply(geo(CircleFence.model_validate(circle), sh))
     _all_wgs84(new.policy)
     _reload_same(new.policy)
     c_new, c_old = new.policy.constraints[-1], old.policy.constraints[-1]
@@ -322,8 +331,8 @@ def test_csp_and_decisions_unchanged():
     tick, past a spawned and edited zone."""
     new, old = _pair()
     for sh in (new, old):
-        api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
-        api.apply_nfz_edit(sh, ZONE["id"], {"op": "translate", "dx": -2, "dy": 1})
+        rest(api.apply_dynamic_nfz, sh, copy.deepcopy(ZONE))
+        rest(api.apply_nfz_edit, sh, ZONE["id"], {"op": "translate", "dx": -2, "dy": 1})
     m = Mission(task_text="fly to (60, 10) altitude 20", target_x=60, target_y=10,
                 cruise_alt_m=20, speed_pref_mps=4)
 
@@ -372,14 +381,14 @@ def test_a_policy_with_no_frame_refuses_event_writes():
     old.wgs84_writes = False
     h0, g0 = new.policy.policy_hash, new.policy.generation
     try:
-        api.apply_dynamic_nfz(new, copy.deepcopy(ZONE))
+        rest(api.apply_dynamic_nfz, new, copy.deepcopy(ZONE))
     except api.ApiError as e:
         assert e.status == 422 and "no WGS84 frame origin" in e.detail, (e.status, e.detail)
     else:
         raise AssertionError("an event on a policy with no frame wrote metres")
     assert (new.policy.policy_hash, new.policy.generation) == (h0, g0)
-    api.apply_dynamic_nfz(old, copy.deepcopy(ZONE))
-    api.apply_nfz_edit(old, ZONE["id"], {"op": "rotate", "angle_deg": 15})
+    rest(api.apply_dynamic_nfz, old, copy.deepcopy(ZONE))
+    rest(api.apply_nfz_edit, old, ZONE["id"], {"op": "rotate", "angle_deg": 15})
     assert not any(v.geographic for v in old.policy.constraints[-1].vertices)
     # The converter itself: a rule with points refuses, one without passes.
     try:
@@ -421,14 +430,14 @@ def test_derived_frame_is_never_moved():
         {"id": "pre", "type": "polygon_fence", **RULE,
          "vertices": [{"x": 30, "y": 15}, {"x": 40, "y": 15}, {"x": 40, "y": 25}]})
     try:
-        sh.hot_apply(fence)
+        sh.hot_apply(geo(fence, sh))
     except HotApplyRefused as e:
         assert "derived frame origin" in str(e), e
     else:
         raise AssertionError("a pre-start fence that moves the derived frame was accepted")
     assert sh.policy.frame_origin == fo and sh.policy.generation == 0
     # a zone does not take part in the derivation: converted and accepted
-    api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
+    rest(api.apply_dynamic_nfz, sh, copy.deepcopy(ZONE))
     assert sh.policy.frame_origin == fo
     _all_wgs84(sh.policy)
     _reload_same(sh.policy)
@@ -443,7 +452,7 @@ def test_a_point_beyond_the_lat_lon_range_is_refused():
     far = {**ZONE, "id": "far", "vertices": [{"x": 2e7, "y": 0}, {"x": 2e7 + 8, "y": 0},
                                              {"x": 2e7 + 8, "y": 8}]}
     try:
-        api.apply_dynamic_nfz(sh, far)
+        rest(api.apply_dynamic_nfz, sh, far)
     except api.ApiError as e:
         assert e.status == 422, e
     else:
@@ -453,23 +462,36 @@ def test_a_point_beyond_the_lat_lon_range_is_refused():
 
 
 def test_the_consistency_guard_refuses_a_bad_conversion():
-    """rule_in_wgs84 refuses lat/lon that do not project back within 1 um of
-    the metres given. metres_to_wgs84 cannot produce such a pair for a point
-    inside the lat/lon range (the 12-decimal round trip is far inside the
-    tolerance), so the guard is exercised with a conversion broken on
-    purpose: about 1 mm of latitude too far north."""
+    """rule_in_wgs84 and the tool-side conversion (wgs84_from_metres, a rule
+    or a raw body) refuse lat/lon that do not project back within 1 um of
+    the metres given; so does the Shield's own write of a ring it computes
+    (a translate: 422 over REST). metres_to_wgs84 cannot produce such a pair
+    for a point inside the lat/lon range (the 12-decimal round trip is far
+    inside the tolerance), so the guard is exercised with a conversion
+    broken on purpose: about 1 mm of latitude too far north."""
     import guardrail.models as M
+    sh = Shield(load_policy(SITL))
+    o = sh.policy.frame_origin
+    rest(api.apply_dynamic_nfz, sh, copy.deepcopy(ZONE))         # converted before the break
     good = M.metres_to_wgs84
     M.metres_to_wgs84 = lambda o, x, y: (good(o, x, y)[0] + 1e-8, good(o, x, y)[1])
     try:
-        sh = Shield(load_policy(SITL))
+        zone = DynamicNFZ.model_validate({**ZONE, "type": "dynamic_nfz"})
+        for conv in (lambda: wgs84_from_metres(copy.deepcopy(ZONE), o),
+                     lambda: wgs84_from_metres(zone, o), lambda: rule_in_wgs84(zone, o)):
+            try:
+                conv()
+            except ValueError as e:
+                assert "projects back" in str(e), e
+            else:
+                raise AssertionError("a conversion 1 mm off was written")
         try:
-            api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
+            api.apply_nfz_edit(sh, ZONE["id"], {"op": "translate", "dx": 1.0})
         except api.ApiError as e:
             assert e.status == 422 and "projects back" in str(e), e
         else:
-            raise AssertionError("a conversion 1 mm off was stored")
-        assert sh.policy.generation == 0
+            raise AssertionError("a computed ring converted 1 mm off was stored")
+        assert sh.policy.generation == 1
     finally:
         M.metres_to_wgs84 = good
 
@@ -496,7 +518,7 @@ def test_no_unbound_mode_is_left():
     assert not hasattr(Shield, "wgs84_bind_frame")
     assert "bind" not in inspect.signature(rule_in_wgs84).parameters
     sh = Shield(load_policy(SITL))
-    api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
+    rest(api.apply_dynamic_nfz, sh, {**ZONE, "vertices": OFF_GRID})
     assert _views(_snapshot(sh.policy)) == _views(sh.policy)
 
 
@@ -514,8 +536,8 @@ def test_live_view_is_the_snapshot_view_bit_for_bit():
     worst here is about 0.87 um."""
     sh, old = _pair()
     for s in (sh, old):
-        api.apply_dynamic_nfz(s, copy.deepcopy(ZONE))
-        api.apply_nfz_edit(s, ZONE["id"], {"op": "rotate", "angle_deg": 30})
+        rest(api.apply_dynamic_nfz, s, copy.deepcopy(ZONE))
+        rest(api.apply_nfz_edit, s, ZONE["id"], {"op": "rotate", "angle_deg": 30})
     back = _snapshot(sh.policy)
     assert back.policy_hash == sh.policy.policy_hash
     assert _views(back) == _views(sh.policy)
@@ -596,7 +618,7 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
     switch `wgs84_writes = False` can put one there)."""
     from guardrail import shield as SH
     sh = Shield(load_policy(SITL))
-    api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
+    rest(api.apply_dynamic_nfz, sh, {**ZONE, "vertices": OFF_GRID})
     live = {c.id: SH.tie_tolerance_m(c) for c in sh.policy.constraints}
     assert live[ZONE["id"]] == SH._TIE_BOUND_M
     assert all(v == SH._TIE_M for k, v in live.items() if k != ZONE["id"]), live
@@ -610,7 +632,7 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
                           "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}))
     assert legacy.policy.frame_origin is None
     legacy.wgs84_writes = False
-    api.apply_dynamic_nfz(legacy, {**ZONE, "vertices": OFF_GRID})
+    rest(api.apply_dynamic_nfz, legacy, {**ZONE, "vertices": OFF_GRID})
     assert all(SH.tie_tolerance_m(c) == SH._TIE_M for c in legacy.policy.constraints)
 
 
@@ -666,7 +688,7 @@ def test_a_lat_lon_body_with_inconsistent_metres_is_refused():
         lat, lon = metres_to_wgs84(o, x, y)
         verts.append({"lat": lat, "lon": lon, "x": x + 5e-6, "y": y})
     try:
-        api.apply_dynamic_nfz(sh, {**ZONE, "id": "ll-off", "vertices": verts})
+        rest(api.apply_dynamic_nfz, sh, {**ZONE, "id": "ll-off", "vertices": verts})
     except (api.ApiError, HotApplyRefused) as e:
         assert getattr(e, "status", 422) == 422, e
     else:
@@ -675,15 +697,25 @@ def test_a_lat_lon_body_with_inconsistent_metres_is_refused():
 
 
 def test_a_lat_lon_body_is_bound_too():
-    """A REST body in lat/lon with metres beside them: the metres are checked
-    against the frame and dropped, so the live view is the frame's."""
+    """A rule in lat/lon with metres beside them: the metres are checked
+    against the frame and dropped, so the live view is the frame's. Since
+    2026-11-26 (WP1-14) such a body is refused over REST (a body carries no
+    projected coordinate); a rule handed to the Shield in process (a dump
+    that keeps the view) is still bound."""
     sh = Shield(load_policy(SITL))
     o = sh.policy.frame_origin
     verts = []
     for x, y in ((10.1234567, 10), (18, 10.7654321), (18, 17)):
         lat, lon = metres_to_wgs84(o, x, y)
         verts.append({"lat": lat, "lon": lon, "x": x, "y": y})
-    api.apply_dynamic_nfz(sh, {**ZONE, "id": "ll", "vertices": verts})
+    body = {**ZONE, "id": "ll", "vertices": verts}
+    try:
+        api.apply_dynamic_nfz(sh, copy.deepcopy(body))
+    except api.ApiError as e:
+        assert e.status == 422 and TOOL_SIDE_CONVERSION in e.detail, e.detail
+    else:
+        raise AssertionError("a REST body with x/y beside lat/lon was accepted")
+    sh.spawn_nfz(DynamicNFZ.model_validate({**body, "type": "dynamic_nfz"}))
     z = sh.policy.constraints[-1]
     assert [(v.x, v.y) for v in z.vertices] == \
         [local_metres(o, v.lat, v.lon) for v in z.vertices]
@@ -696,18 +728,34 @@ OFF_GRID = [{"x": 23.1234567, "y": 6}, {"x": 31, "y": 6.7654321}, {"x": 31, "y":
 
 
 def test_derive_on_a_framed_base_matches_hot_apply():
-    """bundle.derive rebuilds a lock recipe as Shield.hot_apply applies it: on
-    a base with a frame, metre points are written as WGS84, so the derived
-    hash is the live hash. `wgs84_writes=False` (a recipe for a run flown on
-    a framed base before 2026-11-17) gives the metre-write hash."""
+    """bundle.derive rebuilds a lock recipe as Shield.hot_apply applies it.
+    A NEW derivation takes WGS84 rules only (WP1-14, 2026-11-26), converted
+    tool side as the live caller converts them, so the derived hash is the
+    live hash; a metre rule is refused. A recorded recipe in metres is a
+    READ (legacy_read=True, as policy_candidates passes it): on a base with
+    a frame its metres are written as WGS84, to the same hash.
+    `wgs84_writes=False` (a recipe for a run flown on a framed base before
+    2026-11-17) gives the metre-write hash."""
     from guardrail.bundle import derive
+    from guardrail.models import ProjectedCoordinatesRefused
     rule = {**ZONE, "type": "dynamic_nfz", "vertices": OFF_GRID}
     new, old = _pair()
-    api.apply_dynamic_nfz(new, copy.deepcopy(rule))
-    api.apply_dynamic_nfz(old, copy.deepcopy(rule))
-    got = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0")
+    rest(api.apply_dynamic_nfz, new, copy.deepcopy(rule))
+    rest(api.apply_dynamic_nfz, old, copy.deepcopy(rule))
+    o = load_policy(SITL).frame_origin
+    got = derive(load_policy(SITL), [wgs84_from_metres(copy.deepcopy(rule), o)], 1,
+                 ir_schema_version="4.0.0")
     assert got.policy_hash == new.policy.policy_hash
     _all_wgs84(got)
+    read = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0",
+                  legacy_read=True)
+    assert read.policy_hash == got.policy_hash
+    try:
+        derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0")
+    except ProjectedCoordinatesRefused as e:
+        assert TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("derive took a metre rule as a new derivation")
     was = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0",
                  wgs84_writes=False, legacy_read=True)
     assert was.policy_hash == old.policy.policy_hash != got.policy_hash
@@ -736,7 +784,7 @@ def test_geo_to_policy_ingest_matches_the_live_hash():
     body = {**ZONE, "vertices": OFF_GRID}
     pol = G.ingest(copy.deepcopy(body), load_policy(SITL))
     live = Shield(load_policy(SITL))
-    api.apply_dynamic_nfz(live, copy.deepcopy(body))
+    rest(api.apply_dynamic_nfz, live, copy.deepcopy(body))
     assert pol.policy_hash == live.policy.policy_hash
     assert not _has_xy(pol.canonical_ir()["constraints"])
     _all_wgs84(pol)
@@ -900,6 +948,215 @@ def test_the_bind_evidence_matches_its_readme():
     assert smoke["headline_after"]["fail_safe_correctness"] == 1.0
     cost = json.loads((d / "tick_cost.json").read_text(encoding="utf-8"))
     assert all(v["view_reads"] == 0 for v in cost["projection_reads_during_ticks"].values())
+
+
+def test_the_tick_cost_tool_still_runs():
+    """tools/wgs84_bind_compare.py tick-cost (the 17 Nov evidence) runs at
+    this revision: its WGS84 arm converts the metre rule tool side before the
+    REST call, which takes lat/lon only since 2026-11-26, and its metre arm
+    (wgs84_writes off) gives the rule to the Shield directly. Until the fix
+    the WGS84-only REST entry answered its metre body with 422."""
+    w = _compare_tool()
+    out = w.tick_cost(ticks=5, rounds=1)
+    for mode in ("metres", "wgs84_bound"):
+        assert out["filter"][mode]["n"] == 5, out
+        assert out["hot_apply_spawn_plus_rotate"][mode]["n"] == 1, out
+    assert out["filter_median_ratio_bound_over_metres"] > 0, out
+
+
+# ------------------------------- WGS84-only entry (WP1-14, 2026-11-26)
+
+METRE_DOC = {"policy_id": "metre-doc", "version": "0.1.0", "constraints": [
+    {"id": "nfz-a", "type": "polygon_fence", **RULE, "margin_m": 1.0,
+     "vertices": [{"x": 10, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10}]}]}
+
+
+def test_the_dsl_entry_takes_a_wgs84_document_only():
+    """load_policy, policy_from_raw and load_layered refuse a document that
+    gives a point in metres (ProjectedCoordinatesRefused, naming the tool-side
+    conversion and the legacy read); legacy_metre_policy_from_raw /
+    load_legacy_metre_policy READ it exactly as the IR does (same hash). A
+    WGS84 document loads through both to the same hash, and a broken metre
+    document is refused for its own defect first (the WP1 negative corpus).
+    Until 2026-11-26 the metre document loaded through every entry."""
+    import tempfile
+    from guardrail.models import (ProjectedCoordinatesRefused, legacy_metre_policy_from_raw,
+                                  load_layered, load_legacy_metre_policy, policy_from_raw)
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "metre.json"
+        f.write_text(json.dumps(METRE_DOC), encoding="utf-8")
+        for load in (lambda: policy_from_raw(copy.deepcopy(METRE_DOC)),
+                     lambda: load_policy(f), lambda: load_policy(f, runtime=False),
+                     lambda: load_layered([f], runtime=False)):
+            try:
+                load()
+            except ProjectedCoordinatesRefused as e:
+                msg = str(e)
+                assert TOOL_SIDE_CONVERSION in msg and "load_legacy_metre_policy" in msg, msg
+                assert "WP1-14" in msg and "convert_policies_wgs84" in msg, msg
+            else:
+                raise AssertionError("a metre document was loaded")
+        read = load_legacy_metre_policy(f, runtime=False)
+        assert read.policy_hash == Policy.model_validate(copy.deepcopy(METRE_DOC)).policy_hash
+        assert read.policy_hash == legacy_metre_policy_from_raw(
+            copy.deepcopy(METRE_DOC), runtime=False).policy_hash
+    pol = load_policy(SITL)
+    raw = json.loads(pol.model_dump_json())
+    assert policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
+    assert legacy_metre_policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
+    broken = copy.deepcopy(METRE_DOC)
+    broken["constraints"].append(copy.deepcopy(broken["constraints"][0]))   # same id twice
+    try:
+        policy_from_raw(broken)
+    except ProjectedCoordinatesRefused as e:
+        raise AssertionError(f"refused for its metres before its own defect: {e}")
+    except ValueError as e:
+        assert "used by 2 rules" in str(e) or "twice" in str(e), e
+
+
+def test_every_shield_entry_refuses_a_metre_position():
+    """Shield.spawn_nfz / hot_apply (dynamic_nfz, corridor_swap, a pre-start
+    polygon_fence) and move_nfz refuse a caller's metre position (until
+    2026-11-26 each converted it at ingest); converted tool side
+    (wgs84_from_metres), each is accepted and stores exactly what the ingest
+    stored (rule_in_wgs84 of the metre rule: same lat/lon, same hash). The
+    relative edits stay in metres."""
+    from guardrail.models import CorridorSwap, PolygonFence
+    o = load_policy(SITL).frame_origin
+    zone = DynamicNFZ.model_validate({**ZONE, "type": "dynamic_nfz"})
+    pre = PolygonFence.model_validate({"id": "pre", "type": "polygon_fence", **RULE,
+                                       "vertices": [{"x": -30, "y": -30}, {"x": -20, "y": -30},
+                                                    {"x": -20, "y": -21}]})
+    for rule, started in ((zone, True), (pre, False)):
+        sh = Shield(load_policy(SITL))
+        if started:
+            sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D())
+        for call in (lambda: sh.hot_apply(rule), lambda: sh.spawn_nfz(rule)) if started \
+                else (lambda: sh.hot_apply(rule),):
+            try:
+                call()
+            except HotApplyRefused as e:
+                assert TOOL_SIDE_CONVERSION in str(e) and "WP1-14" in str(e), e
+            else:
+                raise AssertionError(f"{rule.id}: a metre rule was accepted")
+        assert sh.policy.generation == 0
+        sh.hot_apply(wgs84_from_metres(rule, o))
+        ingest = Shield(load_policy(SITL))
+        if started:
+            ingest.filter(State(x=0.0, y=0.0, up=10.0), Action4D())
+        ingest.hot_apply(rule_in_wgs84(rule, o))
+        assert sh.policy.policy_hash == ingest.policy.policy_hash, rule.id
+        _all_wgs84(sh.policy)
+    # move: {x, y} and (x, y) refused; {lat, lon} accepted
+    sh = Shield(load_policy(SITL))
+    sh.hot_apply(wgs84_from_metres(zone, o))
+    ring = [{"x": 40.0, "y": 0.0}, {"x": 48.0, "y": 0.0}, {"x": 48.0, "y": 8.0}]
+    for bad in (ring, [(v["x"], v["y"]) for v in ring],
+                [{**g, **m} for g, m in zip(wgs84_from_metres(ring, o), ring)]):
+        try:
+            sh.move_nfz(zone.id, bad)
+        except HotApplyRefused as e:
+            assert TOOL_SIDE_CONVERSION in str(e), e
+        else:
+            raise AssertionError("a metre move was accepted")
+    g = sh.policy.generation
+    sh.move_nfz(zone.id, wgs84_from_metres(ring, o))
+    assert sorted((v.x, v.y) for v in sh.policy.constraints[-1].vertices) == \
+        sorted((v["x"], v["y"]) for v in ring)
+    for edit in (lambda: sh.translate_nfz(zone.id, 2.0, -1.0), lambda: sh.rotate_nfz(zone.id, 15),
+                 lambda: sh.scale_nfz(zone.id, 1.2)):
+        edit()
+    assert sh.policy.generation == g + 4
+    _all_wgs84(sh.policy)
+    # swap
+    sh = Shield(load_policy(SURVEY))
+    sp = CorridorSwap.model_validate({"id": "swap-1", "type": "corridor_swap",
+                                      "target_id": "corridor-survey-route", **RULE,
+                                      "centerline": [{"x": 0, "y": 0}, {"x": 60, "y": 0}],
+                                      "width_m": 30, "altitude_floor_m": 10,
+                                      "altitude_ceiling_m": 60})
+    try:
+        sh.hot_apply(sp)
+    except HotApplyRefused as e:
+        assert TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("a metre swap was accepted")
+    sh.hot_apply(wgs84_from_metres(sp, sh.policy.frame_origin))
+    _all_wgs84(sh.policy)
+
+
+def test_a_scenario_event_may_give_its_zone_in_lat_lon():
+    """The stress library writes absolute positions in metres, converted
+    tool side (scenario_events.in_wgs84); since 2026-11-26 a spawn's vertices
+    and a swap's centerline may also be written in lat/lon, passed as given,
+    to the same policy hash."""
+    o = load_policy(SITL).frame_origin
+    verts = [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}]
+    hashes = []
+    for v in (verts, wgs84_from_metres(verts, o)):
+        sh = Shield(load_policy(SITL))
+        es = EventState(shields=[sh])
+        ev = ScenarioEvent(at_sim_t=1.0, type="spawn_polygon_fence",
+                           payload={"id": "z", "vertices": v})
+        rec = apply_event(ev, es, State(x=0.0, y=0.0, up=10.0), (1.0, 0.0), 1.0)
+        assert rec["vertices"] == [[23.0, 6.0], [31.0, 6.0], [31.0, 14.0]], rec
+        _all_wgs84(sh.policy)
+        hashes.append(sh.policy.policy_hash)
+    assert hashes[0] == hashes[1]
+
+
+def test_a_recorded_run_is_read_in_the_form_it_was_recorded_in():
+    """A run flown before 2026-11-26 may hold a generation in local metres (a
+    zone hot-applied in metres). Its policy_g<N>.json is a recorded document,
+    so the three readers of a run's generations read it with the legacy read,
+    as they read it before the WGS84-only entry: manifest.
+    resolve_run_generation_chain (the stored-manifest census), harness_service.
+    _blob_is (an episode bundle's held generation under an older run's
+    shortened hash) and sweep_scenarios.run_generations (rescore_rail_run,
+    rail_rule_priorities). On the first review of the branch all three went
+    through policy_from_raw, which refuses metres: the run went unresolved,
+    the generation was left out of the bundle, and the rescore raised."""
+    import tempfile
+    from guardrail import harness_service as HS
+    from guardrail.manifest import resolve_run_generation_chain
+    from guardrail.models import POINTS_WGS84, ProjectedCoordinatesRefused, policy_from_raw
+    S, _ = _harness()
+    g0 = load_policy(SITL)                       # the Shield edits its own copy in place
+    sh = Shield(load_policy(SITL))
+    assert g0.point_form == POINTS_WGS84 and sh.policy.policy_hash == g0.policy_hash
+    sh.wgs84_writes = False                      # writes metres, as runs did before
+    sh.spawn_nfz(DynamicNFZ.model_validate({**copy.deepcopy(ZONE), "type": "dynamic_nfz"}))
+    g1 = sh.policy
+    assert g1.generation == 1 and g1.point_form != POINTS_WGS84, g1.point_form
+    try:                                         # the fixture is the refused form
+        policy_from_raw(json.loads(g1.canonical_bytes()), runtime=False)
+    except ProjectedCoordinatesRefused:
+        pass
+    else:
+        raise AssertionError("the metre generation was not refused by the DSL entry")
+    with tempfile.TemporaryDirectory() as tmp:
+        run = Path(tmp)
+        (run / "policy_g0.json").write_bytes(g0.canonical_bytes())
+        (run / "policy_g1.json").write_bytes(g1.canonical_bytes())
+        # the census: the run's last generation resolves through its chain
+        got = resolve_run_generation_chain(run, g1.policy_hash, [("sim_demo", g0)])
+        assert got is not None and got.endswith("policy_g1 (generations recorded by the run)"), got
+        # the rescore's reader: both generations, the same hashes
+        gens = S.run_generations(run)
+        assert sorted(gens) == [0, 1], gens
+        assert gens[0].policy_hash == g0.policy_hash
+        assert gens[1].policy_hash == g1.policy_hash
+        assert "nfz-landslide-007" in S.rail_rule_priorities(g0, gens)
+    # the episode bundle: a held metre generation under a shortened hash
+    short = next(iter(g1.legacy_hashes().values()))
+    assert short != g1.policy_hash and HS._blob_is(g1.canonical_bytes(), short)
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = HS.write_policy_bundle(tmp, Path(tmp) / "gone.yaml", g0, None,
+                                     [{"generation": 0, "policy_hash": g0.policy_hash},
+                                      {"generation": 1, "policy_hash": short}],
+                                     held={1: g1.canonical_bytes()})
+        assert [g["ir"] for g in idx["generations"]] == \
+            ["generations/policy_g0.json", "generations/policy_g1.json"], idx
 
 
 if __name__ == "__main__":
