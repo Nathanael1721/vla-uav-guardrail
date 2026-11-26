@@ -772,6 +772,10 @@ def test_a_row_without_weights_here_gets_the_same_cells_from_build_and_from_resp
     assert bv["rate_orin"].startswith("not R1") and "1.479 s" in bv["rate_orin"]
     assert "conformance" in bv["closed_loop_hil_c1"] and "flight policy" in bv["closed_loop_hil_c1"]
     assert "| not on this host; on the AGX Orin since 2026-11-22" in V.render_markdown(t)
+    # the AGX load fills the Orin cell but is not an Orin timing (R1 or bench)
+    assert _row(t, "bitvla")["orin_load_only"] and not _row(t, "bitvla")["orin_timed"]
+    assert not _row(t, "cognitivedrone")["orin_load_only"]
+    assert not any(r["orin_load_only"] for r in t["rows"] if r["orin_timed"])
 
 
 def test_respec_leaves_measured_cells_and_drops_text_an_entry_no_longer_has():
@@ -782,11 +786,13 @@ def test_respec_leaves_measured_cells_and_drops_text_an_entry_no_longer_has():
     old_bv = _row(t, "bitvla")
     old_bv["orin_load"] = "old"
     old_bv["cells"]["rate_orin"] = "weights not obtained"
+    old_bv["orin_load_only"] = False
     changed = V.respec(t, "2026-11-26T00:00:00Z")
     assert changed == ["bitvla"]
     assert row["cells"]["rate_desktop"] == "R1: kept"
     assert row["c1"] == V.BACKENDS["stub"]["c1"]
     assert _row(t, "bitvla")["orin_load"] == V.BACKENDS["bitvla"]["orin_load"]
+    assert _row(t, "bitvla")["orin_load_only"] is True
     cd = _row(t, "cognitivedrone")
     assert "orin_load" not in cd and "weights_elsewhere" not in cd
     assert "respec" in V.render_markdown(t).split("\n")[2]

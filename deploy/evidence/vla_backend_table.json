@@ -430,7 +430,8 @@
      "_file": "deploy/evidence/hil/vla_rate_stub.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "bc_v3",
@@ -771,7 +772,8 @@
      "_file": "deploy/evidence/hil/vla_rate_bc_v3.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_4bit",
@@ -861,7 +863,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_bf16",
@@ -1141,7 +1144,8 @@
      "_file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_int8wo",
@@ -1360,7 +1364,8 @@
      "_file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_lora",
@@ -1482,7 +1487,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_ft_run2",
@@ -1635,7 +1641,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_bf16",
@@ -2324,7 +2331,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aiotvla_v10b",
@@ -5925,7 +5933,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "dronecats_2b",
@@ -6526,7 +6535,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "racevla_7b",
@@ -7421,7 +7431,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "cognitivedrone",
@@ -7447,7 +7458,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "bitvla",
@@ -7475,7 +7487,8 @@
    "orin_attempt_only": false,
    "r1_results": [],
    "weights_elsewhere": "not on this host; on the AGX Orin since 2026-11-22 (bitvla-libero-spatial, an arm checkpoint, docs/data/bitvla_loader_20261122/)",
-   "orin_load": "not R1: the real loader on the AGX Orin, 22 Nov 2026 (bf16, PyTorch eager): load 5.94 s, median 1.479 s per answer (n = 20), 0.60 Hz over TCP; conformance 5/5 frames; an arm checkpoint, not a flight policy (docs/data/bitvla_loader_20261122/README.md)"
+   "orin_load": "not R1: the real loader on the AGX Orin, 22 Nov 2026 (bf16, PyTorch eager): load 5.94 s, median 1.479 s per answer (n = 20), 0.60 Hz over TCP; conformance 5/5 frames; an arm checkpoint, not a flight policy (docs/data/bitvla_loader_20261122/README.md)",
+   "orin_load_only": true
   }
  ],
  "other_records": [
@@ -9218,5 +9231,5 @@
  },
  "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "comparison_gaps": [],
- "respec_utc": "2026-11-26T02:08:37Z"
+ "respec_utc": "2026-11-26T02:41:31Z"
 }

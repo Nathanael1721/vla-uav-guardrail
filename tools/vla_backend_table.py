@@ -531,6 +531,9 @@ _C2_AERIAL_4BIT = ("not flyable on the AGX Orin as built: the 4-bit load needs b
 # (`unavailable` plus `weights_elsewhere`) states that host and its record in
 # the weights column, its Orin load in the Orin cell (`orin_load`) and its
 # own C1 reason (`c1`) instead of "weights not obtained" (2026-11-26, ARCH-06).
+# Such a load is not counted as an Orin timing: the row's `orin_timed` stays
+# false (it covers only an R1 result or a labelled bench) and its flag
+# `orin_load_only` is true (orin_load_only below).
 BACKENDS = {
     "stub": {
         "label": "Stub (hand-written P-controller, no model)",
@@ -2036,13 +2039,21 @@ def spec_only_cells(spec: dict) -> dict:
             "closed_loop_hil_c2": c2_cell([], spec)}
 
 
+def orin_load_only(spec: dict, orin_timed: bool) -> bool:
+    """The row's only Orin figure is a load record from its BACKENDS entry
+    (`orin_load`), not an R1 result or a bench: `orin_timed` covers only
+    those, so a consumer reading the flags is told the Orin cell is filled."""
+    return bool(spec.get("orin_load")) and not orin_timed
+
+
 def respec(t: dict, when: str) -> list[str]:
     """Refresh a committed table's rows from BACKENDS without re-reading the
     run folders: every row's own text (label, reasons, notes) is replaced by
     its BACKENDS entry, and the cells of a row that measured nothing on any
     host this table reads (no weights here, no record, no R1) are re-derived
-    from that entry (spec_only_cells). Measured cells are left as they are.
-    Returns the backends whose cells changed."""
+    from that entry (spec_only_cells). Measured cells are left as they are;
+    the `orin_load_only` flag is re-derived for every row. Returns the
+    backends whose cells changed."""
     changed = []
     for r in t["rows"]:
         spec = BACKENDS.get(r["backend"])
@@ -2051,6 +2062,7 @@ def respec(t: dict, when: str) -> list[str]:
         for k in [k for k in r if k in _SPEC_TEXT_KEYS and k not in spec]:
             del r[k]
         r.update({k: v for k, v in spec.items()})
+        r["orin_load_only"] = orin_load_only(spec, bool(r.get("orin_timed")))
         if spec.get("unavailable") and not r.get("records") and not r.get("r1_results"):
             cells = spec_only_cells(spec)
             if cells != r["cells"]:
@@ -3265,7 +3277,9 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
                      "weights_status": weights_status(bid, model_root, repo_weights),
                      "cells": cells, "records": mine,
                      # timed on an Orin at all: an R1 result, or a labelled bench
+                     # (a BACKENDS `orin_load` record is neither: orin_load_only)
                      "orin_timed": bool(orin or benches),
+                     "orin_load_only": orin_load_only(spec, bool(orin or benches)),
                      "orin_r1": bool(orin), "orin_bench": bool(benches) and not orin,
                      "orin_attempt_only": bool(orin_no) and not orin,
                      "r1_results": [{k: v for k, v in r.items() if k not in ("latency_s",)}
