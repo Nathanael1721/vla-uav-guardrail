@@ -1,0 +1,101 @@
+{
+  "started": "2026-11-26T10:09:07",
+  "via_adapter": true,
+  "ap_topics_seen": [
+    "/ap/battery/battery0",
+    "/ap/clock",
+    "/ap/cmd_gps_pose",
+    "/ap/cmd_vel",
+    "/ap/geopose/filtered",
+    "/ap/joy",
+    "/ap/navsat/navsat0",
+    "/ap/pose/filtered",
+    "/ap/tf",
+    "/ap/tf_static",
+    "/ap/time",
+    "/ap/twist/filtered"
+  ],
+  "topics": {
+    "ok": true,
+    "window_s": 5.0,
+    "min_hz": 1.0,
+    "topics": {
+      "time": {
+        "name": "/ap/time",
+        "type": "builtin_interfaces/msg/Time",
+        "n": 421,
+        "hz": 84.2,
+        "ok": true
+      },
+      "pose": {
+        "name": "/ap/pose/filtered",
+        "type": "geometry_msgs/msg/PoseStamped",
+        "n": 143,
+        "hz": 28.6,
+        "ok": true
+      },
+      "navsat": {
+        "name": "/ap/navsat/navsat0",
+        "type": "sensor_msgs/msg/NavSatFix",
+        "n": 25,
+        "hz": 5.0,
+        "ok": true
+      },
+      "geopose": {
+        "name": "/ap/geopose/filtered",
+        "type": "geographic_msgs/msg/GeoPoseStamped",
+        "n": 141,
+        "hz": 28.2,
+        "ok": true
+      }
+    }
+  },
+  "ok": true,
+  "guided": {
+    "status": true,
+    "curr_mode": 4,
+    "tries": 1,
+    "s": 0.0
+  },
+  "armed": true,
+  "arm_s": 4.0,
+  "takeoff": {
+    "via": "mavlink",
+    "ok": true,
+    "result": 0,
+    "url": "tcp:127.0.0.1:5760"
+  },
+  "climb": {
+    "z_m": 9.35,
+    "need_m": 9.0,
+    "ok": true,
+    "s": 9.1
+  },
+  "heading_deg": 359.8,
+  "velocity": {
+    "cmd_enu": [
+      -0.004,
+      1.0
+    ],
+    "cmd_speed": 1.0,
+    "cmd_bearing_deg": 359.8,
+    "speed_tol": 0.3,
+    "bearing_tol_deg": 15.0,
+    "measured_enu": [
+      0.006,
+      0.987
+    ],
+    "velocity_error": 0.016,
+    "displacement_enu": [
+      -0.04,
+      5.65
+    ],
+    "track_bearing_deg": 359.6,
+    "bearing_error_deg": 0.1,
+    "ok": true,
+    "twist_samples": 90
+  },
+  "land": {
+    "status": true
+  }
+}

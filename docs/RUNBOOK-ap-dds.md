@@ -7,7 +7,7 @@ the AP_DDS path on ArduCopter SITL without touching the rig:
 
 | Piece | File | What it does |
 |---|---|---|
-| Build | `sitl/ap_dds/setup_ap_dds.sh` | A SEPARATE ArduPilot checkout (`~/ardupilot-dds`, default `Copter-4.5.7`, the rig's tag) built with `--enable-DDS`; ArduPilot's Micro-XRCE-DDS-Gen; a colcon workspace (`~/ap_dds_ws`) with the micro-ROS agent and `ardupilot_msgs` from the same checkout. Refuses to build into `~/ardupilot`. Installs nothing system-wide. |
+| Build | `sitl/ap_dds/setup_ap_dds.sh` | A SEPARATE ArduPilot checkout (`~/ardupilot-dds`, default `Copter-4.5.7`, the rig's tag) built with `--enable-dds`; ArduPilot's Micro-XRCE-DDS-Gen; a colcon workspace (`~/ap_dds_ws`) with the micro-ROS agent and `ardupilot_msgs` from the same checkout. Refuses to build into `~/ardupilot`. Installs nothing system-wide. |
 | Run | `sitl/ap_dds/start_ap_dds_sitl.sh` | micro-ROS agent on UDP 2019, then the DDS SITL (`-I0`, EEPROM wiped, run dir `~/ap-dds-run`) on its own ROS graph (domain 42, localhost discovery). `AP_DDS_MAVROS=1` adds a MAVROS endpoint (SERIAL2, udp 14550) for stage 1. Refuses to start while tcp:5760 is taken (the rig's SITL). |
 | Check | `sitl/ap_dds/verify_ap_dds.py` | `/ap/time`, `/ap/pose/filtered`, `/ap/navsat`, `/ap/geopose/filtered` at a rate; GUIDED, arm, take off; a velocity through `/ap/cmd_vel` (or through the adapter, `--via-adapter`); flown velocity and track against the command; LAND. Writes `ap_dds_verify.json`, exit 0 only on PASS. |
 | Adapter | `sitl/ap_dds_adapter_node.py` | The Shield's `/shield/setpoint` (body) to `/ap/cmd_vel` (TwistStamped, frame `map`, ENU) with the MAVLink adapter's own rotation; `--forward-modes` sends `/shield/mode_request` to `/ap/mode_switch`. Opt-in: nothing on the KPI rail launches it. |
@@ -232,14 +232,45 @@ signed policy bundle):
 kill %1
 ```
 
-Expected: the Shield arms, takes off and flies its route; its run directory
+Expected: the Shield arms, takes off and flies; its run directory
 (`demo/out/ap_dds_stage1_01`) has its usual events, and
 `ap_dds_adapter_log.jsonl` there has one line per forwarded setpoint with
-`ap_receives_ned` equal to `ned`. To be confirmed on the first run: that the
-Shield's delivery watchdog accepts the AP_DDS adapter's
-`/mavlink_adapter/sent` reports and beat (the adapter publishes them on the
-same topic and format as the MAVLink adapter). If it does not, record the
-failure here; the row stays PARTIAL.
+`ap_receives_ned` equal to `ned`.
+
+The Shield's delivery watchdog accepts the AP_DDS adapter's
+`/mavlink_adapter/sent` reports and beat (same topic, QoS depth and JSON as
+the MAVLink adapter; `tests/test_ap_dds_adapter.py`
+`test_the_shields_delivery_monitor_accepts_the_adapters_reports`). Flown on
+`ap_dds_stage1_01` (26 Nov): metrics.json `setpoint_delivery` 244 published,
+244 reports, 101 beats, no gap, no shortfall.
+
+The default scenario above is the stub flying straight at `nfz-square`: the
+Shield escalates on the first tick (X1 Brake, G3 Loiter held in GUIDED,
+G5 RTL after 30 s), so only 2 ticks are "flown" (`flown` counts the pilot's
+action or the FSM's stop, not the hold's own stream). The MAVLink rail does
+the same with this scenario (hil_smoke_03, 2 of 303 ticks). To fly a route
+through the AP_DDS adapter, give both nodes a target clear of the zone and
+the bundle, as `sitl/run_ros2_demo.sh` does (`=`: argparse reads a bare
+`-30,30` as an option):
+
+```bash
+# ENV first
+B=bundles/fase3-sim-demo-v0.1.4.tar.gz
+~/venv-ros/bin/python sitl/ros2_vla_stub_node.py --bundle $B --target=-30,30 &
+~/venv-ros/bin/python sitl/ros2_shield_node.py --shield on --bundle $B \
+  --target=-30,30 --tag ap_dds_stage1_02
+kill %1
+```
+
+Run records on `/mnt/d` (an OneDrive folder through WSL's drvfs): a single
+append there can stall for 300 ms (measured 26 Nov: p99 77 ms, max 324 ms,
+against under 1 ms on WSL's own disk). The Shield writes its records on the
+tick thread, so such a stall during a GUIDED hold exceeds
+`HOLD_STREAM_GAP_S` (0.3 s) and hands the hold to BRAKE ("the stream that
+flies the GUIDED hold faltered"), as on `ap_dds_stage1_01` at 24.6 s
+(`post_publish` 296 ms on tick 244). It is not a delivery fault: the adapter
+sent every setpoint, at most 0.115 s apart. The MAVLink rail on this
+desktop shows the same (Gazebo sweep, 20 Nov: 0.41 s and 0.44 s gaps).
 
 ## What the migration does not cover yet (the grant's "uneven coverage")
 

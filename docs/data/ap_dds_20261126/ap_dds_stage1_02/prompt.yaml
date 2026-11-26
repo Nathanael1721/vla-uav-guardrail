@@ -1,0 +1,95 @@
+mission:
+  task: fly to the northeast pad at 6 m/s
+  target:
+    x: -30.0
+    y: 30.0
+  cruise_alt_m: 15.0
+constraints:
+  policy_id: fase3-sim-demo
+  policy_hash: sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358
+  no_fly_zones:
+  - id: nfz-square
+    vertices:
+    - x: 7.0
+      y: 7.0
+    - x: 23.0
+      y: 7.0
+    - x: 23.0
+      y: 23.0
+    - x: 7.0
+      y: 23.0
+  altitude_band_m:
+  - 10.0
+  - 20.0
+  speed_max_mps: 4.0
+  summary_pack:
+    policy_id: fase3-sim-demo
+    version: 0.1.4
+    generation: 0
+    policy_hash: sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358
+    origin:
+      lat: -35.363261
+      lon: 149.16523
+    n_rules: 3
+    rules_by_type:
+      polygon_fence: 1
+      altitude_envelope: 1
+      kinematic_envelope: 1
+    rules:
+    - id: nfz-square
+      constraint_type: hard
+      priority: P0
+      violation_action: project_fix
+      scope: mission
+      layer: null
+      locked_by: null
+      valid_time: null
+      type: polygon_fence
+      vertices:
+      - lat: -35.36319811793
+        lon: 149.165307108696
+        x: 7.0
+        y: 7.0
+      - lat: -35.363054387485
+        lon: 149.165307108696
+        x: 23.0
+        y: 7.0
+      - lat: -35.363054387485
+        lon: 149.165483357143
+        x: 23.0
+        y: 23.0
+      - lat: -35.36319811793
+        lon: 149.165483357143
+        x: 7.0
+        y: 23.0
+      altitude_floor_m: 0.0
+      altitude_ceiling_m: 100.0
+      margin_m: 1.0
+      altitude_ref: null
+    - id: alt-band
+      constraint_type: hard
+      priority: P0
+      violation_action: project_fix
+      scope: mission
+      layer: null
+      locked_by: null
+      valid_time: null
+      type: altitude_envelope
+      alt_min_m: 10.0
+      alt_max_m: 20.0
+      altitude_ref: null
+    - id: kin-caps
+      constraint_type: hard
+      priority: P1
+      violation_action: project_fix
+      scope: mission
+      layer: null
+      locked_by: null
+      valid_time: null
+      type: kinematic_envelope
+      speed_max_mps: 4.0
+      climb_rate_max_mps: 2.0
+      yaw_rate_max_dps: 45.0
+natural_language_prompt: Never enter zone 'nfz-square'. Stay between 10 m and 20 m
+  altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below
+  45 deg/s.
