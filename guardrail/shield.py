@@ -154,16 +154,22 @@ from .models import (
     KinematicEnvelope,
     ObstacleClearance,
     PeopleClearance,
+    XY,
     Policy,
     PolygonFence,
     State,
     SubjectStandoff,
     TimeWindowSwitch,
     _not_looser,
+    mark_legacy_read,
     no_frame_message,
+    point_gives_metres,
     projected_input_message,
+    ProjectedCoordinatesRefused,
+    projected_rule_problem,
     rule_in_wgs84,
     rule_metre_points,
+    shield_policy_problem,
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -363,9 +369,17 @@ def as_dynamic_nfz(fence: PolygonFence, motion: dict | None = None) -> DynamicNF
     A circle_fence keeps its derived 32-gon as the vertices.
 
     This is the one-line migration for every caller that used to hot-apply a
-    PolygonFence: `shield.hot_apply(as_dynamic_nfz(fence))`."""
+    PolygonFence: `shield.hot_apply(as_dynamic_nfz(fence))`.
+
+    The vertices are copied in the form they are STORED (WP1-14): lat/lon
+    for a WGS84 point, {x, y} for a legacy metre one. A plain model_dump of
+    a point bound to a frame also writes its local x/y view beside lat/lon,
+    which the Shield's event entry refuses as projected coordinates
+    (point_gives_metres); until 2026-11-26 this dumped that view, so the
+    migration this names was refused for every WGS84 fence."""
     data = {"id": fence.id, "type": "dynamic_nfz",
-            "vertices": [v.model_dump(exclude_none=True) for v in fence.vertices],
+            "vertices": [v.model_dump(exclude_none=True, context={"points": "stored"})
+                         for v in fence.vertices],
             "altitude_floor_m": fence.altitude_floor_m,
             "altitude_ceiling_m": fence.altitude_ceiling_m,
             "margin_m": fence.margin_m, "constraint_type": fence.constraint_type,
@@ -2176,7 +2190,8 @@ class Shield:
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
                  dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False,
                  up_ref: str | None = None, people_source: str | None = None,
-                 clear_response: "_response.VelocityResponse | None" = None):
+                 clear_response: "_response.VelocityResponse | None" = None,
+                 legacy_metres: bool = False):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -2349,7 +2364,34 @@ class Shield:
         frame while the heading turns at the yaw rate (`_arc_offset`) -
         instead of along its world direction at t = 0. `filter()` (a
         world-frame action, flown as a LOCAL_NED velocity that does not
-        turn with the heading) is never arced."""
+        turn with the heading) is never arced.
+
+        legacy_metres: declares a read of the legacy metre form. WGS84 ONLY
+        (WP1-14, since 2026-11-26; grant, Policy DSL page: "the DSL itself
+        never carries projected coordinates"): a Shield is not built on a
+        policy that stores a point in local metres (Policy.point_form a
+        legacy form) - ProjectedCoordinatesRefused - unless a declared legacy
+        read covers that content (Policy.legacy_read_covers: models.read_
+        recorded_policy, load_legacy_metre_policy / legacy_metre_policy_from_
+        raw, bundle.load_for_flight legacy_read, bundle.derive legacy_read,
+        Policy.metre_form) or this is True: a re-read of a recorded run, or a
+        test of the local-frame geometry itself. The declaration is a private
+        label bound to the metre points the policy held when it was made: a
+        model_copy with new metre constraints is not covered, and a dump /
+        model_validate round trip drops it (declare it again after a
+        re-read). A WGS84 or point-free policy is untouched by it. This
+        checks the metre FORMS for an in-process caller; a lat/lon point that
+        a document gave with x/y beside it is dropped by the type before a
+        Shield sees it, and is refused at the entries instead. The type
+        (Policy.model_validate) still READS the legacy form, because every
+        recorded artefact is read through it (replay, the lock recipes, the
+        bundles of before 2026-11-03), and the DSL entries (load_policy /
+        policy_from_raw / load_layered), REST / gRPC, the Shield's events and
+        the flight loader refuse it."""
+        problem = None if legacy_metres else shield_policy_problem(policy)
+        if problem:
+            raise ProjectedCoordinatesRefused(problem, policy=policy)
+        self._legacy_metres = bool(legacy_metres)
         if recovery_law not in RECOVERY_LAWS:
             raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
                              f"got {recovery_law!r}")
@@ -6759,6 +6801,9 @@ class Shield:
     # refusal (it is checked first). With wgs84_writes off (the comparison
     # switch above) nothing is refused or converted, as before: metres are
     # stored as given, and a rule given in lat/lon is placed in the frame.
+    # Since 2026-11-26 a lat/lon point given with an x or y key beside it is
+    # refused the same way (models.point_gives_metres; until then its x/y
+    # were checked to 1 um and dropped), as REST refuses it with 422.
     wgs84_writes: bool = True
 
     def _in_frame(self, rule, op: str, *, computed: bool = False):
@@ -6774,10 +6819,12 @@ class Shield:
                 return rule_in_wgs84(rule, frame)
             except ValueError as e:                 # pydantic ValidationError too
                 raise HotApplyRefused(f"{op} {getattr(rule, 'id', '?')!r}: {e}") from None
-        if (not computed and self.policy.frame_origin is not None
-                and rule_metre_points(rule)):
-            raise HotApplyRefused(projected_input_message(
-                f"{op} {getattr(rule, 'id', '?')!r}"))
+        if not computed and self.policy.frame_origin is not None:
+            # A metre point, or (since 2026-11-26) a lat/lon point with x/y
+            # beside it, as REST answers both with 422 (api._points).
+            problem = projected_rule_problem(rule, f"{op} {getattr(rule, 'id', '?')!r}")
+            if problem:
+                raise HotApplyRefused(problem)
         try:
             return rule_in_wgs84(rule, self.policy.frame_origin)
         except ValueError as e:                     # pydantic ValidationError too
@@ -6850,9 +6897,25 @@ class Shield:
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the runtime could not "
                                   f"compile the policy it would leave: "
                                   f"{type(e).__name__}: {e}") from e
+        # A declared legacy read that covered the policy before this event
+        # (Policy.legacy_read_covers, or this Shield built with legacy_metres)
+        # still covers what the event derives from it: the event entry takes
+        # absolute points in WGS84 only, so the only metre points it can
+        # leave are covered ones moved by a relative edit (translate, rotate,
+        # scale) or written by the comparison switch below.
+        covered = (getattr(self, "_legacy_metres", False)
+                   or self.policy.legacy_read_covers())
         # In place: callers (the REST app, the audit logger) hold this Policy.
         self.policy.constraints = constraints
         self.policy.generation = cand.generation
+        if not self.wgs84_writes or covered:
+            # The comparison switch stores metres as the writes of before
+            # 2026-11-17 did: a declared legacy form, so a Shield built on
+            # this generation (the compiler's, a hold search's) re-reads it
+            # as this one wrote it (Shield.__init__, WP1-14). The declaration
+            # is bound to content (mark_legacy_read), so it is made again on
+            # the content this event leaves.
+            mark_legacy_read(self.policy)
         self._anchors = anchors
         self._rt = rt
         ev = {"op": op, "type": rule_type, "rule_id": rule_id,
@@ -7083,8 +7146,11 @@ class Shield:
 
     def _given_ring(self, zone_id: str, vertices) -> list[dict]:
         """A move's vertices as the caller gave them, checked: {lat, lon}
-        points only (WP1-14, 2026-11-26). With wgs84_writes off (the
-        comparison switch) metres are taken as before, unconverted."""
+        points only (WP1-14, 2026-11-26), as dicts or as models.XY points
+        given lat/lon alone (point_gives_metres False). With wgs84_writes
+        off (the comparison switch) metres are taken as before, unconverted.
+        Until 2026-11-26 (second re-review) an XY given {lat, lon} was
+        refused as "given in local metres", which it is not."""
         if not isinstance(vertices, (list, tuple)):
             raise HotApplyRefused(f"move {zone_id!r}: vertices must be a list of "
                                   f"{{lat, lon}} points")
@@ -7104,11 +7170,23 @@ class Shield:
                                   + no_frame_message(f"dynamic_nfz {zone_id!r}"))
         pts = []
         for v in vertices:
-            if not (isinstance(v, dict) and v.get("lat") is not None
-                    and v.get("lon") is not None):
+            if isinstance(v, XY):
+                if point_gives_metres(v):
+                    raise HotApplyRefused(projected_input_message(
+                        f"move {zone_id!r}: vertex {v!r}"))
+                pts.append({"lat": v.lat, "lon": v.lon})
+                continue
+            if not isinstance(v, dict):
                 raise HotApplyRefused(projected_input_message(
-                    f"move {zone_id!r}: vertex {v!r}"))
-            if v.get("x") is not None or v.get("y") is not None:
+                    f"move {zone_id!r}: vertex {v!r}") if isinstance(v, (list, tuple))
+                    else f"move {zone_id!r}: vertex {v!r} is not a {{lat, lon}} point")
+            if v.get("lat") is None or v.get("lon") is None:
+                if "x" in v or "y" in v:
+                    raise HotApplyRefused(projected_input_message(
+                        f"move {zone_id!r}: vertex {v!r}"))
+                raise HotApplyRefused(f"move {zone_id!r}: vertex {v!r} is not a "
+                                      f"{{lat, lon}} point")
+            if "x" in v or "y" in v:            # any x/y key, as api._points
                 raise HotApplyRefused(projected_input_message(
                     f"move {zone_id!r}: vertex {v!r} carries x/y beside lat/lon"))
             pts.append({"lat": v["lat"], "lon": v["lon"]})

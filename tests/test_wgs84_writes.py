@@ -42,7 +42,9 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
   * the evidence in docs/data/wgs84_bind_default_20261117 says what its
     README says, and its diff tool drops only wall-clock keys;
   * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
-    agree with the Shield's writes; the 1-um consistency guard fires;
+    agree with the Shield's writes (since 2026-11-26 the ingest tool, like
+    REST, takes the body as {lat, lon} only, converted tool side); the 1-um
+    consistency guard fires;
   * since 2026-11-26 every entry takes an absolute position in WGS84 only
     (the DSL loaders, the REST bodies, the Shield's spawn / move / swap /
     pre-start add, a new derive): metres are refused naming the tool-side
@@ -629,7 +631,7 @@ def test_the_tie_tolerance_is_a_property_of_what_is_stored():
         {"policy_id": "metres", "version": "0.1.0",
          "constraints": [{"id": "f", "type": "polygon_fence", **RULE,
                           "vertices": [{"x": 0, "y": 0}, {"x": 9, "y": 0}, {"x": 9, "y": 9}],
-                          "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}))
+                          "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}), legacy_metres=True)
     assert legacy.policy.frame_origin is None
     legacy.wgs84_writes = False
     rest(api.apply_dynamic_nfz, legacy, {**ZONE, "vertices": OFF_GRID})
@@ -700,8 +702,10 @@ def test_a_lat_lon_body_is_bound_too():
     """A rule in lat/lon with metres beside them: the metres are checked
     against the frame and dropped, so the live view is the frame's. Since
     2026-11-26 (WP1-14) such a body is refused over REST (a body carries no
-    projected coordinate); a rule handed to the Shield in process (a dump
-    that keeps the view) is still bound."""
+    projected coordinate), and since the review of that day (residual 2) so
+    is such a rule handed to the Shield in process; the tool-side conversion (wgs84_from_metres)
+    checks those metres against the frame, drops them, and its rule is
+    bound."""
     sh = Shield(load_policy(SITL))
     o = sh.policy.frame_origin
     verts = []
@@ -715,7 +719,14 @@ def test_a_lat_lon_body_is_bound_too():
         assert e.status == 422 and TOOL_SIDE_CONVERSION in e.detail, e.detail
     else:
         raise AssertionError("a REST body with x/y beside lat/lon was accepted")
-    sh.spawn_nfz(DynamicNFZ.model_validate({**body, "type": "dynamic_nfz"}))
+    rule = DynamicNFZ.model_validate({**body, "type": "dynamic_nfz"})
+    try:
+        sh.spawn_nfz(rule)
+    except HotApplyRefused as e:
+        assert "x/y beside lat/lon" in str(e) and TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("an in-process rule with x/y beside lat/lon was accepted")
+    sh.spawn_nfz(wgs84_from_metres(rule, o))
     z = sh.policy.constraints[-1]
     assert [(v.x, v.y) for v in z.vertices] == \
         [local_metres(o, v.lat, v.lon) for v in z.vertices]
@@ -776,13 +787,24 @@ def _geo_tool():
 
 
 def test_geo_to_policy_ingest_matches_the_live_hash():
-    """tools/geo_to_policy.py ingest of a POST /dynamic_nfz metre body onto
-    a framed base: stored in WGS84 (no x/y in the canonical IR) and the same
-    hash as api.apply_dynamic_nfz gives the live policy - off-grid metres
-    included."""
+    """tools/geo_to_policy.py ingest of a POST /dynamic_nfz body laid out in
+    metres onto a framed base: since 2026-11-26 (WP1-14) the tool, like
+    REST, takes it as {lat, lon} only, converted tool side (wgs84_from_
+    metres about the base's frame origin), and refuses the metre body
+    itself. What it stores is WGS84 (no x/y in the canonical IR) with the
+    same hash as api.apply_dynamic_nfz gives the live policy - off-grid
+    metres included."""
+    from guardrail.models import ProjectedCoordinatesRefused
     G = _geo_tool()
     body = {**ZONE, "vertices": OFF_GRID}
-    pol = G.ingest(copy.deepcopy(body), load_policy(SITL))
+    base = load_policy(SITL)
+    try:
+        G.ingest(copy.deepcopy(body), base)
+    except ProjectedCoordinatesRefused as e:
+        assert TOOL_SIDE_CONVERSION in str(e), e
+    else:
+        raise AssertionError("the ingest tool took a metre body REST refuses")
+    pol = G.ingest(wgs84_from_metres(copy.deepcopy(body), base.frame_origin), base)
     live = Shield(load_policy(SITL))
     rest(api.apply_dynamic_nfz, live, copy.deepcopy(body))
     assert pol.policy_hash == live.policy.policy_hash
@@ -793,8 +815,9 @@ def test_geo_to_policy_ingest_matches_the_live_hash():
 def test_geo_to_policy_refuses_to_move_a_derived_origin():
     """A base with no stated origin derives its frame from its first
     polygon_fence. Appending one that would become that fence would move
-    every WGS84 point: refused, for a metre rule and - a change from master
-    47b3fde, which accepted it - for a pure lat/lon GeoJSON zone."""
+    every WGS84 point: refused, for a DSL rule (laid out in metres, sent as
+    lat/lon since 2026-11-26) and - a change from master 47b3fde, which
+    accepted it - for a pure lat/lon GeoJSON zone."""
     G = _geo_tool()
     o = (35.6895, 139.6917)
     cl = [dict(zip(("lat", "lon"), metres_to_wgs84(o, x, y))) for x, y in ((0, 0), (80, 0))]
@@ -810,7 +833,7 @@ def test_geo_to_policy_refuses_to_move_a_derived_origin():
     geo = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "properties": {"name": "yard", **RULE},
          "geometry": {"type": "Polygon", "coordinates": [ring]}}]}
-    for src in (fence, geo):
+    for src in (wgs84_from_metres(copy.deepcopy(fence), base.frame_origin), geo):
         try:
             G.ingest(copy.deepcopy(src), base)
         except G.ConversionError as e:
@@ -1001,9 +1024,19 @@ def test_the_dsl_entry_takes_a_wgs84_document_only():
         assert read.policy_hash == legacy_metre_policy_from_raw(
             copy.deepcopy(METRE_DOC), runtime=False).policy_hash
     pol = load_policy(SITL)
-    raw = json.loads(pol.model_dump_json())
+    raw = pol.model_dump(mode="json", context={"points": "stored"})
     assert policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
     assert legacy_metre_policy_from_raw(copy.deepcopy(raw)).policy_hash == pol.policy_hash
+    # A plain dump writes each point's local view beside its lat/lon: refused
+    # at the entry since 2026-11-26, read as before by the legacy read.
+    dumped = json.loads(pol.model_dump_json())
+    try:
+        policy_from_raw(copy.deepcopy(dumped))
+    except ProjectedCoordinatesRefused as e:
+        assert "x/y beside lat/lon" in str(e), e
+    else:
+        raise AssertionError("a document with x/y beside lat/lon was loaded")
+    assert legacy_metre_policy_from_raw(copy.deepcopy(dumped)).policy_hash == pol.policy_hash
     broken = copy.deepcopy(METRE_DOC)
     broken["constraints"].append(copy.deepcopy(broken["constraints"][0]))   # same id twice
     try:

@@ -56,7 +56,9 @@ origin (models.NoFrameOrigin).
 
 PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [{lat, lon}, ...]},
 {"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate", "angle_deg": 30} or
-{"op": "scale", "factor": 1.5}.
+{"op": "scale", "factor": 1.5}. A move refuses any other key (a `geometry:`
+block included; MOVE_KEYS, since 2026-11-26), and so do translate, rotate
+and scale (EDIT_KEYS, since the fourth fix of 2026-11-26).
 
 POST /time_window_switch: {"target_id": "nfz-school-yard", "active": false,
 "constraint_type": "hard", "scope": "mission", "priority": "P0",
@@ -143,7 +145,11 @@ from .shield import (HOT_APPLICABLE, HotApplyRefused, LockedRuleClass, RuleIdCon
 
 
 class NfzRequest(BaseModel):
-    """The 2026-07 POST /nfz body."""
+    """The 2026-07 POST /nfz body. A `geometry:` block (the grant's form) is
+    refused with 422 by apply_legacy_nfz, not ignored (WP1-14, 2026-11-26).
+    Other keys it does not define are ignored, as they always were: callers
+    send this body with the four rule fields beside it, which it reads as
+    the fixed hard / P0 / project_fix / mission it always meant."""
     id: str
     vertices: list[XY] = Field(min_length=3)
     altitude_floor_m: float = 0.0
@@ -179,9 +185,15 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
     [x, y] pair, or x/y beside lat/lon - is refused with 422, naming the
     tool-side conversion (models.wgs84_from_metres, about the policy's
     `origin` from GET /policy). Until then such a point was accepted and
-    written as WGS84 at ingest (deviation 1 of the final report). The point
-    is placed in the policy's frame when the Shield writes it (a policy with
-    no frame origin refuses it: models.NoFrameOrigin, 422)."""
+    written as WGS84 at ingest (deviation 1 of the final report). Every
+    body's points come here, top level or inside a `geometry:` block
+    (_body_points, since the 2026-11-26 review). The point is placed in the
+    policy's frame when the Shield writes it (a policy with no frame origin
+    refuses it: models.NoFrameOrigin, 422). Since 2026-11-26 a point with
+    any other key (`X`, `alt`, `north`) is refused too (422), as the
+    published schema has it (a point is {lat, lon}, additionalProperties
+    false) and a document's point refuses it (extra_forbidden); until then
+    the key was dropped without a word."""
     if not isinstance(pts, list):
         raise ApiError(422, "vertices / centerline must be a list of {lat, lon} points")
     out = []
@@ -197,6 +209,12 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
             raise ApiError(422, projected_input_message(f"point {p!r}"))
         if "lat" not in p or "lon" not in p:
             raise ApiError(422, f"point {p!r} is not a {{lat, lon}} object")
+        extra = set(p) - {"lat", "lon"}
+        if extra:
+            raise ApiError(422, f"point {p!r}: unknown key(s) {sorted(map(str, extra))}; "
+                                f"a point is {{lat, lon}} only (the published schema, "
+                                f"policies/policy_dsl.schema.json: additionalProperties "
+                                f"false)")
         # A lat/lon that is not a number ("abc", null, or an integer too
         # big for a float) is the client's mistake: 422, as the module
         # docstring promises. Until 2026-10-19 float() raised here
@@ -210,6 +228,21 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
             raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
         out.append({"lat": lat, "lon": lon})
     return out
+
+
+def _body_points(shield: Shield, data: dict, key: str) -> dict:
+    """`data` (a copy of a body) with its `key` points (vertices / centerline)
+    through `_points`, wherever the DSL reads them: at the top level, and
+    inside the grant's `geometry:` block (models._normalise_rule lifts it).
+    Until 2026-11-26 only the top level was checked, so a nested body with
+    x/y beside lat/lon was applied (review 2026-11-26, WP1-14). The client's
+    body is not changed."""
+    if key in data:
+        data[key] = _points(shield, data[key])
+    geo = data.get("geometry")
+    if isinstance(geo, dict) and key in geo:
+        data["geometry"] = {**geo, key: _points(shield, geo[key])}
+    return data
 
 
 def _result(ev: dict, **extra) -> dict:
@@ -251,9 +284,7 @@ def apply_dynamic_nfz(shield: Shield, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
-    data = {**body, "type": "dynamic_nfz"}
-    if "vertices" in data:
-        data["vertices"] = _points(shield, data["vertices"])
+    data = _body_points(shield, {**body, "type": "dynamic_nfz"}, "vertices")
     zone = _build(DynamicNFZ, data)
     try:
         return _result(shield.spawn_nfz(zone))
@@ -261,12 +292,56 @@ def apply_dynamic_nfz(shield: Shield, body: dict) -> dict:
         raise _refuse(e) from None
 
 
+# The keys a PATCH /dynamic_nfz/{id} "move" body may carry (WP1-14, 2026-11-26).
+MOVE_KEYS = frozenset({"op", "vertices", "motion", "layer"})
+# ... and each op's (fourth fix of 2026-11-26: translate, rotate and scale
+# ignored any other key, a `geometry:` block or a metre `center` included,
+# and answered 200 with a new generation; nothing projected was stored).
+EDIT_KEYS = {"move": MOVE_KEYS,
+             "translate": frozenset({"op", "dx", "dy", "layer"}),
+             "rotate": frozenset({"op", "angle_deg", "layer"}),
+             "scale": frozenset({"op", "factor", "layer"})}
+
+
 def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
-    """dynamic_nfz "move" / "translate" / "rotate" / "scale"."""
+    """dynamic_nfz "move" / "translate" / "rotate" / "scale".
+
+    A "move" takes the zone's new top-level `vertices` as {lat, lon} points
+    (_points) and refuses any key but MOVE_KEYS (422). Until 2026-11-26 it
+    read `vertices` and ignored the rest, so a body with a `geometry:` block
+    in local metres beside lat/lon vertices answered 200 and bumped the
+    generation, the block dropped without a word (third independent review
+    of WP1-14; nothing projected was stored). A `geometry:` block's points
+    are checked first, as POST /nfz checks them, so x/y there is refused
+    for what it is. translate / rotate / scale carry no point, and each
+    refuses any key but its own (EDIT_KEYS; until the fourth fix of
+    2026-11-26 they ignored them: a rotate's metre `center` was dropped and
+    the zone turned about its vertex mean, answering 200)."""
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
     op = body.get("op")
+    if not isinstance(op, str):
+        # a list or object op is unhashable: checked here, so the EDIT_KEYS
+        # lookup below answers 422, not a TypeError (500)
+        raise ApiError(422, f"op {op!r}: one of move, translate, rotate, scale "
+                            f"(DELETE expires a zone)")
+    if op == "move":
+        if "geometry" in body:
+            _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
+                         "vertices")
+        extra = sorted(str(k) for k in body if k not in MOVE_KEYS)
+        if extra:
+            raise ApiError(422, f"move: unknown key(s) {', '.join(extra)}; a move takes "
+                                f"the zone's top-level `vertices` as {{lat, lon}} points "
+                                f"(and `motion`), no `geometry:` block")
+    elif op in EDIT_KEYS:
+        extra = sorted(str(k) for k in body if k not in EDIT_KEYS[op])
+        if extra:
+            takes = ", ".join(sorted(EDIT_KEYS[op] - {"op", "layer"}))
+            raise ApiError(422, f"{op}: unknown key(s) {', '.join(extra)}; a {op} takes "
+                                f"{takes} only (a relative edit of the zone as it "
+                                f"stands: no point, no `geometry:` block, no centre)")
     try:
         if op == "move":
             ev = shield.move_nfz(zone_id, _points(shield, body.get("vertices")),
@@ -315,9 +390,7 @@ def apply_corridor_swap(shield: Shield, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
-    data = {**body, "type": "corridor_swap"}
-    if "centerline" in data:
-        data["centerline"] = _points(shield, data["centerline"])
+    data = _body_points(shield, {**body, "type": "corridor_swap"}, "centerline")
     sp = _build(CorridorSwap, data)
     try:
         return _result(shield.hot_apply(sp))
@@ -346,7 +419,26 @@ def apply_event(shield: Shield, body: dict) -> dict:
 
 
 def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
-    """POST /nfz, the 2026-07 body: now a dynamic_nfz spawn (same zone)."""
+    """POST /nfz, the 2026-07 body: now a dynamic_nfz spawn (same zone).
+
+    The body's zone is its top-level `vertices`, {lat, lon} only (_points).
+    A `geometry:` block is refused (422), its points checked first as every
+    other route checks them (_body_points): until 2026-11-26 NfzRequest
+    ignored it without a word, so a nested block with x/y beside lat/lon
+    was silently dropped here while /dynamic_nfz and /hot_apply answered
+    422 (review 2026-11-26, WP1-14). The top-level `vertices` go through
+    _points as the body arrives, before NfzRequest reads them: an x or y key
+    whose value is null was dropped by NfzRequest's dump and the zone
+    stored, where every other route answers 422 (found 2026-11-26)."""
+    if isinstance(body, dict) and "geometry" in body:
+        _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
+                     "vertices")
+        raise ApiError(422, "POST /nfz takes the 2026-07 body: the zone's top-level "
+                            "`vertices` as {lat, lon} points, no `geometry:` block. "
+                            "Send a rule in the grant's geometry form to POST "
+                            "/dynamic_nfz")
+    if isinstance(body, dict) and "vertices" in body:
+        body = _body_points(shield, dict(body), "vertices")
     try:
         req = NfzRequest.model_validate(body)
     except ValidationError as e:

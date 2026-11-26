@@ -232,7 +232,7 @@ def test_unsafe_depth_measures_a_moving_zone_where_it_has_moved_to():
         {"id": "mz", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0, "motion": {"vx_mps": 1.0},
          "vertices": [{"x": 10, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5},
                       {"x": 10, "y": 5}]}]})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     sh.filter(State(x=-50.0, y=-50.0, up=10.0), Action4D(), t=0.0)
     here = State(x=25.0, y=0.0, up=10.0)
     d = sh.filter(here, Action4D(), t=10.0)
@@ -335,11 +335,11 @@ def test_the_shared_window_memo_answers_as_each_rule_alone():
     for name, cons, clock, want in _MEMO_CASES:
         pol = Policy.model_validate({"policy_id": "memo", "constraints": cons})
         got = [v.rule_id for v in Shield(pol.model_copy(deep=True), escalation=False,
-                                         now=lambda c=clock: c)._check(st, a)]
+                                         now=lambda c=clock: c, legacy_metres=True)._check(st, a)]
         restore = _no_memo()
         try:
             alone = [v.rule_id for v in Shield(pol.model_copy(deep=True), escalation=False,
-                                               now=lambda c=clock: c)._check(st, a)]
+                                               now=lambda c=clock: c, legacy_metres=True)._check(st, a)]
         finally:
             restore()
         assert alone == want, (name, "the case does not test what it says", alone)

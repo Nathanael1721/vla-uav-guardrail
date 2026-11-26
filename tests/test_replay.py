@@ -1790,7 +1790,7 @@ def test_zone_dwell_counts_a_declared_dynamic_nfz_and_names_a_moving_one():
     named, not scored 0; the margin ring and the band are the rule's."""
     from guardrail.replay import zone_dwell
     from guardrail.shield import Shield
-    sh = Shield(_dwell_policy(), escalation=False)
+    sh = Shield(_dwell_policy(), escalation=False, legacy_metres=True)
     pts = [{"x": 5, "y": 5, "up": 10},       # sq
            {"x": 5, "y": 5, "up": 60},       # sq, above its band: not counted
            {"x": 11, "y": 5, "up": 10},      # sq's margin ring, not its polygon

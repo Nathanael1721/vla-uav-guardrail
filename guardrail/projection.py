@@ -16,14 +16,21 @@ was given x/y HERE, AT LOAD, for every point of the policy. Since 2026-11-03
 to its policy's frame origin when the policy validates, and its metres are
 computed the first time the Shield or the compiler reads `point.x` / `point.y`
 (models.XY), by `local_metres` below, which caches them per origin. Metre-
-authored policies are untouched: they are the legacy form and still load and
-hash exactly as before; since 2026-11-03 no shipped policy is written in it
-(tools/convert_policies_wgs84.py), and since 2026-11-17 a metre point an
-event writes into a policy with a frame (REST hot-apply, the Shield's zone
-edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
-tools/geo_to_policy.py ingest) is converted at ingest (`metres_to_wgs84`,
-models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
-metre form is not STORED, and the converted point is bound to the frame,
+authored policies are the legacy form: they hash exactly as before, and since
+2026-11-26 they are read only through the declared legacy read
+(models.load_legacy_metre_policy; load_policy refuses them, and a flight
+loader reads one only when the lock records it, bundle.recorded_as). Since
+2026-11-03 no shipped policy is written in it (tools/convert_policies_wgs84.py).
+From 2026-11-17 until 2026-11-26 a metre point an event wrote into a policy
+with a frame (REST hot-apply, the Shield's zone edits, the harness's spawned
+zones, a lock recipe rebuilt by bundle.derive, tools/geo_to_policy.py ingest)
+was converted at ingest (`metres_to_wgs84`, models.rule_in_wgs84,
+`raw_points_in_wgs84`). Since 2026-11-26 REST, the Shield's events, a new
+derive and the ingest tool refuse a metre point instead, and the caller
+converts it tool side (models.wgs84_from_metres, through the same functions);
+the harness converts its own scenario events' metres before they reach those
+entries. Either way, in a policy with a frame the metre form is not STORED,
+and the converted point is bound to the frame,
 so the live Shield enforces the micrometre view of its stored lat/lon (the
 metres given, on the micrometre grid; else within 0.6 um), the same floats
 a reload of the snapshot reads (models.rule_in_wgs84). Since 2026-11-18 the
@@ -225,6 +232,22 @@ def metre_point_count(node) -> int:
     return 0
 
 
+def xy_beside_latlon_count(node) -> int:
+    """How many points under `node` are written in WGS84 AND carry an `x` or
+    `y` key beside lat/lon (whatever its value), depth first: a projected
+    coordinate written into the document, which the DSL never carries
+    (WP1-14, since 2026-11-26). Counted on the RAW document because
+    project_raw drops those keys before validation (after checking them
+    against the frame), so the validated policy no longer shows them."""
+    if _is_geo_point(node) and ("x" in node or "y" in node):
+        return 1
+    if isinstance(node, dict):
+        return sum(xy_beside_latlon_count(v) for v in node.values())
+    if isinstance(node, list):
+        return sum(xy_beside_latlon_count(v) for v in node)
+    return 0
+
+
 def geo_points(node) -> list[tuple[float, float]]:
     """Every (lat, lon) under `node`, depth first, in document order."""
     out: list[tuple[float, float]] = []
@@ -346,8 +369,10 @@ def raw_point_metres(point: dict, origin) -> tuple[float, float]:
 def raw_points_in_wgs84(node, origin: tuple[float, float]):
     """A copy of raw rule(s) `node` with every metre point {x, y} written as
     {lat, lon} about `origin` (metres_to_wgs84); everything else as it was.
-    The raw-dict twin of models.rule_in_wgs84, for a tool that appends rules
-    to a policy with a frame (tools/geo_to_policy.py ingest, 2026-11-17)."""
+    The raw-dict twin of models.rule_in_wgs84, for a tool that writes metre
+    rules into a policy with a frame (demo/gui_policy.py, tools/msl_dem_kpi.py,
+    tools/wp1_roundtrip_kpi.py; tools/geo_to_policy.py ingest from 2026-11-17
+    until 2026-11-26, when it began to refuse metres as REST does)."""
     if isinstance(node, list):
         return [raw_points_in_wgs84(v, origin) for v in node]
     if not isinstance(node, dict):

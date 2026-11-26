@@ -136,7 +136,7 @@ NORTH_4 = Action4D(vy=4.0)                           # the goto pilot's command 
 
 def _shield(now=MON_0729_58, policy=None, **kw):
     pol = policy if policy is not None else load_policy(SURVEY)
-    return Shield(pol, now=lambda: now, **kw)
+    return Shield(pol, now=lambda: now, **kw, legacy_metres=True)
 
 
 def _school(**over):

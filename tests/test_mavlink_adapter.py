@@ -576,7 +576,7 @@ def test_a_switch_hot_applied_mid_flight_takes_its_zone_off_the_next_export():
     pol = Policy.model_validate({"policy_id": "hot", "constraints": [
         {"id": "plain", "type": "polygon_fence", **HARD_P0, "vertices": _SQ}]})
     assert [f["id"] for f in A.policy_fences(pol, column_m=30.0)[0]] == ["plain"]
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     sh.filter(State(x=-50, y=-50, up=10), Action4D())
     sh.hot_apply(geo(TimeWindowSwitch(id="sw", type="time_window_switch", **HARD_P0,
                                   target_id="plain", active=False), sh))

@@ -208,7 +208,7 @@ def test_the_same_body_action_in_the_same_body_scene_is_repaired_the_same_at_eve
         up = rng.uniform(4.0, 30.0)
         ref = None
         for h in GRANT_HEADINGS + (37.3, -123.4):
-            d, em = Shield(_scene(x0, y0, h)).filter_body(
+            d, em = Shield(_scene(x0, y0, h), legacy_metres=True).filter_body(
                 State(x=x0, y=y0, up=up, yaw_deg=h), body)
             got = (em, sorted(v.rule_id for v in d.violations), [r.operator for r in d.repairs])
             if ref is None:
@@ -237,6 +237,7 @@ class _FirstHanded(Shield):
     """Records the action the first chain operator is handed, per tick."""
 
     def __init__(self, *a, **k):
+        k.setdefault("legacy_metres", True)     # scenes laid out in local metres
         super().__init__(*a, **k)
         self.first_handed = []
         ops = dict(self.repair_operators)
@@ -305,7 +306,7 @@ def test_sanitise_runs_on_the_body_action_one_channel_at_a_time():
     wrapper `filter` still sanitises the world action it is handed."""
     nan = float("nan")
     for h in (0.0, 37.3, 90.0, -123.4):
-        sh = Shield(_scene(500.0, 500.0, h), escalation=False)     # nothing near
+        sh = Shield(_scene(500.0, 500.0, h), escalation=False, legacy_metres=True)     # nothing near
         d, eb = sh.filter_body(State(x=0.0, y=0.0, up=15.0, yaw_deg=h),
                                Action4D(vx=nan, vy=2.0))
         assert _same(_ch(eb), (0.0, 2.0, 0.0, 0.0)), (h, eb)
@@ -315,7 +316,7 @@ def test_sanitise_runs_on_the_body_action_one_channel_at_a_time():
         assert fin and fin[0].detail == "non-finite channel(s) vx zeroed", (h, d.violations)
         assert [r.operator for r in d.repairs] == ["Sanitise"], (h, d.repairs)
     # The world-frame wrapper: the world channel, as before.
-    d = Shield(_scene(500.0, 500.0, 37.3), escalation=False).filter(
+    d = Shield(_scene(500.0, 500.0, 37.3), escalation=False, legacy_metres=True).filter(
         State(x=0.0, y=0.0, up=15.0, yaw_deg=37.3), Action4D(vx=nan, vy=2.0))
     assert _same(_ch(d.emitted), (0.0, 2.0, 0.0, 0.0)), d.emitted
     assert "non-finite channel(s) vx zeroed" in [v.detail for v in d.violations]
@@ -333,7 +334,7 @@ def test_a_non_finite_heading_zeroes_the_horizontal_channels_as_before():
     in the rotation (math.cos), before and after."""
     nan = float("nan")
     for heading in (nan,):
-        sh = Shield(_scene(500.0, 500.0, 0.0), escalation=False)
+        sh = Shield(_scene(500.0, 500.0, 0.0), escalation=False, legacy_metres=True)
         d, eb = sh.filter_body(State(x=0.0, y=0.0, up=15.0, yaw_deg=heading),
                                Action4D(vx=3.0, vy=1.0, vz_up=0.5))
         assert _same(_ch(d.raw), (0.0, 0.0, 0.5, 0.0)), d.raw
@@ -363,7 +364,7 @@ def test_filter_world_as_body_hands_over_every_tick_in_the_body_frame():
             return super().filter_body(state, body, t, **k)
 
     rng = random.Random(3)
-    sh = Spy(_scene(0.0, 0.0, 0.0))
+    sh = Spy(_scene(0.0, 0.0, 0.0), legacy_metres=True)
     for i in range(50):
         h = rng.uniform(-180.0, 180.0)
         w = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6), vz_up=rng.uniform(-2, 2))
@@ -493,7 +494,7 @@ def test_the_corridor_repair_is_the_body_frame_one():
             Corridor(id="cor", type="corridor", centerline=[XY(x=a[0], y=a[1]), XY(x=b[0], y=b[1])],
                      width_m=8.0, altitude_floor_m=0.0, altitude_ceiling_m=100.0, **HARD),
             _kin()])
-        return Shield(pol), State(x=X0, y=Y0, up=15.0, yaw_deg=h)
+        return Shield(pol, legacy_metres=True), State(x=X0, y=Y0, up=15.0, yaw_deg=h)
     ops = _same_repair_at_every_heading(scene, _bodies(7), ROT_HEADINGS, tol=1e-11)
     assert ops.get("CorridorReturn", 0) >= 15, ops
 
@@ -557,7 +558,7 @@ def test_the_direction_search_is_the_same_body_frame_set_at_every_quarter_turn()
     no flight behind it). 30 divides 90, so at every quarter turn the
     candidates read in the body frame are the same SET as at heading 0; the
     bearing passed in is not used."""
-    sh = Shield(_scene(0.0, 0.0, 0.0))
+    sh = Shield(_scene(0.0, 0.0, 0.0), legacy_metres=True)
     a = Action4D(vx=1.0, vy=0.5, vz_up=0.3, yaw_rate=0.1)
     old = [(math.cos(k * math.pi / 6.0) * (4.0 * f), math.sin(k * math.pi / 6.0) * (4.0 * f))
            for k in range(12) for f in (1.0, 0.5)]

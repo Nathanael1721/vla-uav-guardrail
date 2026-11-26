@@ -784,7 +784,7 @@ def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
          "alt_max_m": 30.0, "scope": "mission", "constraint_type": "soft", "priority": "P2"},
         {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
          "min_range_m": 5.0}]})
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     assert sh.unsafe_depth(State(x=-30, y=-30, up=15)) == 0.0
     assert abs(sh.unsafe_depth(State(x=-30, y=-30, up=7)) - 3.0) < 1e-9     # 3 m under
     inside = sh.unsafe_depth(State(x=10, y=4, up=15))                          # ring at -1
@@ -821,13 +821,13 @@ def test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up():
              "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                           {"x": 7, "y": 23}]}]})
     st, fast = State(x=0, y=15, up=8), Action4D(vx=4.0)
-    kept = Shield(pol("P1"), theta_horizon_s=0.1)
+    kept = Shield(pol("P1"), theta_horizon_s=0.1, legacy_metres=True)
     d = kept.filter(st, fast)
     assert d.relaxed == ["soft-high"], d.relaxed
     assert {"SpeedClamp", "GeofenceSlide", "SoftRelax"} <= {r.operator for r in d.repairs}
     assert kept.applied_caps.to_dict() == {"speed_max_mps": 2.0, "climb_rate_max_mps": 2.0}
     assert d.fsm_fault is None, d.fsm_fault
-    given = Shield(pol("P2"), theta_horizon_s=0.1)
+    given = Shield(pol("P2"), theta_horizon_s=0.1, legacy_metres=True)
     d = given.filter(st, fast)
     assert "soft-speed" in d.relaxed and "SpeedClamp" not in {r.operator for r in d.repairs}
     assert given.applied_caps is None, given.applied_caps
@@ -842,7 +842,7 @@ def test_unsafe_depth_off_a_corridor_is_the_excess_over_its_half_width():
     sh = Shield(Policy.model_validate({"policy_id": "c", "constraints": [
         {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
-         "altitude_floor_m": 5, "altitude_ceiling_m": 30}]}))
+         "altitude_floor_m": 5, "altitude_ceiling_m": 30}]}), legacy_metres=True)
     assert sh.unsafe_depth(State(x=0, y=4.0, up=10)) == 0.0
     assert abs(sh.unsafe_depth(State(x=0, y=8.0, up=10)) - 3.0) < 1e-9
     assert abs(sh.unsafe_depth(State(x=0, y=-9.5, up=10)) - 4.5) < 1e-9
@@ -868,7 +868,7 @@ def test_a_best_effort_recovery_never_deepens_the_ring_it_is_inside():
          "min_range_m": 10.0},
         {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     st = State(x=18.5, y=10.0, up=10.0)          # x North: the zone's north face is x = 20
     sh.set_subject(24.0, 10.0, "vehicle")         # 5.5 m north, inside the 10 m ring
     d = sh.filter(st, Action4D(vx=2.0))
@@ -899,7 +899,7 @@ def test_a_best_effort_recovery_never_heads_deeper_into_the_zone_it_is_inside():
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
     st = State(x=18.5, y=10.0, up=10.0)          # the zone's north face is x = 20
     for raw in (Action4D(vx=-2.0), Action4D(vx=-3.0, vy=-1.0), Action4D(vx=-2.0, vy=0.5)):
-        sh = Shield(pol, escalation=False)
+        sh = Shield(pol, escalation=False, legacy_metres=True)
         sh.set_subject(24.0, 10.0, "vehicle")
         d = sh.filter(st, raw)
         assert d.repairs[-1].operator == "ClearanceEscape", d.repairs
@@ -922,16 +922,16 @@ def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
         z.update(kw)
         return Policy.model_validate({"policy_id": "z", "constraints": [z]})
     st = State(x=18.5, y=10.0, up=10.0)
-    hard = Shield(zone(), escalation=False)
+    hard = Shield(zone(), escalation=False, legacy_metres=True)
     assert [hard._deepens(st, Action4D(vx=v)) for v in (-2.0, 0.0, 2.0)] == [1, 0, 0]
     assert [hard._deepens(st, Action4D(vy=v)) for v in (-2.0, 2.0)] == [0, 0]
     for kw in ({"violation_action": "monitor_only"},
                {"scope": "mission", "constraint_type": "soft", "priority": "P2"}):
-        sh = Shield(zone(**kw), escalation=False)
+        sh = Shield(zone(**kw), escalation=False, legacy_metres=True)
         assert sh._deepens(st, Action4D(vx=-2.0)) == 0, kw
     moving = Shield(Policy.model_validate({"policy_id": "mv", "constraints": [
         {"id": "dyn", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0, "vertices": _SQ20,
-         "motion": {"vx_mps": 3.0}}]}), escalation=False)
+         "motion": {"vx_mps": 3.0}}]}), escalation=False, legacy_metres=True)
     assert [moving._deepens(st, Action4D(vx=v)) for v in (-2.0, 2.0, 4.0)] == [1, 1, 0]
     # Not inside: nothing to deepen.
     assert hard._deepens(State(x=-30.0, y=-30.0, up=10.0), Action4D(vx=4.0)) == 0
@@ -1416,7 +1416,7 @@ def test_history_records_the_brake_and_rescue_branches_too():
         PolygonFence(id="B", type="polygon_fence", **HARD_P0, margin_m=1.0, vertices=[
             {"x": -3, "y": -16}, {"x": 3, "y": -16}, {"x": 3, "y": -10}, {"x": -3, "y": -10}]),
     ])
-    s = Shield(two)
+    s = Shield(two, legacy_metres=True)
     d = s.filter(State(x=0, y=0, up=5), Action4D(vx=4.0))     # slide A -> B -> brake
     assert d.braked and s.history[-1].decision is d
     overlap = Policy(policy_id="ov", constraints=[
@@ -1426,7 +1426,7 @@ def test_history_records_the_brake_and_rescue_branches_too():
         PolygonFence(id="b", type="polygon_fence", **HARD_P0, margin_m=1.0, vertices=[
             {"x": 15, "y": 5}, {"x": 35, "y": 5}, {"x": 35, "y": 25}, {"x": 15, "y": 25}]),
     ])
-    s = Shield(overlap)
+    s = Shield(overlap, legacy_metres=True)
     d = s.filter(State(x=16, y=10, up=10), Action4D())         # inside both
     assert any(r.operator == "ClearanceEscape" for r in d.repairs), d.repairs
     assert s.history[-1].decision is d and len(s.history) == 1
@@ -1612,8 +1612,8 @@ def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
     watched = Policy.model_validate({"policy_id": "mo", "constraints": [
         zone, dict(kin, violation_action="monitor_only", scope="mission", constraint_type="soft",
                    priority="P2")]})
-    assert Shield(watched).filter(st, fast).fsm_fault is None
-    sh = Shield(watched, theta_horizon_s=0.1)
+    assert Shield(watched, legacy_metres=True).filter(st, fast).fsm_fault is None
+    sh = Shield(watched, theta_horizon_s=0.1, legacy_metres=True)
     d = sh.filter(st, fast)
     assert d.fsm_fault is None and d.set_mode is None, d.fsm_fault
     assert sh.applied_caps is None, "a watched-only cap clamps nothing"
@@ -1621,7 +1621,7 @@ def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
     dv = math.hypot(d.emitted.vx - fast.vx, d.emitted.vy - fast.vy)
     assert abs(d.fsm_record["magnitude"]["lateral_m"] - dv * 0.1) < 1e-6
     switched = Shield(Policy.model_validate({"policy_id": "sw", "constraints": [zone, kin]}),
-                      theta_horizon_s=0.1)
+                      theta_horizon_s=0.1, legacy_metres=True)
     switched.filter(State(x=-40, y=-40, up=4), Action4D(vx=1.0), t=0.0)
     switched.set_rule_active("kin", False, t=0.1)
     d = switched.filter(st, fast, t=0.2)
@@ -1629,7 +1629,7 @@ def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
     assert switched.applied_caps is None        # what a rail's own FSM is handed
     # With the cap applied, the measure still starts from the clamped action.
     capped = Shield(Policy.model_validate({"policy_id": "cap", "constraints": [zone, kin]}),
-                    theta_horizon_s=0.1)
+                    theta_horizon_s=0.1, legacy_metres=True)
     d = capped.filter(st, fast)
     assert "SpeedClamp" in [r.operator for r in d.repairs] and d.fsm_fault is None
     assert capped.applied_caps.to_dict() == {"speed_max_mps": 4.0, "climb_rate_max_mps": 2.0}
@@ -1650,8 +1650,8 @@ def test_theta_still_escalates_a_setpoint_change_beyond_it():
         {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                       {"x": 23, "y": 23}, {"x": 7, "y": 23}]}]})
-    assert Shield(pol).filter(State(x=0, y=15, up=4), Action4D(vx=30.0)).fsm_edge == "X1"
-    s = Shield(pol, theta_horizon_s=0.1)
+    assert Shield(pol, legacy_metres=True).filter(State(x=0, y=15, up=4), Action4D(vx=30.0)).fsm_edge == "X1"
+    s = Shield(pol, theta_horizon_s=0.1, legacy_metres=True)
     st, a = State(x=0, y=15, up=4), Action4D(vx=30.0)
     d = s.filter(st, a)
     assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
@@ -1667,7 +1667,7 @@ def test_theta_still_escalates_a_setpoint_change_beyond_it():
 
 
 def test_monitor_only_is_recorded_and_never_repaired():
-    s = Shield(_zone_policy(violation_action="monitor_only"))
+    s = Shield(_zone_policy(violation_action="monitor_only"), legacy_metres=True)
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
     assert [v.rule_id for v in d.violations] == ["nfz"]
     assert d.repairs == [] and not d.braked and d.emitted == d.raw
@@ -1679,7 +1679,7 @@ def test_monitor_only_is_left_alone_when_another_rule_is_repaired():
     """A tick that repairs a speed cap must not, while it is at it, steer away
     from a monitor_only zone: only the cap is enforced, and the zone is still
     on record as flown into."""
-    s = Shield(_zone_policy(violation_action="monitor_only"))
+    s = Shield(_zone_policy(violation_action="monitor_only"), legacy_metres=True)
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=6.0))
     assert sorted(v.rule_id for v in d.violations) == ["kin", "nfz"]
     assert [r.operator for r in d.repairs] == ["SpeedClamp"], d.repairs
@@ -1688,7 +1688,7 @@ def test_monitor_only_is_left_alone_when_another_rule_is_repaired():
 
 
 def test_a_brake_rule_skips_projection_and_stops():
-    s = Shield(_zone_policy(violation_action="brake"))
+    s = Shield(_zone_policy(violation_action="brake"), legacy_metres=True)
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
     assert d.braked and d.emitted == Action4D()
     assert [r.operator for r in d.repairs] == ["Brake"]
@@ -1701,7 +1701,7 @@ def test_direct_failsafe_rules_request_their_mode():
     requested on the transition, a stop on the hand-over tick, nothing after."""
     for act, edge, mode in (("RTL", "G11", "RTL"), ("land", "G12", "LAND"),
                             ("loiter", "X4", "LOITER")):
-        s = Shield(_zone_policy(violation_action=act))
+        s = Shield(_zone_policy(violation_action=act), legacy_metres=True)
         d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
         assert d.braked and (d.fsm_edge, d.set_mode, d.setpoint) == (edge, mode, "brake"), act
         d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
@@ -1714,11 +1714,11 @@ def test_the_autopilots_report_ends_the_shields_failsafe():
     caller that streams `command` and requests `set_mode` from the Shield's
     own FSM can finish an episode instead of holding RTL forever."""
     st, a = State(x=0, y=15, up=4), Action4D(vx=3.0)
-    s = Shield(_zone_policy(violation_action="RTL"))
+    s = Shield(_zone_policy(violation_action="RTL"), legacy_metres=True)
     assert s.filter(st, a, t=0.0).fsm_edge == "G11"
     d = s.filter(st, a, t=0.1, home_reached=True)
     assert (d.fsm_edge, d.fsm_record["terminal"], d.command) == ("G9", True, None)
-    s = Shield(_zone_policy(violation_action="RTL"))
+    s = Shield(_zone_policy(violation_action="RTL"), legacy_metres=True)
     s.filter(st, a, t=0.0)
     d = s.filter(st, a, t=0.1, rtl_failed=True)
     assert (d.fsm_edge, d.set_mode, d.fsm_state_after) == ("G6", "LAND", "Land")
@@ -1729,7 +1729,7 @@ def test_the_autopilots_report_ends_the_shields_failsafe():
 def test_an_rtl_rule_inside_its_zone_recovers_rather_than_stopping():
     """Where a stop is illegal (inside the zone) the Shield still recovers and
     the stop is withheld, while the mode change goes through."""
-    s = Shield(_zone_policy(violation_action="RTL"))
+    s = Shield(_zone_policy(violation_action="RTL"), legacy_metres=True)
     d = s.filter(State(x=10, y=15, up=4), Action4D(vx=0.5))
     assert not d.braked and [r.operator for r in d.repairs] == ["GeofenceEscape"]
     assert (d.fsm_edge, d.set_mode, d.setpoint) == ("G11", "RTL", "pass")
@@ -1741,7 +1741,7 @@ def test_a_soft_rule_is_capped_at_brake():
     """A soft rule written with RTL stops the aircraft but never changes the
     flight mode (fsm.RuleHit.effective_action), and the record says it was
     capped."""
-    s = Shield(_zone_policy(violation_action="RTL", scope="mission", constraint_type="soft"))
+    s = Shield(_zone_policy(violation_action="RTL", scope="mission", constraint_type="soft"), legacy_metres=True)
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
     assert d.braked and d.set_mode is None and d.fsm_state_after == "Brake"
     gov = d.fsm_record["governing_rule"]
@@ -1805,11 +1805,11 @@ def test_a_stop_that_breaks_only_a_soft_rule_is_allowed():
     """Inside a SOFT zone whose action is brake: the stop leaves the aircraft
     inside a rule that allows a stop as its response, so the Shield stops
     rather than recovering. (Only a HARD rule makes a stop illegal.)"""
-    s = Shield(_zone_policy(violation_action="brake", scope="mission", constraint_type="soft"))
+    s = Shield(_zone_policy(violation_action="brake", scope="mission", constraint_type="soft"), legacy_metres=True)
     d = s.filter(State(x=10, y=15, up=4), Action4D(vx=0.5))
     assert d.braked and d.emitted == Action4D(), d
     assert [r.operator for r in d.repairs] == ["Brake"]
-    hard = Shield(_zone_policy(violation_action="brake")).filter(
+    hard = Shield(_zone_policy(violation_action="brake"), legacy_metres=True).filter(
         State(x=10, y=15, up=4), Action4D(vx=0.5))
     assert not hard.braked and [r.operator for r in hard.repairs] == ["GeofenceEscape"]
 
@@ -1826,7 +1826,7 @@ def test_a_hard_rule_is_never_given_up():
         {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 20,
          "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
          "altitude_floor_m": 20, "altitude_ceiling_m": 30}]})
-    d = Shield(pol).filter(State(x=0, y=0, up=5), Action4D(vx=1.0))
+    d = Shield(pol, legacy_metres=True).filter(State(x=0, y=0, up=5), Action4D(vx=1.0))
     assert d.relaxed == [] and not any(r.operator == "SoftRelax" for r in d.repairs)
     assert [v.rule_id for v in d.emitted_violations] == ["low"]
     assert (d.fsm_edge, d.setpoint) == ("X1", "pass")
@@ -1892,7 +1892,7 @@ def test_a_window_ending_17_30_ends_at_17_30_00():
     inside = State(x=0, y=0, up=5)
     for hhmmss, on in (("17:29:59", True), ("17:30:00", True), ("17:30:00.040", True),
                        ("17:30:00.060", False), ("17:30:30", False)):
-        s = Shield(_windowed(), now=_at(hhmmss))
+        s = Shield(_windowed(), now=_at(hhmmss), legacy_metres=True)
         assert bool(s.state_is_unsafe(inside)) is on, hhmmss
 
 
@@ -1902,17 +1902,17 @@ def test_the_lookahead_reads_the_rules_in_force_at_each_poses_time():
     predicted at t + 3.0 s (both sides of 07:30 put the 50 ms before it in
     force too, so the 2.9 s pose is not). Before, the forecast ignored the
     switch-on entirely."""
-    s = Shield(_windowed(), now=_at("07:29:57"))
+    s = Shield(_windowed(), now=_at("07:29:57"), legacy_metres=True)
     v = s._check(State(x=0, y=0, up=5), Action4D())
     assert [(x.rule_id, round(x.predicted_at_s, 6)) for x in v] == [("yard", 3.0)], v
-    s = Shield(_windowed(), now=_at("07:29:59.960"))
+    s = Shield(_windowed(), now=_at("07:29:59.960"), legacy_metres=True)
     assert [round(x.predicted_at_s, 6) for x in s._check(State(x=0, y=0, up=5), Action4D())] == [0.0]
 
 
 def test_the_default_end_of_day_is_the_end_of_the_day():
     """`end_time` defaults to 23:59. Read as the instant 23:59:00 it would
     switch every all-day schedule off for the last minute of each day."""
-    s = Shield(_windowed(end="23:59", start="00:00"), now=_at("23:59:30"))
+    s = Shield(_windowed(end="23:59", start="00:00"), now=_at("23:59:30"), legacy_metres=True)
     assert s.state_is_unsafe(State(x=0, y=0, up=5))
 
 
@@ -1961,7 +1961,7 @@ def test_the_last_instant_of_a_window_is_still_in_force():
     last = datetime(2026, 10, 7, 17, 30, 0)
     assert recurrence_active(rec, last)
     assert not recurrence_active(rec, last.replace(microsecond=1))
-    s = Shield(_windowed(), now=_at("17:30:00.050"))
+    s = Shield(_windowed(), now=_at("17:30:00.050"), legacy_metres=True)
     assert [v.rule_id for v in s.state_is_unsafe(State(x=0, y=0, up=5))] == ["yard"]
 
 
@@ -1981,7 +1981,7 @@ def test_a_window_past_midnight_ends_at_midnight_when_the_next_day_is_not_listed
          "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "22:00",
                                        "end_time": "06:00"}}}]})
     mon = datetime(2026, 10, 5, 23, 59, 58)
-    s = Shield(pol, now=lambda: mon, escalation=False)
+    s = Shield(pol, now=lambda: mon, escalation=False, legacy_metres=True)
     assert s._check(State(x=0, y=0, up=4), Action4D(vx=3.0)) == []
     v = s._check(State(x=0, y=0, up=4), Action4D(vx=8.0))
     assert [(x.rule_id, round(x.predicted_at_s, 6)) for x in v] == [("nfz-night", 1.3)], v
@@ -2034,9 +2034,9 @@ def test_rule_status_reports_no_breach_for_a_rule_out_of_its_window():
     row says inside, not in force, and no breach. At noon it is a breach."""
     from datetime import datetime
     inside = State(x=0, y=0, up=5)
-    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 18, 0)).rule_status(inside)[0]
+    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 18, 0), legacy_metres=True).rule_status(inside)[0]
     assert (row["inside"], row["in_force"], row["breach"]) == (True, False, False), row
-    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 12, 0)).rule_status(inside)[0]
+    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 12, 0), legacy_metres=True).rule_status(inside)[0]
     assert (row["inside"], row["in_force"], row["breach"]) == (True, True, True), row
 
 

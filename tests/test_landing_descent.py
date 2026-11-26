@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 import follow_vlm as F                                           # noqa: E402
 from guardrail import State                                      # noqa: E402
-from guardrail.models import DynamicNFZ, Policy                  # noqa: E402
+from guardrail.models import DynamicNFZ, Policy, mark_legacy_read  # noqa: E402
 from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
@@ -56,9 +56,11 @@ def _policy(low_zone=True, climb=2.0):
                      "altitude_floor_m": 0, "altitude_ceiling_m": 4, "margin_m": 1.0})
     # An origin, so a zone can be hot-applied mid-flight (WP1-14: a policy
     # states its WGS84 frame); the follow policies' home-geo-point.
-    return Policy.model_validate({"policy_id": "landing-descent-test",
-                                  "origin": {"lat": 35.6895, "lon": 139.6917},
-                                  "constraints": cons})
+    # Laid out in local metres about it: a declared legacy read, so the
+    # flight Shield may be built on it (Shield.__init__, WP1-14).
+    return mark_legacy_read(Policy.model_validate({"policy_id": "landing-descent-test",
+                                                   "origin": {"lat": 35.6895, "lon": 139.6917},
+                                                   "constraints": cons}))
 
 
 class FakeDrone:
@@ -376,14 +378,14 @@ def test_the_descent_asks_no_more_than_the_shields_climb_cap():
 
 
 def _corridor_policy():
-    return Policy.model_validate({
+    return mark_legacy_read(Policy.model_validate({
         "policy_id": "landing-corridor-test", "origin": {"lat": 35.6895, "lon": 139.6917},
         "constraints": [
             {"id": "route", "type": "corridor", **HARD_P0,
              "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
              "width_m": 20.0, "altitude_floor_m": 10.0, "altitude_ceiling_m": 20.0},
             {"id": "kin-caps", "type": "kinematic_envelope", **HARD_P0, "priority": "P1",
-             "speed_max_mps": 5.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+             "speed_max_mps": 5.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
 
 
 def test_a_corridor_floor_is_set_aside_but_not_its_sides():
@@ -502,6 +504,7 @@ def test_the_people_rule_judges_people_fed_during_the_descent():
         *[c.model_dump(mode="json") for c in pol.constraints],
         {"id": "de-people", "type": "distance_envelope", **HARD_P0,
          "object_class": "people", "min_distance_m": 5.0}]})
+    mark_legacy_read(pol)                        # laid out in local metres (WP1-14)
     sh = F.flight_shield(pol, None, people_source="test: a walker")
     walker = _Walker()
     feed = F.LandingPeopleFeed(sh, walker, P.PeopleMemory(), 50.0, time.time())

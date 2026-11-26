@@ -60,7 +60,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail import load_policy                                  # noqa: E402
-from guardrail.models import Action4D, Policy, State               # noqa: E402
+from guardrail.models import Action4D, Policy, State, mark_legacy_read  # noqa: E402
 
 # Imported defensively so that, run against a tree without the CSP module, each
 # test fails on its own line with the reason instead of the whole file dying at
@@ -151,7 +151,9 @@ MIX_MISSION = dict(tx=100.0, ty=0.0, alt=15.0, speed=4.0)
 
 
 def _mix():
-    return Policy.model_validate(MIX)
+    # Laid out in local metres: a declared legacy read, so the Shields the
+    # compiler and the cost map build on it may be built (WP1-14).
+    return mark_legacy_read(Policy.model_validate(MIX))
 
 
 # --------------------------------------------------------------------------- #
@@ -2631,7 +2633,7 @@ def test_the_cost_map_follows_the_grants_conventions():
     assert cm.ref.startswith(f"costmap:{pol.policy_id}@v{pol.version}/g0#sha256:")
     # A policy in metres with no origin (the shipped files state one since the
     # WGS84 conversion of 2026-11-03; Policy.metre_form is the old form).
-    metre = K.rasterise_cost_map(load_policy(DEMO).metre_form())
+    metre = K.rasterise_cost_map(mark_legacy_read(load_policy(DEMO).metre_form()))
     assert metre.header["cost_map"]["origin"] is None, "a metre policy has no WGS84 origin"
     shipped = K.rasterise_cost_map(load_policy(DEMO))
     assert set(shipped.header["cost_map"]["origin"]) == {"lat", "lon"}, \
@@ -2700,6 +2702,7 @@ def test_standoff_and_clearance_are_drawn_only_with_their_inputs():
         {"id": "standoff", "type": "subject_standoff", **HARD_P0, "min_range_m": 10.0},
         {"id": "ped-only", "type": "subject_standoff", **HARD_P0, "subject_class": "pedestrian",
          "min_range_m": 20.0}]})
+    mark_legacy_read(pol)                        # laid out in local metres (WP1-14)
     bare = K.rasterise_cost_map(pol)
     whys = {d["id"]: d["why"] for d in bare.header["not_drawn"]}
     assert "no obstacle map" in whys["keep-off"] and "no subject" in whys["standoff"], whys
@@ -2996,8 +2999,9 @@ def test_a_keep_out_zone_is_drawn_with_its_margin_ring():
     from guardrail.shield import Shield
     pol = Policy.model_validate({"policy_id": "ring", "constraints": [
         {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 20, 20), "margin_m": 8.0}]})
+    mark_legacy_read(pol)                        # laid out in local metres (WP1-14)
     cm = K.rasterise_cost_map(pol, altitude_m=15.0, resolution_m=5.0)
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     poly = SPoly([(0, 0), (20, 0), (20, 20), (0, 20)])
     rng = np.random.default_rng(1)
     n = 0

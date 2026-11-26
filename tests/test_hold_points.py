@@ -401,7 +401,7 @@ def _two_zone_policy(window_start: str) -> Policy:
 
 def test_a_transit_never_enters_another_zone():
     pol = _two_zone_policy("08:00")
-    sh = Shield(pol, now=lambda: datetime(2026, 9, 7, 7, 59, 58), escalation=False)
+    sh = Shield(pol, now=lambda: datetime(2026, 9, 7, 7, 59, 58), escalation=False, legacy_metres=True)
     st = State(x=0.0, y=6.0, up=15.0)            # nearer A's north edge, under B
     p = HP.choose_hold_point(sh, st, heading=(0.0, 1.0))
     assert p.kind == "moved" and p.legal, p
@@ -500,7 +500,7 @@ def test_a_transit_never_closes_on_the_person_it_must_keep_clear_of():
          "priority": "P0", "violation_action": "repair", "min_range_m": 10.0},
         wall("north", -3, 9, 40, 40), wall("south", -3, -40, 40, -9),
         wall("east", 9, -40, 40, 40)]})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     sh.set_subject(0.0, 0.0, "pedestrian")
     st = State(x=2.0, y=0.0, up=15.0)
     p = HP.choose_hold_point(sh, st, heading=(-1.0, 0.0))
@@ -524,7 +524,7 @@ def test_no_legal_point_holds_in_place_marked_illegal():
          "altitude_floor_m": 0, "altitude_ceiling_m": 100,
          "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "08:00",
                                        "end_time": "09:00"}}}]})
-    sh = Shield(big, now=lambda: datetime(2026, 9, 7, 7, 59, 58), escalation=False)
+    sh = Shield(big, now=lambda: datetime(2026, 9, 7, 7, 59, 58), escalation=False, legacy_metres=True)
     p = HP.choose_hold_point(sh, State(x=0.0, y=0.0, up=15.0))
     assert p.kind == "in_place" and not p.legal and p.breaks == ("huge",), p
     assert "no point within" in p.reason
@@ -538,7 +538,7 @@ def test_a_landing_site_leaves_a_zone_the_descent_would_enter():
          "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5},
                       {"x": -5, "y": 5}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 8}]})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     st = State(x=0.0, y=0.0, up=15.0)
     assert not sh.hard_violations(sh.state_is_unsafe(st))       # a hover is legal
     p = HP.choose_landing_site(sh, st, heading=(1.0, 0.0))

@@ -135,7 +135,11 @@
 #          that folder SKIPs where it is absent), test_legacy_rails_wgs84_only
 #          (2026-11-21, WP1-14: the six legacy AirSim flight scripts refuse
 #          a metre policy through bundle.load_for_flight; each script's
-#          loader imported, airsim replaced by a stand-in, no simulator).
+#          loader imported, airsim replaced by a stand-in, no simulator),
+#          test_wgs84_entry_residuals (2026-11-26, WP1-14: the published
+#          schema's point is {lat, lon} only; x/y beside lat/lon refused in a
+#          document, a Shield event and a nested REST geometry block; no
+#          Shield on a metre policy without a declared legacy read).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
@@ -817,6 +821,7 @@ jobs:
               tests/test_wgs84_writes.py \
               tests/test_wgs84_ingest_writers.py \
               tests/test_wgs84_frameless_writers.py \
+              tests/test_wgs84_entry_residuals.py \
               tests/test_bundle_census.py \
               tests/test_legacy_rails_wgs84_only.py \
               tests/test_railvideo_truth_frame.py \

@@ -162,7 +162,7 @@ def test_every_reader_of_the_clock_asks_the_shields_rule_clock():
     from guardrail.replay import zone_dwell
     pol = _timed_policy()
     when = datetime(2026, 10, 12, 8, 15)                 # Monday: switch holds 'held' off
-    sh = Shield(pol, now=lambda: when, escalation=False)
+    sh = Shield(pol, now=lambda: when, escalation=False, legacy_metres=True)
     status = {r["id"]: r["in_force"] for r in sh.rule_status(State(x=-50, y=-50, up=10))}
     assert status["yard"] and not status["held"], status
     held = next(c for c in pol.constraints if c.id == "held")
@@ -175,7 +175,7 @@ def test_every_reader_of_the_clock_asks_the_shields_rule_clock():
     orig = RuleClock.on
     RuleClock.on = lambda self, rule, x: True             # everything in force
     try:
-        sh2 = Shield(pol, now=lambda: when, escalation=False)
+        sh2 = Shield(pol, now=lambda: when, escalation=False, legacy_metres=True)
         status2 = {r["id"]: r["in_force"] for r in sh2.rule_status(State(x=-50, y=-50, up=10))}
         assert status2["held"], "the Shield's schedule does not read RuleClock"
         assert K._RuleClock(pol).on(held, when), "the compiler keeps its own clock"
@@ -344,7 +344,7 @@ def test_the_checker_reads_the_trajectory_the_buffer_holds():
     real forecast runs into - so the checker reads the buffer, not a forecast
     of its own. The null: with the buffer untouched the zone is seen."""
     st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=6.0)       # 6 m/s at the box
-    sh = Shield(_fenced(), escalation=False)
+    sh = Shield(_fenced(), escalation=False, legacy_metres=True)
     d = sh.filter(st, a, t=0.0)
     assert [v.rule_id for v in d.violations] == ["box"], d.violations
     orig = SH.SlidingWindow.admit
@@ -354,14 +354,14 @@ def test_the_checker_reads_the_trajectory_the_buffer_holds():
         return orig(self, tick, state, action, moved)
     SH.SlidingWindow.admit = far
     try:
-        blind = Shield(_fenced(), escalation=False).filter(st, a, t=0.0)
+        blind = Shield(_fenced(), escalation=False, legacy_metres=True).filter(st, a, t=0.0)
     finally:
         SH.SlidingWindow.admit = orig
     assert blind.violations == [], "the checker forecast the action itself"
 
 
 def test_the_buffer_keeps_the_last_50_actions_with_their_trajectories():
-    sh = Shield(_fenced(), escalation=False)
+    sh = Shield(_fenced(), escalation=False, legacy_metres=True)
     x = -40.0
     for k in range(60):
         sh.filter(State(x=x, y=float(k % 3), up=10.0), Action4D(vx=2.0, vy=0.1 * k), t=0.1 * k)
@@ -848,7 +848,7 @@ def test_the_rtl_leg_and_the_harness_measures_ask_the_library():
     import sweep_scenarios as SW
     pol = _pol({"id": "box", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
                 "vertices": _sq(20, -5, 30, 5)})
-    sh = Shield(pol, escalation=False)
+    sh = Shield(pol, escalation=False, legacy_metres=True)
     zones = RP.zones_from_shield(sh)
     leg = RP.check_leg(0.0, 0.0, 20.0, (50.0, 0.0), zones)
     assert not leg.clear and leg.blocking == ("box",), leg
@@ -2001,7 +2001,7 @@ def test_the_semantic_reports_altitude_band_is_the_shields_row():
             n_broken += not old
     assert n == 600 and n_held > 50 and n_broken > 50, (n, n_held, n_broken)
     assert SH.altitude_band_report(sh, []) is None
-    nob = Shield(_fenced(), escalation=False)
+    nob = Shield(_fenced(), escalation=False, legacy_metres=True)
     assert SH.altitude_band_report(nob, [{"x": 0.0, "y": 0.0, "up": 99.0}]) is None
     orig = Shield.rule_status
 

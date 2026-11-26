@@ -368,8 +368,10 @@ def load_flight_policy(path: str | Path) -> tuple:
     points are stored in local metres is refused (SystemExit naming why)
     before anything is flown. WP1-14, since 2026-11-21: until then this
     script read it with models.load_policy and flew it. A WGS84 policy loads
-    as before; VLAGUARD_LEGACY_READ=1 re-runs a recorded flight under a
-    metre one, announced as a read."""
+    as before; VLAGUARD_LEGACY_READ=1 declares the legacy read (meant for
+    re-running a recorded flight) and loads a metre one, announced as a read;
+    it declares it for every load_for_flight in the process; since 2026-11-26
+    it reads a policy the lock records only (bundle.recorded_as)."""
     return refuse_or_load_yaml(path)
 
 

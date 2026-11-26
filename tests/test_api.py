@@ -181,7 +181,7 @@ def test_a_lat_lon_zone_lands_in_the_policys_own_frame():
     # A policy written in metres with no origin has no frame for a lat/lon
     # point. Every shipped file states an origin since 2026-11-03 (WP1-14);
     # demo_policy's metre form is the policy as it was.
-    metres = Shield(load_policy(DEMO).metre_form())
+    metres = Shield(load_policy(DEMO).metre_form(), legacy_metres=True)
     metres.filter(State(x=-20, y=-20, up=4), Action4D())
     assert _err(A.apply_dynamic_nfz, metres, {**HARD_P0, "id": "geo", "vertices": [
         {"lat": 25.0, "lon": 121.5}, {"lat": 25.001, "lon": 121.5},
@@ -264,7 +264,7 @@ def _layered_shield(tighten: bool = False) -> Shield:
                                        {"x": 24, "y": 24}, {"x": 6, "y": 24}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0",
                                  "constraints": mis_rules})
-    sh = Shield(merge_layers([reg, mis]))
+    sh = Shield(merge_layers([reg, mis]), legacy_metres=True)
     sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
     return sh
 
@@ -417,6 +417,32 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
     assert [e["op"] for e in c.get("/events").json()] == ["spawn", "translate", "expire"]
 
 
+def test_routes_refuse_an_edit_key_the_op_does_not_define():
+    """PATCH /dynamic_nfz/{id} translate / rotate / scale answered 200 to a
+    key they do not define (a `geometry:` block, a metre `center`) and
+    dropped it (WP1-14, fourth fix of 2026-11-26): now 422, nothing applied,
+    as a move answers (api.EDIT_KEYS)."""
+    sh = _flying()
+    c = _client(sh)
+    if c is None:
+        return SKIP
+    assert c.post("/dynamic_nfz", json=_geo(ZONE, sh)).status_code == 200
+    for body in ({"op": "translate", "dx": 1, "dy": 0,
+                  "geometry": {"vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0},
+                                            {"x": 5, "y": 5}]}},
+                 {"op": "rotate", "angle_deg": 20, "center": {"x": 10, "y": 0}},
+                 {"op": "scale", "factor": 1.5, "X": 1}):
+        r = c.patch("/dynamic_nfz/nfz-landslide", json=body)
+        assert r.status_code == 422 and "unknown key" in r.json()["detail"], r.text
+    # an op that is not a string (a list is unhashable) is a 422 too, not a 500
+    for op in (["translate"], {"op": "translate"}, None, 3):
+        r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": op, "dx": 1})
+        assert r.status_code == 422 and "one of move" in r.json()["detail"], r.text
+    assert c.get("/health").json()["generation"] == 1
+    r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": "rotate", "angle_deg": 20})
+    assert r.status_code == 200 and r.json()["generation"] == 2, r.text
+
+
 def test_routes_switch_swap_and_the_legacy_body():
     from guardrail.models import Policy
     # A frame origin stated: since 2026-11-26 (WP1-14) a swap's centerline is
@@ -427,7 +453,7 @@ def test_routes_switch_swap_and_the_legacy_body():
                                  "constraints": [
         {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}]}]})
-    sh = Shield(pol)
+    sh = Shield(pol, legacy_metres=True)
     c = _client(sh)
     if c is None:
         return SKIP
