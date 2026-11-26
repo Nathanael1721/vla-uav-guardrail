@@ -328,7 +328,7 @@ from .models import wgs84_from_metres
 from .scenario_spec import (Episode, Family, Library, PolicyRef, ScenarioEvent,  # noqa: F401
                             arm_episodes, episode_arms, load_profile)
 
-ROOT =Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 50051
 
 
@@ -1377,13 +1377,15 @@ def rail_bag_and_audit(run_dir: str | Path, ep_dir: str | Path, *,
 
 def _blob_is(blob: bytes, recorded: str) -> bool:
     """Is `blob` the canonical IR the hash `recorded` names? Its SHA-256, or
-    (an older run's shortened hash) the policy it parses to matching it."""
+    (an older run's shortened hash) the policy it parses to matching it.
+    The blob is a recorded generation, read in the form it was recorded in
+    (an older run's may hold local metres; WP1-14)."""
     if "sha256:" + hashlib.sha256(blob).hexdigest() == recorded:
         return True
     try:
-        from .models import policy_from_raw
-        return bool(policy_from_raw(json.loads(blob), source="generation",
-                                    runtime=False).matches_hash(recorded))
+        from .models import legacy_metre_policy_from_raw
+        return bool(legacy_metre_policy_from_raw(json.loads(blob), source="generation",
+                                                 runtime=False).matches_hash(recorded))
     except Exception:                                            # noqa: BLE001
         return False
 

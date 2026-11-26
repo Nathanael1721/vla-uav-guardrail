@@ -2379,7 +2379,7 @@ def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> s
     C-16; one without motion may since 2026-11-15)."""
     if not recorded:
         return None
-    from guardrail.models import era_context, policy_from_raw
+    from guardrail.models import era_context, legacy_metre_policy_from_raw
     run_dir = Path(run_dir)
 
     def gen(f: Path) -> int:
@@ -2391,9 +2391,12 @@ def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> s
     try:
         # A run's policy_g<N>.json records no IR schema version: read as
         # written, so a run flown before IR schema 4.0.0, whose rules leave
-        # `scope` out, resolves as it did (models.era_context).
-        chain = [policy_from_raw(json.loads(f.read_text(encoding="utf-8")), source=f.name,
-                                 runtime=False, context=era_context(None)) for f in gens]
+        # `scope` out, resolves as it did (models.era_context). It is a
+        # recorded document, so it is read in the form it was recorded in:
+        # a run flown before WP1-14 (2026-11-26) may hold local metres.
+        chain = [legacy_metre_policy_from_raw(json.loads(f.read_text(encoding="utf-8")),
+                                              source=f.name, runtime=False,
+                                              context=era_context(None)) for f in gens]
     except Exception:                                          # noqa: BLE001
         return None
     base, _, label = resolve_run_policy({"policy_hash": chain[0].policy_hash}, candidates)

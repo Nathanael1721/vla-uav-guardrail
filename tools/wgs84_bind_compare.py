@@ -302,7 +302,7 @@ def diff_sweeps(before: dict, after: dict, before_runs: Path | None,
 
 def tick_cost(ticks: int = 400, rounds: int = 7) -> dict:
     from guardrail import api
-    from guardrail.models import Action4D, State, load_policy
+    from guardrail.models import Action4D, DynamicNFZ, State, load_policy, wgs84_from_metres
     from guardrail.shield import Shield
     sitl = ROOT / "policies" / "sim_demo_policy.yaml"
     rule = {"id": "nfz-bench", "scope": "mission", "constraint_type": "hard",
@@ -316,7 +316,18 @@ def tick_cost(ticks: int = 400, rounds: int = 7) -> dict:
         if metres:
             sh.wgs84_writes = False
         t0 = time.perf_counter_ns()
-        api.apply_dynamic_nfz(sh, copy.deepcopy(rule))
+        if metres:
+            # The metre arm (comparison switch): the Shield stores the metres
+            # as given. The REST entry takes lat/lon only since 2026-11-26
+            # (WP1-14), so the rule goes to the Shield directly.
+            sh.spawn_nfz(DynamicNFZ.model_validate({**copy.deepcopy(rule),
+                                                    "type": "dynamic_nfz"}))
+        else:
+            # The WGS84 arm: converted tool side, as every metre caller does
+            # since 2026-11-26, inside the timed commit, where the ingest
+            # converted it until then (the same projection.metres_to_wgs84).
+            api.apply_dynamic_nfz(sh, wgs84_from_metres(copy.deepcopy(rule),
+                                                        sh.policy.frame_origin))
         api.apply_nfz_edit(sh, rule["id"], {"op": "rotate", "angle_deg": 17})
         return sh, (time.perf_counter_ns() - t0) / 1e3
 

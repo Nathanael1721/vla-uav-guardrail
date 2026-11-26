@@ -2577,10 +2577,12 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 # converters that write WGS84 from it: bundle.load_for_flight legacy_read
 # (VLAGUARD_LEGACY_READ=1), tools/bundle_census.py, tools/convert_policies_
 # wgs84.py, the bundle export CLI (WGS84 about --origin) and demo/gui_policy.py's
-# base read. A run's stored generations (guardrail/replay.py,
-# tools/replay_at_revision.py) and a bundle's IR are read through the IR
-# (Policy.model_validate) as before; a lock recipe through bundle.derive
-# legacy_read.
+# base read. A recorded run's policy_g<N>.json is read in the form it was
+# recorded in: by legacy_metre_policy_from_raw in
+# manifest.resolve_run_generation_chain, harness_service._blob_is and
+# experiments/sweep_scenarios.run_generations, and through the IR
+# (Policy.model_validate) in guardrail/replay.py. A bundle's IR is read through
+# the IR as before; a lock recipe through bundle.derive legacy_read.
 
 TOOL_SIDE_CONVERSION = "guardrail.models.wgs84_from_metres"
 
@@ -3457,10 +3459,13 @@ def legacy_metre_policy_from_raw(raw, *, source: str = "<policy>", runtime: bool
     """policy_from_raw that also READS the legacy metre form (a document whose
     points are stored in local metres, Policy.point_form; WP1-14). For the
     declared re-reads of recorded documents only - bundle.load_for_flight
-    legacy_read (VLAGUARD_LEGACY_READ=1), tools/replay_at_revision.py,
-    tools/bundle_census.py - never for a new document: the DSL never carries
-    projected coordinates. A WGS84 or point-free document loads exactly as
-    policy_from_raw loads it."""
+    legacy_read (VLAGUARD_LEGACY_READ=1), tools/bundle_census.py,
+    tools/convert_policies_wgs84.py, the bundle export CLI, demo/gui_policy.py's
+    base read, and the readers
+    of a recorded run's policy_g<N>.json (manifest.resolve_run_generation_chain,
+    harness_service._blob_is, experiments/sweep_scenarios.run_generations) -
+    never for a new document: the DSL never carries projected coordinates. A
+    WGS84 or point-free document loads exactly as policy_from_raw loads it."""
     return _policy_from_raw(raw, source=source, runtime=runtime, ground=ground,
                             context=context, legacy_read=True)
 

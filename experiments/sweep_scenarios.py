@@ -5113,14 +5113,16 @@ def run_generations(run_dir: Path) -> dict:
     """{generation: Policy} from a rail run's own policy_g<N>.json files (the
     take-off policy and every hot-applied generation), read without the
     flight loaders' runtime gate (a hot-applied zone is a dynamic_nfz, which
-    a policy FILE may not fly). {} when there are none."""
-    from guardrail.models import policy_from_raw
+    a policy FILE may not fly). {} when there are none. These are recorded
+    documents, read in the form they were recorded in: a run flown before
+    WP1-14 (2026-11-26) may hold local metres."""
+    from guardrail.models import legacy_metre_policy_from_raw
     out = {}
     for f in sorted(Path(run_dir).glob("policy_g*.json")):
         tail = f.stem[len("policy_g"):]
         if tail.isdigit():
-            out[int(tail)] = policy_from_raw(json.loads(f.read_text(encoding="utf-8")),
-                                             source=f.name, runtime=False)
+            out[int(tail)] = legacy_metre_policy_from_raw(
+                json.loads(f.read_text(encoding="utf-8")), source=f.name, runtime=False)
     return out
 
 

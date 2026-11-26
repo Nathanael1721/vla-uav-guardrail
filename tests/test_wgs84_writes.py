@@ -950,6 +950,20 @@ def test_the_bind_evidence_matches_its_readme():
     assert all(v["view_reads"] == 0 for v in cost["projection_reads_during_ticks"].values())
 
 
+def test_the_tick_cost_tool_still_runs():
+    """tools/wgs84_bind_compare.py tick-cost (the 17 Nov evidence) runs at
+    this revision: its WGS84 arm converts the metre rule tool side before the
+    REST call, which takes lat/lon only since 2026-11-26, and its metre arm
+    (wgs84_writes off) gives the rule to the Shield directly. Until the fix
+    the WGS84-only REST entry answered its metre body with 422."""
+    w = _compare_tool()
+    out = w.tick_cost(ticks=5, rounds=1)
+    for mode in ("metres", "wgs84_bound"):
+        assert out["filter"][mode]["n"] == 5, out
+        assert out["hot_apply_spawn_plus_rotate"][mode]["n"] == 1, out
+    assert out["filter_median_ratio_bound_over_metres"] > 0, out
+
+
 # ------------------------------- WGS84-only entry (WP1-14, 2026-11-26)
 
 METRE_DOC = {"policy_id": "metre-doc", "version": "0.1.0", "constraints": [
@@ -1089,6 +1103,60 @@ def test_a_scenario_event_may_give_its_zone_in_lat_lon():
         _all_wgs84(sh.policy)
         hashes.append(sh.policy.policy_hash)
     assert hashes[0] == hashes[1]
+
+
+def test_a_recorded_run_is_read_in_the_form_it_was_recorded_in():
+    """A run flown before 2026-11-26 may hold a generation in local metres (a
+    zone hot-applied in metres). Its policy_g<N>.json is a recorded document,
+    so the three readers of a run's generations read it with the legacy read,
+    as they read it before the WGS84-only entry: manifest.
+    resolve_run_generation_chain (the stored-manifest census), harness_service.
+    _blob_is (an episode bundle's held generation under an older run's
+    shortened hash) and sweep_scenarios.run_generations (rescore_rail_run,
+    rail_rule_priorities). On the first review of the branch all three went
+    through policy_from_raw, which refuses metres: the run went unresolved,
+    the generation was left out of the bundle, and the rescore raised."""
+    import tempfile
+    from guardrail import harness_service as HS
+    from guardrail.manifest import resolve_run_generation_chain
+    from guardrail.models import POINTS_WGS84, ProjectedCoordinatesRefused, policy_from_raw
+    S, _ = _harness()
+    g0 = load_policy(SITL)                       # the Shield edits its own copy in place
+    sh = Shield(load_policy(SITL))
+    assert g0.point_form == POINTS_WGS84 and sh.policy.policy_hash == g0.policy_hash
+    sh.wgs84_writes = False                      # writes metres, as runs did before
+    sh.spawn_nfz(DynamicNFZ.model_validate({**copy.deepcopy(ZONE), "type": "dynamic_nfz"}))
+    g1 = sh.policy
+    assert g1.generation == 1 and g1.point_form != POINTS_WGS84, g1.point_form
+    try:                                         # the fixture is the refused form
+        policy_from_raw(json.loads(g1.canonical_bytes()), runtime=False)
+    except ProjectedCoordinatesRefused:
+        pass
+    else:
+        raise AssertionError("the metre generation was not refused by the DSL entry")
+    with tempfile.TemporaryDirectory() as tmp:
+        run = Path(tmp)
+        (run / "policy_g0.json").write_bytes(g0.canonical_bytes())
+        (run / "policy_g1.json").write_bytes(g1.canonical_bytes())
+        # the census: the run's last generation resolves through its chain
+        got = resolve_run_generation_chain(run, g1.policy_hash, [("sim_demo", g0)])
+        assert got is not None and got.endswith("policy_g1 (generations recorded by the run)"), got
+        # the rescore's reader: both generations, the same hashes
+        gens = S.run_generations(run)
+        assert sorted(gens) == [0, 1], gens
+        assert gens[0].policy_hash == g0.policy_hash
+        assert gens[1].policy_hash == g1.policy_hash
+        assert "nfz-landslide-007" in S.rail_rule_priorities(g0, gens)
+    # the episode bundle: a held metre generation under a shortened hash
+    short = next(iter(g1.legacy_hashes().values()))
+    assert short != g1.policy_hash and HS._blob_is(g1.canonical_bytes(), short)
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = HS.write_policy_bundle(tmp, Path(tmp) / "gone.yaml", g0, None,
+                                     [{"generation": 0, "policy_hash": g0.policy_hash},
+                                      {"generation": 1, "policy_hash": short}],
+                                     held={1: g1.canonical_bytes()})
+        assert [g["ir"] for g in idx["generations"]] == \
+            ["generations/policy_g0.json", "generations/policy_g1.json"], idx
 
 
 if __name__ == "__main__":
