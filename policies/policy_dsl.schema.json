@@ -244,7 +244,7 @@
     },
     "CanonicalIR": {
       "additionalProperties": false,
-      "description": "The canonical IR: what a bundle's ir.json holds and policy_hash digests. This project's field names only; a geographic point as {lat, lon}, a metre point as {x, y}.",
+      "description": "The canonical IR: what a bundle's ir.json holds and policy_hash digests. This project's field names only; every point as WGS84 {lat, lon}.",
       "properties": {
         "constraints": {
           "items": {
@@ -3609,75 +3609,25 @@
     },
     "IR.XY": {
       "additionalProperties": false,
-      "anyOf": [
-        {
-          "required": [
-            "x",
-            "y"
-          ]
-        },
-        {
-          "required": [
-            "lat",
-            "lon"
-          ]
-        }
-      ],
-      "description": "A point: {x, y} metres (x = North, y = East of the frame origin), or {lat, lon} WGS84 - the canonical form of a geographic point.",
+      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at every entry: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
       "properties": {
         "lat": {
-          "anyOf": [
-            {
-              "maximum": 90.0,
-              "minimum": -90.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Lat"
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
         },
         "lon": {
-          "anyOf": [
-            {
-              "maximum": 180.0,
-              "minimum": -180.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Lon"
-        },
-        "x": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "X"
-        },
-        "y": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Y"
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
         }
       },
+      "required": [
+        "lat",
+        "lon"
+      ],
       "title": "XY",
       "type": "object"
     },
@@ -4778,75 +4728,25 @@
     },
     "XY": {
       "additionalProperties": false,
-      "anyOf": [
-        {
-          "required": [
-            "x",
-            "y"
-          ]
-        },
-        {
-          "required": [
-            "lat",
-            "lon"
-          ]
-        }
-      ],
-      "description": "A point: {x, y} metres (x = North, y = East of the frame origin), or {lat, lon} WGS84 - the canonical form of a geographic point.",
+      "description": "A point: WGS84 {lat, lon} in degrees, the only point form the DSL carries. Local metres ({x, y}, or x/y beside lat/lon) are refused at every entry: a tool that works in metres converts them with guardrail.models.wgs84_from_metres about the policy's `origin`. The ENU/NED view is computed lazily by the Safety Shield and the Prefix Compiler.",
       "properties": {
         "lat": {
-          "anyOf": [
-            {
-              "maximum": 90.0,
-              "minimum": -90.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Lat"
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
         },
         "lon": {
-          "anyOf": [
-            {
-              "maximum": 180.0,
-              "minimum": -180.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Lon"
-        },
-        "x": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "X"
-        },
-        "y": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Y"
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
         }
       },
+      "required": [
+        "lat",
+        "lon"
+      ],
       "title": "XY",
       "type": "object"
     }

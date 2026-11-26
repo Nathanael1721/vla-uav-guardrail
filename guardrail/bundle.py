@@ -3265,20 +3265,41 @@ def policy_candidates(policies_dir: str | Path | None = None,
 
 def ir_json_schema() -> dict:
     """The canonical IR's JSON Schema: exactly what a bundle's `ir.json` may
-    hold - this project's field names, a geographic point as {lat, lon}, a
-    metre point as {x, y}, unknown keys refused. Published inside
-    policy_dsl.schema.json as `$defs/CanonicalIR` (see policy_json_schema)."""
+    hold - this project's field names, every point as WGS84 {lat, lon},
+    unknown keys refused. Published inside policy_dsl.schema.json as
+    `$defs/CanonicalIR` (see policy_json_schema)."""
     schema = Policy.model_json_schema()
-    # The model requires x/y because the Shield reads them; the IR stores a
-    # geographic point WITHOUT them (they are derived at load). So a point is
-    # one frame or the other, never neither.
+    # A point is WGS84 {lat, lon} and nothing else (WP1-14; grant, Policy DSL
+    # page: "the DSL itself never carries projected coordinates"). The model
+    # keeps `x` / `y` FIELDS only for the legacy metre read form (bundles and
+    # runs stored before IR schema 3.1.0, read by models.load_legacy_metre_
+    # policy) and for the lazily computed local view (models.XY), so the
+    # published contract drops them: until 2026-11-26 it still offered
+    # {x, y} metres as a point form beside {lat, lon}, which every entry has
+    # refused since then (models.ProjectedCoordinatesRefused).
     xy = schema.get("$defs", {}).get("XY")
     if xy is not None:
-        xy.pop("required", None)
-        xy["anyOf"] = [{"required": ["x", "y"]}, {"required": ["lat", "lon"]}]
+        props = xy.get("properties", {})
+        for k in ("x", "y"):
+            props.pop(k, None)
+        for k in ("lat", "lon"):
+            p = props.get(k)
+            if p is not None and "anyOf" in p:
+                # The model's annotation admits null only because a legacy
+                # metre point has no lat/lon; a published point always has.
+                (branch,) = [b for b in p["anyOf"] if b.get("type") != "null"]
+                p.pop("anyOf")
+                p.pop("default", None)
+                p.update(branch)
+        xy.pop("anyOf", None)
+        xy["required"] = ["lat", "lon"]
         xy["description"] = (
-            "A point: {x, y} metres (x = North, y = East of the frame origin), "
-            "or {lat, lon} WGS84 - the canonical form of a geographic point.")
+            "A point: WGS84 {lat, lon} in degrees, the only point form the DSL "
+            "carries. Local metres ({x, y}, or x/y beside lat/lon) are refused "
+            "at every entry: a tool that works in metres converts them with "
+            "guardrail.models.wgs84_from_metres about the policy's `origin`. "
+            "The ENU/NED view is computed lazily by the Safety Shield and the "
+            "Prefix Compiler.")
     # A DERIVED field (exclude=True: circle_fence's polygon) is never in the IR
     # and is refused when authored, so the published contract does not offer it.
     from .models import SCOPE_REQUIRED_SINCE, ir_models
@@ -3427,8 +3448,8 @@ def policy_json_schema() -> dict:
     canonical["title"] = "CanonicalIR"
     canonical["description"] = (
         "The canonical IR: what a bundle's ir.json holds and policy_hash "
-        "digests. This project's field names only; a geographic point as "
-        "{lat, lon}, a metre point as {x, y}.")
+        "digests. This project's field names only; every point as WGS84 "
+        "{lat, lon}.")
     out_defs["CanonicalIR"] = canonical
     schema = dict(root)
     # At least one rule: the lint refuses an empty policy at every DSL entry
