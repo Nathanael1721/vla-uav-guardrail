@@ -187,7 +187,11 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
     body's points come here, top level or inside a `geometry:` block
     (_body_points, since the 2026-11-26 review). The point is placed in the
     policy's frame when the Shield writes it (a policy with no frame origin
-    refuses it: models.NoFrameOrigin, 422)."""
+    refuses it: models.NoFrameOrigin, 422). Since 2026-11-26 a point with
+    any other key (`X`, `alt`, `north`) is refused too (422), as the
+    published schema has it (a point is {lat, lon}, additionalProperties
+    false) and a document's point refuses it (extra_forbidden); until then
+    the key was dropped without a word."""
     if not isinstance(pts, list):
         raise ApiError(422, "vertices / centerline must be a list of {lat, lon} points")
     out = []
@@ -203,6 +207,12 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
             raise ApiError(422, projected_input_message(f"point {p!r}"))
         if "lat" not in p or "lon" not in p:
             raise ApiError(422, f"point {p!r} is not a {{lat, lon}} object")
+        extra = set(p) - {"lat", "lon"}
+        if extra:
+            raise ApiError(422, f"point {p!r}: unknown key(s) {sorted(map(str, extra))}; "
+                                f"a point is {{lat, lon}} only (the published schema, "
+                                f"policies/policy_dsl.schema.json: additionalProperties "
+                                f"false)")
         # A lat/lon that is not a number ("abc", null, or an integer too
         # big for a float) is the client's mistake: 422, as the module
         # docstring promises. Until 2026-10-19 float() raised here
@@ -370,7 +380,10 @@ def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
     other route checks them (_body_points): until 2026-11-26 NfzRequest
     ignored it without a word, so a nested block with x/y beside lat/lon
     was silently dropped here while /dynamic_nfz and /hot_apply answered
-    422 (review 2026-11-26, WP1-14)."""
+    422 (review 2026-11-26, WP1-14). The top-level `vertices` go through
+    _points as the body arrives, before NfzRequest reads them: an x or y key
+    whose value is null was dropped by NfzRequest's dump and the zone
+    stored, where every other route answers 422 (found 2026-11-26)."""
     if isinstance(body, dict) and "geometry" in body:
         _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
                      "vertices")
@@ -378,6 +391,8 @@ def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
                             "`vertices` as {lat, lon} points, no `geometry:` block. "
                             "Send a rule in the grant's geometry form to POST "
                             "/dynamic_nfz")
+    if isinstance(body, dict) and "vertices" in body:
+        body = _body_points(shield, dict(body), "vertices")
     try:
         req = NfzRequest.model_validate(body)
     except ValidationError as e:

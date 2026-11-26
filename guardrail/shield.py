@@ -154,6 +154,7 @@ from .models import (
     KinematicEnvelope,
     ObstacleClearance,
     PeopleClearance,
+    XY,
     Policy,
     PolygonFence,
     State,
@@ -162,6 +163,7 @@ from .models import (
     _not_looser,
     mark_legacy_read,
     no_frame_message,
+    point_gives_metres,
     projected_input_message,
     ProjectedCoordinatesRefused,
     projected_rule_problem,
@@ -7144,8 +7146,11 @@ class Shield:
 
     def _given_ring(self, zone_id: str, vertices) -> list[dict]:
         """A move's vertices as the caller gave them, checked: {lat, lon}
-        points only (WP1-14, 2026-11-26). With wgs84_writes off (the
-        comparison switch) metres are taken as before, unconverted."""
+        points only (WP1-14, 2026-11-26), as dicts or as models.XY points
+        given lat/lon alone (point_gives_metres False). With wgs84_writes
+        off (the comparison switch) metres are taken as before, unconverted.
+        Until 2026-11-26 (second re-review) an XY given {lat, lon} was
+        refused as "given in local metres", which it is not."""
         if not isinstance(vertices, (list, tuple)):
             raise HotApplyRefused(f"move {zone_id!r}: vertices must be a list of "
                                   f"{{lat, lon}} points")
@@ -7165,10 +7170,22 @@ class Shield:
                                   + no_frame_message(f"dynamic_nfz {zone_id!r}"))
         pts = []
         for v in vertices:
-            if not (isinstance(v, dict) and v.get("lat") is not None
-                    and v.get("lon") is not None):
+            if isinstance(v, XY):
+                if point_gives_metres(v):
+                    raise HotApplyRefused(projected_input_message(
+                        f"move {zone_id!r}: vertex {v!r}"))
+                pts.append({"lat": v.lat, "lon": v.lon})
+                continue
+            if not isinstance(v, dict):
                 raise HotApplyRefused(projected_input_message(
-                    f"move {zone_id!r}: vertex {v!r}"))
+                    f"move {zone_id!r}: vertex {v!r}") if isinstance(v, (list, tuple))
+                    else f"move {zone_id!r}: vertex {v!r} is not a {{lat, lon}} point")
+            if v.get("lat") is None or v.get("lon") is None:
+                if "x" in v or "y" in v:
+                    raise HotApplyRefused(projected_input_message(
+                        f"move {zone_id!r}: vertex {v!r}"))
+                raise HotApplyRefused(f"move {zone_id!r}: vertex {v!r} is not a "
+                                      f"{{lat, lon}} point")
             if "x" in v or "y" in v:            # any x/y key, as api._points
                 raise HotApplyRefused(projected_input_message(
                     f"move {zone_id!r}: vertex {v!r} carries x/y beside lat/lon"))
