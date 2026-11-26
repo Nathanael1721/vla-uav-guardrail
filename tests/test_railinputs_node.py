@@ -1139,6 +1139,101 @@ def test_a_start_frame_still_computing_at_the_end_is_never_published_over_it():
     assert "not published over the end frame" in node.manifest_frames["start"]["why"]
 
 
+# --------------------------------------------------------------------------- #
+# WP4-19 (2026-11-26): generation N's CSP at the pilot. With --csp-topic on
+# the node publishes each generation's policy and CSP on /shield/csp
+# (latched) and reads the VLA stub's /vla/prefix_csp back
+# (guardrail/csp_topic.py). Each test fails on 9a5239c (no such flag, topic
+# or record).
+# --------------------------------------------------------------------------- #
+
+def test_the_csp_topic_publishes_each_generation_and_reads_the_pilot_back():
+    """Generation 0 on /shield/csp when the node is built, generation N after
+    a hot-apply's files are written (the REST path here: the Shield's rule,
+    then the episode record), each with the generation's policy and its
+    csp_g<N>.json; the pilot's announcements stamp the rows from then on
+    (a malformed or refused one does not), and metrics.json keeps both."""
+    from guardrail import csp_topic as CT
+    from guardrail import scenario_events as SE
+    N, node, clk, out = _build(["--csp-topic", "on"])
+    sent = node.pubs[CT.CSP_TOPIC].sent
+    assert len(sent) == 1, sent
+    g0 = json.loads(sent[0].data)
+    assert g0["schema"] == CT.SCHEMA and g0["generation"] == 0 and g0["t"] is None
+    assert g0["policy_hash"] == node.policy.policy_hash and g0["csp"]["generation"] == 0
+    assert CT.read_policy(g0).policy_hash == node.policy.policy_hash
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    assert all("pilot_csp_generation" not in r for r in node.rows), "stamped before any"
+    node._on_pilot_csp(N.String(data=json.dumps({"schema": CT.PILOT_SCHEMA,
+                                                  "generation": 0})))
+    _fly(N, node, clk, 1)
+    assert node.rows[-1]["pilot_csp_generation"] == 0
+    zone = SE.spawn_zone({"id": "late", "vertices": [
+        {"x": 200.0, "y": 200.0}, {"x": 210.0, "y": 200.0},
+        {"x": 210.0, "y": 210.0}, {"x": 200.0, "y": 210.0}]}, 0, node.state, (1.0, 0.0))
+    with node._lock:
+        node.shield.hot_apply(zone)
+        node.rec.hot_applied(zone.id, t=node._t())
+    assert len(sent) == 2, sent
+    g1 = json.loads(sent[1].data)
+    assert g1["generation"] == 1 and g1["csp"]["generation"] == 1 and g1["t"] is not None
+    pol1 = CT.read_policy(g1)
+    assert any(c.id == "late" for c in pol1.constraints)
+    assert (out / "policy_g1.json").read_bytes() == pol1.canonical_bytes()
+    _fly(N, node, clk, 1)
+    assert (node.rows[-1]["generation"], node.rows[-1]["pilot_csp_generation"]) == (1, 0)
+    for data in (json.dumps({"schema": CT.PILOT_SCHEMA, "generation": 1}), "not json",
+                 json.dumps({"schema": CT.PILOT_SCHEMA, "generation": 2,
+                             "refused": "ValueError: x"})):
+        node._on_pilot_csp(N.String(data=data))
+    _fly(N, node, clk, 1)
+    assert (node.rows[-1]["generation"], node.rows[-1]["pilot_csp_generation"]) == (1, 1)
+    node._finish("time cap")
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["prefix_csp_topic"]
+    assert m["topic"] == CT.CSP_TOPIC and m["refused"] is None and m["errors"] == [], m
+    assert [(p["generation"], p["csp"]) for p in m["published"]] == [(0, True), (1, True)]
+    assert [p.get("generation") for p in m["pilot"]] == [0, 1, None, 2], m["pilot"]
+    assert "malformed" in m["pilot"][2] and m["pilot"][3]["refused"]
+    assert all("t_rx" in p for p in m["pilot"])
+
+
+def test_without_the_flag_nothing_of_the_csp_topic_exists():
+    """THE NULL: no --csp-topic (every mission but a dynamic prefix arm): no
+    publisher, no hook on the episode record, rows and metrics.json as they
+    were. And under a keystore that refuses the topic, the refusal is
+    recorded and the node flies on without it."""
+    from guardrail import csp_topic as CT
+    N, node, clk, out = _build([])
+    assert CT.CSP_TOPIC not in node.pubs and node.rec.on_generation is None
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    assert all("pilot_csp_generation" not in r for r in node.rows)
+    node._finish("time cap")
+    assert "prefix_csp_topic" not in json.loads((out / "metrics.json").read_text(
+        encoding="utf-8"))
+    real = _Node.create_publisher
+
+    def refuse(self, msg_type, topic, qos):
+        if topic == CT.CSP_TOPIC:
+            raise RuntimeError("Failed to create publisher: not permitted")
+        return real(self, msg_type, topic, qos)
+    _Node.create_publisher = refuse
+    try:
+        N, node, clk, out = _build(["--csp-topic", "on"])
+    finally:
+        _Node.create_publisher = real
+    assert CT.CSP_TOPIC not in node.pubs and node.rec.on_generation is None
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    node._finish("time cap")
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["prefix_csp_topic"]
+    assert "not permitted" in m["refused"] and m["published"] == [], m
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

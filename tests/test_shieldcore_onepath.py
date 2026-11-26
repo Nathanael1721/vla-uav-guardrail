@@ -1123,7 +1123,9 @@ _THRESHOLD_COMPARISONS_NOT_VERDICTS = {
         "PLANNING: the CSP's region pre-filter, a bounding-box overlap of a "
         "zone grown by its margin with the mission region (keeps more zones, "
         "never fewer); it selects rules to compile, it judges no position",
-    ("guardrail/prefix_consumer.py", "__init__"):
+    # _View.build since 2026-11-26 (WP4-19: the per-CSP geometry moved out of
+    # PrefixConsumer.__init__ so a generation swap is one assignment).
+    ("guardrail/prefix_consumer.py", "build"):
         "GEOMETRY: builds a corridor's inner tube only when the corridor is "
         "wider than twice the consumer's margin; it compares the rule's width "
         "with a planning margin, it judges no position",

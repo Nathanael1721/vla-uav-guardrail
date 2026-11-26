@@ -1782,6 +1782,12 @@ class EpisodeRecord:
         self._held: list[str] | None = None
         self._held_by: int | None = None
         self.generations: list[dict] = []
+        # Called as on_generation(row, policy, t) after each generation's
+        # files and event are written (write_generation): a rail's Shield
+        # node sets it to publish generation N's CSP to the pilot
+        # (guardrail/csp_topic.py, --csp-topic on, 2026-11-26). None (the
+        # default): nothing is called, as before.
+        self.on_generation: Callable[[dict, Policy, float | None], None] | None = None
         self.episode_id: int = int(wall_ns())
         self.ended = False
         self.event("episode_start", wall_ns=self.episode_id,
@@ -1929,6 +1935,9 @@ class EpisodeRecord:
             self.event("cost_map_failed", t=t, generation=g,
                        error=cm_err or err or "no cost map written")
         self.event("policy_generation", t=t, **row)
+        if self.on_generation is not None:
+            # After the files and the event: the hook reads csp_g<N>.json.
+            self.on_generation(row, pol, t)
         return row
 
     def generation_writer(self, reason: str,

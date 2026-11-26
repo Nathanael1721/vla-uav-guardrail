@@ -63,10 +63,11 @@ LAUNCH_FILE="sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py"
 # The topics the native rail records (sitl/run_ros2_demo.sh, which says what
 # each group is: actions, mode changes, MAVROS's sensor topics and raw MAVLink,
 # the last two since 2026-11-02, and the Shield node's manifest frames since
-# 2026-11-21); a test keeps the two lists equal. The manifest is subscribed
+# 2026-11-21, generation N's CSP and the pilot's answer since 2026-11-26); a
+# test keeps the two lists equal. The latched topics are subscribed
 # transient_local (--qos-profile-overrides-path sitl/bag_qos_overrides.yaml
 # of the mounted checkout), as the native rail does.
-BAG_TOPICS=(/guardrail/manifest
+BAG_TOPICS=(/guardrail/manifest /shield/csp /vla/prefix_csp
             /vla/action_4d /vla/identity /shield/setpoint /shield/intercept
             /shield/mode_request /shield/fences /mavlink_adapter/status
             /mavlink_adapter/sent

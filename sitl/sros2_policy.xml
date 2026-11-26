@@ -21,6 +21,10 @@
     /guardrail/manifest     is published by /guardrail/safety_shield ONLY and
                             read by the bag recorder: the episode's manifest
                             as a frame of the bag (2026-11-21, ARCH-22)
+    /shield/csp             is published by /guardrail/safety_shield ONLY and
+                            read by the VLA stub: each generation's policy
+                            and CSP for its prefix consumer; the stub answers
+                            on /vla/prefix_csp (2026-11-26, WP4-19)
 
   and each node may reach the MAVROS services it calls and nothing else.
   Every node also publishes /rosout and /parameter_events and serves its own
@@ -56,12 +60,17 @@
             <!-- the manifest as a frame of the bag, latched (ARCH-22,
                  2026-11-21) -->
             <topic>/guardrail/manifest</topic>
+            <!-- each generation's policy and CSP for the prefix consumer,
+                 latched (WP4-19, 2026-11-26; -csp-topic on only) -->
+            <topic>/shield/csp</topic>
             <topic>/rosout</topic>
             <topic>/parameter_events</topic>
           </topics>
           <topics subscribe="ALLOW">
             <topic>/vla/action_4d</topic>
             <topic>/vla/identity</topic>
+            <!-- the CSP generation the prefix consumer flies (2026-11-26) -->
+            <topic>/vla/prefix_csp</topic>
             <topic>/mavlink_adapter/status</topic>
             <!-- what the adapter sent, for the delivery monitor (2026-11-17) -->
             <topic>/mavlink_adapter/sent</topic>
@@ -169,11 +178,16 @@
           <topics publish="ALLOW">
             <topic>/vla/action_4d</topic>
             <topic>/vla/identity</topic>
+            <!-- the CSP generation its prefix consumer flies (WP4-19,
+                 2026-11-26) -->
+            <topic>/vla/prefix_csp</topic>
             <topic>/rosout</topic>
             <topic>/parameter_events</topic>
           </topics>
           <topics subscribe="ALLOW">
             <topic>/mavros/local_position/pose</topic>
+            <!-- generation N's policy and CSP from the Shield (2026-11-26) -->
+            <topic>/shield/csp</topic>
           </topics>
           <services reply="ALLOW">
             <service>~/*</service>

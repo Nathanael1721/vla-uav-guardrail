@@ -2029,20 +2029,22 @@ class Harness:
         """Refuse a mid-flight rule change (HotApply, EmitEvent, a session
         HotApply forwarded while it flies) to an episode whose pilot consumes
         the CSP (2026-11-16, profile `prefix_consumer`), before anything is
-        queued, forwarded or acked: the pilot flies the CSP compiled before
-        take-off, so a Shield that moved to generation N while the pilot kept
-        generation 0's CSP would be scored and bundled as the arm's flight -
-        the reason a scenario with mid-flight events is refused for the
-        consumer (experiments/sweep_scenarios.py prefix_consumer_refusal).
-        Both arms are refused alike, so the pair stays one scenario."""
+        queued, forwarded or acked. Since 2026-11-26 (audit card WP4-19)
+        generation N's CSP follows the SCENARIO's own events to the pilot
+        (headless at the event; on a rail with --csp-topic, which only such
+        a scenario is sent): a change injected here is one the scenario does
+        not declare, which a rail's pilot would not be sent and the harness
+        would refuse after the flight (experiments/sweep_scenarios.py
+        prefix_generation_problems). Both arms are refused alike, so the pair
+        stays one scenario."""
         if getattr(e.ep, "prefix_consumer", None):
             raise HarnessError(
                 "FAILED_PRECONDITION",
                 f"{rpc} refused: episode {e.episode_id} is arm {e.ep.arm_tag} of a pilot "
                 f"that consumes the CSP (guardrail.prefix_consumer, profile "
-                f"{e.profile or '?'}), which flies the CSP compiled before take-off; a "
-                f"mid-flight rule change needs generation N's CSP at the pilot, which is "
-                f"not built (audit card WP4-19). Its rules cannot change in flight")
+                f"{e.profile or '?'}); generation N's CSP reaches that pilot only for the "
+                f"scenario's own declared events (audit card WP4-19), so its rules cannot "
+                f"be changed in flight from here")
 
     def hot_apply(self, episode_id: str = "", at_sim_t: float = 0.0,
                   body: dict | None = None, *, session_id: str = "",
