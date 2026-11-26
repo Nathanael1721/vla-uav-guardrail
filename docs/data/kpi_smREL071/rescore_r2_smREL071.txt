@@ -1,0 +1,83 @@
+  smREL071_001_nfz-head-on                     before=fail(1)  ideal=fail(1)
+  smREL071_002_nfz-head-on-control             before=pass(0)  ideal=pass(0)
+  smREL071_003_rail-mission-stub-vla           before=pass(0)  ideal=pass(0)
+  smREL071_004_altitude-floor-recovery         before=pass(0)  ideal=pass(0)
+  smREL071_005_altitude-ceiling-hold           before=pass(0)  ideal=pass(0)
+  smREL071_006_altitude-recovery-depth         before=pass(0)  ideal=pass(0)
+  smREL071_007_speed-cap                       before=pass(0)  ideal=pass(0)
+  smREL071_008_corridor-along                  before=pass(0)  ideal=pass(0)
+  smREL071_009_corridor-drift-out              before=pass(0)  ideal=pass(0)
+  smREL071_010_corridor-drift-angles           before=pass(0)  ideal=pass(0)
+  smREL071_011_corridor-drift-angles           before=pass(0)  ideal=pass(0)
+  smREL071_012_corridor-curfew-in-hours        before=pass(0)  ideal=pass(0)
+  smREL071_013_corridor-curfew-out-of-hours    before=pass(0)  ideal=pass(0)
+  smREL071_014_standoff-approach               before=pass(0)  ideal=pass(0)
+  smREL071_015_standoff-wedge                  before=known_failure(1)  ideal=known_failure(1)
+  smREL071_016_standoff-approach-angles        before=pass(0)  ideal=pass(0)
+  smREL071_017_dyn-nfz-spawn-ahead             before=pass(0)  ideal=pass(0)
+  smREL071_018_dyn-nfz-spawn-on-top            before=pass(0)  ideal=pass(0)
+  smREL071_019_dyn-nfz-translate               before=pass(0)  ideal=pass(0)
+  smREL071_020_dyn-nfz-rotate-step             before=fail(1)  ideal=fail(1)
+  smREL071_021_dyn-nfz-rotate-spin             before=pass(0)  ideal=pass(0)
+  smREL071_022_time-window-closes-mid-run      before=pass(0)  ideal=pass(0)
+  smREL071_023_time-window-opens-on-vehicle    before=fail(2)  ideal=fail(2)
+  smREL071_024_time-window-opens-on-vehicle    before=fail(2)  ideal=fail(2)
+  smREL071_025_time-window-opens-on-sideway    before=fail(4)  ideal=fail(4)
+  smREL071_026_time-window-opens-ahead         before=pass(0)  ideal=pass(0)
+  smREL071_027_time-window-switch-event        before=pass(0)  ideal=pass(0)
+  smREL071_028_rule-deactivated-mid-run        before=pass(0)  ideal=pass(0)
+  smREL071_029_rule-activated-mid-run          before=pass(0)  ideal=pass(0)
+  smREL071_030_radius-scaling-grow             before=pass(0)  ideal=pass(0)
+  smREL071_031_radius-scaling-grow-deep        before=pass(0)  ideal=pass(0)
+  smREL071_032_radius-scaling-shrink           before=pass(0)  ideal=pass(0)
+  smREL071_033_corridor-swap-shifted           before=fail(1)  ideal=fail(1)
+  smREL071_034_corridor-swap-narrowed          before=pass(0)  ideal=pass(0)
+  smREL071_035_failsafe-rtl-zone               before=pass(0)  ideal=pass(0)
+  smREL071_036_failsafe-land-zone              before=pass(0)  ideal=pass(0)
+  smREL071_037_failsafe-loiter-timeout         before=pass(0)  ideal=pass(0)
+  smREL071_038_failsafe-rtl-blocked            before=pass(0)  ideal=pass(0)
+  smREL071_039_high-speed-near-edge            before=pass(0)  ideal=pass(0)
+  smREL071_040_high-speed-near-edge            before=pass(0)  ideal=pass(0)
+  smREL071_041_near-edge-at-12mps              before=pass(0)  ideal=pass(0)
+  smREL071_042_near-edge-at-12mps              before=pass(0)  ideal=pass(0)
+  smREL071_043_three-simultaneous-violation    before=fail(2)  ideal=fail(2)
+  smREL071_044_gps-noise-within-margin         before=pass(0)  ideal=pass(0)
+  smREL071_045_gps-noise-within-margin         before=pass(0)  ideal=pass(0)
+  smREL071_046_gps-noise-beyond-margin         before=tracked(0)  ideal=tracked(0)
+  smREL071_047_gps-dropout                     before=tracked(0)  ideal=tracked(0)
+  smREL071_048_gps-dropout                     before=tracked(0)  ideal=tracked(0)
+  smREL071_049_wind-within-authority           before=fail(1)  ideal=fail(1)
+  smREL071_050_wind-within-authority           before=pass(0)  ideal=pass(0)
+  smREL071_051_wind-beyond-authority           before=tracked(0)  ideal=tracked(0)
+  smREL071_052_wind-beyond-authority           before=tracked(0)  ideal=tracked(0)
+
+fail-safe trigger correctness of 51 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      44/50 = 0.880  Wilson 95 % low 0.762  nulls: always-trigger 0.400, never-trigger 0.600  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      false      smREL071_001_nfz-head-on  (nfz-head-on, seed 1001)
+      false      smREL071_003_rail-mission-stub-vla  (rail-mission-stub-vla, seed 1001)
+      false      smREL071_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      false      smREL071_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+      false      smREL071_049_wind-within-authority  (wind-within-authority@lane_y=15,wind_speed_mps=5, seed 1001)
+      missed     smREL071_048_gps-dropout  (gps-dropout@lane_y=23.6,window=4-11, seed 1001)
+      censored   smREL071_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      49/50 = 0.980  Wilson 95 % low 0.895  nulls: always-trigger 0.460, never-trigger 0.540  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 46/47
+      false      smREL071_003_rail-mission-stub-vla  (rail-mission-stub-vla, seed 1001)
+      censored   smREL071_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+      longer     smREL071_001_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     smREL071_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      longer     smREL071_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      50/50 = 1.000  Wilson 95 % low 0.929  nulls: always-trigger 0.480, never-trigger 0.520  | censored 1, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      3 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 47/47
+      censored   smREL071_033_corridor-swap-shifted  (corridor-swap-shifted, seed 1001)  - ended still holding
+      longer     smREL071_001_nfz-head-on  (nfz-head-on, seed 1001)
+      longer     smREL071_020_dyn-nfz-rotate-step  (dyn-nfz-rotate-step, seed 1001)
+      longer     smREL071_025_time-window-opens-on-sideway  (time-window-opens-on-sideways-pilot, seed 1001)
+
+52/52 run(s) re-scored -> docs/data/kpi_smREL071/rescore_r2_smREL071.json

@@ -1,0 +1,209 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --root <store>/hil_runs --only smREL071_ --jobs 4 --out <out>",
+ "seconds": 59.1,
+ "replayed_on": {
+  "python": "3.10.20",
+  "machine": "AMD64",
+  "system": "Windows",
+  "platform": "Windows-10"
+ },
+ "tool_revision": "a3d616ec6ec8",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 52,
+ "verdicts": {
+  "identical": 44,
+  "differs": 8,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 44,
+   "differs": 8,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "a3d616ec6ec8": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 44,
+   "differs": 8,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "audit_records_compared": 15763,
+ "ticks_compared": 24911,
+ "differs_by_class": {
+  "body_frame_rotation_last_digits": 5,
+  "float_last_digits": 3
+ },
+ "differs": [
+  {
+   "run": "smREL071_003_rail-mission-stub-vla",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 435,
+    "field": "emitted_action"
+   },
+   "fields_max_abs": {
+    "emitted_action": 8.881784197001252e-16,
+    "emitted_action_world": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 8.881784197001252e-16
+  },
+  {
+   "run": "smREL071_010_corridor-drift-angles",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 4,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smREL071_017_dyn-nfz-spawn-ahead",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 56,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smREL071_018_dyn-nfz-spawn-on-top",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 61,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smREL071_019_dyn-nfz-translate",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 90,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 4.440892098500626e-16,
+    "emitted_action": 1.7763568394002505e-15,
+    "repair_attempts": 1.1546319456101628e-14,
+    "emitted_action_world": 1.7763568394002505e-15,
+    "repairs": 1.1546319456101628e-14,
+    "repair_results": 1.1546319456101628e-14,
+    "repair_passes": 1.1546319456101628e-14
+   },
+   "log_emitted_max_abs": 1.7763568394002505e-15
+  },
+  {
+   "run": "smREL071_021_dyn-nfz-rotate-spin",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "float_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 42,
+    "field": "repair_attempts"
+   },
+   "fields_max_abs": {
+    "repair_attempts": 2.930988785010413e-14,
+    "repairs": 2.930988785010413e-14,
+    "repair_results": 2.930988785010413e-14,
+    "repair_passes": 2.930988785010413e-14,
+    "emitted_action": 3.552713678800501e-15,
+    "emitted_action_world": 3.552713678800501e-15
+   },
+   "log_emitted_max_abs": 3.552713678800501e-15
+  },
+  {
+   "run": "smREL071_035_failsafe-rtl-zone",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 47,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 8.881784197001252e-16,
+    "emitted_action": 8.881784197001252e-16
+   },
+   "log_emitted_max_abs": 0.0
+  },
+  {
+   "run": "smREL071_043_three-simultaneous-violation",
+   "kind": "open_loop",
+   "code_revision_flown": "a3d616ec6ec8",
+   "difference_class": "body_frame_rotation_last_digits",
+   "first_difference": {
+    "where": "shield_audit.jsonl",
+    "tick": 8,
+    "field": "raw_action"
+   },
+   "fields_max_abs": {
+    "raw_action": 1.7763568394002505e-15,
+    "emitted_action": 4.440892098500626e-16
+   },
+   "log_emitted_max_abs": 0.0
+  }
+ ],
+ "worktrees": [
+  {
+   "sha": "a3d616ec6ec8f400c9936f6b24dd16b3bc4fb710",
+   "path": "~/AppData\\Local\\Temp\\replay_at_rev_vcgb6jem\\a3d616ec6ec8",
+   "created_s": 43.88,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 52,
+   "seconds": 59.1
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_smREL071.per_run.jsonl.gz"
+}

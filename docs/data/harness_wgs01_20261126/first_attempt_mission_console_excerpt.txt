@@ -1,0 +1,22 @@
+Excerpt of the first attempt's mission_console.log (26 Nov 2026, 07:52 UTC),
+as read from the run folder before the second attempt moved it aside; the
+file itself was not kept.
+
+[safety_shield-3] [INFO] [1795679529.289931142] [safety_shield]: policy fase3-sim-demo v0.1.4 sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358 from bundle bundles/fase3-sim-demo-v0.1.4.tar.gz - signature verified
+[safety_shield-3] Traceback (most recent call last):
+[safety_shield-3]   File "/opt/vlaguard/sitl/ros2_shield_node.py", line 6775, in <module>
+[safety_shield-3]     main()
+[safety_shield-3]   File "/opt/vlaguard/sitl/ros2_shield_node.py", line 6758, in main
+[safety_shield-3]     node.bring_up()
+[safety_shield-3]   File "/opt/vlaguard/sitl/ros2_shield_node.py", line 4387, in bring_up
+[safety_shield-3]     self.serve_hot_apply()
+[safety_shield-3]   File "/opt/vlaguard/sitl/ros2_shield_node.py", line 4734, in serve_hot_apply
+[safety_shield-3]     th = self.hot.start(self.args.hotapply_host, int(port),
+[safety_shield-3]   File "/opt/vlaguard/guardrail/api.py", line 672, in start
+[safety_shield-3]     self.thread = serve_in_background(
+[safety_shield-3]   File "/opt/vlaguard/guardrail/api.py", line 540, in serve_in_background
+[safety_shield-3]     import uvicorn
+[safety_shield-3] ModuleNotFoundError: No module named 'uvicorn'
+[ERROR] [safety_shield-3]: process has died [pid 3170343, exit code 1, ...]
+[mavlink_adapter-2] [INFO] [1795679530.068791670] [mavlink_adapter]: adapter: 0 setpoint(s) sent, 0 dropped (0 while another node also published)
+[replay] REFUSED /opt/vlaguard/demo/out/wgs01_001_dyn-nfz-rotate-step: /opt/vlaguard/demo/out/wgs01_001_dyn-nfz-rotate-step has no flight_log.jsonl; there is nothing to replay.

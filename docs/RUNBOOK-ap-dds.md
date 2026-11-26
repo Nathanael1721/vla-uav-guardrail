@@ -15,21 +15,36 @@ the AP_DDS path on ArduCopter SITL without touching the rig:
 
 ## Row status (ARCH-08)
 
-**PARTIAL.** The AP_DDS code path, its build/run/verify scripts and this
-runbook exist; nothing here has run on ArduPilot yet. The grant names no KPI
-for this optional row.
+**PARTIAL** (independent review, 26 Nov, 3 of 3). Steps 1-6 ran on
+ArduCopter 4.5.7 DDS SITL on 26 Nov (desktop WSL, `dev` topology, not
+KPI-grade; docs/data/ap_dds_20261126/): steps 4 and 5 PASS
+(`ap_dds_verify_01`, `_02`: velocity_error 0.02 / 0.016 m/s, bearing error
+0.1 deg), and one clean step-6 flight (`ap_dds_stage1_02`, 21493e6) in which
+the Shield's setpoints reached the autopilot only through
+`ap_dds_adapter_node.py` -> `/ap/cmd_vel`. That flight was a route with no
+scenario: closest zone 9.90 m, no P0 engagement, so no safety intervention
+has gone through the adapter on a clean revision (`ap_dds_stage1_01`, the
+zone-engaging run, is diagnostic only: dirty tree, hold lost to BRAKE). State,
+mode changes, arming, take-off, home, parameters and the fence stay on
+MAVROS 2; stage 2 is not possible on 4.5.7 (no mode/armed/landed state, no
+param service). The grant names no KPI for this optional row.
 
 | After | Row text |
 |---|---|
-| this branch | PARTIAL: AP_DDS output adapter, scripts and runbook exist, not yet run on SITL; Shield on MAVROS |
-| steps 4 and 5 PASS | still PARTIAL: "AP_DDS output path shown on SITL; the Shield's state inputs still on MAVROS". Neither run has the Shield in the loop (step 5 publishes `/shield/setpoint` itself) |
-| step 6 (stage 1) flown | the earliest DONE candidate: `ros2_shield_node.py` flies a scenario with its output through `ap_dds_adapter_node.py` on the DDS SITL, state still read from MAVROS |
+| 17 Nov (b316a05) | PARTIAL: AP_DDS output adapter, scripts and runbook exist; Shield on MAVROS |
+| steps 4 and 5 PASS (26 Nov) | still PARTIAL: "AP_DDS output path shown on SITL; the Shield's state inputs still on MAVROS". Neither run has the Shield in the loop (step 5 publishes `/shield/setpoint` itself) |
+| step 6 (stage 1) flown (26 Nov, `ap_dds_stage1_02`) | still PARTIAL: the output half of an optional migration. This runbook once called step 6 "the earliest DONE candidate"; that is the project's own bar, not the grant's wording |
 
-Or the lab records a decision that this optional row closes at PARTIAL. The
-evidence to cite is the SITL output only: `ap_dds_verify.json`
-(`velocity.velocity_error`, `velocity.bearing_error_deg`, `climb`,
-`ap_topics_seen`) and, for step 6, the Shield's run directory with
-`ap_dds_adapter_log.jsonl`.
+To close the row: a recorded lab/PI decision that stage 1 meets this
+optional item, or that the row closes at PARTIAL (not yet recorded); a
+clean-revision scenario run with the P0 rule engaged through
+`ap_dds_adapter_node.py` would strengthen the case. The evidence to cite is
+the SITL output only: `ap_dds_verify.json` (`velocity.velocity_error`,
+`velocity.bearing_error_deg`, `climb`, `ap_topics_seen`) and, for step 6,
+the Shield's run directory and the flown trajectory. `ap_receives_ned` in
+`ap_dds_adapter_log.jsonl` is the adapter's own model output, equal to `ned`
+by construction: a consistency check, not evidence of what the autopilot
+received.
 
 ## What the unit test checks (a model consistency check, not a measurement)
 

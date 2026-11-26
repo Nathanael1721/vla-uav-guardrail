@@ -1207,6 +1207,18 @@ docker build --build-context wheels="$HOME/wheelhouse-api"     --build-arg COMPA
 The layer only adds packages; the Shield, MAVROS and the router are the base image's. A
 campaign flown on it records the image like any other (section 15).
 
+Every rebuild of `vlaguard/companion:jazzy` drops the layer: re-apply it after each base
+rebuild (tag the new base first, then build the layer FROM that tag as `jazzy`). The 22 Nov
+rebuild did not, and the first harness-driven episode on it (wgs01, 26 Nov) died at
+bring-up with `ModuleNotFoundError: No module named 'uvicorn'` before take-off; the base was
+kept as `jazzy-noapi-20261122` and the layer rebuilt on it from `~/wheelhouse-api`. Check
+before a harness-driven episode:
+
+```bash
+docker run --rm --entrypoint /opt/venv/bin/python vlaguard/companion:jazzy \
+    -c "import fastapi, uvicorn; print(fastapi.__version__, uvicorn.__version__)"
+```
+
 ## 16. Moving to the drone (flight)
 
 Nothing is rebuilt. The same `vlaguard/companion:jazzy` arm64 image and the

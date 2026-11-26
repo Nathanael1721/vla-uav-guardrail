@@ -1,0 +1,27 @@
+session ss-394314f0912b on the hil rail, endpoint https://10.42.0.3:8071
+launched ep-3ea786b593b5: dyn-nfz-rotate-step seed 1001, its scenario's events applied by the harness
+  queued #0 at 3 s: spawn_polygon_fence bar [scenario]
+  queued #1 at 8 s: rotate_polygon_fence bar [scenario]
+flying: EndEpisode waits for the mission, its fetch and its scoring (up to 3600 s)
+session stopped: 10 events, 300 telemetry frames
+episode ep-3ea786b593b5: fail (outcome RTL_triggered)
+bundle: <repo>/.claude/worktrees/flight-a3d616e/demo/out/harness/ep-3ea786b593b5/episode-2026-11-26T07-57-15Z--dyn-nfz-rotate-step--seed1001
+  gate failed: fail-safe: labelled not expected, triggered
+hil rail run: F:/vla_drone_offload/hil_runs/wgs01_001_dyn-nfz-rotate-step
+  t=3.02 s dynamic_nfz/spawn bar (over rest): generation 1 sha256:4e3d5f0eebe9 [from scenario]
+  t=8.00 s dynamic_nfz/rotate bar (over rest): generation 2 sha256:a4aced2b24ec [from scenario]
+  episode.bag2/          written: the run's rosbag2 directory (recorded as bag/, which the run folder keeps) under the grant's name, 2 file(s) as copies
+  harness_events.jsonl   written
+  kpi.json               written
+  manifest.json          written: the mission's own manifest.json, byte for byte
+  policy_bundle.tar.gz   written, complete
+  shield_audit.jsonl     written: the run's shield_audit.jsonl, byte for byte
+KPI row: dynamic_nfz_movement / dyn-nfz-rotate-step, Shield on, 1 episode(s)
+  P0 escape rate               0                                 null passthrough 0.060606
+  fail-safe correctness        0                                 null never trigger 1, always trigger 0
+  mission success rate         0                                 null hover 0
+  repair success rate          0.833333                          null always brake 0
+  mean repair count            6
+  mean repair magnitude, m/s   5.6566
+  mean time to safe, s         unset (never_unsafe)
+grant bundle: 6/6 names written
