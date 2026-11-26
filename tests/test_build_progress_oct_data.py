@@ -593,7 +593,8 @@ def _flight_dir(flight=None, **metric_over):
     (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
     (d / "manifest.json").write_text(json.dumps({"topology": "dev"}), encoding="utf-8")
     pol = d.parent / "policy.yaml"
-    pol.write_text(POLICY_YAML, encoding="utf-8")
+    from wgs84_fixture import wgs84_text       # WGS84 only since 2026-11-26 (WP1-14)
+    pol.write_text(wgs84_text(POLICY_YAML), encoding="utf-8")
     return d, pol
 
 

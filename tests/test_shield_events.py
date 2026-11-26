@@ -39,6 +39,7 @@ from guardrail.models import (CorridorSwap, DynamicNFZ, Policy,         # noqa: 
 from guardrail.shield import (HotApplyRefused, LayerRelaxation,        # noqa: E402
                               LockedRuleClass, RuleIdConflict, UnknownRule,
                               as_dynamic_nfz)
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -97,7 +98,7 @@ def test_a_spawned_zone_is_enforced_on_the_next_tick_and_restamps():
     d0 = sh.filter(st, a)
     assert not d0.touched and d0.generation == 0
     h0 = sh.policy.policy_hash
-    ev = sh.hot_apply(_zone())
+    ev = sh.hot_apply(geo(_zone(), sh))
     assert ev["op"] == "spawn" and ev["generation"] == 1
     assert ev["policy_hash"] == sh.policy.policy_hash != h0
     assert sh.ir.is_current_for(sh.policy)
@@ -111,17 +112,17 @@ def test_a_spawned_zone_is_enforced_on_the_next_tick_and_restamps():
 def test_a_spawn_with_an_existing_id_or_a_negative_margin_is_refused():
     sh = Shield(load_policy(DEMO))
     sh.filter(State(x=-20, y=-20, up=4), Action4D())
-    sh.hot_apply(_zone())
-    _raises(RuleIdConflict, sh.hot_apply, _zone())
-    _raises(RuleIdConflict, sh.hot_apply, _zone(zid="nfz-square"))
-    _raises(HotApplyRefused, sh.hot_apply, _zone(zid="neg", margin=-1.0))
+    sh.hot_apply(geo(_zone(), sh))
+    _raises(RuleIdConflict, sh.hot_apply, geo(_zone(), sh))
+    _raises(RuleIdConflict, sh.hot_apply, geo(_zone(zid="nfz-square"), sh))
+    _raises(HotApplyRefused, sh.hot_apply, geo(_zone(zid="neg", margin=-1.0), sh))
     assert sh.policy.generation == 1               # nothing half-applied
 
 
 def test_translate_rotate_scale_and_move_reshape_the_enforced_zone():
     sh = Shield(load_policy(DEMO))
     sh.filter(State(x=-20, y=-20, up=4), Action4D())
-    sh.hot_apply(_zone(cx=-40.0, cy=-40.0, half=2.0))
+    sh.hot_apply(geo(_zone(cx=-40.0, cy=-40.0, half=2.0), sh))
     base = [(-42.0, -42.0), (-38.0, -42.0), (-38.0, -38.0), (-42.0, -38.0)]
     assert _close(_ring(sh, "dyn"), base)
     sh.translate_nfz("dyn", 5.0, -1.0)
@@ -134,7 +135,7 @@ def test_translate_rotate_scale_and_move_reshape_the_enforced_zone():
     sh.scale_nfz("dyn", 2.0)
     assert _close(_ring(sh, "dyn"), [(-35.0 + 2 * (x + 35.0), -41.0 + 2 * (y + 41.0))
                                      for x, y in want])
-    sh.move_nfz("dyn", [(0.0, 30.0), (4.0, 30.0), (4.0, 34.0)])
+    sh.move_nfz("dyn", geo_ring([(0.0, 30.0), (4.0, 30.0), (4.0, 34.0)], sh))
     assert _close(_ring(sh, "dyn"), [(0.0, 30.0), (4.0, 30.0), (4.0, 34.0)])
     assert sh.policy.generation == 5
     assert [e["op"] for e in sh.events] == ["spawn", "translate", "rotate", "scale", "move"]
@@ -150,7 +151,7 @@ def test_expire_removes_the_zone():
     sh = Shield(load_policy(DEMO))
     st, a = State(x=-20, y=-20, up=4), Action4D(vx=3.0)
     sh.filter(st, Action4D())
-    sh.hot_apply(_zone())
+    sh.hot_apply(geo(_zone(), sh))
     assert sh.filter(st, a).touched
     ev = sh.expire_nfz("dyn")
     assert ev["op"] == "expire" and ev["generation"] == 2
@@ -170,8 +171,8 @@ def test_a_moving_zone_is_enforced_where_it_will_be():
     spawned (the 401305a hot_apply did) never sees it."""
     sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
     st = State(x=0.0, y=0.0, up=10.0)
-    sh.hot_apply(_zone(cx=35.0, cy=0.0, half=5.0, margin=0.5,
-                       motion={"vx_mps": -2.0}), t=0.0)
+    sh.hot_apply(geo(_zone(cx=35.0, cy=0.0, half=5.0, margin=0.5,
+                       motion={"vx_mps": -2.0}), sh), t=0.0)
     first = at12 = None
     for k in range(141):
         t = round(0.1 * k, 9)
@@ -196,7 +197,7 @@ def test_a_moving_zone_follows_ring_at_from_its_anchor():
     z = _zone(cx=0.0, cy=50.0, half=3.0, motion={"vx_mps": 1.0, "vy_mps": -0.5,
                                                  "yaw_rate_dps": 10.0})
     sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
-    sh.hot_apply(z, t=2.0)
+    sh.hot_apply(geo(z, sh), t=2.0)
     for t in (2.0, 3.0, 4.5):
         sh.filter(State(x=-100.0, y=-100.0, up=5.0), Action4D(), t=t)
         assert _close(_ring(sh, "dyn"), z.ring_at(t - 2.0), 1e-6), t
@@ -205,7 +206,7 @@ def test_a_moving_zone_follows_ring_at_from_its_anchor():
 def test_editing_a_moving_zone_reanchors_it_where_it_is_now():
     z = _zone(cx=0.0, cy=50.0, half=3.0, motion={"vx_mps": 1.0})
     sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
-    sh.hot_apply(z, t=0.0)
+    sh.hot_apply(geo(z, sh), t=0.0)
     sh.filter(State(x=-100.0, y=-100.0, up=5.0), Action4D(), t=4.0)
     sh.translate_nfz("dyn", 0.0, 10.0)             # at t = 4 the zone is 4 m north
     sh.filter(State(x=-100.0, y=-100.0, up=5.0), Action4D(), t=6.0)
@@ -225,7 +226,7 @@ def test_the_lookahead_frame_of_a_turning_zone_is_ring_at():
     z = _zone(cx=0.0, cy=0.0, half=6.0, motion={"vx_mps": 1.5, "vy_mps": -0.7,
                                                "yaw_rate_dps": 25.0})
     sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
-    sh.hot_apply(z, t=1.0)
+    sh.hot_apply(geo(z, sh), t=1.0)
     sh.filter(State(x=-500.0, y=-500.0, up=5.0), Action4D(), t=3.0)     # age 2 s
     with sh._scope(sh._new_tick(3.0)):
         mv = sh._motion_of(z)
@@ -294,8 +295,8 @@ def test_a_moving_zone_out_of_reach_costs_no_point_test():
     far = _zone(zid="far", cx=400.0, cy=0.0, half=5.0, motion={"vx_mps": -1.0})
     near = _zone(zid="near", cx=20.0, cy=0.0, half=3.0, motion={"vx_mps": -1.0})
     sh = Shield(Policy(policy_id="m", origin=FRAME, constraints=[]))
-    sh.hot_apply(far, t=0.0)
-    sh.hot_apply(near, t=0.0)
+    sh.hot_apply(geo(far, sh), t=0.0)
+    sh.hot_apply(geo(near, sh), t=0.0)
     st, a = State(x=0.0, y=0.0, up=5.0), Action4D(vx=3.0)
     n_far, d = _count_zone_tests(sh, st, a, "far")
     assert n_far == 0, n_far
@@ -351,8 +352,8 @@ def test_a_switch_turns_a_rule_off_and_back_on():
     standing = [c for c in sh.policy.constraints if c.type == "time_window_switch"]
     assert len(standing) == 1 and standing[0].active is True, standing
     _raises(UnknownRule, sh.set_rule_active, "nope", False)
-    _raises(HotApplyRefused, sh.hot_apply, TimeWindowSwitch(
-        id="sw2", type="time_window_switch", **HARD_P0, target_id=standing[0].id, active=False))
+    _raises(HotApplyRefused, sh.hot_apply, geo(TimeWindowSwitch(
+        id="sw2", type="time_window_switch", **HARD_P0, target_id=standing[0].id, active=False), sh))
 
 
 def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
@@ -367,10 +368,10 @@ def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
     for hhmm, touched in (("12:30", False), ("13:30", True)):
         when = datetime(2026, 10, 7, int(hhmm[:2]), int(hhmm[3:]))
         sh = Shield(load_policy(DEMO), now=lambda w=when: w)
-        sh.hot_apply(sw)
+        sh.hot_apply(geo(sw, sh))
         assert sh.filter(st, a).touched is touched, hhmm
     sh = Shield(load_policy(DEMO))
-    sh.hot_apply(sw)
+    sh.hot_apply(geo(sw, sh))
     assert sh.filter(st, a).touched
 
 
@@ -394,17 +395,17 @@ def test_a_corridor_swap_replaces_the_corridor():
     sh = Shield(_lanes())
     on_a = State(x=0, y=0, up=10)
     assert not sh.filter(on_a, Action4D(vx=2.0)).touched
-    sh.hot_apply(_swap("lane-b", 40.0))
+    sh.hot_apply(geo(_swap("lane-b", 40.0), sh))
     d = sh.filter(on_a, Action4D(vx=2.0))
     assert [v.rule_id for v in d.violations] == ["lane-b"], d.violations
     on_b = State(x=0, y=40, up=10)
     assert not sh.filter(on_b, Action4D(vx=2.0)).touched     # lane-a no longer binds
-    sh.hot_apply(_swap("lane-c", -40.0))                      # supersedes lane-b
+    sh.hot_apply(geo(_swap("lane-c", -40.0), sh))                      # supersedes lane-b
     assert {c.id for c in sh.policy.constraints} == {"lane-a", "lane-c"}
     assert [v.rule_id for v in sh.filter(on_b, Action4D(vx=2.0)).violations] == ["lane-c"]
     fence = Shield(load_policy(DEMO))
     bad = CorridorSwap.model_validate({**_swap("x", 0.0).model_dump(), "target_id": "nfz-square"})
-    _raises(HotApplyRefused, fence.hot_apply, bad)
+    _raises(HotApplyRefused, fence.hot_apply, geo(bad, fence))
 
 
 def test_declared_events_are_enforced_from_the_policy():
@@ -442,7 +443,7 @@ def test_an_event_that_would_leave_the_policy_inconsistent_is_refused():
     Expiring a zone a switch still targets would leave the switch dangling."""
     sh = Shield(load_policy(DEMO))
     sh.filter(State(x=-20, y=-20, up=4), Action4D())
-    sh.hot_apply(_zone())
+    sh.hot_apply(geo(_zone(), sh))
     sh.set_rule_active("dyn", False, switch_id="dyn-off")
     assert _relint(sh) == []
     e = _raises(HotApplyRefused, sh.expire_nfz, "dyn")
@@ -455,12 +456,12 @@ def test_an_event_that_would_leave_the_policy_inconsistent_is_refused():
 def test_every_generation_an_event_sequence_produces_lints_clean():
     sh = Shield(_lanes())
     sh.filter(State(x=0, y=0, up=10), Action4D())
-    steps = [lambda: sh.hot_apply(_zone(cx=50.0, cy=50.0)),
+    steps = [lambda: sh.hot_apply(geo(_zone(cx=50.0, cy=50.0), sh)),
              lambda: sh.translate_nfz("dyn", 3.0, 0.0),
-             lambda: sh.hot_apply(_swap("lane-b", 40.0)),
+             lambda: sh.hot_apply(geo(_swap("lane-b", 40.0), sh)),
              lambda: sh.set_rule_active("dyn", False),
              lambda: sh.set_rule_active("dyn", True),
-             lambda: sh.hot_apply(_swap("lane-c", -40.0)),
+             lambda: sh.hot_apply(geo(_swap("lane-c", -40.0), sh)),
              lambda: sh.scale_nfz("dyn", 1.5)]
     for k, step in enumerate(steps, 1):
         step()
@@ -488,23 +489,23 @@ def test_an_event_the_shield_would_not_enforce_is_refused():
     before = _snapshot(sh)
     msl = _zone(zid="msl", altitude_ref="MSL", altitude_floor_m=120.0,
                 altitude_ceiling_m=300.0)
-    e = _raises(HotApplyRefused, sh.spawn_nfz, msl)
+    e = _raises(HotApplyRefused, sh.spawn_nfz, geo(msl, sh))
     assert "would not enforce" in str(e) and "MSL" in str(e), e
-    _raises(HotApplyRefused, sh.hot_apply, msl)
+    _raises(HotApplyRefused, sh.hot_apply, geo(msl, sh))
     assert _snapshot(sh) == before and Shield.unenforceable(sh.policy) == []
     Shield(sh.policy)                               # still a policy it can be built on
-    assert sh.spawn_nfz(_zone(zid="agl", altitude_floor_m=20.0,
-                              altitude_ceiling_m=200.0))["generation"] == 1
+    assert sh.spawn_nfz(geo(_zone(zid="agl", altitude_floor_m=20.0,
+                              altitude_ceiling_m=200.0), sh))["generation"] == 1
     lanes = Shield(_lanes())
     lanes.filter(State(x=0, y=0, up=10), Action4D())
     swap = CorridorSwap.model_validate({**_swap("lane-b", 40.0).model_dump(),
                                         "altitude_ref": "MSL"})
-    _raises(HotApplyRefused, lanes.hot_apply, swap)
+    _raises(HotApplyRefused, lanes.hot_apply, geo(swap, lanes))
     assert lanes.policy.generation == 0 and lanes.events == []
     pre = Shield(load_policy(DEMO))                 # before the first tick
     fence = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence", **HARD_P0,
                                          "altitude_ref": "MSL", "vertices": _sq(-40, -40, 3)})
-    _raises(HotApplyRefused, pre.hot_apply, fence)
+    _raises(HotApplyRefused, pre.hot_apply, geo(fence, pre))
     assert pre.policy.generation == 0 and all(c.id != "pf" for c in pre.policy.constraints)
 
 
@@ -531,19 +532,19 @@ def test_a_runtime_that_fails_to_build_changes_nothing():
         return real(*args, **kw)
     S._build_runtime = flaky
     try:
-        e = _raises(HotApplyRefused, sh.spawn_nfz, _zone())
+        e = _raises(HotApplyRefused, sh.spawn_nfz, geo(_zone(), sh))
         assert "injected build fault" in str(e), e
         assert _snapshot(sh) == before and sh.ir.is_current_for(sh.policy)
-        assert sh.spawn_nfz(_zone())["generation"] == 1         # the retry is not a conflict
+        assert sh.spawn_nfz(geo(_zone(), sh))["generation"] == 1         # the retry is not a conflict
     finally:
         S._build_runtime = real
     assert [v.rule_id for v in sh.filter(st, a).violations] == ["dyn"]
     huge = Shield(load_policy(DEMO))
     huge.filter(st, Action4D())
     before = _snapshot(huge)
-    _raises(HotApplyRefused, huge.spawn_nfz, _zone(zid="huge", margin=1e308))
+    _raises(HotApplyRefused, huge.spawn_nfz, geo(_zone(zid="huge", margin=1e308), huge))
     assert _snapshot(huge) == before and huge.ir.is_current_for(huge.policy)
-    assert huge.spawn_nfz(_zone())["generation"] == 1           # not blocked by "huge"
+    assert huge.spawn_nfz(geo(_zone(), huge))["generation"] == 1           # not blocked by "huge"
     d = huge.filter(st, a)
     assert [v.rule_id for v in d.violations] == ["dyn"] and d.generation == 1
     # expire passes {} as the anchors once its zone is gone: that is kept, not
@@ -563,7 +564,7 @@ def test_an_event_never_changes_a_tick_already_running():
         def _repair_geofence(self, state, a, repairs):
             if not self.fired:
                 self.fired = True
-                self.hot_apply(_zone(zid="late", cx=0.0, cy=15.0, half=3.0))
+                self.hot_apply(geo(_zone(zid="late", cx=0.0, cy=15.0, half=3.0), self))
             return super()._repair_geofence(state, a, repairs)
 
     sh = EventMidTick(load_policy(DEMO))
@@ -594,8 +595,9 @@ def test_hot_apply_fits_the_grants_50_ms_at_50_rules():
         # written in WGS84 about it, as the bench's hot-apply phase does.
         sh = Shield(fifty_rule_policy())
         sh.filter(State(x=-50, y=-50, up=20), Action4D())
+        zone = geo(_zone(zid=f"hot-{i}", cx=-25.0, cy=-25.0, half=5.0), sh)  # tool side
         t0 = time.perf_counter()
-        sh.hot_apply(_zone(zid=f"hot-{i}", cx=-25.0, cy=-25.0, half=5.0))
+        sh.hot_apply(zone)
         ms.append((time.perf_counter() - t0) * 1e3)
     assert statistics.median(ms) <= 50.0, statistics.median(ms)
 
@@ -637,7 +639,7 @@ def test_the_audit_record_carries_generation_fsm_state_and_the_grants_fields():
     al = AuditLogger(tmp / "audit.jsonl", pol)
     st, a = State(x=0, y=15, up=4), Action4D(vx=1.3)
     al.log(1, sh.filter(st, a))
-    sh.hot_apply(_zone())
+    sh.hot_apply(geo(_zone(), sh))
     al.log(2, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=3.0)))
     recs = [json.loads(ln) for ln in (tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [r["generation"] for r in recs] == [0, 1]
@@ -671,7 +673,7 @@ def test_a_record_written_after_an_event_keeps_the_rules_it_was_decided_under():
     al = AuditLogger(tmp / "audit.jsonl", pol)
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
     h0 = pol.policy_hash
-    sh.hot_apply(_zone())                          # lands before the log call
+    sh.hot_apply(geo(_zone(), sh))                          # lands before the log call
     al.log(1, d)
     rec = json.loads((tmp / "audit.jsonl").read_text(encoding="utf-8"))
     assert (rec["generation"], rec["policy_hash"]) == (0, h0) != (1, pol.policy_hash)
@@ -753,8 +755,8 @@ def test_a_switch_may_not_turn_off_a_hard_rule_of_another_layer():
     g = sh.policy.generation
     e = _raises(LayerRelaxation, sh.set_rule_active, "nfz-airport", False)
     assert "hard regulation-layer rule" in str(e)
-    _raises(LayerRelaxation, sh.hot_apply, TimeWindowSwitch(
-        id="sw", type="time_window_switch", **HARD_P0, target_id="nfz-airport", active=False))
+    _raises(LayerRelaxation, sh.hot_apply, geo(TimeWindowSwitch(
+        id="sw", type="time_window_switch", **HARD_P0, target_id="nfz-airport", active=False), sh))
     assert sh.policy.generation == g and sh.events == []          # nothing applied
     d = sh.filter(st, a)
     assert [v.rule_id for v in d.violations] == ["nfz-airport"]   # still enforced
@@ -819,13 +821,13 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
         "id": "wide", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 500,
         "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 300})
-    e = _raises(LayerRelaxation, sh.hot_apply, wide)
+    e = _raises(LayerRelaxation, sh.hot_apply, geo(wide, sh))
     assert "overriding a hard regulation-layer copy" in str(e), str(e)
     narrow = CorridorSwap.model_validate({
         "id": "narrow", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 10,
         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
         "altitude_floor_m": 8, "altitude_ceiling_m": 25})
-    assert sh.hot_apply(narrow)["op"] == "swap"
+    assert sh.hot_apply(geo(narrow, sh))["op"] == "swap"
 
 
 def test_a_switch_may_not_override_another_layers_switch_holding_a_rule_on():
@@ -857,7 +859,7 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
         "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 1000, "scope": "mission", "constraint_type": "soft",
         "priority": "P2", "violation_action": "monitor_only"})
-    e = _raises(LayerRelaxation, sh.hot_apply, wide)
+    e = _raises(LayerRelaxation, sh.hot_apply, geo(wide, sh))
     assert "hard regulation-layer corridor 'lane'" in str(e)
     d = sh.filter(State(x=0, y=300, up=10), Action4D(vy=1.0))
     assert "lane" in {v.rule_id for v in d.violations}           # the original holds
@@ -865,7 +867,7 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
         "id": "narrow", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 10,
         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
         "altitude_floor_m": 8, "altitude_ceiling_m": 25})
-    assert sh.hot_apply(narrow)["op"] == "swap"
+    assert sh.hot_apply(geo(narrow, sh))["op"] == "swap"
     d = sh.filter(State(x=0, y=8, up=10), Action4D(vy=1.0))
     assert [v.rule_id for v in d.violations] == ["narrow"]
 
@@ -904,8 +906,8 @@ def test_the_last_switch_in_force_decides():
         for hhmm, want in (("10:30", first), ("11:30", then)):
             when = datetime(2026, 10, 7, int(hhmm[:2]), int(hhmm[3:]))
             sh = Shield(load_policy(DEMO), now=lambda w=when: w)
-            sh.hot_apply(sw("s1", first, "10:00"))
-            sh.hot_apply(sw("s2", then, "11:00"))
+            sh.hot_apply(geo(sw("s1", first, "10:00"), sh))
+            sh.hot_apply(geo(sw("s2", then, "11:00"), sh))
             row = next(r for r in sh.rule_status(st) if r["id"] == "nfz-square")
             assert row["in_force"] is want, (first, then, hhmm, row["in_force"])
 
@@ -924,7 +926,7 @@ def test_a_moving_zone_carries_on_across_reset_episode():
     sh = Shield(load_policy(DEMO))
     for _ in range(1200):
         sh.filter(st, Action4D())
-    sh.spawn_nfz(z)
+    sh.spawn_nfz(geo(z, sh))
     for _ in range(50):
         sh.filter(st, Action4D())
     assert _close(_ring(sh, "mv", st), z.ring_at(5.0), 1e-6)
@@ -937,7 +939,7 @@ def test_a_moving_zone_carries_on_across_reset_episode():
     # next episode starts at t = 20 -> 10 s old.
     sh = Shield(load_policy(DEMO))
     sh.filter(st, Action4D(), t=9.0)
-    sh.spawn_nfz(z, t=10.0)
+    sh.spawn_nfz(geo(z, sh), t=10.0)
     sh.filter(st, Action4D(), t=12.0)
     sh.reset_episode()
     sh.filter(st, Action4D(), t=20.0)
@@ -953,10 +955,10 @@ def test_reset_episode_lifts_the_mission_start_lock():
     sh = Shield(load_policy(DEMO))
     sh.filter(State(x=-20, y=-20, up=4), Action4D())
     assert sh.mission_started
-    _raises(LockedRuleClass, sh.hot_apply, pf)
+    _raises(LockedRuleClass, sh.hot_apply, geo(pf, sh))
     sh.reset_episode()
     assert not sh.mission_started
-    assert sh.hot_apply(pf)["op"] == "add_before_start"
+    assert sh.hot_apply(geo(pf, sh))["op"] == "add_before_start"
 
 
 def test_the_migration_keeps_the_zones_breach_action_type_and_priority():
@@ -1067,7 +1069,7 @@ def test_a_zone_spawned_on_top_is_left_the_same_way_in_every_vertex_order():
         sh = Shield(Policy(policy_id="spawn", origin=FRAME, constraints=[]), escalation=False)
         x, y = start
         sh.filter(State(x=x, y=y, up=15.0), Action4D(vx=4 * hx, vy=4 * hy), t=0.0)
-        sh.hot_apply(_zone_in_order(pts), t=0.0)
+        sh.hot_apply(geo(_zone_in_order(pts), sh), t=0.0)
         rows = []
         for k in range(1, 81):
             d = sh.filter(State(x=x, y=y, up=15.0), Action4D(vx=4 * hx, vy=4 * hy), t=0.1 * k)

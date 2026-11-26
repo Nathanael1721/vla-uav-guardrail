@@ -75,6 +75,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
+from guardrail.models import wgs84_from_metres                     # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -108,9 +109,20 @@ policy: {path: policies/sim_demo_policy.yaml}
 expected_kpis:
   P0_escape_rate: 0
 """
-ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
-        "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
-                     {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
+# A REST / gRPC hot-apply body gives its absolute positions in WGS84 only
+# (WP1-14, 2026-11-26): the fixtures are laid out in metres in
+# sim_demo_policy's frame and converted tool side (models.wgs84_from_metres),
+# as a client in metres does before it sends.
+SIM_ORIGIN = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").frame_origin
+
+
+def _ll(body):
+    return wgs84_from_metres(body, SIM_ORIGIN)
+
+
+ZONE = _ll({"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
+            "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
+                         {"x": 20, "y": -10}, {"x": 10, "y": -10}]})
 JITTER = """
 scenario_id: wp4-jitter
 template: static_nfz

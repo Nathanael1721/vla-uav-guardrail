@@ -25,7 +25,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .models import CorridorSwap, DynamicNFZ, State, TimeWindowSwitch
+from .models import CorridorSwap, DynamicNFZ, State, TimeWindowSwitch, wgs84_from_metres
 
 
 class UnsupportedEvent(RuntimeError):
@@ -34,6 +34,25 @@ class UnsupportedEvent(RuntimeError):
 
 
 _SAME = object()
+
+
+def in_wgs84(obj, shield):
+    """`obj` (a rule, or raw point dicts) with its absolute metre points
+    written as WGS84 lat/lon about `shield`'s policy frame origin: the
+    tool-side conversion (models.wgs84_from_metres) a scenario event goes
+    through before it reaches the Shield, which since 2026-11-26 takes an
+    absolute position in lat/lon only (WP1-14). The stress library writes
+    its events in local metres (the grant's scenario payloads are metres
+    relative to the vehicle: width_m, ahead_of_vehicle_m), so the harness
+    converts them here, with the same metres_to_wgs84 the Shield applied at
+    ingest until then: the stored lat/lon, the hash and the enforced zone
+    are unchanged. A policy with no frame origin is left to the Shield,
+    which refuses the event as before (NoFrameOrigin), as is a Shield with
+    its comparison switch wgs84_writes off (it stores what it is given)."""
+    origin = shield.policy.frame_origin
+    if origin is None or not getattr(shield, "wgs84_writes", True):
+        return obj
+    return wgs84_from_metres(obj, origin)
 
 
 def spawn_zone(payload: dict, k: int, st: State, heading: tuple[float, float]
@@ -45,7 +64,10 @@ def spawn_zone(payload: dict, k: int, st: State, heading: tuple[float, float]
     `ahead_of_vehicle_m` ahead of the vehicle on its current heading - the
     worked example's "Polygon NFZ spawns 60 m ahead". `anchor: center` puts the
     CENTRE that far ahead instead, so `ahead_of_vehicle_m: 0, anchor: center`
-    drops the zone on top of the aircraft. `vertices` gives it absolutely.
+    drops the zone on top of the aircraft. `vertices` gives it absolutely:
+    in local metres ({x, y}, the library's frame; converted to WGS84 before
+    the Shield sees them, `in_wgs84`) or, since 2026-11-26, in WGS84
+    ({lat, lon}, passed as given; WP1-14).
     `motion` ({vx_mps, vy_mps, yaw_rate_dps}) makes it move from the spawn on;
     `violation_action` (default repair) is the breach action, so a zone can ask
     for a brake, a loiter, RTL or a landing.
@@ -56,7 +78,7 @@ def spawn_zone(payload: dict, k: int, st: State, heading: tuple[float, float]
     priority (shield.as_dynamic_nfz).
     """
     if "vertices" in payload:
-        verts = [{"x": float(v["x"]), "y": float(v["y"])} for v in payload["vertices"]]
+        verts = [_point(v) for v in payload["vertices"]]
     else:
         w, h = float(payload["width_m"]), float(payload["height_m"])
         a = float(payload.get("ahead_of_vehicle_m", 0.0))
@@ -78,6 +100,25 @@ def spawn_zone(payload: dict, k: int, st: State, heading: tuple[float, float]
     if payload.get("motion") is not None:
         data["motion"] = dict(payload["motion"])
     return DynamicNFZ.model_validate(data)
+
+
+def _point(v) -> dict:
+    """An absolute point of an event payload: {lat, lon} (WGS84) as given, or
+    {x, y} local metres (a dict or an [x, y] pair), as floats."""
+    if isinstance(v, dict) and v.get("lat") is not None and v.get("lon") is not None:
+        return {"lat": float(v["lat"]), "lon": float(v["lon"])}
+    if isinstance(v, dict):
+        return {"x": float(v["x"]), "y": float(v["y"])}
+    return {"x": float(v[0]), "y": float(v[1])}
+
+
+def _record_ring(shield, zone) -> list[list[float]]:
+    """A zone's ring for the event record: [x, y] metres rounded to the mm,
+    from the zone as given when it is in metres (as recorded since
+    2026-10-07), else as the Shield stored it (its frame's view)."""
+    if all(not v.geographic for v in zone.vertices):
+        return [[round(v.x, 3), round(v.y, 3)] for v in zone.vertices]
+    return [[round(v.x, 3), round(v.y, 3)] for v in zone_of(shield, zone.id).vertices]
 
 
 def direction(payload: dict, heading: tuple[float, float]) -> tuple[float, float]:
@@ -199,10 +240,10 @@ def apply_event(ev, es: EventState, st: State, heading: tuple[float, float],
         if any(c.id == zone.id for c in flying.policy.constraints):
             # Same refusal as the hot-apply REST endpoint (guardrail/api.py).
             raise ValueError(f"spawn_polygon_fence: id {zone.id!r} already exists")
-        out = run_all(lambda s: s.hot_apply(zone, when))
+        out = run_all(lambda s: s.hot_apply(in_wgs84(zone, s), when))
         if not out.get("refused"):
             es.last_zone = zone.id
-            out["vertices"] = [[round(v.x, 3), round(v.y, 3)] for v in zone.vertices]
+            out["vertices"] = _record_ring(flying, zone)
             out["violation_action"] = zone.violation_action
             if zone.motion is not None:
                 out["motion"] = zone.motion.model_dump()
@@ -227,13 +268,15 @@ def apply_event(ev, es: EventState, st: State, heading: tuple[float, float],
         if ev.type == "translate_polygon_fence" and "mps" in p:
             ux, uy = direction(p, heading)
             motion.update(vx_mps=float(p["mps"]) * ux, vy_mps=float(p["mps"]) * uy)
-            ring = flying.zone_ring_at(zid, when)
-            out = run_all(lambda s: s.move_nfz(zid, ring, when, motion=dict(motion)))
+            ring = [{"x": x, "y": y} for x, y in flying.zone_ring_at(zid, when)]
+            out = run_all(lambda s: s.move_nfz(zid, in_wgs84(ring, s), when,
+                                               motion=dict(motion)))
             out["motion"] = motion
         elif ev.type == "rotate_polygon_fence" and "deg_per_s" in p:
             motion["yaw_rate_dps"] = float(p["deg_per_s"])
-            ring = flying.zone_ring_at(zid, when)
-            out = run_all(lambda s: s.move_nfz(zid, ring, when, motion=dict(motion)))
+            ring = [{"x": x, "y": y} for x, y in flying.zone_ring_at(zid, when)]
+            out = run_all(lambda s: s.move_nfz(zid, in_wgs84(ring, s), when,
+                                               motion=dict(motion)))
             out["motion"] = motion
         elif ev.type == "translate_polygon_fence":
             dx, dy = float(p.get("dx_m", 0.0)), float(p.get("dy_m", 0.0))
@@ -271,8 +314,7 @@ def apply_event(ev, es: EventState, st: State, heading: tuple[float, float],
         return out
 
     if ev.type == "swap_corridor":
-        cl = [{"x": float(v["x"]), "y": float(v["y"])} if isinstance(v, dict)
-              else {"x": float(v[0]), "y": float(v[1])} for v in p["centerline"]]
+        cl = [_point(v) for v in p["centerline"]]
         data = {"id": p.get("id") or f"swap-{p['target_id']}", "type": "corridor_swap",
                 "target_id": p["target_id"], "centerline": cl,
                 "width_m": float(p["width_m"]),
@@ -285,8 +327,10 @@ def apply_event(ev, es: EventState, st: State, heading: tuple[float, float],
         if window(p) is not None:
             data["valid_time"] = window(p)
         sp = CorridorSwap.model_validate(data)
-        out = run_all(lambda s: s.hot_apply(sp, when))
-        out.update(target=p["target_id"], centerline=[[v["x"], v["y"]] for v in cl],
+        out = run_all(lambda s: s.hot_apply(in_wgs84(sp, s), when))
+        out.update(target=p["target_id"],
+                   centerline=[[v["x"], v["y"]] if "x" in v else [v["lat"], v["lon"]]
+                               for v in cl],
                    width_m=data["width_m"])
         return out
 

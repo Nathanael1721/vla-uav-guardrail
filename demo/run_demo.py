@@ -59,7 +59,7 @@ from guardrail.frames import (body_action, body_to_local_ned,       # noqa: E402
                               filter_world_as_body, limit_in_world)
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
-from guardrail.models import PolygonFence, XY                          # noqa: E402
+from guardrail.models import PolygonFence, XY, wgs84_from_metres       # noqa: E402
 from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell              # noqa: E402
 from guardrail.shield import as_dynamic_nfz                            # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
@@ -134,9 +134,15 @@ def apply_dynamic_zone(shield, fence: PolygonFence = DYNAMIC_FENCE):
     """Hot-apply `fence` mid-flight as a dynamic_nfz (same id, vertices,
     band, margin, priority and breach action, no motion) and return the rule
     applied. `shield.hot_apply(fence)` itself raises LockedRuleClass once the
-    mission has started (the first filter() tick)."""
+    mission has started (the first filter() tick).
+
+    The zone is authored in local metres; since 2026-11-26 the Shield takes
+    an absolute position in WGS84 only (WP1-14), so it is converted here,
+    tool side, about the policy's frame origin (wgs84_from_metres). The
+    metre zone is returned, as before (its x/y are the policy frame's)."""
     zone = as_dynamic_nfz(fence)
-    shield.hot_apply(zone)
+    shield.hot_apply(wgs84_from_metres(zone, shield.policy.frame_origin,
+                                       what=f"dynamic_nfz {zone.id!r}"))
     return zone
 
 

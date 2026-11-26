@@ -293,7 +293,7 @@ def test_a_stale_default_bundle_is_refused_naming_both_hashes():
     assert st["present"] and st["matches"] is True and st["bundle_hash"] == st["yaml_hash"]
     assert flight_policy_choice(None, None, dev_yaml=False, default_yaml=y,
                                 default_bundle=b) == (str(b), None, {"default_bundle": True})
-    y.write_text(EDITED, encoding="utf-8")
+    y.write_text(T._as_flown(EDITED), encoding="utf-8")
     st = flight_bundle_status(y, bundles_dir=bundles)
     assert st["matches"] is False and st["bundle_hash"] != st["yaml_hash"], st
     try:
@@ -356,7 +356,7 @@ def test_the_launcher_flies_the_signed_bundle_or_says_dev_yaml():
     y, b = _bundle_of(NFZ_AHEAD, bundles)
     got, said = _policy_args(y, bundles)
     assert got.split("|")[0] == "--bundle" and Path(got.split("|")[1]) == b, (got, said)
-    y.write_text(EDITED, encoding="utf-8")
+    y.write_text(T._as_flown(EDITED), encoding="utf-8")
     got, said = _policy_args(y, bundles)
     assert got.split("|") == ["--policy", str(y), "--dev-yaml"], got
     assert "STALE" in said and "--dev-yaml" in said, said
@@ -398,7 +398,7 @@ def test_the_city_launchers_fly_the_signed_bundle_or_say_dev_yaml():
     assert got == "" and "signed bundle" in said, (got, said)
     got, said = _city_policy_dev(y, bundles, dev=True)
     assert got == "--dev-yaml" and "-DevYaml" in said, (got, said)
-    y.write_text(EDITED, encoding="utf-8")
+    y.write_text(T._as_flown(EDITED), encoding="utf-8")
     got, said = _city_policy_dev(y, bundles)
     assert got == "--dev-yaml" and "STALE" in said, (got, said)
     got, said = _city_policy_dev(y, _tmp())
@@ -568,7 +568,7 @@ def test_zones_enforced_is_fence_type_s_polygon_bit_alone():
     circle bit."""
     from guardrail import load_policy
     f = _tmp() / "p.yaml"
-    f.write_text(FENCED, encoding="utf-8")
+    f.write_text(T._as_flown(FENCED), encoding="utf-8")
     pol = load_policy(f)
 
     class L:
@@ -594,7 +594,7 @@ class StubRec:
 def _backstop(policy_text=None, ap_fence=None, link=None):
     from guardrail import load_policy
     f = _tmp() / "p.yaml"
-    f.write_text(policy_text or FENCED, encoding="utf-8")
+    f.write_text(T._as_flown(policy_text or FENCED), encoding="utf-8")
     link = link or FenceLink(T.Clock(), ap.FrameAnchor(*ANCHOR, "scene"))
     bs = pn.FenceBackstop(load_policy(f), link, StubRec(),
                           ap.FrameAnchor(*ANCHOR, "scene.home-geo-point"),
@@ -781,11 +781,12 @@ def test_a_monitor_only_zone_is_not_put_on_the_autopilot_fence():
     from guardrail import load_policy
     from guardrail.fence_export import policy_zones
     f = _tmp() / "p.yaml"
-    f.write_text(NFZ_AHEAD.replace("violation_action: repair",
-                                   "violation_action: monitor_only"), encoding="utf-8")
+    f.write_text(T._as_flown(NFZ_AHEAD.replace("violation_action: repair",
+                                               "violation_action: monitor_only")),
+                 encoding="utf-8")
     zones, skipped = policy_zones(load_policy(f), column_m=20.0)
     assert zones == [] and "monitor_only" in skipped[0]["why"], (zones, skipped)
-    f.write_text(NFZ_AHEAD, encoding="utf-8")
+    f.write_text(T._as_flown(NFZ_AHEAD), encoding="utf-8")
     assert [z["id"] for z in policy_zones(load_policy(f), column_m=20.0)[0]] == ["nfz-ahead"]
 
 

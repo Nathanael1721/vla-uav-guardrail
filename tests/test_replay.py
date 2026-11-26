@@ -42,6 +42,7 @@ from guardrail.replay import (EPISODE, INDEX_NAME,             # noqa: E402
                               POLICY, SIGNATURE_NAME, VERIFIED_KPI_FIELDS,
                               _SIGNED_BY, _digest,
                               read_replay, verify_replay, write_replay)
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -1827,10 +1828,10 @@ def test_zone_dwell_counts_a_hot_applied_zone_only_once_it_is_live():
     from guardrail.models import PolygonFence, XY
     sh = Shield(load_policy(SIM_POLICY), escalation=False)
     sh.filter(State(x=-50, y=-50, up=15), Action4D())          # mission started
-    sh.hot_apply(as_dynamic_nfz(PolygonFence(
+    sh.hot_apply(geo(as_dynamic_nfz(PolygonFence(
         id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
-        margin_m=1.0)))
+        margin_m=1.0)), sh))
     pts = [{"t": t, "x": 27.0, "y": 10.0, "up": 15.0} for t in (7.0, 7.9, 8.0, 8.1)]
     got = zone_dwell(sh, pts, 0.1, live_from={"nfz-dynamic": 8.0, "ghost": 1.0})
     assert got["nfz_by_zone_s"] == {"nfz-dynamic": 0.2}, got

@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from guardrail import Action4D, Shield, State, load_policy
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -241,10 +242,10 @@ def test_hot_apply_dynamic_nfz():
     assert not s.filter(st, act).touched
 
     gen0, hash0 = s.policy.generation, s.policy.policy_hash
-    s.hot_apply(DynamicNFZ(
+    s.hot_apply(geo(DynamicNFZ(
         id="nfz-dynamic", type="dynamic_nfz", **HARD_P0,
         vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24), XY(x=-8, y=-16), XY(x=-15, y=-16)],
-    ))
+    ), s))
     assert s.policy.generation == gen0 + 1
     assert s.policy.policy_hash != hash0          # hash tracks the change
 
@@ -268,13 +269,13 @@ def test_a_polygon_fence_is_locked_once_the_mission_starts():
                             vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24),
                                       XY(x=-8, y=-16), XY(x=-15, y=-16)])
     s = make_shield()
-    s.hot_apply(fence())                          # before take-off: allowed
+    s.hot_apply(geo(fence(), s))                          # before take-off: allowed
     assert s.policy.generation == 1 and not s.mission_started
     s = make_shield()
     s.filter(State(x=-20, y=-20, up=4), Action4D())
     gen, n = s.policy.generation, len(s.policy.constraints)
     try:
-        s.hot_apply(fence())
+        s.hot_apply(geo(fence(), s))
     except LockedRuleClass as e:
         assert "locked at mission start" in str(e) and "as_dynamic_nfz" in str(e)
     else:
@@ -283,7 +284,7 @@ def test_a_polygon_fence_is_locked_once_the_mission_starts():
     z = as_dynamic_nfz(fence())
     assert z.type == "dynamic_nfz" and z.margin_m == fence().margin_m
     assert [(v.x, v.y) for v in z.vertices] == [(v.x, v.y) for v in fence().vertices]
-    s.hot_apply(z)
+    s.hot_apply(geo(z, s))
     assert s.policy.generation == gen + 1
 
 

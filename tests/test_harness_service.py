@@ -87,6 +87,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import sweep_scenarios as S                                       # noqa: E402
 from guardrail import harness_service as H                       # noqa: E402
+from guardrail import load_policy                                  # noqa: E402
+from guardrail.models import wgs84_from_metres                     # noqa: E402
 from guardrail.scenario_spec import Episode, Library             # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
@@ -231,10 +233,21 @@ policy: {path: policies/sim_demo_policy.yaml}
 expected_kpis:
   P0_escape_rate: 0
 """
+# A REST / gRPC hot-apply body gives its absolute positions in WGS84 only
+# (WP1-14, 2026-11-26): the fixtures are laid out in metres in
+# sim_demo_policy's frame and converted tool side (models.wgs84_from_metres),
+# as a client in metres does before it sends.
+SIM_ORIGIN = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").frame_origin
+
+
+def _ll(body):
+    return wgs84_from_metres(body, SIM_ORIGIN)
+
+
 # The zone hot-applied across OPEN's path (x 10..20 straddles y = -20).
-ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
-        "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
-                     {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
+ZONE = _ll({"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
+            "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
+                         {"x": 20, "y": -10}, {"x": 10, "y": -10}]})
 OPEN_WITH_EVENT = OPEN + """
 events:
   - at_sim_t: 3.0
@@ -281,9 +294,9 @@ SW_OFF = {"type": "time_window_switch", **HARD_P0, "id": "sw1", "target_id": "nf
 SW_OFF_TUE = dict(SW_OFF, valid_time={"recurrence": {"days": ["Tue"], "start_time": "09:00",
                                                      "end_time": "11:00"}})
 # A zone far off OPEN's path (it changes nothing the aircraft does).
-FAR = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-far",
-       "vertices": [{"x": 100, "y": 100}, {"x": 110, "y": 100},
-                    {"x": 110, "y": 110}, {"x": 100, "y": 110}]}
+FAR = _ll({"type": "dynamic_nfz", **HARD_P0, "id": "nfz-far",
+           "vertices": [{"x": 100, "y": 100}, {"x": 110, "y": 100},
+                        {"x": 110, "y": 110}, {"x": 100, "y": 110}]})
 
 
 def _written(base: str, events: list[dict]) -> str:
@@ -1004,6 +1017,11 @@ def test_a_hot_applied_corridor_swap_flies_as_the_library_scenario_writes_it():
     # a REST rule body states the three fields (IR schema 3.0.0); the runner
     # writes the same values for the event it applies
     body = {"type": "corridor_swap", **HARD_P0, **written_ev["payload"]}
+    # ...in WGS84 (WP1-14, 2026-11-26): the library writes the centerline in
+    # metres in its policy's frame (policies/corridor_survey.yaml), so the
+    # client converts it tool side before it sends.
+    survey = load_policy(ROOT / "policies" / "corridor_survey.yaml").frame_origin
+    body = wgs84_from_metres(body, survey)
     with _server() as srv, _client(srv, insecure=True) as c:
         ref = c.start_episode(scenario_id="corridor-swap-shifted", keep_flight_log=True)
         written = c.end_episode(ref.episode_id)
@@ -1120,7 +1138,8 @@ def test_a_non_finite_number_in_a_struct_is_invalid_argument_not_internal():
     nan, inf = float("nan"), float("inf")
     with _server() as srv, _client(srv, insecure=True) as c:
         eid = c.start_episode(scenario_yaml=OPEN).episode_id
-        inf_vertex = dict(ZONE, vertices=[{"x": inf, "y": -30}] + ZONE["vertices"][1:])
+        inf_vertex = dict(ZONE, vertices=[{**ZONE["vertices"][0], "lat": inf}]
+                          + ZONE["vertices"][1:])
         for body in (dict(ZONE, margin_m=nan), inf_vertex):
             code, why = _refused(c.hot_apply, eid, 3.0, body)
             assert code == "INVALID_ARGUMENT" and why.startswith("body:"), (code, why)

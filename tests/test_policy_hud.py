@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import Shield, State, load_policy                # noqa: E402
 from guardrail.models import Action4D                           # noqa: E402
 from guardrail.shield import Repair, ShieldDecision, Violation  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 from policy_hud import (PolicyIndicator, draw_policy_overlay,   # noqa: E402
                         draw_status_box, render_base_map, rule_view)
 
@@ -635,9 +636,9 @@ def test_a_hot_applied_zone_gets_a_row_and_leaves_with_it():
     st = State(x=0, y=0, up=8)
     n0 = len(ind.update(0.0, _dec(), st)["rows"])
     sh.filter(st, A0)
-    sh.hot_apply(DynamicNFZ.model_validate({
+    sh.hot_apply(geo(DynamicNFZ.model_validate({
         "id": "landslide", "type": "dynamic_nfz", **HARD_P0, "margin_m": 0,
-        "vertices": [{"x": -3, "y": -3}, {"x": 3, "y": -3}, {"x": 3, "y": 3}, {"x": -3, "y": 3}]}))
+        "vertices": [{"x": -3, "y": -3}, {"x": 3, "y": -3}, {"x": 3, "y": 3}, {"x": -3, "y": 3}]}), sh))
     snap = ind.update(0.1, _dec(), st)
     assert len(snap["rows"]) == n0 + 1 and _row(snap, "landslide")["status"] == "breach"
     assert "landslide" in [f[0] for f in snap["map"]["fences"]]
@@ -661,8 +662,8 @@ def test_an_event_landing_mid_update_never_misaligns_a_row():
     sh = Shield(load_policy(NFZ))
     st = State(x=0, y=0, up=8)
     sh.filter(st, A0)
-    sh.hot_apply(zone("first", 0.0))
-    sh.hot_apply(zone("second", 300.0))
+    sh.hot_apply(geo(zone("first", 0.0), sh))
+    sh.hot_apply(geo(zone("second", 300.0), sh))
     ind = PolicyIndicator(sh.policy, shield=sh)
     ind.update(0.0, _dec(), st)
     real = sh.rule_status

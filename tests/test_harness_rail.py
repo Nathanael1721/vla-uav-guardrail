@@ -67,6 +67,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from guardrail import api                                          # noqa: E402
 from guardrail import harness_service as H                         # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
+from guardrail.models import wgs84_from_metres                     # noqa: E402
 from guardrail.shield import Action4D, Shield, State               # noqa: E402
 
 S = H._sweep()
@@ -95,15 +96,25 @@ except H.HarnessUnavailable:
 SIM = ROOT / "policies" / "sim_demo_policy.yaml"
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
+# A REST body gives its absolute positions in WGS84 only (WP1-14, 2026-11-26):
+# the fixtures are laid out in metres in SIM's frame and converted tool side
+# (models.wgs84_from_metres), as a client in metres does before it sends.
+SIM_ORIGIN = load_policy(SIM).frame_origin
+
+
+def _ll(body: dict) -> dict:
+    return wgs84_from_metres(body, SIM_ORIGIN)
+
+
 # Far from every library mission's path: the fake flight does not react to it.
-ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
-        "vertices": [{"x": 210, "y": 230}, {"x": 220, "y": 230},
-                     {"x": 220, "y": 250}, {"x": 210, "y": 250}]}
+ZONE = _ll({"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
+            "vertices": [{"x": 210, "y": 230}, {"x": 220, "y": 230},
+                         {"x": 220, "y": 250}, {"x": 210, "y": 250}]})
 TRANSLATE = {"type": "dynamic_nfz", "op": "translate", "id": "nfz-hot", "dx": 5.0, "dy": -2.0}
 ROTATE = {"type": "dynamic_nfz", "op": "rotate", "id": "nfz-hot", "angle_deg": 30.0}
 SCALE = {"type": "dynamic_nfz", "op": "scale", "id": "nfz-hot", "factor": 1.5}
-MOVE = {"type": "dynamic_nfz", "op": "move", "id": "nfz-hot",
-        "vertices": [{"x": 300, "y": 300}, {"x": 310, "y": 300}, {"x": 310, "y": 310}]}
+MOVE = _ll({"type": "dynamic_nfz", "op": "move", "id": "nfz-hot",
+            "vertices": [{"x": 300, "y": 300}, {"x": 310, "y": 300}, {"x": 310, "y": 310}]})
 SWITCH_OFF = {"type": "time_window_switch", **HARD_P0, "target_id": "nfz-hot",
               "active": False}
 CAMPAIGN = "tsthr"
@@ -893,8 +904,8 @@ def test_the_headless_runner_keeps_every_generation_and_the_bundle_packs_them():
     only. A held IR that does not hash to the recorded hash is not packed
     (the null). A session with no rail answers as before, with the new
     fields saying so."""
-    near = dict(ZONE, vertices=[{"x": 10, "y": -30}, {"x": 20, "y": -30},
-                                {"x": 20, "y": -10}, {"x": 10, "y": -10}])
+    near = _ll(dict(ZONE, vertices=[{"x": 10, "y": -30}, {"x": 20, "y": -30},
+                                    {"x": 20, "y": -10}, {"x": 10, "y": -10}]))
     h = H.Harness(runs_dir=_tmp("hrail_hl_"))
     ref = h.start_episode(scenario_yaml=OPEN, seed=7)
     h.hot_apply(ref["episode_id"], 3.0, near)

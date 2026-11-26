@@ -161,7 +161,10 @@ from .models import (
     SubjectStandoff,
     TimeWindowSwitch,
     _not_looser,
+    no_frame_message,
+    projected_input_message,
     rule_in_wgs84,
+    rule_metre_points,
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -6739,11 +6742,38 @@ class Shield:
     # becomes a legacy form, which bundle.write_bundle refuses to issue and
     # bundle.load_for_flight refuses to fly (WP1-14, 2026-11-18;
     # tests/test_wgs84_frameless_writers.py).
+    #
+    # WGS84-ONLY ENTRY (WP1-14, 2026-11-26). Until then a caller could GIVE
+    # an absolute position in metres (a spawn's vertices, a move's ring, a
+    # swap's centerline, a pre-start fence) and `_in_frame` converted it.
+    # Since then a rule a caller gives with a metre point is REFUSED
+    # (HotApplyRefused, a 422 over REST), naming the tool-side conversion
+    # (models.wgs84_from_metres), which writes the same lat/lon the ingest
+    # wrote. Only the rings the Shield COMPUTES itself from a relative edit
+    # (translate dx/dy, rotate, scale: `computed=True`) are still written
+    # from metres here. A policy with no frame keeps its NoFrameOrigin
+    # refusal (it is checked first). With wgs84_writes off (the comparison
+    # switch above) nothing is refused or converted, as before: metres are
+    # stored as given, and a rule given in lat/lon is placed in the frame.
     wgs84_writes: bool = True
 
-    def _in_frame(self, rule, op: str):
+    def _in_frame(self, rule, op: str, *, computed: bool = False):
         if not self.wgs84_writes:
-            return rule
+            # Comparison mode: metres are stored as given; a rule given in
+            # lat/lon is still placed in the frame (bound), since nothing
+            # gives it a metre view any more (the REST layer did until
+            # 2026-11-26).
+            frame = self.policy.frame_origin
+            if frame is None or rule_metre_points(rule):
+                return rule
+            try:
+                return rule_in_wgs84(rule, frame)
+            except ValueError as e:                 # pydantic ValidationError too
+                raise HotApplyRefused(f"{op} {getattr(rule, 'id', '?')!r}: {e}") from None
+        if (not computed and self.policy.frame_origin is not None
+                and rule_metre_points(rule)):
+            raise HotApplyRefused(projected_input_message(
+                f"{op} {getattr(rule, 'id', '?')!r}"))
         try:
             return rule_in_wgs84(rule, self.policy.frame_origin)
         except ValueError as e:                     # pydantic ValidationError too
@@ -6959,18 +6989,26 @@ class Shield:
         return i, z
 
     def _edit_zone(self, zone_id: str, op: str, fn, t: float | None,
-                   motion=False, layer: str = DEFAULT_LAYER) -> dict:
+                   motion=False, layer: str = DEFAULT_LAYER, *,
+                   given: list[dict] | None = None) -> dict:
+        """`fn(ring)` computes the new ring in metres from the zone's ring now
+        (a relative edit: translate, rotate, scale); `given` is instead the
+        new ring as the caller gave it, {lat, lon} points (a move)."""
         with self._lock:
             i, z = self._zone_now(zone_id)
             self._guard_zone_edit(z, op, layer)
             te = self._event_time(t)
-            # Re-anchor a moving zone where it is NOW, so the edit applies to
-            # the zone the aircraft sees and the motion continues from there.
-            ring = z.ring_at(self._zone_age(z, te)) if z.motion is not None else \
-                [(v.x, v.y) for v in z.vertices]
-            new_ring = fn(ring)
             data = z.model_dump(mode="json", exclude_none=True)
-            data["vertices"] = [{"x": float(x), "y": float(y)} for x, y in new_ring]
+            if given is not None:
+                data["vertices"] = self._given_ring(zone_id, given)
+            else:
+                # Re-anchor a moving zone where it is NOW, so the edit applies
+                # to the zone the aircraft sees and the motion continues from
+                # there.
+                ring = z.ring_at(self._zone_age(z, te)) if z.motion is not None else \
+                    [(v.x, v.y) for v in z.vertices]
+                new_ring = fn(ring)
+                data["vertices"] = [{"x": float(x), "y": float(y)} for x, y in new_ring]
             if motion is not False:
                 if motion is None:
                     data.pop("motion", None)
@@ -6980,7 +7018,7 @@ class Shield:
                 nz = DynamicNFZ.model_validate(data)
             except Exception as e:                       # pydantic ValidationError
                 raise HotApplyRefused(f"{op} {zone_id!r}: {e}") from None
-            nz = self._in_frame(nz, op)
+            nz = self._in_frame(nz, op, computed=given is None)
             cons = list(self.policy.constraints)
             cons[i] = nz
             anchors = dict(self._anchors)
@@ -7032,11 +7070,45 @@ class Shield:
 
     def move_nfz(self, zone_id: str, vertices, t: float | None = None,
                  motion=False, *, layer: str = DEFAULT_LAYER) -> dict:
-        """dynamic_nfz "move": new vertices (metres, policy frame). `motion` a
-        Motion dict to change it, None to stop the zone, False to keep it."""
-        pts = [(float(v["x"]), float(v["y"])) if isinstance(v, dict)
-               else (float(v[0]), float(v[1])) for v in vertices]
-        return self._edit_zone(zone_id, "move", lambda ring: pts, t, motion, layer)
+        """dynamic_nfz "move": new vertices, each {lat, lon} (WGS84). Since
+        2026-11-26 a vertex in metres ({x, y} or an (x, y) pair) is refused
+        (WP1-14): convert it tool-side with models.wgs84_from_metres. `motion`
+        a Motion dict to change it, None to stop the zone, False to keep it."""
+        return self._edit_zone(zone_id, "move", None, t, motion, layer,
+                               given=vertices)
+
+    def _given_ring(self, zone_id: str, vertices) -> list[dict]:
+        """A move's vertices as the caller gave them, checked: {lat, lon}
+        points only (WP1-14, 2026-11-26). With wgs84_writes off (the
+        comparison switch) metres are taken as before, unconverted."""
+        if not isinstance(vertices, (list, tuple)):
+            raise HotApplyRefused(f"move {zone_id!r}: vertices must be a list of "
+                                  f"{{lat, lon}} points")
+        if not self.wgs84_writes:
+            out = []
+            for v in vertices:
+                if isinstance(v, dict) and v.get("x") is not None:
+                    out.append({"x": float(v["x"]), "y": float(v["y"])})
+                elif isinstance(v, dict):
+                    out.append({"lat": v.get("lat"), "lon": v.get("lon")})
+                else:
+                    out.append({"x": float(v[0]), "y": float(v[1])})
+            return out
+        if self.policy.frame_origin is None:
+            # As `_in_frame` refuses any rule with points on such a policy.
+            raise HotApplyRefused(f"move {zone_id!r}: "
+                                  + no_frame_message(f"dynamic_nfz {zone_id!r}"))
+        pts = []
+        for v in vertices:
+            if not (isinstance(v, dict) and v.get("lat") is not None
+                    and v.get("lon") is not None):
+                raise HotApplyRefused(projected_input_message(
+                    f"move {zone_id!r}: vertex {v!r}"))
+            if v.get("x") is not None or v.get("y") is not None:
+                raise HotApplyRefused(projected_input_message(
+                    f"move {zone_id!r}: vertex {v!r} carries x/y beside lat/lon"))
+            pts.append({"lat": v["lat"], "lon": v["lon"]})
+        return pts
 
     def translate_nfz(self, zone_id: str, dx: float, dy: float,
                       t: float | None = None, *, layer: str = DEFAULT_LAYER) -> dict:

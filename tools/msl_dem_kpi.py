@@ -326,7 +326,7 @@ print(json.dumps({"ms": (time.perf_counter() - t0) * 1e3, "rules": len(pol.const
 def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
              tmp: Path) -> dict:
     import bench_shield_50rules as bench
-    from guardrail.models import DynamicNFZ
+    from guardrail.models import DynamicNFZ, wgs84_from_metres
     dem = in_frame(dem)
     raw = fifty_rule_msl_raw()
     tmp.mkdir(parents=True, exist_ok=True)
@@ -387,6 +387,9 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
                           vertices=[{"x": cx, "y": cy}, {"x": cx + 10, "y": cy},
                                     {"x": cx + 10, "y": cy + 10}, {"x": cx, "y": cy + 10}],
                           altitude_floor_m=40.0, altitude_ceiling_m=160.0)
+        # WGS84-only entry (WP1-14, 2026-11-26): converted tool-side, outside
+        # the timed hot-apply.
+        zone = wgs84_from_metres(zone, sh.policy.frame_origin)
         t0 = time.perf_counter()
         sh.hot_apply(zone)
         t1 = time.perf_counter()

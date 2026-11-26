@@ -46,6 +46,7 @@ from guardrail.compiler import ConstraintCompiler, Mission              # noqa: 
 from guardrail.models import (RUNTIME_TYPES, Action4D, DynamicNFZ,      # noqa: E402
                               State, policy_from_raw)
 from guardrail.shield import ENFORCED_TYPES, HotApplyRefused, Shield    # noqa: E402
+from wgs84_fixture import geo, geo_ring, wgs84_doc             # noqa: E402
 
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
 
@@ -73,7 +74,7 @@ BUILDINGS = _grid_map([(slice(28, 33), slice(18, 23))])    # a block at x 36..44
 
 
 def _policy(*rules, pid="p"):
-    return policy_from_raw({"policy_id": pid, "constraints": list(rules)})
+    return policy_from_raw(wgs84_doc({"policy_id": pid, "constraints": list(rules)}))
 
 
 def _de(cls, d, rid=None):
@@ -218,16 +219,16 @@ def _msl_raw(ref="MSL", lo=600.0, hi=640.0, floor=0.0, ceil=700.0):
 
 def test_msl_is_refused_without_a_ground_everywhere():
     """As before 2026-11-03: no ground, no MSL - at the loader, the Shield."""
-    _refused(lambda: policy_from_raw(_msl_raw()), "altitude_ref MSL", "ground")
-    pol = policy_from_raw(_msl_raw(), runtime=False)
+    _refused(lambda: policy_from_raw(wgs84_doc(_msl_raw())), "altitude_ref MSL", "ground")
+    pol = policy_from_raw(wgs84_doc(_msl_raw()), runtime=False)
     _refused(lambda: Shield(pol), "altitude_ref MSL", "ground")
 
 
 def test_msl_over_a_flat_ground_is_the_agl_policy_shifted_by_its_elevation():
     g = terrain.SITL_CMAC
     assert g.elevation_msl_m == 584.0
-    msl = policy_from_raw(_msl_raw(), ground=g)
-    agl = policy_from_raw(_msl_raw(ref=None, lo=16.0, hi=56.0, floor=-584.0, ceil=116.0))
+    msl = policy_from_raw(wgs84_doc(_msl_raw()), ground=g)
+    agl = policy_from_raw(wgs84_doc(_msl_raw(ref=None, lo=16.0, hi=56.0, floor=-584.0, ceil=116.0)))
     s1, s2 = Shield(msl, ground=g), Shield(agl)
     assert s1.ground is g and s1.policy.policy_hash == msl.policy_hash, \
         "the declared policy (and its hash) is what the Shield holds"
@@ -239,7 +240,7 @@ def test_msl_over_a_flat_ground_is_the_agl_policy_shifted_by_its_elevation():
     assert n == 756 and diff == 0, (n, diff)
     # The same heights judged as AGL (no conversion) would be another policy:
     # 600 m above GROUND forbids every case here.
-    wrong = Shield(policy_from_raw(_msl_raw(ref=None)))
+    wrong = Shield(policy_from_raw(wgs84_doc(_msl_raw(ref=None))))
     assert _same_decisions(wrong, s2, cases)[1] > 100
 
 
@@ -249,7 +250,7 @@ def test_a_ground_that_is_not_flat_is_refused_not_approximated():
 
         def elevation_at(self, x=None, y=None):
             return 100.0 + 0.1 * (x or 0.0)
-    pol = policy_from_raw(_msl_raw(), runtime=False)
+    pol = policy_from_raw(wgs84_doc(_msl_raw()), runtime=False)
     _refused(lambda: Shield(pol, ground=Hilly()), "not a flat ground")
     _refused(lambda: terrain.FlatGround(float("nan"), "x"), "not finite")
     _refused(lambda: terrain.FlatGround(10.0, ""), "say where")
@@ -261,20 +262,21 @@ def test_an_msl_hot_apply_follows_the_shields_ground():
     The base states a frame origin: since 2026-11-18 (WP1-14) a zone's metres
     are written as WGS84 about it, and a policy with no origin refuses them
     (models.NoFrameOrigin) before the MSL test is reached."""
-    base = policy_from_raw({**_msl_raw(ref=None, lo=5.0, hi=60.0),
-                            "origin": {"lat": 25.0421, "lon": 121.531}})
+    base = policy_from_raw(wgs84_doc({**_msl_raw(ref=None, lo=5.0, hi=60.0),
+                            "origin": {"lat": 25.0421, "lon": 121.531}}))
     zone = DynamicNFZ(id="dz", type="dynamic_nfz", **H, altitude_ref="MSL",
                       vertices=[{"x": 50, "y": -5}, {"x": 60, "y": -5}, {"x": 60, "y": 5},
                                 {"x": 50, "y": 5}],
                       altitude_floor_m=0.0, altitude_ceiling_m=650.0)
     try:
-        Shield(base).hot_apply(zone)
+        bare = Shield(base)
+        bare.hot_apply(geo(zone, bare))
     except HotApplyRefused as e:
         assert "MSL" in str(e), e
     else:
         raise AssertionError("an MSL zone was hot-applied to a Shield with no ground")
     sh = Shield(base, ground=terrain.FlatGround(600.0, "test"))
-    sh.hot_apply(zone)
+    sh.hot_apply(geo(zone, sh))
     # 650 m MSL over 600 m ground is a 50 m AGL ceiling: 40 m is inside, 55 m above.
     st = {r["id"]: r for r in sh.rule_status(State(x=55.0, y=0.0, up=40.0))}
     assert st["dz"]["breach"], st

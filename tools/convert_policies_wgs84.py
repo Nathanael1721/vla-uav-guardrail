@@ -70,8 +70,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail.bundle import as_version                          # noqa: E402
-from guardrail.models import (Policy, _rule_points, load_policy,  # noqa: E402
-                              parse_policy_text)
+from guardrail.models import (Policy, _rule_points,                # noqa: E402
+                              load_legacy_metre_policy, parse_policy_text)
 from guardrail.projection import LocalProjection, local_metres   # noqa: E402
 
 TOL_M = 1e-6                      # the stated round-trip tolerance (1 um)
@@ -190,7 +190,9 @@ def convert_one(path: Path) -> dict:
     # The repository mixes LF and CRLF; the file keeps its own.
     eol = "\r\n" if "\r\n" in raw_text else "\n"
     text = raw_text.replace("\r\n", "\n")
-    old = load_policy(path, runtime=False)
+    # The metre file is READ in its legacy form (models.load_policy refuses
+    # it since 2026-11-26, WP1-14): converting it is this tool's job.
+    old = load_legacy_metre_policy(path, runtime=False)
     rec = {"file": path.name, "old": f"{old.policy_id}@{old.version}",
            "old_policy_hash": old.policy_hash}
     if old.origin is not None or old.is_geographic:

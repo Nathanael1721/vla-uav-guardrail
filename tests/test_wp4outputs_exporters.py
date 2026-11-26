@@ -98,6 +98,7 @@ import export_episodes as X                                        # noqa: E402
 import rerun_episode as RR                                         # noqa: E402
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
+from guardrail.models import wgs84_from_metres                     # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -142,9 +143,20 @@ stress: {start_jitter_m: 3.0}
 expected_kpis:
   P0_escape_rate: 0
 """
-ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
-        "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
-                     {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
+# A REST / gRPC hot-apply body gives its absolute positions in WGS84 only
+# (WP1-14, 2026-11-26): the fixtures are laid out in metres in
+# sim_demo_policy's frame and converted tool side (models.wgs84_from_metres),
+# as a client in metres does before it sends.
+SIM_ORIGIN = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").frame_origin
+
+
+def _ll(body):
+    return wgs84_from_metres(body, SIM_ORIGIN)
+
+
+ZONE = _ll({"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
+            "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
+                         {"x": 20, "y": -10}, {"x": 10, "y": -10}]})
 
 _H: dict = {}
 
@@ -1436,10 +1448,10 @@ def test_a_rerun_flies_the_same_log_and_another_seed_differs():
 def test_a_rerun_rebuilds_from_the_library_when_the_extras_are_absent():
     # a zone across the lane ahead of the aircraft (it starts at x -20, y 15,
     # eastbound at 4 m/s), spawned at 1 s: the flight cannot ignore it
-    bundle = _fly(scenario_id="nfz-head-on", seed=1001, hot=[(1.0, {
+    bundle = _fly(scenario_id="nfz-head-on", seed=1001, hot=[(1.0, _ll({
         "type": "dynamic_nfz", **HARD_P0, "id": "nfz-early",
         "vertices": [{"x": -12, "y": 5}, {"x": -8, "y": 5}, {"x": -8, "y": 25},
-                     {"x": -12, "y": 25}]})])
+                     {"x": -12, "y": 25}]}))])
     copy = _tmp("wp4_lib_") / bundle.name
     shutil.copytree(bundle, copy)
     (copy / "manifest_extras.json").unlink(missing_ok=True)

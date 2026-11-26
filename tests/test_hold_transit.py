@@ -62,6 +62,7 @@ from guardrail import load_policy  # noqa: E402
 from guardrail import holdpoint as HP  # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -150,7 +151,7 @@ def _bar(x0: float, w: float, half: float, speed: float, margin: float = 0.5) ->
                      altitude_floor_m=0, altitude_ceiling_m=100, margin_m=margin,
                      motion={"vx_mps": -speed, "vy_mps": 0.0})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(bar, t=0.0)
+    sh.spawn_nfz(geo(bar, sh), t=0.0)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
     return sh
 
@@ -233,12 +234,12 @@ def _leaving_a_moving_zone() -> tuple[Shield, State]:
                           altitude_floor_m=0, altitude_ceiling_m=100, margin_m=margin,
                           motion={"vx_mps": vx, "vy_mps": vy})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(nfz("z0", [(17.872, -18.39), (20.779, -15.629), (-5.464, 12.004),
-                            (-8.372, 9.243)], 1.0, -3.634, 3.4185), t=0.0)
-    sh.spawn_nfz(nfz("z1", [(13.288, -21.737), (14.868, -18.107), (-17.016, -4.228),
-                            (-18.596, -7.858)], 0.5, 0.3786, 0.2964), t=0.0)
-    sh.spawn_nfz(nfz("z2", [(-8.087, 14.514), (-9.469, 14.91), (-15.247, -5.262),
-                            (-13.866, -5.657)], 0.5, -0.4135, 1.097), t=0.0)
+    sh.spawn_nfz(geo(nfz("z0", [(17.872, -18.39), (20.779, -15.629), (-5.464, 12.004),
+                            (-8.372, 9.243)], 1.0, -3.634, 3.4185), sh), t=0.0)
+    sh.spawn_nfz(geo(nfz("z1", [(13.288, -21.737), (14.868, -18.107), (-17.016, -4.228),
+                            (-18.596, -7.858)], 0.5, 0.3786, 0.2964), sh), t=0.0)
+    sh.spawn_nfz(geo(nfz("z2", [(-8.087, 14.514), (-9.469, 14.91), (-15.247, -5.262),
+                            (-13.866, -5.657)], 0.5, -0.4135, 1.097), sh), t=0.0)
     st = State(x=1.1756, y=0.9677, up=22.0)
     sh.filter(st, Action4D(), t=0.0)
     return sh, st
@@ -287,7 +288,7 @@ def test_a_turning_zone_and_a_walking_person_are_judged_where_they_will_be():
            "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
     sh = Shield(Policy.model_validate({"policy_id": "spin", "origin": FRAME, "constraints": [kin]}),
                 escalation=False)
-    sh.spawn_nfz(spin, t=0.0)
+    sh.spawn_nfz(geo(spin, sh), t=0.0)
     sh.filter(st, Action4D(), t=0.0)
     assert [v.rule_id for v in sh.hard_violations(sh.state_is_unsafe(st))] == ["spin"]
     crossed = missed_by_metres = 0
@@ -339,12 +340,12 @@ def _fuzz_shield(rng: random.Random, thin: bool) -> tuple[Shield, State]:
         sp = (rng.choice([0.0, rng.uniform(2, 8)]) if thin else rng.uniform(0, 5))
         d = rng.uniform(0, 2 * math.pi)
         yaw = rng.choice([0.0, 0.0, rng.uniform(-20, 20)])
-        sh.spawn_nfz(DynamicNFZ(
+        sh.spawn_nfz(geo(DynamicNFZ(
             id=f"z{j}", type="dynamic_nfz", **HARD_P0,
             vertices=[{"x": cx + c * x - s * y, "y": cy + s * x + c * y} for x, y in pts],
             altitude_floor_m=0, altitude_ceiling_m=100, margin_m=rng.choice([0.5, 1.0]),
             motion={"vx_mps": sp * math.cos(d), "vy_mps": sp * math.sin(d),
-                    "yaw_rate_dps": yaw}), t=0.0)
+                    "yaw_rate_dps": yaw}), sh), t=0.0)
     st = State(x=rng.uniform(-8, 8), y=rng.uniform(-8, 8),
                up=rng.choice([15.0, 15.0, 3.0, 5.0, 8.0, 22.0]))
     sh.filter(st, Action4D(), t=0.0)
@@ -522,7 +523,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
             ang = rng.uniform(0, math.pi)
             c, s = math.cos(ang), math.sin(ang)
             sp, d = rng.choice([0.0, rng.uniform(1, 8)]), rng.uniform(0, 2 * math.pi)
-            sh.spawn_nfz(DynamicNFZ(
+            sh.spawn_nfz(geo(DynamicNFZ(
                 id=f"z{j}", type="dynamic_nfz", **HARD_P0,
                 vertices=[{"x": cx + c * x - s * y, "y": cy + s * x + c * y}
                           for x, y in ((-w / 2, -h / 2), (w / 2, -h / 2),
@@ -531,7 +532,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
                 altitude_ceiling_m=rng.choice([100, 100, 14, 18]),
                 margin_m=rng.choice([0.2, 0.5, 1.0]),
                 motion={"vx_mps": sp * math.cos(d), "vy_mps": sp * math.sin(d),
-                        "yaw_rate_dps": rng.choice([0.0, 0.0, rng.uniform(-40, 40)])}), t=0.0)
+                        "yaw_rate_dps": rng.choice([0.0, 0.0, rng.uniform(-40, 40)])}), sh), t=0.0)
     if kind == "zones":
         sh.set_subject(rng.uniform(-8, 8), rng.uniform(-8, 8), "pedestrian",
                        velocity=((rng.uniform(-3, 3), rng.uniform(-3, 3))
@@ -952,7 +953,7 @@ def test_the_start_of_a_turning_zone_being_left_is_bounded_between_poses():
         motion={"vx_mps": 2.2642283198335083, "vy_mps": 4.082530812152869,
                 "yaw_rate_dps": -53.01150607113388})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(zone, t=0.0)
+    sh.spawn_nfz(geo(zone, sh), t=0.0)
     st = State(x=0.0, y=0.0, up=15.0)
     sh.filter(st, Action4D(), t=0.0)
     assert "z" in {v.rule_id for v in sh.hard_violations(sh.state_is_unsafe(st))}

@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import Action4D, Shield, State, load_policy  # noqa: E402
 from guardrail import api as A                             # noqa: E402
+from guardrail.models import TOOL_SIDE_CONVERSION, wgs84_from_metres  # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -41,6 +42,15 @@ ZONE = {"id": "nfz-landslide", **HARD_P0,
         "vertices": [{"x": -15, "y": -24}, {"x": -8, "y": -24},
                                             {"x": -8, "y": -16}, {"x": -15, "y": -16}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0}
+
+
+def _geo(body, sh: Shield):
+    """`body` (a REST body, or a list of points) with its metre positions
+    written as {lat, lon} about `sh`'s policy frame origin: the tool-side
+    conversion a client in metres makes before it sends (WP1-14, 2026-11-26).
+    The fixtures here are laid out in metres on the micrometre grid, so the
+    policy's view of every point is exactly the metres written."""
+    return wgs84_from_metres(body, sh.policy.frame_origin)
 
 
 def _flying(path=DEMO) -> Shield:
@@ -70,7 +80,7 @@ def _client(sh):
 def test_a_dynamic_nfz_spawns_restamps_and_is_enforced():
     sh = _flying()
     h0 = sh.policy.policy_hash
-    res = A.apply_dynamic_nfz(sh, dict(ZONE))
+    res = A.apply_dynamic_nfz(sh, _geo(ZONE, sh))
     assert res["type"] == "dynamic_nfz" and res["op"] == "spawn"
     assert res["generation"] == 1 and res["policy_hash"] == sh.policy.policy_hash != h0
     d = sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=3.0))
@@ -82,7 +92,7 @@ def test_the_legacy_nfz_body_now_spawns_a_dynamic_nfz():
     start. The same body now spawns the dynamic_nfz it stands for, and the
     response says so."""
     sh = _flying()
-    res = A.apply_legacy_nfz(sh, dict(ZONE))
+    res = A.apply_legacy_nfz(sh, _geo(ZONE, sh))
     assert res["type"] == "dynamic_nfz" and "deprecated" in res
     assert sh.policy.constraints[-1].type == "dynamic_nfz"
     assert [(v.x, v.y) for v in sh.policy.constraints[-1].vertices] == \
@@ -100,7 +110,7 @@ def test_a_rule_body_must_state_the_four_constraintbase_fields():
     hard, P0, project_fix, for this mission."""
     sh = _flying()
     for field in ("constraint_type", "scope", "priority", "violation_action"):
-        body = {k: v for k, v in ZONE.items() if k != field}
+        body = {k: v for k, v in _geo(ZONE, sh).items() if k != field}
         e = _err(A.apply_dynamic_nfz, sh, body)
         assert e.status == 422 and field in e.detail, (field, e.status, e.detail)
         e = _err(A.apply_event, sh, {"type": "time_window_switch", "id": "sw",
@@ -108,30 +118,30 @@ def test_a_rule_body_must_state_the_four_constraintbase_fields():
                                      **{k: v for k, v in HARD_P0.items() if k != field}})
         assert e.status == 422 and field in e.detail, (field, e.status, e.detail)
     assert sh.policy.generation == 0, "a refused body changed the policy"
-    legacy = {k: ZONE[k] for k in ("id", "vertices", "altitude_floor_m",
-                                   "altitude_ceiling_m", "margin_m")}
+    legacy = {k: _geo(ZONE, sh)[k] for k in ("id", "vertices", "altitude_floor_m",
+                                             "altitude_ceiling_m", "margin_m")}
     res = A.apply_legacy_nfz(sh, legacy)
     z = sh.policy.constraints[-1]
     assert (z.constraint_type, z.priority, z.violation_action, z.scope) == \
         ("hard", "P0", "project_fix", "mission")
     assert "scope" in res["deprecated"] and "this mission" in res["deprecated"], res
     # A null scope is no scope.
-    e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "id": "null-scope", "scope": None})
+    e = _err(A.apply_dynamic_nfz, sh, {**_geo(ZONE, sh), "id": "null-scope", "scope": None})
     assert e.status == 422 and "scope" in e.detail, (e.status, e.detail)
     # `repair` is still read, as the grant's project_fix.
-    A.apply_dynamic_nfz(sh, {**ZONE, "id": "old-spelling", "violation_action": "repair",
-                             "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},
-                                          {"x": 45, "y": 45}]})
+    A.apply_dynamic_nfz(sh, _geo({**ZONE, "id": "old-spelling", "violation_action": "repair",
+                                  "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},
+                                               {"x": 45, "y": 45}]}, sh))
     assert sh.policy.constraints[-1].violation_action == "project_fix"
 
 
 def test_refusals_map_to_their_status():
     sh = _flying()
-    A.apply_dynamic_nfz(sh, dict(ZONE))
-    assert _err(A.apply_dynamic_nfz, sh, dict(ZONE)).status == 409           # id exists
+    A.apply_dynamic_nfz(sh, _geo(ZONE, sh))
+    assert _err(A.apply_dynamic_nfz, sh, _geo(ZONE, sh)).status == 409       # id exists
     assert _err(A.apply_nfz_expire, sh, "nope").status == 404                # no such id
-    bow = {**ZONE, "id": "bow", "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 4},
-                                             {"x": 4, "y": 0}, {"x": 0, "y": 4}]}
+    bow = _geo({**ZONE, "id": "bow", "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 4},
+                                                  {"x": 4, "y": 0}, {"x": 0, "y": 4}]}, sh)
     assert _err(A.apply_dynamic_nfz, sh, bow).status == 422                  # bow-tie
     e = _err(A.apply_event, sh, {**ZONE, "id": "pf", "type": "polygon_fence"})
     assert e.status == 422 and "locked at mission start" in e.detail
@@ -143,12 +153,12 @@ def test_refusals_map_to_their_status():
 
 def test_edits_switches_and_swaps_go_through_the_shield():
     sh = _flying()
-    A.apply_dynamic_nfz(sh, dict(ZONE))
+    A.apply_dynamic_nfz(sh, _geo(ZONE, sh))
     assert A.apply_nfz_edit(sh, "nfz-landslide", {"op": "translate", "dx": 2})["op"] == "translate"
     assert A.apply_nfz_edit(sh, "nfz-landslide", {"op": "rotate", "angle_deg": 15})["op"] == "rotate"
     assert A.apply_nfz_edit(sh, "nfz-landslide", {"op": "scale", "factor": 0.5})["op"] == "scale"
-    assert A.apply_nfz_edit(sh, "nfz-landslide", {
-        "op": "move", "vertices": [[0, 40], [4, 40], [4, 44]]})["op"] == "move"
+    assert A.apply_nfz_edit(sh, "nfz-landslide", {"op": "move", "vertices": _geo(
+        [{"x": 0, "y": 40}, {"x": 4, "y": 40}, {"x": 4, "y": 44}], sh)})["op"] == "move"
     assert A.apply_nfz_expire(sh, "nfz-landslide")["op"] == "expire"
     res = A.apply_time_window_switch(sh, {**HARD_P0, "target_id": "nfz-square", "active": False})
     assert res["op"] == "switch_off" and res["applied"].startswith("switch-nfz-square")
@@ -274,7 +284,7 @@ def test_a_rest_event_cannot_relax_another_layers_hard_rule_or_claim_a_layer():
     e = _err(A.apply_event, sh, {"type": "time_window_switch", **HARD_P0, "target_id": "nfz-airport",
                                  "active": False, "layer": "regulation"})
     assert e.status == 422 and "layer 'regulation' refused" in e.detail
-    e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "layer": "site"})
+    e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "vertices": _geo_square(), "layer": "site"})
     assert e.status == 422 and "layer 'site' refused" in e.detail
     assert sh.policy.generation == 0 and sh.events == []
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
@@ -304,6 +314,81 @@ def test_health_reports_the_generation_and_the_fsm():
         "dynamic_nfz", "time_window_switch", "corridor_swap"]
 
 
+def _metre_bodies(sh: Shield):
+    """Every REST body that gives an absolute position, in local metres, in
+    each metre spelling: {x, y}, an [x, y] pair, x/y beside lat/lon."""
+    geo = _geo(ZONE["vertices"], sh)
+    spellings = {
+        "xy": ZONE["vertices"],
+        "pair": [[p["x"], p["y"]] for p in ZONE["vertices"]],
+        "both": [{**g, **m} for g, m in zip(geo, ZONE["vertices"])],
+    }
+    for name, verts in spellings.items():
+        yield name, A.apply_dynamic_nfz, (sh, {**ZONE, "vertices": verts})
+        yield name, A.apply_event, (sh, {**ZONE, "type": "dynamic_nfz", "vertices": verts})
+        if name != "pair":              # the 2026-07 body never took pairs (NfzRequest)
+            yield name, A.apply_legacy_nfz, (sh, {**ZONE, "id": "old", "vertices": verts})
+        yield name, A.apply_nfz_edit, (sh, "nfz-geo", {"op": "move", "vertices": verts})
+        yield name, A.apply_corridor_swap, (sh, {**HARD_P0, "id": "c", "target_id": "x",
+                                                 "width_m": 10, "centerline": verts[:2]})
+
+
+def test_a_metre_position_is_refused_with_422_naming_the_tool_side_conversion():
+    """WP1-14 (2026-11-26). The grant: "the DSL itself never carries projected
+    coordinates". Until this date every body below was ACCEPTED and its
+    metres written as WGS84 at ingest (deviation 1); now each is refused with
+    422 naming models.wgs84_from_metres, and nothing is applied. Relative
+    edits stay in metres (translate / rotate / scale below are accepted)."""
+    sh = _flying()
+    A.apply_dynamic_nfz(sh, _geo({**ZONE, "id": "nfz-geo"}, sh))
+    g = sh.policy.generation
+    for name, fn, args in _metre_bodies(sh):
+        e = _err(fn, *args)
+        assert e.status == 422, (name, fn.__name__, e.status, e.detail)
+        assert TOOL_SIDE_CONVERSION in e.detail and "WP1-14" in e.detail, (name, e.detail)
+    assert sh.policy.generation == g, "a refused metre body changed the policy"
+    for edit in ({"op": "translate", "dx": 2, "dy": -1}, {"op": "rotate", "angle_deg": 20},
+                 {"op": "scale", "factor": 1.2}):
+        assert A.apply_nfz_edit(sh, "nfz-geo", edit)["op"] == edit["op"]
+    stored = sh.policy.model_dump(mode="json", context={"points": "stored"})
+    assert '"x"' not in str(stored).replace("'", '"'), "the policy carries metres"
+
+
+def test_a_body_converted_tool_side_stores_what_the_ingest_stored():
+    """The tool-side conversion writes the lat/lon the REST ingest wrote
+    until 2026-11-26 (both are projection.metres_to_wgs84 about the frame
+    origin), so the zone, the policy hash and the enforcement are those of a
+    metre body then: compared here with the rule the ingest built
+    (models.rule_in_wgs84 of the metre zone)."""
+    from guardrail.models import DynamicNFZ, rule_in_wgs84
+    sh = _flying()
+    A.apply_dynamic_nfz(sh, _geo(ZONE, sh))
+    ingest = _flying()
+    ingest.hot_apply(rule_in_wgs84(DynamicNFZ.model_validate({**ZONE, "type": "dynamic_nfz"}),
+                                   ingest.policy.frame_origin))
+    assert sh.policy.policy_hash == ingest.policy.policy_hash
+    a, b = sh.policy.constraints[-1], ingest.policy.constraints[-1]
+    assert [(v.lat, v.lon, v.x, v.y) for v in a.vertices] == \
+        [(v.lat, v.lon, v.x, v.y) for v in b.vertices]
+
+
+def test_routes_refuse_a_metre_position_with_422():
+    sh = _flying()
+    c = _client(sh)
+    if c is None:
+        return SKIP
+    assert c.post("/dynamic_nfz", json=_geo({**ZONE, "id": "nfz-geo"}, sh)).status_code == 200
+    for path, body in (("/dynamic_nfz", ZONE), ("/hot_apply", {**ZONE, "type": "dynamic_nfz"}),
+                       ("/nfz", {**ZONE, "id": "old"}),
+                       ("/corridor_swap", {**HARD_P0, "id": "c", "target_id": "x", "width_m": 10,
+                                           "centerline": ZONE["vertices"][:2]})):
+        r = c.post(path, json=body)
+        assert r.status_code == 422 and TOOL_SIDE_CONVERSION in r.json()["detail"], (path, r.text)
+    r = c.patch("/dynamic_nfz/nfz-geo", json={"op": "move", "vertices": ZONE["vertices"]})
+    assert r.status_code == 422 and TOOL_SIDE_CONVERSION in r.json()["detail"], r.text
+    assert c.get("/health").json()["generation"] == 1
+
+
 # ---------------------------------------------------------------------- routes
 
 def test_routes_spawn_edit_expire_and_refuse_over_http():
@@ -311,14 +396,15 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
     c = _client(sh)
     if c is None:
         return SKIP
-    r = c.post("/dynamic_nfz", json=ZONE)
+    zone = _geo(ZONE, sh)
+    r = c.post("/dynamic_nfz", json=zone)
     assert r.status_code == 200 and r.json()["generation"] == 1, r.text
-    assert c.post("/dynamic_nfz", json=ZONE).status_code == 409
+    assert c.post("/dynamic_nfz", json=zone).status_code == 409
     r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": "translate", "dx": 1, "dy": 0})
     assert r.status_code == 200 and r.json()["generation"] == 2
     assert c.delete("/dynamic_nfz/nfz-landslide").status_code == 200
     assert c.delete("/dynamic_nfz/nfz-landslide").status_code == 404
-    r = c.post("/hot_apply", json={**ZONE, "id": "pf", "type": "polygon_fence"})
+    r = c.post("/hot_apply", json={**zone, "id": "pf", "type": "polygon_fence"})
     assert r.status_code == 422 and "locked at mission start" in r.json()["detail"]
     assert c.get("/health").json()["generation"] == 3
     assert [e["op"] for e in c.get("/events").json()] == ["spawn", "translate", "expire"]
@@ -326,8 +412,9 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
 
 def test_routes_switch_swap_and_the_legacy_body():
     from guardrail.models import Policy
-    # A frame origin stated: since 2026-11-18 (WP1-14) a swap's metres are
-    # written as WGS84 about it, and a policy with no frame refuses them (422).
+    # A frame origin stated: since 2026-11-26 (WP1-14) a swap's centerline is
+    # sent in WGS84, converted tool-side about it; a policy with no frame
+    # refuses any point (422).
     pol = Policy.model_validate({"policy_id": "lanes",
                                  "origin": {"lat": 35.6895, "lon": 139.6917},
                                  "constraints": [
@@ -337,14 +424,15 @@ def test_routes_switch_swap_and_the_legacy_body():
     c = _client(sh)
     if c is None:
         return SKIP
-    r = c.post("/corridor_swap", json={**HARD_P0, "id": "lane-b", "target_id": "lane-a", "width_m": 10,
-                                       "centerline": [{"x": -100, "y": 40}, {"x": 100, "y": 40}]})
+    r = c.post("/corridor_swap", json=_geo(
+        {**HARD_P0, "id": "lane-b", "target_id": "lane-a", "width_m": 10,
+         "centerline": [{"x": -100, "y": 40}, {"x": 100, "y": 40}]}, sh))
     assert r.status_code == 200, r.text
     d = sh.filter(State(x=0, y=0, up=10), Action4D(vx=2.0))
     assert [v.rule_id for v in d.violations] == ["lane-b"]
     r = c.post("/time_window_switch", json={**HARD_P0, "target_id": "lane-b", "active": False})
     assert r.status_code == 422                     # a swap is an event, not a rule
-    r = c.post("/nfz", json={**ZONE, "id": "old-style"})
+    r = c.post("/nfz", json=_geo({**ZONE, "id": "old-style"}, sh))
     assert r.status_code == 200 and r.json()["type"] == "dynamic_nfz"
     assert c.get("/policy").json()["constraints"][-1]["type"] == "dynamic_nfz"
 
@@ -372,12 +460,13 @@ def test_routes_refuse_a_zone_the_shield_would_not_enforce_or_build():
     c = _client(sh)
     if c is None:
         return SKIP
-    r = c.post("/dynamic_nfz", json={**ZONE, "altitude_ref": "MSL"})
+    zone = _geo(ZONE, sh)
+    r = c.post("/dynamic_nfz", json={**zone, "altitude_ref": "MSL"})
     assert r.status_code == 422 and "MSL" in r.json()["detail"], r.text
-    r = c.post("/dynamic_nfz", json={**ZONE, "margin_m": 1e308})
+    r = c.post("/dynamic_nfz", json={**zone, "margin_m": 1e308})
     assert r.status_code == 422 and "could not compile" in r.json()["detail"], r.text
     assert c.get("/health").json()["generation"] == 0
-    assert c.post("/dynamic_nfz", json=ZONE).status_code == 200
+    assert c.post("/dynamic_nfz", json=zone).status_code == 200
 
 
 if __name__ == "__main__":

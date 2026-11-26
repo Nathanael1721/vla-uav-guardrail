@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from guardrail import kpi as K, load_policy                        # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 import rescore_kpis as R                                           # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
@@ -122,9 +123,9 @@ def test_a_declared_subject_breach_is_not_scored_clean():
 
 def _people_rule_policy(d=10.0, extra=()):
     from guardrail.models import policy_from_raw
-    return policy_from_raw({"policy_id": "people-rescore", "constraints": [
+    return policy_from_raw(wgs84_doc({"policy_id": "people-rescore", "constraints": [
         {"id": "de-people", "type": "distance_envelope", **HARD_P0,
-         "object_class": "people", "min_distance_m": d}, *extra]})
+         "object_class": "people", "min_distance_m": d}, *extra]}))
 
 
 def test_a_people_envelope_run_is_rescored_from_its_logged_people():

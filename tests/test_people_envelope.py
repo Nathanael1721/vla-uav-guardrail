@@ -54,6 +54,7 @@ import numpy as np                                                      # noqa: 
 from guardrail import people as P                                      # noqa: E402
 from guardrail.models import Action4D, State, policy_from_raw           # noqa: E402
 from guardrail.shield import Shield                                     # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
@@ -72,11 +73,11 @@ def _refused(fn, *needles, exc=ValueError):
 
 
 def _people_policy(d=5.0, extra=()):
-    return policy_from_raw({"policy_id": "people-test", "version": "0.1.0", "constraints": [
+    return policy_from_raw(wgs84_doc({"policy_id": "people-test", "version": "0.1.0", "constraints": [
         {"id": "de-people", "type": "distance_envelope", **H, "object_class": "people",
          "min_distance_m": d},
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}, *extra]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}, *extra]}))
 
 
 def _shield(**kw):
@@ -207,13 +208,13 @@ def test_non_finite_people_are_dropped_and_counted():
 def test_a_policy_without_a_people_envelope_ignores_set_people_decision_for_decision():
     """Behaviour identity for every policy flown before: nothing reads the
     people unless a distance_envelope over people is in the policy."""
-    pol = policy_from_raw({"policy_id": "no-people", "constraints": [
+    pol = policy_from_raw(wgs84_doc({"policy_id": "no-people", "constraints": [
         {"id": "nfz", "type": "polygon_fence", **H, "altitude_floor_m": 0,
          "altitude_ceiling_m": 100,
          "vertices": [{"x": 10, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5},
                       {"x": 10, "y": 5}]},
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     a, b = Shield(pol, escalation=False), Shield(pol, escalation=False)
     b.set_people([(x, y) for x in range(-10, 30, 3) for y in range(-10, 10, 3)])
     n = 0
@@ -366,9 +367,9 @@ def test_synthetic_detections_reach_the_shield_and_go_stale():
 def test_the_rail_asks_for_people_only_for_a_people_policy():
     pn, fv = _fv()
     args = SimpleNamespace(people_query=None, people_thresh=None, people_stale_s=3.0)
-    plain = policy_from_raw({"policy_id": "p", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": [
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     assert pn.people_source_for(plain, args, detector=True) == (None, None)
     src, phrase = pn.people_source_for(_people_policy(), args, detector=True)
     assert phrase == fv.PEOPLE_QUERY == "a person" and src.startswith("perception: ")
@@ -455,9 +456,9 @@ def test_the_simulators_pedestrian_list_feeds_the_people():
 
 def test_the_sim_rails_name_their_source_or_refuse():
     _, fv = _fv()
-    plain = policy_from_raw({"policy_id": "p", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": [
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     a = SimpleNamespace(level_peds=40, level_ped_prefix="Ped_", level_truth_period=0.5,
                         pedestrians=0)
     assert fv.sim_people_source(plain, a) is None
@@ -484,9 +485,9 @@ def test_the_sim_rails_name_their_source_or_refuse():
 # ------------------------------------------------------------------ (f) SITL, harness
 
 def test_the_sitl_rails_and_the_harness_judge_the_declared_person_only():
-    plain = policy_from_raw({"policy_id": "p", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": [
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     assert P.declared_subject_source(plain, None, None, rail="r") == ({}, [])
     kw, gaps = P.declared_subject_source(_people_policy(), (30.0, 0.0), "pedestrian",
                                          rail="the ArduPilot SITL rail")
@@ -658,7 +659,7 @@ def test_the_cull_range_is_sized_by_the_envelope_and_the_forecast():
             cons.append({"id": "kin", "type": "kinematic_envelope", **H,
                          "speed_max_mps": cap, "climb_rate_max_mps": 2.0,
                          "yaw_rate_max_dps": 45.0})
-        return policy_from_raw({"policy_id": "p", "constraints": cons})
+        return policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": cons}))
     from guardrail.models import load_policy
     rig = load_policy(ROOT / "experiments" / "policies" / "follow_car_citylife_people.yaml")
     assert P.cull_range_m(rig, 5.0) == P.PEOPLE_RANGE_M          # 4 + 25 + 10 < 100
@@ -673,9 +674,9 @@ def test_the_cull_range_is_sized_by_the_envelope_and_the_forecast():
     assert P.range_record(math.inf).startswith("no cull")
     assert P.range_record(115.0) == 115.0
     # No people rule: the floor.
-    plain = policy_from_raw({"policy_id": "p", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": [
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     assert P.cull_range_m(plain, 5.0) == P.PEOPLE_RANGE_M
     _refused(lambda: P.cull_range_m(rig, float("nan")), "lookahead_s")
     # The equivalence the cull rests on, for a large envelope (98 m): a
@@ -724,9 +725,9 @@ def test_an_offline_reader_takes_its_people_from_the_log_or_refuses():
     for m in ({}, {"subject": {"class": "car", "x": 1.0, "y": 1.0}}):
         kw, gaps = P.logged_people_source(pol, [{"x": 0.0, "y": 0.0}], m)
         assert kw == {} and "records no people" in gaps[0], gaps
-    plain = policy_from_raw({"policy_id": "p", "constraints": [
+    plain = policy_from_raw(wgs84_doc({"policy_id": "p", "constraints": [
         {"id": "kin", "type": "kinematic_envelope", **H, "speed_max_mps": 4.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]}))
     assert P.logged_people_source(plain, [{"x": 0.0, "y": 0.0}], {}) == ({}, [])
 
 

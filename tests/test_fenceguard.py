@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import load_policy                                # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 from follow_vlm import FenceGuard                                # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
@@ -396,10 +397,10 @@ def test_a_zone_hot_applied_mid_flight_is_seen_by_the_guard():
     g = FenceGuard(pol, shield=sh)
     assert g.gate(10.0, -40.0, *NORTH)[0] == 1.0             # clear road ahead
     sh.filter(State(x=10.0, y=-40.0, up=10.0), Action4D())
-    sh.hot_apply(DynamicNFZ.model_validate({
+    sh.hot_apply(geo(DynamicNFZ.model_validate({
         "id": "spawned", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0,
         "vertices": [{"x": 5, "y": -34}, {"x": 15, "y": -34},
-                     {"x": 15, "y": -30}, {"x": 5, "y": -30}]}))
+                     {"x": 15, "y": -30}, {"x": 5, "y": -30}]}), sh))
     scale, dist, _ = g.gate(10.0, -40.0, *NORTH)
     assert scale < 1.0 and dist is not None and dist < g.brake_m, (scale, dist)
     assert g.last_cause == "fence"
