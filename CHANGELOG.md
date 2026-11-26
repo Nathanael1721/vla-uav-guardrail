@@ -24,6 +24,7 @@ shipped change and recorded as one.
 #### Changed (text only)
 - docs/FINAL-REPORT.md: a status-block note; sections 1, 4.4, 10 and 11; decision 9 (its "not yet pushed" also corrected: 2b01e77 and 132e979 were pushed with release 0.7.0 (21c2771) on 23 Nov). Both files: the Appendix A rows WP3-19, WP4-06, WP4-14 (release 0.7.1's own runs failed too, with the cause) and X-01, identical in both; the outline's sections 4 and 10 (plan).
 - docs/data/github_ci/: run_45762447982.json, run_45762446649.json and run_45838850365.json (exported with `gh run view --json`), described in its README.md. Appendix A stays 112 DONE, 23 PARTIAL, 1 DRIFT, 0 MISSING.
+- The rows WP3-19 and WP4-14 (both files) and section 10 of the report said only release 0.7.0 ran the five-row smoke in a KPI-grade run; release 0.7.1's smoke smREL071 (a3d616e, 26 Nov, docs/data/kpi_smREL071/) flew the five rows too, 52/52 KPI-grade, P0 escape 0 on each. They now name both releases; the statuses are unchanged (WP3-19 and WP4-14 stay PARTIAL).
 
 ### 2026-11-26 (flown: release 0.7.1 smoke smREL071, prefix_dyn pdyn1126, harness REST lat/lon wgs01; independent review; WP3-04 DONE)
 
