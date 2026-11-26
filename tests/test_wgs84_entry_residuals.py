@@ -48,6 +48,8 @@ The independent review of that fix (2026-11-26) found that a declared
 legacy read (VLAGUARD_LEGACY_READ=1) flew a NEW policy in local metres
 through load_for_flight; a declared read now takes a policy the lock records
 only (bundle.recorded_as; tests/recorded_legacy.py gives the recorded ones).
+It also found that PATCH /dynamic_nfz move ignored a `geometry:` block; a
+move now refuses any key it does not take.
 
 The REST checks call the guardrail.api handlers the routes call; the FastAPI
 routes are exercised by tests/test_api.py where FastAPI is installed.
@@ -836,6 +838,44 @@ def test_move_takes_an_xy_given_lat_lon():
     msg = _refused(lambda: sh.move_nfz("z", [XY(x=0.0, y=0.0), XY(x=5.0, y=0.0),
                                             XY(x=5.0, y=5.0)]), HotApplyRefused)
     assert "local metres" in msg, msg
+
+
+def test_patch_move_refuses_a_geometry_block_and_unknown_keys():
+    """PATCH /dynamic_nfz/{id} {op: move} read `vertices` and ignored every
+    other key, so {op: move, vertices: [lat/lon], geometry: {vertices:
+    [{x, y}]}} answered 200, dropped the block and bumped the generation 1
+    -> 2 (third independent review of WP1-14, 2026-11-26; failed before:
+    200). Now 422, nothing applied: a geometry block in metres is refused
+    for its points (naming the conversion), any other unknown key for what
+    it is. A clean move, with `motion` or `layer: mission`, is applied as
+    before."""
+    sh = Shield(load_policy(SITL))
+    api.apply_dynamic_nfz(sh, {"id": "z", **RULE, "vertices": [
+        _ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]})
+    assert sh.policy.generation == 1
+    ring = [_ll(sh, 40, -5), _ll(sh, 50, -5), _ll(sh, 50, 5)]
+    metre_block = {"vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]}
+    for body, words in (
+            ({"op": "move", "vertices": ring, "geometry": metre_block},
+             (TOOL_SIDE_CONVERSION,)),
+            ({"op": "move", "vertices": ring, "geometry": {"vertices": ring}},
+             ("geometry",)),
+            ({"op": "move", "vertices": ring, "X": 1.0}, ("unknown key", "X"))):
+        try:
+            api.apply_nfz_edit(sh, "z", copy.deepcopy(body))
+        except api.ApiError as e:
+            assert e.status == 422, (body, e.status)
+            for w in words:
+                assert w in e.detail, (w, e.detail)
+        else:
+            raise AssertionError(f"PATCH move applied {sorted(body)}")
+        assert sh.policy.generation == 1, body
+    assert api.apply_nfz_edit(sh, "z", {"op": "move", "vertices": ring,
+                                        "layer": "mission"})["generation"] == 2
+    assert api.apply_nfz_edit(sh, "z", {"op": "move", "vertices": ring,
+                                        "motion": None})["generation"] == 3
+    # translate carries no point; its body is as it was
+    assert api.apply_nfz_edit(sh, "z", {"op": "translate", "dx": 1.0})["generation"] == 4
 
 
 def test_every_run_resolution_candidate_builds_a_shield():

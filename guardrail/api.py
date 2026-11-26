@@ -56,7 +56,8 @@ origin (models.NoFrameOrigin).
 
 PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [{lat, lon}, ...]},
 {"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate", "angle_deg": 30} or
-{"op": "scale", "factor": 1.5}.
+{"op": "scale", "factor": 1.5}. A move refuses any other key (a `geometry:`
+block included; MOVE_KEYS, since 2026-11-26).
 
 POST /time_window_switch: {"target_id": "nfz-school-yard", "active": false,
 "constraint_type": "hard", "scope": "mission", "priority": "P0",
@@ -290,12 +291,34 @@ def apply_dynamic_nfz(shield: Shield, body: dict) -> dict:
         raise _refuse(e) from None
 
 
+# The keys a PATCH /dynamic_nfz/{id} "move" body may carry (WP1-14, 2026-11-26).
+MOVE_KEYS = frozenset({"op", "vertices", "motion", "layer"})
+
+
 def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
-    """dynamic_nfz "move" / "translate" / "rotate" / "scale"."""
+    """dynamic_nfz "move" / "translate" / "rotate" / "scale".
+
+    A "move" takes the zone's new top-level `vertices` as {lat, lon} points
+    (_points) and refuses any key but MOVE_KEYS (422). Until 2026-11-26 it
+    read `vertices` and ignored the rest, so a body with a `geometry:` block
+    in local metres beside lat/lon vertices answered 200 and bumped the
+    generation, the block dropped without a word (third independent review
+    of WP1-14; nothing projected was stored). A `geometry:` block's points
+    are checked first, as POST /nfz checks them, so x/y there is refused
+    for what it is. translate / rotate / scale carry no point."""
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
     op = body.get("op")
+    if op == "move":
+        if "geometry" in body:
+            _body_points(shield, {k: v for k, v in body.items() if k != "vertices"},
+                         "vertices")
+        extra = sorted(str(k) for k in body if k not in MOVE_KEYS)
+        if extra:
+            raise ApiError(422, f"move: unknown key(s) {', '.join(extra)}; a move takes "
+                                f"the zone's top-level `vertices` as {{lat, lon}} points "
+                                f"(and `motion`), no `geometry:` block")
     try:
         if op == "move":
             ev = shield.move_nfz(zone_id, _points(shield, body.get("vertices")),
