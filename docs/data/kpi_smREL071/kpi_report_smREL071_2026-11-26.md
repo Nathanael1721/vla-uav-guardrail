@@ -55,7 +55,7 @@ Nulls: a hover would pass 0.0 % of the missions; an always-brake Shield's repair
 - The campaign's own fail-safe figure, on the labels it flew with: 45/50 = 0.900 (4 false, 1 missed); 0 of its fail-safes triggered by the autopilot's GeoFence backstop.
 
 ```
-python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/wf1125/rigplan/hil_rig_F.json --hil-campaign smREL071 --out F:/vla_drone_offload/hil_campaigns/hil_smREL071/sweep.json --runs F:/vla_drone_offload/hil_campaigns/hil_smREL071 --hil-controls
+python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config <rigplan>/hil_rig_F.json --hil-campaign smREL071 --out F:/vla_drone_offload/hil_campaigns/hil_smREL071/sweep.json --runs F:/vla_drone_offload/hil_campaigns/hil_smREL071 --hil-controls
 ```
 
 ### Stack revisions by campaign

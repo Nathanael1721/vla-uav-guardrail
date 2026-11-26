@@ -52,7 +52,7 @@
   "profile": "smoke",
   "grant_scope": "~50 scenarios x 1 seed each",
   "cadence": "per build (CI)",
-  "command": "python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/wf1125/rigplan/hil_rig_F.json --hil-campaign smREL071 --out F:/vla_drone_offload/hil_campaigns/hil_smREL071/sweep.json --runs F:/vla_drone_offload/hil_campaigns/hil_smREL071 --hil-controls",
+  "command": "python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-config <rigplan>/hil_rig_F.json --hil-campaign smREL071 --out F:/vla_drone_offload/hil_campaigns/hil_smREL071/sweep.json --runs F:/vla_drone_offload/hil_campaigns/hil_smREL071 --hil-controls",
   "code_revision": "a3d616ec6ec8",
   "max_s_add": 0.0,
   "flight_length": {

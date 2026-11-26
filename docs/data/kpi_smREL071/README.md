@@ -11,9 +11,10 @@ standoff-reclassified, the dyn-nfz-translate prefix arms). All 52 KPI-grade;
 single_sha 52/52. It is the release gate of docs/RUNBOOK-release.md (P0
 escape 0, no ERROR, the five matrix rows flown and KPI-grade, no tick over
 100 ms). No nightly follows it: the KPI of record stays release 0.7.0's
-ntFIN5 (docs/data/kpi_ntFIN5/), whose 654 runs replay with identical Shield
-decisions through the body-frame stack this release ships (CHANGELOG
-2026-11-26, WP3-04).
+ntFIN5 (docs/data/kpi_ntFIN5/). That ntFIN5's 654 runs give the same Shield
+decisions through the body-frame stack this release ships is stated in
+CHANGELOG 2026-11-26 and commit 35df373 (WP3-04), with no committed record,
+and the NaN single-channel case now decides differently by design.
 
 The launcher's own line printed "fail-safe labels 45/50 = 0.9": that is the
 ideal-vehicle label reading (a) the launcher scores in flight, not the
@@ -69,4 +70,7 @@ each.
 
 Re-score and replay after the flight; the inputs committed (704b656); the KPI
 report from that clean tree. Local paths repo-relative or `<store>`, the temp
-folder of the replay written `~/AppData/...`.
+folder of the replay written `~/AppData/...`. The campaign command quoted in
+the KPI report (.md and .json) had its rig config's local path replaced by
+`<rigplan>/hil_rig_F.json` after generation (`<rigplan>` is the lab's local
+rig-plan folder, not in the repo); nothing else in the report was changed.

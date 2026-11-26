@@ -6,8 +6,9 @@ the hil rig (AGX Orin + ArduCopter 4.5.7 SITL over MAVROS 2) at release
 0.7.1, a3d616e, sim_speedup 1.0, KPI-grade (kpi.json `kpi_grade` true,
 manifest `code_revision` a3d616ec6ec8). Scenario dyn-nfz-rotate-step, seed
 1001, signed bundle fase3-sim-demo v0.1.4. Its purpose: the first flight
-since WP1-14 (909804b, 26 Nov: every entry takes absolute positions in WGS84
-only) in which a policy change reaches the flying Shield over the Policy
+since WP1-14 (909804b, 26 Nov: the entries refuse a point in metres; a
+nested geometry.vertices / centerline REST body is not yet checked, see
+CHANGELOG 2026-11-26, corrections (b)) in which a policy change reaches the flying Shield over the Policy
 DSL's REST hot-apply, so the lat/lon-only REST form is shown on the rig, not
 only in tests. It is the harness twin of hh02_001 (14 Nov, the same scenario
 and seed).
@@ -27,8 +28,8 @@ the fences re-published to the autopilot for each generation.
 
 ## Outcome
 
-P0 escape 0 (null passthrough 0.0606); tick max 49.89 ms, 0 of 650 ticks
-over 100 ms; the grant's six bundle names written (manifest.json,
+P0 escape 0 (null passthrough 0.0606); `tick_ms` max 49.89 ms, 0 of the 399
+ticks with a measured `tick_ms` over 100 ms (650 ticks in the episode); the grant's six bundle names written (manifest.json,
 policy_bundle.tar.gz complete with generations 0-2, episode.bag2/,
 shield_audit.jsonl, harness_events.jsonl, kpi.json). The harness's verdict
 was `fail` on its ideal-vehicle fail-safe label ("labelled not expected,

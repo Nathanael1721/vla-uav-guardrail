@@ -49,11 +49,14 @@ toward the new edge, about 1 m from it. The FSM goes Normal -> Brake on the
 swap tick (X1, "repair over theta ... projection abandoned"). On the prefix-on
 arm the consumer has generation 1's CSP 0.12 s later and turns away; the
 Shield, still in Brake, passes that legal turned action. The aircraft's own
-momentum carries it 0.64-0.81 m outside the narrowed corridor at ~3.5 s; the
-Shield then flies the escape (body vy about -1.8 m/s) and it is back inside
-by ~5.2 s (G7 to Normal). Because the Shield was flying when the position
-became unsafe, under the rules already in force, the scorer counts it as a
-breach. The prefix-off arms overshoot the same way (to 9.99 m deep; RTL), but
+momentum carries it out of the narrowed corridor at about 3.5-3.6 s (first
+unsafe tick 3.467 s on _005, 3.608 s on _007), to 0.81 / 0.64 m outside at
+about 4.3-4.4 s (4.359 / 4.309 s); the Shield then flies the escape (body vy
+about -1.8 m/s) and it is back inside by ~5.2 s (G7 to Normal). Because the
+Shield was flying when the position became unsafe, under the rules already
+in force, the scorer counts it as a breach. The prefix-off arms overshoot
+the same way (_006 0.70 m, _008 0.72 m outside, at about 4.25 s; their
+later 9.99 m depth is in RTL, about 71 s in), but
 in the autopilot's Loiter after Brake, which the scorer attributes to the
 autopilot, not to the flight. Headless, where the vehicle model stops on the
 commanded velocity, the same cells pass. The gate is left as it was set; the
