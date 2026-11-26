@@ -36,6 +36,14 @@ view and so its own migration was refused; POST /nfz ignored a `geometry:`
 block; and the lock's rewound metre versions (bundle.policy_candidates)
 could no longer build a Shield.
 
+A third review (2026-11-26, second independent re-review of WP1-14) found:
+bundle.load_bundle(runtime=True), documented as applying load_for_flight's
+gate, applied neither point-form refusal; POST /nfz stored a vertex whose x
+was null (NfzRequest's dump dropped it) and every route dropped any other
+unknown point key; and Shield.move_nfz refused a models.XY given {lat, lon}
+as "given in local metres". Closed here too. (The Ingest CLI's metre
+conversion, the other finding, is tests/test_geo_to_policy.py.)
+
 The REST checks call the guardrail.api handlers the routes call; the FastAPI
 routes are exercised by tests/test_api.py where FastAPI is installed.
 """
@@ -636,6 +644,104 @@ def test_post_nfz_refuses_a_geometry_block():
     # The 2026-07 body itself is applied as before.
     res = api.apply_legacy_nfz(sh, {"id": "old", "vertices": top})
     assert res["type"] == "dynamic_nfz" and sh.policy.generation == 1
+
+
+def test_load_bundle_runtime_applies_the_point_form_refusals():
+    """bundle.load_bundle(runtime=True) says it applies load_for_flight's
+    flight gate, but a legacy16 bundle whose ir.json writes x/y beside
+    lat/lon and a bundle stored in local metres both loaded, and a Shield
+    built on the first (failed before: ACCEPTED, second re-review 26 Nov).
+    Now both are refused (LegacyPointFormRefused) unless the read is
+    declared (legacy_read=True, or VLAGUARD_LEGACY_READ=1), which labels the
+    policy; runtime=False (the declaration) and a WGS84 bundle load as
+    before; write_bundle's `previous` (a recorded bundle, the one caller)
+    declares the read, so an older metre version still gives its diff."""
+    import os
+    os.environ.pop(B.LEGACY_READ_ENV, None)
+    pol = load_policy(SITL)
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        xy = _legacy16_xy_bundles(pol, d)
+        metre = B.write_bundle(pol.metre_form(), d / "metre.tar.gz", signer=None,
+                               allow_legacy_metres=True)
+        good = d / "good.tar.gz"
+        assert B.load_bundle(good, require_signature=False).policy_hash == pol.policy_hash
+        for b, words in [(x, ("x/y beside lat/lon",)) for x in xy] +                         [(metre, ("local-metres",))]:
+            msg = _refused(lambda: B.load_bundle(b, require_signature=False),
+                           B.LegacyPointFormRefused, names_conversion=False)
+            for w in (*words, B.LEGACY_READ_ENV):
+                assert w in msg, (b.name, w, msg)
+            got = B.load_bundle(b, require_signature=False, legacy_read=True)
+            assert got.legacy_read, b.name
+            Shield(got)                                   # a declared read builds one
+            assert not B.load_bundle(b, require_signature=False,
+                                     runtime=False).legacy_read, b.name
+            os.environ[B.LEGACY_READ_ENV] = "1"
+            try:
+                assert B.load_bundle(b, require_signature=False).legacy_read, b.name
+            finally:
+                os.environ.pop(B.LEGACY_READ_ENV, None)
+        # write_bundle(previous=<an older metre bundle>): the diff is a read.
+        # (_previous_policy also requires a verified signature, which these
+        # unsigned fixtures lack; only that check is relaxed here.)
+        real = B.load_bundle
+        B.load_bundle = lambda *a, **k: real(*a, **{**k, "require_signature": False})
+        try:
+            new = B.write_bundle(pol, d / "next.tar.gz", signer=None, previous=metre)
+        finally:
+            B.load_bundle = real
+        assert B.check_bundle(new).manifest.get("changelog_diff") is not None
+
+
+def test_rest_refuses_any_point_key_but_lat_lon():
+    """The published schema's point is {lat, lon} with additionalProperties
+    false, and a document's point refuses another key (extra_forbidden), but
+    REST dropped it (`X`, `alt`) and stored the zone; POST /nfz also stored
+    a vertex whose `x` was null, because NfzRequest's dump dropped it before
+    the point check (failed before: both ACCEPTED, 200). Now 422 on every
+    route, nothing stored; a clean {lat, lon} body is applied as before."""
+    sh = Shield(load_policy(SITL))
+    top = [_ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]
+    bad_points = [("X", [{**top[0], "X": 1.0}] + top[1:]),
+                  ("alt", [{**top[0], "alt": 30.0}] + top[1:]),
+                  ("x null", [{**top[0], "x": None}] + top[1:])]
+    for name, verts in bad_points:
+        for route, body in ((api.apply_legacy_nfz, {"id": "z", "vertices": verts}),
+                            (api.apply_dynamic_nfz, {"id": "z", **RULE, "vertices": verts}),
+                            (api.apply_event,                     # /hot_apply, gRPC
+                             {"id": "z", "type": "dynamic_nfz", **RULE,
+                              "geometry": {"vertices": verts}})):
+            try:
+                route(sh, copy.deepcopy(body))
+            except api.ApiError as e:
+                assert e.status == 422, (name, route.__name__, e.status)
+            else:
+                raise AssertionError(f"{route.__name__} stored a point with {name}")
+            assert sh.policy.generation == 0, (name, route.__name__)
+    assert api.apply_legacy_nfz(sh, {"id": "z", "vertices": top})["type"] == "dynamic_nfz"
+
+
+def test_move_takes_an_xy_given_lat_lon():
+    """Shield.move_nfz with models.XY points: one given {lat, lon} alone is
+    the WGS84 form and is applied as the dict form is (failed before:
+    refused as "an absolute position is given in local metres"); one given
+    {x, y} metres is refused, naming the conversion."""
+    from guardrail.models import XY
+    sh = Shield(load_policy(SITL))
+    sh.spawn_nfz(DynamicNFZ.model_validate(
+        {"id": "z", "type": "dynamic_nfz", **RULE,
+         "vertices": [_ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]}))
+    ring = [_ll(sh, 40, -5), _ll(sh, 50, -5), _ll(sh, 50, 5)]
+    twin = Shield(load_policy(SITL))
+    twin.spawn_nfz(DynamicNFZ.model_validate(
+        {"id": "z", "type": "dynamic_nfz", **RULE,
+         "vertices": [_ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]}))
+    sh.move_nfz("z", [XY.model_validate(v) for v in ring])
+    twin.move_nfz("z", ring)
+    assert sh.policy.policy_hash == twin.policy.policy_hash
+    msg = _refused(lambda: sh.move_nfz("z", [XY(x=0.0, y=0.0), XY(x=5.0, y=0.0),
+                                            XY(x=5.0, y=5.0)]), HotApplyRefused)
+    assert "local metres" in msg, msg
 
 
 def test_every_run_resolution_candidate_builds_a_shield():
