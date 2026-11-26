@@ -430,7 +430,8 @@
      "_file": "deploy/evidence/hil/vla_rate_stub.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "bc_v3",
@@ -771,7 +772,8 @@
      "_file": "deploy/evidence/hil/vla_rate_bc_v3.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_4bit",
@@ -861,7 +863,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_bf16",
@@ -1141,7 +1144,8 @@
      "_file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "openvla_7b_int8wo",
@@ -1360,7 +1364,8 @@
      "_file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json",
      "_is_r1": true
     }
-   ]
+   ],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_lora",
@@ -1482,7 +1487,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_ft_run2",
@@ -1635,7 +1641,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aerialvla_bf16",
@@ -2324,7 +2331,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "aiotvla_v10b",
@@ -5925,7 +5933,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "dronecats_2b",
@@ -6526,7 +6535,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "racevla_7b",
@@ -7421,7 +7431,8 @@
    "orin_r1": false,
    "orin_bench": true,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "cognitivedrone",
@@ -7447,7 +7458,8 @@
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "orin_load_only": false
   },
   {
    "backend": "bitvla",
@@ -7456,24 +7468,27 @@
    "inputs": "image + instruction",
    "weights_repo": [],
    "weights_root": [],
-   "code": "demo/vla_server_foreign.py (family bitvla; adapter only, 2026-11-17)",
-   "unavailable": "no checkpoint on this machine; the published ones are LIBERO arm fine-tunes (hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), none for a drone, and the adapter (serve --model bitvla) refuses until one is downloaded. The grant lists it with CognitiveDrone, OpenVLA and in-house stubs as backends the slot must accept (Architecture constraints p.2-3); the reference design names it as a smaller backend to swap in if a 7 B model misses 10 Hz on the Orin (docs/04-risks-and-fallbacks/fallback-gates.md), with its citation still to be added",
-   "c1": "not flown: weights not obtained",
-   "c2": "weights not obtained",
+   "code": "demo/vla_server_foreign.py (family bitvla; adapter 2026-11-17, loader fixed against the real checkpoint 2026-11-22)",
+   "unavailable": "no checkpoint on this machine (the desktop that builds this table); the published ones are LIBERO arm fine-tunes (hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), none for a drone. On 22 Nov 2026 the LIBERO-Spatial one was downloaded to the AGX Orin and loaded there by BitVLA's own model code through the adapter (serve --model bitvla): load 5.94 s (warm page cache), 5,585 MiB GPU after load, median 1.479 s per answer (n = 20, about 0.68 Hz; 0.60 Hz over TCP), 5 of 5 frames to a finite Action4D that the client's strict reader and Shield.filter accept. An arm checkpoint, so a conformance check, not a flight policy; never flown (docs/data/bitvla_loader_20261122/README.md). The grant lists it with CognitiveDrone, OpenVLA and in-house stubs as backends the slot must accept (Architecture constraints p.2-3); the reference design names it as a smaller backend to swap in if a 7 B model misses 10 Hz on the Orin (docs/04-risks-and-fallbacks/fallback-gates.md), with its citation still to be added",
+   "c1": "not flown: the only BitVLA checkpoints are LIBERO arm fine-tunes; the one loaded on the AGX Orin (22 Nov) is a conformance check, not a flight policy",
+   "c2": "not flown: the same arm checkpoint, which reads no follow hint and is not a flight policy",
    "weights_status": [],
    "cells": {
     "rate_desktop": "n/a (no weights here)",
-    "rate_orin": "weights not obtained",
+    "rate_orin": "not R1: the real loader on the AGX Orin, 22 Nov 2026 (bf16, PyTorch eager): load 5.94 s, median 1.479 s per answer (n = 20), 0.60 Hz over TCP; conformance 5/5 frames; an arm checkpoint, not a flight policy (docs/data/bitvla_loader_20261122/README.md)",
     "closed_loop_desktop": "n/a (no weights here)",
-    "closed_loop_hil_c1": "weights not obtained",
-    "closed_loop_hil_c2": "weights not obtained"
+    "closed_loop_hil_c1": "not flown: the only BitVLA checkpoints are LIBERO arm fine-tunes; the one loaded on the AGX Orin (22 Nov) is a conformance check, not a flight policy",
+    "closed_loop_hil_c2": "not flown: the same arm checkpoint, which reads no follow hint and is not a flight policy"
    },
    "records": [],
    "orin_timed": false,
    "orin_r1": false,
    "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [],
+   "weights_elsewhere": "not on this host; on the AGX Orin since 2026-11-22 (bitvla-libero-spatial, an arm checkpoint, docs/data/bitvla_loader_20261122/)",
+   "orin_load": "not R1: the real loader on the AGX Orin, 22 Nov 2026 (bf16, PyTorch eager): load 5.94 s, median 1.479 s per answer (n = 20), 0.60 Hz over TCP; conformance 5/5 frames; an arm checkpoint, not a flight policy (docs/data/bitvla_loader_20261122/README.md)",
+   "orin_load_only": true
   }
  ],
  "other_records": [
@@ -9215,5 +9230,6 @@
   "confirmation": "this tool records no confirmation of the choice by anyone"
  },
  "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
- "comparison_gaps": []
+ "comparison_gaps": [],
+ "respec_utc": "2026-11-26T02:41:31Z"
 }
