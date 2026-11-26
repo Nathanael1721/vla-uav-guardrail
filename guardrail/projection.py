@@ -16,16 +16,21 @@ was given x/y HERE, AT LOAD, for every point of the policy. Since 2026-11-03
 to its policy's frame origin when the policy validates, and its metres are
 computed the first time the Shield or the compiler reads `point.x` / `point.y`
 (models.XY), by `local_metres` below, which caches them per origin. Metre-
-authored policies are untouched: they are the legacy form and still load and
-hash exactly as before; since 2026-11-03 no shipped policy is written in it
-(tools/convert_policies_wgs84.py), and since 2026-11-17 a metre point an
-event writes into a policy with a frame (REST hot-apply, the Shield's zone
-edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
-tools/geo_to_policy.py ingest; since 2026-11-26 REST, the Shield's events, a
-new derive and the ingest tool refuse metres and the caller converts them
-tool side, models.wgs84_from_metres) is converted at ingest (`metres_to_wgs84`,
-models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
-metre form is not STORED, and the converted point is bound to the frame,
+authored policies are the legacy form: they hash exactly as before, and since
+2026-11-26 they are read only through the declared legacy read
+(models.load_legacy_metre_policy; load_policy refuses them, and a flight
+loader reads one only when the lock records it, bundle.recorded_as). Since
+2026-11-03 no shipped policy is written in it (tools/convert_policies_wgs84.py).
+From 2026-11-17 until 2026-11-26 a metre point an event wrote into a policy
+with a frame (REST hot-apply, the Shield's zone edits, the harness's spawned
+zones, a lock recipe rebuilt by bundle.derive, tools/geo_to_policy.py ingest)
+was converted at ingest (`metres_to_wgs84`, models.rule_in_wgs84,
+`raw_points_in_wgs84`). Since 2026-11-26 REST, the Shield's events, a new
+derive and the ingest tool refuse a metre point instead, and the caller
+converts it tool side (models.wgs84_from_metres, through the same functions);
+the harness converts its own scenario events' metres before they reach those
+entries. Either way, in a policy with a frame the metre form is not STORED,
+and the converted point is bound to the frame,
 so the live Shield enforces the micrometre view of its stored lat/lon (the
 metres given, on the micrometre grid; else within 0.6 um), the same floats
 a reload of the snapshot reads (models.rule_in_wgs84). Since 2026-11-18 the

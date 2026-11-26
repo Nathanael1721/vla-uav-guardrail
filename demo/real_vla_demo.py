@@ -1460,9 +1460,10 @@ def load_flight_policy(path: str | Path) -> tuple[Policy, dict]:
     script read it with models.load_policy and flew it. A WGS84 policy loads
     as before; VLAGUARD_LEGACY_READ=1 declares the legacy read (meant for
     re-running a recorded flight) and loads a metre one, announced as a read;
-    it declares it for every load_for_flight in the process, and nothing
-    checks that the policy was recorded; metrics.json then carries
-    `legacy_read`, `point_form` and `point_note` (legacy_point_keys)."""
+    it declares it for every load_for_flight in the process; since 2026-11-26
+    it reads a policy the lock records only (bundle.recorded_as);
+    metrics.json then carries `legacy_read`, `point_form` and `point_note`
+    (legacy_point_keys)."""
     return refuse_or_load_yaml(path)
 
 

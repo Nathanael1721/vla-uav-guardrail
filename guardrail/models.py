@@ -1709,8 +1709,9 @@ class Policy(BaseModel):
         (bundle.load_for_flight; until then it flew them, labelled; a
         point-free policy with no origin still flies, and refuses every
         event with points); a declared read of a recorded
-        flight (legacy_read / VLAGUARD_LEGACY_READ=1) loads them and records
-        `point_form`, `point_note`. tools/bundle_census.py lists the bundles
+        flight (legacy_read / VLAGUARD_LEGACY_READ=1; since 2026-11-26 of a
+        policy the lock records only, bundle.recorded_as) loads them and
+        records `point_form`, `point_note`, `recorded_as`. tools/bundle_census.py lists the bundles
         stored in them and the WGS84 bundle to fly instead.
 
         This labels how POINTS are stored; it is not bundle.FRAME_FORM, the
@@ -2640,7 +2641,8 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 # The legacy metre READ of a document is `load_legacy_metre_policy` /
 # `legacy_metre_policy_from_raw`, used only by the declared re-reads and the
 # converters that write WGS84 from it: bundle.load_for_flight legacy_read
-# (VLAGUARD_LEGACY_READ=1), tools/bundle_census.py, tools/convert_policies_
+# (VLAGUARD_LEGACY_READ=1; a recorded policy only, bundle.recorded_as, since
+# 2026-11-26), tools/bundle_census.py, tools/convert_policies_
 # wgs84.py, the bundle export CLI (WGS84 about --origin) and demo/gui_policy.py's
 # base read. A recorded run's policy_g<N>.json is read in the form it was
 # recorded in: by legacy_metre_policy_from_raw in
@@ -2665,22 +2667,34 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 #     deprecated POST /nfz checks its top-level vertices the same way, and
 #     refuses a `geometry:` block (apply_legacy_nfz) but ignores other
 #     body keys it does not define (NfzRequest has no extra="forbid": its
-#     callers send the four rule fields beside the 2026-07 body);
+#     callers send the four rule fields beside the 2026-07 body); PATCH
+#     /dynamic_nfz/{id} move refuses any key but op / vertices / motion /
+#     layer, a `geometry:` block included (api.MOVE_KEYS; since 2026-11-26,
+#     before which it dropped one);
 #   * the Ingest CLI, tools/geo_to_policy.py ingest (WP1-16), for a DSL
 #     rule or a POST /nfz / /dynamic_nfz body read from a file, stdin or a
 #     URL (ProjectedCoordinatesRefused, exit 2, the REST wording; since
 #     2026-11-26, before which it converted metres itself);
 #   * the Shield's events (Shield._in_frame, _given_ring) and a new
-#     bundle.derive (refuse_metre_rule);
+#     bundle.derive (refuse_metre_rule). In process, Shield.move_nfz
+#     (_given_ring) checks each vertex for metres and x/y and keeps its lat
+#     and lon only: any other key (`alt`, say) is dropped, where REST's
+#     _points answers 422 for it;
 #   * the flight loaders: bundle.load_for_flight and bundle.load_bundle
 #     (runtime=True; since 2026-11-26) refuse a policy stored in local
 #     metres (LEGACY_POINT_FORMS) and a bundle whose archived ir.json writes
 #     x/y beside lat/lon (BundleCheck.projected_points: the dump of the
 #     bundles hashed before 2026-10-06), unless the load is a declared read
 #     (legacy_read=True, or VLAGUARD_LEGACY_READ=1, which declares it for
-#     EVERY such load in that process: nothing checks that the policy is a
-#     recorded one). load_for_flight's record then says so; load_bundle
-#     returns a Policy only and labels it (mark_legacy_read).
+#     every such load in that process) of a RECORDED policy: since the
+#     third fix of 2026-11-26 one form of its policy_hash, as the era of
+#     its document computes it, must be in policies/policy.lock.json (any
+#     version, migrated ones included, or a lock derivation;
+#     bundle.recorded_as), and any other policy is refused with the
+#     variable set too (until then nothing checked it, so a new metre
+#     document flew under it). load_for_flight's record then says so
+#     (`recorded_as`); load_bundle returns a Policy only and labels it
+#     (mark_legacy_read).
 # NOT a Policy DSL entry, and so not refusing metres: the Stress Testing
 # harness's own event type. The grant (Stress Testing page) defines
 # ScenarioEvent as the harness's scenario type, `payload: dict # event-

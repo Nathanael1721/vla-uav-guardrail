@@ -343,7 +343,8 @@ def load_flight_policy(path: str | Path) -> tuple:
     WGS84 policy loads as before; VLAGUARD_LEGACY_READ=1 declares the legacy
     read (meant for re-running a recorded flight) and loads a metre one,
     announced as a read; it declares it for every load_for_flight in the
-    process, and nothing checks that the policy was recorded."""
+    process; since 2026-11-26 it reads a policy the lock records
+    only (bundle.recorded_as)."""
     return refuse_or_load_yaml(path)
 
 
