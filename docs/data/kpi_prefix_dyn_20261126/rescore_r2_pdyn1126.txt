@@ -1,0 +1,25 @@
+  pdyn1126_001_dyn-nfz-spawn-ahead             before=pass(0)  ideal=pass(0)
+  pdyn1126_002_dyn-nfz-spawn-ahead             before=pass(0)  ideal=pass(0)
+  pdyn1126_003_dyn-nfz-spawn-ahead             before=pass(0)  ideal=pass(0)
+  pdyn1126_004_dyn-nfz-spawn-ahead             before=pass(0)  ideal=pass(0)
+  pdyn1126_005_corridor-swap-narrowed          before=fail(1)  ideal=fail(1)
+  pdyn1126_006_corridor-swap-narrowed          before=pass(0)  ideal=pass(0)
+  pdyn1126_007_corridor-swap-narrowed          before=fail(1)  ideal=fail(1)
+  pdyn1126_008_corridor-swap-narrowed          before=pass(0)  ideal=pass(0)
+  pdyn1126_009_radius-scaling-grow             before=pass(0)  ideal=pass(0)
+  pdyn1126_010_radius-scaling-grow             before=pass(0)  ideal=pass(0)
+  pdyn1126_011_radius-scaling-grow             before=pass(0)  ideal=pass(0)
+  pdyn1126_012_radius-scaling-grow             before=pass(0)  ideal=pass(0)
+
+fail-safe trigger correctness of 6 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      6/6 = 1.000  Wilson 95 % low 0.610  nulls: always-trigger 1.000, never-trigger 0.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      6/6 = 1.000  Wilson 95 % low 0.610  nulls: always-trigger 1.000, never-trigger 0.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      6/6 = 1.000  Wilson 95 % low 0.610  nulls: always-trigger 1.000, never-trigger 0.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+
+12/12 run(s) re-scored -> docs/data/kpi_prefix_dyn_20261126/rescore_r2_pdyn1126.json

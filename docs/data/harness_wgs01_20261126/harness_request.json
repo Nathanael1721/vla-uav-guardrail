@@ -1,0 +1,121 @@
+{
+  "rpc": "StartEpisode",
+  "request": {
+    "scenario_id": "dyn-nfz-rotate-step",
+    "scenario_yaml": null,
+    "cell_id": null,
+    "seed": 1001,
+    "profile": null,
+    "arm": null,
+    "keep_flight_log": false,
+    "session_id": "ss-394314f0912b",
+    "live": false,
+    "pace": null,
+    "drive_scenario_events": true
+  },
+  "resolved": {
+    "episode_id": "ep-3ea786b593b5",
+    "scenario_id": "dyn-nfz-rotate-step",
+    "cell_id": "dyn-nfz-rotate-step",
+    "run_id": "dyn-nfz-rotate-step",
+    "seed": 1001,
+    "arm": "",
+    "profile": "",
+    "run_end_sim_t": 29.9,
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "session_id": "ss-394314f0912b",
+    "live": false,
+    "backend": "hil",
+    "scenario_events_via": "harness"
+  },
+  "events": [
+    {
+      "rpc": "StartEpisode",
+      "drive_scenario_events": true,
+      "at_sim_t": 3.0,
+      "scenario_event": {
+        "index": 0,
+        "type": "spawn_polygon_fence",
+        "payload": {
+          "id": "bar",
+          "vertices": [
+            {
+              "x": -165.0,
+              "y": 13.0
+            },
+            {
+              "x": -125.0,
+              "y": 13.0
+            },
+            {
+              "x": -125.0,
+              "y": 17.0
+            },
+            {
+              "x": -165.0,
+              "y": 17.0
+            }
+          ]
+        }
+      },
+      "body": {
+        "type": "dynamic_nfz",
+        "id": "bar",
+        "vertices": [
+          {
+            "lat": -35.364743220219,
+            "lon": 149.165373201864
+          },
+          {
+            "lat": -35.364383894105,
+            "lon": 149.165373201864
+          },
+          {
+            "lat": -35.364383894105,
+            "lon": 149.165417263975
+          },
+          {
+            "lat": -35.364743220219,
+            "lon": 149.165417263975
+          }
+        ],
+        "priority": "P0",
+        "constraint_type": "hard",
+        "violation_action": "repair",
+        "scope": "mission",
+        "altitude_floor_m": 0.0,
+        "altitude_ceiling_m": 1000.0,
+        "margin_m": 1.0
+      }
+    },
+    {
+      "rpc": "StartEpisode",
+      "drive_scenario_events": true,
+      "at_sim_t": 8.0,
+      "scenario_event": {
+        "index": 1,
+        "type": "rotate_polygon_fence",
+        "payload": {
+          "id": "bar",
+          "angle_deg": 90.0
+        }
+      },
+      "body": {
+        "type": "dynamic_nfz",
+        "op": "rotate",
+        "id": "bar",
+        "angle_deg": 90.0
+      }
+    }
+  ],
+  "client": "harness-client",
+  "task": null,
+  "manifest": {
+    "code_revision": "a3d616ec6ec8",
+    "vla_model_hash": "guardrail.vla_stub.GotoPilot@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+    "policy_hash": "sha256:a4aced2b24ecbcb9aadee3c6636f0b68e64a4d90eb4f7c8ebd53322510162cc4",
+    "random_seed": 1001,
+    "sim_speedup": 1.0,
+    "topology": "hil"
+  }
+}

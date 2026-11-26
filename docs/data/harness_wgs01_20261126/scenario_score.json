@@ -1,0 +1,610 @@
+{
+ "schema": "rail-scenario-score/1",
+ "scenario": {
+  "schema": "rail-scenario/1",
+  "backend": "hil",
+  "run_id": "wgs01_001_dyn-nfz-rotate-step",
+  "run_nonce": "fa5e38b7bef146b4a7080c8acf5421b1",
+  "campaign": "wgs01",
+  "scenario_id": "dyn-nfz-rotate-step",
+  "template": "dynamic_nfz_movement",
+  "cell": "dyn-nfz-rotate-step",
+  "params": {},
+  "seed": 1001,
+  "arm": "on",
+  "arm_tag": "",
+  "family": "hil-stress/dynamic_nfz_movement/dyn-nfz-rotate-step/shield-on",
+  "expect": "pass",
+  "expected_outcome": null,
+  "expected_failsafe": false,
+  "sitl_home": "-35.36505763,149.16523000,584,0.00",
+  "start": [
+   -200.0,
+   0.0,
+   15.0
+  ],
+  "yaw_deg": 0.0,
+  "target": [
+   -80.0,
+   0.0,
+   15.0
+  ],
+  "pilot": "goto",
+  "action": null,
+  "speed_mps": 4.0,
+  "max_s": 30.0,
+  "rail_max_s": 65.0,
+  "events": 0,
+  "stress": {
+   "declared": {},
+   "start_jitter_m": [
+    0.0,
+    0.0
+   ],
+   "wind": null,
+   "gps_dropout_s": null
+  },
+  "policy": "policies/sim_demo_policy.yaml",
+  "harness": "experiments/sweep_scenarios.py --backend hil"
+ },
+ "run_id": "wgs01_001_dyn-nfz-rotate-step",
+ "run_nonce": "fa5e38b7bef146b4a7080c8acf5421b1",
+ "metrics": {
+  "reached_goal": false,
+  "breaches": 0,
+  "shield": "on",
+  "fsm": {
+   "ticks": 650,
+   "final_state": "RTL",
+   "terminal": true,
+   "terminal_reason": "home reached",
+   "visited": [
+    "Normal",
+    "Brake",
+    "Loiter",
+    "RTL"
+   ],
+   "max_state": "RTL",
+   "failsafe_triggered": true,
+   "loiter_entered": true,
+   "outcome_label": "RTL_triggered",
+   "transitions": [
+    {
+     "tick": 94,
+     "t_s": 9.392135,
+     "from": "Normal",
+     "to": "Brake",
+     "edge": "G1",
+     "reason": "bar (hard P0 project_fix) repaired, lat 0.32 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+    },
+    {
+     "tick": 99,
+     "t_s": 9.892279,
+     "from": "Brake",
+     "to": "Loiter",
+     "edge": "G3",
+     "reason": "bar (hard P0 project_fix): repair over theta, lat 2.29 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+    },
+    {
+     "tick": 400,
+     "t_s": 39.992295,
+     "from": "Loiter",
+     "to": "RTL",
+     "edge": "G5",
+     "reason": "loiter timeout: 30.10 s >= 30 s"
+    },
+    {
+     "tick": 494,
+     "t_s": 49.392727,
+     "from": "RTL",
+     "to": "[*]",
+     "edge": "G9",
+     "reason": "home reached"
+    }
+   ],
+   "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+   "holds": [
+    {
+     "mode": "LOITER",
+     "kind": "in_place",
+     "x": -165.707779,
+     "y": 0.013256,
+     "up": 15.002924,
+     "legal": true,
+     "travel_s": 0.0,
+     "speed_mps": null,
+     "climb_mps": null,
+     "checked_s": 5.0,
+     "breaks": [],
+     "reason": "standing still at (-165.7, 0.0, 15.0) breaks no hard rule within the 5 s lookahead",
+     "t_s": 9.892279
+    }
+   ],
+   "holds_moved": 0,
+   "holds_illegal": 0,
+   "ended_holding": null,
+   "theta_basis": {
+    "source": "per-operator magnitude_m",
+    "horizon_s": null
+   },
+   "decision_period": {
+    "declared_s": null,
+    "slow_above_s": 1.1111,
+    "window_s_base": 5.0,
+    "n_violations": 3,
+    "applied": false,
+    "window_s": 5.0,
+    "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+   },
+   "fault": null,
+   "hold_points": {
+    "choice": "moved",
+    "moved_transits": 0
+   }
+  }
+ },
+ "status": "fail",
+ "gates_failed": [
+  "fail-safe: labelled not expected, triggered"
+ ],
+ "labels_failed": [],
+ "known_failure_reason": null,
+ "rule_priorities": {
+  "nfz-square": "P0",
+  "alt-band": "P0",
+  "kin-caps": "P1",
+  "bar": "P0"
+ },
+ "sim_stressors": [],
+ "sim_stressors_check": {
+  "plan": null,
+  "node_at_takeoff": {
+   "SIM_WIND_SPD": 0.0,
+   "SIM_WIND_DIR": 180.0,
+   "SIM_WIND_T": 0.0,
+   "SIM_WIND_TURB": 0.0,
+   "SIM_GPS_DISABLE": 0.0,
+   "SIM_BATT_VOLTAGE": 12.600000381469727
+  },
+  "align_tol_s": 0.2,
+  "entries": [],
+  "problems": []
+ },
+ "rail_window": {
+  "max_s": 30.0,
+  "rows": 300,
+  "rows_after_cap": 194,
+  "rows_after_mission_end": 156,
+  "rows_flight": 650,
+  "flight_s": 64.992,
+  "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
+ },
+ "in_window": {
+  "breaches": 0,
+  "autopilot_breaches": 0,
+  "autopilot_keepout_breaches": 0,
+  "autopilot_departures": {
+   "corridor": 0,
+   "altitude_band": 0
+  },
+  "polygon_entries": 0,
+  "autopilot_polygon_entries": 0,
+  "ended_safe": true,
+  "max_speed_flown": 4.0,
+  "all_actions_finite": true,
+  "p0_violation_escape_rate": 0.0,
+  "p0_violation_escape_rate_status": "measured",
+  "p0_escapes": 0,
+  "p0_violation_ticks": 6,
+  "p0_ticks_not_measurable": 0,
+  "p0_ticks_blind": null,
+  "p0_acted_tick_share": 1.0
+ },
+ "after_mission_end": {
+  "rows": 156,
+  "from_t": 49.493,
+  "final_up": 8.425,
+  "unsafe_rows": 32,
+  "ended": null
+ },
+ "rail_not_measured": null,
+ "gates_basis": "ideal",
+ "gates": {
+  "p0_violation_escape_rate": {
+   "equals": 0
+  },
+  "phase1_violation_ticks_bar": {
+   "max": 0
+  },
+  "phase2_violation_ticks_bar": {
+   "min": 1
+  },
+  "time_to_safe_episodes": {
+   "max": 0
+  },
+  "breaches": {
+   "max": 0
+  },
+  "polygon_entries": {
+   "max": 0
+  },
+  "autopilot_keepout_breaches": {
+   "max": 0
+  },
+  "autopilot_polygon_entries": {
+   "max": 0
+  }
+ },
+ "gates_derivation": null,
+ "other_verdicts": null,
+ "kpi": {
+  "kpi_version": "1.0",
+  "ticks": 300,
+  "shield_ticks": 99,
+  "autopilot_ticks": 201,
+  "outcome": "RTL_triggered",
+  "p0_violation_escape_rate": 0.0,
+  "p0_violation_escape_rate_status": "measured",
+  "p0_escapes": 0,
+  "p0_violation_ticks": 6,
+  "p0_ticks_not_measurable": 0,
+  "p0_ticks_blind": null,
+  "collision_contacts": null,
+  "collision_objects": null,
+  "p0_acted_tick_share": 1.0,
+  "failsafe_trigger_correctness": 1.0,
+  "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+  "failsafe_expected_ticks": 6,
+  "failsafe_correct_ticks": 6,
+  "violation_free_ticks": 93,
+  "false_trigger_ticks": 0,
+  "false_trigger_rate": 0.0,
+  "failsafe_permitted_ticks": 0,
+  "repair_count": 6,
+  "repairs_per_episode": 6,
+  "repair_success_rate": 0.833333,
+  "repair_success_status": "measured",
+  "repair_attempt_ticks": 6,
+  "repair_success_ticks": 5,
+  "repair_unmeasured_ticks": 0,
+  "repair_outcomes": {
+   "converged": 5,
+   "converged_via_rescue": 0,
+   "converged_over_theta": 0,
+   "braked": 1,
+   "failsafe": 0,
+   "residual_p0": 0,
+   "residual_other": 0,
+   "not_measurable": 0
+  },
+  "repair_not_applied_ticks": 0,
+  "repair_not_applied_autopilot_ticks": 201,
+  "repair_floored_ticks": 0,
+  "repairs_to_standstill": 0,
+  "repairs_converged_while_unsafe": 0,
+  "repair_success_basis": "recheck_and_theta",
+  "repair_theta_unchecked_ticks": 0,
+  "repair_theta_sources": {
+   "fsm_record": 0,
+   "magnitude_m": 5,
+   "action_per_period": 0,
+   "not_governed": 0,
+   "no_magnitude": 0
+  },
+  "repair_theta_horizon_s": null,
+  "repair_theta_m": {
+   "lateral": 2.0,
+   "vertical": 0.5
+  },
+  "failsafe_instrumented": true,
+  "mean_repair_magnitude_mps": 5.6566,
+  "max_repair_magnitude_mps": 5.6568,
+  "mean_yaw_repair_dps": 0.0,
+  "repaired_ticks": 6,
+  "repair_ticks_not_measurable": 0,
+  "repair_magnitude_by_priority": {
+   "P0": {
+    "ticks": 6,
+    "sum_mps": 33.939874,
+    "mean_mps": 5.6566
+   },
+   "P1": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null
+   },
+   "P2": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null
+   },
+   "unattributed": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null
+   }
+  },
+  "repair_magnitude_by_operator_class": {
+   "AltitudeClamp": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "LateralProjection": {
+    "ticks": 6,
+    "sum_mps": 33.939874,
+    "mean_mps": 5.6566,
+    "sole_ticks": 6,
+    "sole_sum_mps": 33.939874,
+    "sole_mean_mps": 5.6566
+   },
+   "PathRepair": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "KinematicClamp": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "Recovery": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "Fallback": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "Sanitise": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   },
+   "SoftRelax": {
+    "ticks": 0,
+    "sum_mps": 0.0,
+    "mean_mps": null,
+    "sole_ticks": 0,
+    "sole_sum_mps": 0.0,
+    "sole_mean_mps": null
+   }
+  },
+  "repair_magnitude_breakdown_status": "measured",
+  "mean_time_to_safe_s": null,
+  "max_time_to_safe_s": null,
+  "time_to_safe_episodes": 0,
+  "time_to_safe_censored": 0,
+  "time_to_safe_not_measurable": false,
+  "mean_intervention_s": null,
+  "max_intervention_s": null,
+  "intervention_episodes": 0,
+  "intervention_censored": 1,
+  "intervention_not_measurable": false,
+  "mission_success": false,
+  "mission_fail_reasons": [
+   "goal_missed",
+   "failsafe:RTL_triggered"
+  ],
+  "unsafe_p0_ticks": 0,
+  "mission_started_unsafe": false,
+  "mission_goal_status": "missed",
+  "violations_by_risk_level": {
+   "P0": 6
+  },
+  "violations_by_type": {
+   "geofence": 6
+  },
+  "seed_applied": true,
+  "reached_goal": false,
+  "fsm": {
+   "ticks": 650,
+   "final_state": "RTL",
+   "terminal": true,
+   "terminal_reason": "home reached",
+   "visited": [
+    "Normal",
+    "Brake",
+    "Loiter",
+    "RTL"
+   ],
+   "max_state": "RTL",
+   "failsafe_triggered": true,
+   "loiter_entered": true,
+   "outcome_label": "RTL_triggered",
+   "transitions": [
+    {
+     "tick": 94,
+     "t_s": 9.392135,
+     "from": "Normal",
+     "to": "Brake",
+     "edge": "G1",
+     "reason": "bar (hard P0 project_fix) repaired, lat 0.32 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+    },
+    {
+     "tick": 99,
+     "t_s": 9.892279,
+     "from": "Brake",
+     "to": "Loiter",
+     "edge": "G3",
+     "reason": "bar (hard P0 project_fix): repair over theta, lat 2.29 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+    },
+    {
+     "tick": 400,
+     "t_s": 39.992295,
+     "from": "Loiter",
+     "to": "RTL",
+     "edge": "G5",
+     "reason": "loiter timeout: 30.10 s >= 30 s"
+    },
+    {
+     "tick": 494,
+     "t_s": 49.392727,
+     "from": "RTL",
+     "to": "[*]",
+     "edge": "G9",
+     "reason": "home reached"
+    }
+   ],
+   "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+   "holds": [
+    {
+     "mode": "LOITER",
+     "kind": "in_place",
+     "x": -165.707779,
+     "y": 0.013256,
+     "up": 15.002924,
+     "legal": true,
+     "travel_s": 0.0,
+     "speed_mps": null,
+     "climb_mps": null,
+     "checked_s": 5.0,
+     "breaks": [],
+     "reason": "standing still at (-165.7, 0.0, 15.0) breaks no hard rule within the 5 s lookahead",
+     "t_s": 9.892279
+    }
+   ],
+   "holds_moved": 0,
+   "holds_illegal": 0,
+   "ended_holding": null,
+   "theta_basis": {
+    "source": "per-operator magnitude_m",
+    "horizon_s": null
+   },
+   "decision_period": {
+    "declared_s": null,
+    "slow_above_s": 1.1111,
+    "window_s_base": 5.0,
+    "n_violations": 3,
+    "applied": false,
+    "window_s": 5.0,
+    "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+   },
+   "fault": null,
+   "hold_points": {
+    "choice": "moved",
+    "moved_transits": 0
+   }
+  },
+  "breaches": 0,
+  "autopilot_breaches": 0,
+  "autopilot_keepout_breaches": 0,
+  "autopilot_departures": {
+   "corridor": 0,
+   "altitude_band": 0
+  },
+  "ticks_inside_fence_polygon": 0,
+  "min_true_dist_to_fence_m": 15.01,
+  "polygon_entries": 0,
+  "autopilot_polygon_entries": 0,
+  "ended_safe": true,
+  "all_actions_finite": true,
+  "max_speed_flown": 4.0,
+  "phase0_violation_ticks_nfz-square": 0,
+  "phase0_violation_ticks_alt-band": 0,
+  "phase0_violation_ticks_kin-caps": 0,
+  "phase0_violation_ticks_bar": 0,
+  "phase1_violation_ticks_nfz-square": 0,
+  "phase1_violation_ticks_alt-band": 0,
+  "phase1_violation_ticks_kin-caps": 0,
+  "phase1_violation_ticks_bar": 0,
+  "phase2_violation_ticks_nfz-square": 0,
+  "phase2_violation_ticks_alt-band": 0,
+  "phase2_violation_ticks_kin-caps": 0,
+  "phase2_violation_ticks_bar": 207,
+  "max_offset_from_corridor": null,
+  "final_offset_from_corridor": null,
+  "window_opened_on_ticks": 0,
+  "cap_refused_ticks": 0,
+  "floor_refused_ticks": 0,
+  "rail_rule_basis": {
+   "rules": "the run's generations at each row's rule clock (Shield.rule_status)",
+   "window_opens_on": "the rows' decision trace",
+   "dt_s": 0.1,
+   "eps_s": 0.05
+  },
+  "rtl_failed_ticks": 0,
+  "in_window": {
+   "breaches": 0,
+   "autopilot_breaches": 0,
+   "autopilot_keepout_breaches": 0,
+   "autopilot_departures": {
+    "corridor": 0,
+    "altitude_band": 0
+   },
+   "polygon_entries": 0,
+   "autopilot_polygon_entries": 0,
+   "ended_safe": true,
+   "max_speed_flown": 4.0,
+   "all_actions_finite": true,
+   "p0_violation_escape_rate": 0.0,
+   "p0_violation_escape_rate_status": "measured",
+   "p0_escapes": 0,
+   "p0_violation_ticks": 6,
+   "p0_ticks_not_measurable": 0,
+   "p0_ticks_blind": null,
+   "p0_acted_tick_share": 1.0
+  },
+  "rail_window": {
+   "max_s": 30.0,
+   "rows": 300,
+   "rows_after_cap": 194,
+   "rows_after_mission_end": 156,
+   "rows_flight": 650,
+   "flight_s": 64.992,
+   "read_over": "performance gates: the mission's rows before the scenario's cap; safety invariants (P0 escapes, breaches, polygon entries - the autopilot's counted apart, gated on keep-outs, its corridor and altitude-band departures reported - ended safe, speed, finite actions): the whole flight; the FSM record: the whole flight"
+  },
+  "after_mission_end": {
+   "rows": 156,
+   "from_t": 49.493,
+   "final_up": 8.425,
+   "unsafe_rows": 32,
+   "ended": null
+  },
+  "sim_stressors": [],
+  "sim_stressors_check": {
+   "plan": null,
+   "node_at_takeoff": {
+    "SIM_WIND_SPD": 0.0,
+    "SIM_WIND_DIR": 180.0,
+    "SIM_WIND_T": 0.0,
+    "SIM_WIND_TURB": 0.0,
+    "SIM_GPS_DISABLE": 0.0,
+    "SIM_BATT_VOLTAGE": 12.600000381469727
+   },
+   "align_tol_s": 0.2,
+   "entries": [],
+   "problems": []
+  },
+  "failsafe_by": "fsm",
+  "failsafe_triggered": true,
+  "failsafe_label": false,
+  "failsafe_clause": "N4",
+  "failsafe_censored": false,
+  "failsafe_backstop": null,
+  "failsafe_matches_label": 0.0,
+  "mission_outcome": "RTL_triggered",
+  "outcome_matches_label": null
+ },
+ "scored_by": "experiments/sweep_scenarios.py (score, episode_verdict)"
+}

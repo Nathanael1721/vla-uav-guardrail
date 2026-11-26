@@ -1,0 +1,8 @@
+{
+  "code_revision": "a3d616ec6ec8",
+  "vla_model_hash": "guardrail.vla_stub.GotoPilot@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+  "policy_hash": "sha256:a4aced2b24ecbcb9aadee3c6636f0b68e64a4d90eb4f7c8ebd53322510162cc4",
+  "random_seed": 1001,
+  "sim_speedup": 1.0,
+  "topology": "hil"
+}

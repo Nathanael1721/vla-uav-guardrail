@@ -1,0 +1,12 @@
+session ss-8cda6d6f6d1b on the hil rail, endpoint https://10.42.0.3:8071
+launched ep-10b2a83537c3: dyn-nfz-rotate-step seed 1001, its scenario's events applied by the harness
+  queued #0 at 3 s: spawn_polygon_fence bar [scenario]
+  queued #1 at 8 s: rotate_polygon_fence bar [scenario]
+flying: EndEpisode waits for the mission, its fetch and its scoring (up to 3600 s)
+REFUSED FAILED_PRECONDITION: episode ep-10b2a83537c3 failed: the hil rail did not fly the episode: RuntimeError: wgs01_001_dyn-nfz-rotate-step: episode 1795679529293621708 has no mission_end: the mission did not finish (mission exited 0: -rotate-step: /opt/vlaguard/demo/out/wgs01_001_dyn-nfz-rotate-step has no flight_log.jsonl; there is nothing to replay. A replay bundle without the episode log is a filing cabinet.
+ Container vlaguard-orin-mavros-1 Running 
+ Container vlaguard-orin-mission-run-9ae4456cc032 Creating 
+ Container vlaguard-orin-mission-run-9ae4456cc032 Created 
+vlaguard-entrypoint: [replay] re-pack FAILED (see above)
+)
+session ss-8cda6d6f6d1b stopped
