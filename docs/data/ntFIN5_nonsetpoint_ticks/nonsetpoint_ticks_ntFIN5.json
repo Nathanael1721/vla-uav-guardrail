@@ -4,6 +4,33 @@
  "budget_ms": 100.0,
  "runs_read": 654,
  "setpoint_ticks": 183961,
+ "setpoint_set_mode_ticks": 477,
+ "setpoint_set_mode_tick_ms": {
+  "n": 477,
+  "p50": 16.506,
+  "p95": 33.706,
+  "p99": 43.683,
+  "max": 45.863,
+  "over_budget": 0
+ },
+ "set_mode_ticks_by_mode": {
+  "GUIDED": {
+   "setpoint": 72,
+   "nonsetpoint": 0
+  },
+  "LAND": {
+   "setpoint": 6,
+   "nonsetpoint": 19
+  },
+  "LOITER": {
+   "setpoint": 354,
+   "nonsetpoint": 0
+  },
+  "RTL": {
+   "setpoint": 45,
+   "nonsetpoint": 262
+  }
+ },
  "nonsetpoint_ticks_without_phases": 0,
  "unparsed_lines": 0,
  "groups": {

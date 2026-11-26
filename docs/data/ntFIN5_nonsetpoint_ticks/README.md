@@ -12,9 +12,10 @@ docs/data/kpi_ntFIN5/). No flight was made for this record.
 The tick budget in the KPI report (0 of 183,961 ticks over 100 ms) is read
 from `tick_ms` / `e2e_ms` / `e2e_with_wait_ms`, which the Shield node writes
 only on a tick that publishes a setpoint (sitl/ros2_shield_node.py
-`latency_fields`). The other 119,087 ntFIN5 monitor ticks - the FSM's RTL
-and Land ticks and the SET_MODE escalation ticks - carry null there, so the
-KPI said nothing about them. Every ntFIN5 row also carries `tick_phases_ms`
+`latency_fields`). The other 119,087 ntFIN5 monitor ticks (107,002 with
+the FSM in RTL after the tick, 6,562 in Land, 5,523 with no state recorded;
+281 of them sent a SET_MODE) carry null there, so the KPI said nothing
+about them. Every ntFIN5 row also carries `tick_phases_ms`
 (since 2026-11-23: pre_shield, hot_apply, shield, fsm, hold, publish,
 post_publish, monotonic_ns stamps from the tick's entry). This record reads
 those.
@@ -36,10 +37,18 @@ Percentiles are nearest rank, as in tools/kpi_report.py.
 All 654 run logs read; 183,961 setpoint ticks (the KPI report's count) and
 119,087 non-setpoint ticks, every one with `tick_phases_ms` (0 without).
 
+758 ticks carried an FSM SET_MODE (row `set_mode` not null). The 281 that
+published no setpoint (RTL 262, LAND 19) are timed below: at most 41.70 ms
+to the end of the publish phase. The other 477 (LOITER 354, GUIDED 72,
+RTL 45, LAND 6) published a setpoint, so they carry `tick_ms` and are in
+the KPI's 0 of 183,961 (tick_ms p99 43.68 ms, max 45.86 ms;
+`setpoint_set_mode_ticks`, `setpoint_set_mode_tick_ms` and
+`set_mode_ticks_by_mode` in the JSON).
+
 | Ticks | n | to_publish_ms p50 / p99 / max | over 100 ms | whole_tick_ms p50 / p99 / max | over 100 ms |
 |---|---|---|---|---|---|
 | all non-setpoint | 119,087 | 6.85 / 19.59 / 41.70 | 0 | 8.37 / 22.01 / 87.76 | 0 |
-| with a SET_MODE request (`set_mode` not null) | 281 | 17.85 / 30.69 / 41.70 | 0 | 21.04 / 33.07 / 43.86 | 0 |
+| non-setpoint with a SET_MODE request (`set_mode` not null) | 281 | 17.85 / 30.69 / 41.70 | 0 | 21.04 / 33.07 / 43.86 | 0 |
 | FSM in RTL after the tick | 107,002 | 6.68 / 18.80 / 30.69 | 0 | 8.02 / 21.37 / 61.04 | 0 |
 | FSM in Land after the tick | 6,562 | 8.26 / 21.42 / 41.70 | 0 | 10.15 / 23.94 / 87.76 | 0 |
 | no FSM state recorded | 5,523 | 9.11 / 18.81 / 24.61 | 0 | 11.49 / 21.70 / 71.93 | 0 |

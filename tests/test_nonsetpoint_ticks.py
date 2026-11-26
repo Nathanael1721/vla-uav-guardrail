@@ -65,6 +65,30 @@ def test_to_publish_stops_before_post_publish_and_whole_tick_includes_it():
     assert res["slowest"][0]["whole_tick_ms"] == 127.2
 
 
+def test_a_set_mode_tick_with_a_setpoint_is_counted_not_grouped():
+    # The hold's LOITER / GUIDED request goes out on a tick that also
+    # publishes a setpoint: it carries tick_ms and is inside the KPI already.
+    res = _scan({"ntX_001": [
+        {"tick": 1, "tick_ms": 45.86, "set_mode": "LOITER", "fsm_state_after": "Loiter",
+         "tick_phases_ms": _phases()},
+        {"tick": 2, "tick_ms": 3.0, "set_mode": "GUIDED", "tick_phases_ms": _phases()},
+        {"tick": 3, "tick_ms": None, "set_mode": "RTL", "fsm_state_after": "RTL",
+         "tick_phases_ms": _phases()},
+        {"tick": 4, "tick_ms": 9.0, "set_mode": "RTL", "tick_phases_ms": _phases()}]})
+    assert res["setpoint_ticks"] == 3
+    assert res["setpoint_set_mode_ticks"] == 3
+    assert res["setpoint_set_mode_tick_ms"]["n"] == 3
+    assert res["setpoint_set_mode_tick_ms"]["max"] == 45.86
+    assert res["set_mode_ticks_by_mode"] == {
+        "GUIDED": {"setpoint": 1, "nonsetpoint": 0},
+        "LOITER": {"setpoint": 1, "nonsetpoint": 0},
+        "RTL": {"setpoint": 1, "nonsetpoint": 1}}
+    g = res["groups"]
+    assert g["all"]["to_publish_ms"]["n"] == 1             # only tick 3
+    assert g["set_mode_request"]["to_publish_ms"]["n"] == 1
+    assert "fsm_after:Loiter" not in g
+
+
 def test_a_row_without_phases_is_not_measured_never_zero():
     res = _scan({"ntX_001": [{"tick": 1, "tick_ms": None, "fsm_state_after": "Land"}]})
     assert res["nonsetpoint_ticks_without_phases"] == 1
