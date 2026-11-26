@@ -494,8 +494,11 @@ if [ "${BAG:-1}" = "1" ]; then
   # node's latched /guardrail/manifest frames, the episode's start and end
   # (guardrail/manifest.py manifest_frame), subscribed transient_local
   # (bag_qos_overrides.yaml) so the start frame, published before the
-  # recorder discovers the topic, is recorded all the same. Keep
-  # deploy/docker/entrypoint.sh's BAG_TOPICS equal
+  # recorder discovers the topic, is recorded all the same. Generation N's
+  # CSP (since 2026-11-26, WP4-19): the Shield node's latched /shield/csp and
+  # the VLA stub's latched /vla/prefix_csp, subscribed transient_local too;
+  # published only on a mission sent --csp-topic on, so every other bag has
+  # no such topic. Keep deploy/docker/entrypoint.sh's BAG_TOPICS equal
   # (tests/test_deploy_configs.py).
   # BAG_MANIFEST=1 (off by default; ARCH-22, 2026-11-16): what the launch
   # knows of the manifest, as KEY=VALUE pairs after --custom-data, which
@@ -517,7 +520,7 @@ if [ "${BAG:-1}" = "1" ]; then
   fi
   nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
     --qos-profile-overrides-path "$DIR/bag_qos_overrides.yaml" \
-    /guardrail/manifest \
+    /guardrail/manifest /shield/csp /vla/prefix_csp \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
     /mavlink_adapter/sent \

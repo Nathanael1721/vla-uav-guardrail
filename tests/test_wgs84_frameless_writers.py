@@ -64,10 +64,11 @@ from guardrail.models import (POINTS_LEGACY_METRES, POINTS_NONE,   # noqa: E402
                               POINTS_WGS84, CircleFence, CorridorSwap,
                               DynamicNFZ, NoFrameOrigin, Policy, PolygonFence,
                               State, TimeWindowSwitch, load_policy, no_frame_message,
-                              rule_in_wgs84)
+                              rule_in_wgs84, wgs84_from_metres)
 from guardrail.scenario_events import EventState, apply_event      # noqa: E402
 from guardrail.scenario_spec import ScenarioEvent                  # noqa: E402
 from guardrail.shield import HotApplyRefused, Shield               # noqa: E402
+from wgs84_fixture import geo, geo_ring, rest                  # noqa: E402
 
 RULE = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "project_fix"}
@@ -134,20 +135,20 @@ def test_the_shield_refuses_every_write_with_points_on_a_frameless_policy():
         form = sh.policy.point_form
         assert form in (POINTS_LEGACY_METRES, POINTS_NONE), form
         # pre-start fences (before the first tick)
-        _refused(lambda: sh.hot_apply(PolygonFence.model_validate(
-            {"id": "pre", "type": "polygon_fence", **RULE, "vertices": SQUARE})),
+        _refused(lambda: sh.hot_apply(geo(PolygonFence.model_validate(
+            {"id": "pre", "type": "polygon_fence", **RULE, "vertices": SQUARE}), sh)),
             HotApplyRefused, "add_before_start", "'pre'")
-        _refused(lambda: sh.hot_apply(CircleFence.model_validate(
+        _refused(lambda: sh.hot_apply(geo(CircleFence.model_validate(
             {"id": "disc", "type": "circle_fence", **RULE, "radius_m": 5.0,
-             "center": {"x": 60, "y": 0}})), HotApplyRefused, "'disc'")
+             "center": {"x": 60, "y": 0}}), sh)), HotApplyRefused, "'disc'")
         _unchanged(sh, before)
         sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D())     # mission started
-        _refused(lambda: sh.spawn_nfz(_zone()), HotApplyRefused, "spawn", "'z-new'")
+        _refused(lambda: sh.spawn_nfz(geo(_zone(), sh)), HotApplyRefused, "spawn", "'z-new'")
         # a lat/lon zone too: it would become the frame the metres are read in
         o = (FRAME["lat"], FRAME["lon"])
-        geo = [{"lat": o[0] + d[0], "lon": o[1] + d[1]}
-               for d in ((0, 0), (1e-4, 0), (1e-4, 1e-4), (0, 1e-4))]
-        _refused(lambda: sh.spawn_nfz(_zone("z-geo", geo)), HotApplyRefused, "'z-geo'")
+        ll = [{"lat": o[0] + d[0], "lon": o[1] + d[1]}
+              for d in ((0, 0), (1e-4, 0), (1e-4, 1e-4), (0, 1e-4))]
+        _refused(lambda: sh.spawn_nfz(_zone("z-geo", ll)), HotApplyRefused, "'z-geo'")
         _unchanged(sh, before)
         assert sh.policy.point_form == form
     # the metre policy's own zone and corridor: edits and a swap are refused
@@ -157,17 +158,17 @@ def test_the_shield_refuses_every_write_with_points_on_a_frameless_policy():
     for fn in (lambda: sh.translate_nfz("zone", 3.0, 0.0),
                lambda: sh.rotate_nfz("zone", 15.0),
                lambda: sh.scale_nfz("zone", 1.5),
-               lambda: sh.move_nfz("zone", [(-30, 40), (-20, 40), (-20, 50), (-30, 50)]),
-               lambda: sh.hot_apply(CorridorSwap.model_validate(
+               lambda: sh.move_nfz("zone", geo_ring([(-30, 40), (-20, 40), (-20, 50), (-30, 50)], sh)),
+               lambda: sh.hot_apply(geo(CorridorSwap.model_validate(
                    {"id": "lane-b", "type": "corridor_swap", **RULE, "target_id": "lane",
                     "width_m": 30, "centerline": [{"x": -100, "y": 20}, {"x": 200, "y": 20}],
-                    "altitude_floor_m": 0, "altitude_ceiling_m": 120}))):
+                    "altitude_floor_m": 0, "altitude_ceiling_m": 120}), sh))):
         _refused(fn, HotApplyRefused)
     _unchanged(sh, before)
     # what writes no point is not affected
-    sh.hot_apply(TimeWindowSwitch.model_validate(
+    sh.hot_apply(geo(TimeWindowSwitch.model_validate(
         {"id": "off", "type": "time_window_switch", **RULE, "target_id": "fence",
-         "active": False}))
+         "active": False}), sh))
     sh.expire_nfz("zone")
     assert sh.policy.generation == before[1] + 2
     assert sh.policy.point_form == POINTS_LEGACY_METRES
@@ -185,7 +186,7 @@ def test_the_converter_names_the_rule_and_passes_a_rule_without_points():
 def test_with_a_frame_the_same_writes_store_wgs84():
     sh = Shield(_framed())
     sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D())
-    sh.spawn_nfz(_zone())
+    sh.spawn_nfz(geo(_zone(), sh))
     sh.rotate_nfz("z-new", 15.0)
     assert sh.policy.point_form == POINTS_WGS84
     assert all(v.geographic for v in sh.policy.constraints[-1].vertices)
@@ -198,18 +199,18 @@ def test_rest_answers_422_naming_the_missing_origin():
         sh = Shield(make())
         before = (sh.policy.policy_hash, sh.policy.generation)
         body = {"id": "rest-z", **RULE, "margin_m": 1.0, "vertices": SQUARE}
-        calls = [lambda: api.apply_dynamic_nfz(sh, copy.deepcopy(body)),
-                 lambda: api.apply_event(sh, {"type": "dynamic_nfz", **copy.deepcopy(body)}),
-                 lambda: api.apply_legacy_nfz(sh, {"id": "legacy-z", "vertices": SQUARE,
+        calls = [lambda: rest(api.apply_dynamic_nfz, sh, copy.deepcopy(body)),
+                 lambda: rest(api.apply_event, sh, {"type": "dynamic_nfz", **copy.deepcopy(body)}),
+                 lambda: rest(api.apply_legacy_nfz, sh, {"id": "legacy-z", "vertices": SQUARE,
                                                    "altitude_floor_m": 0,
                                                    "altitude_ceiling_m": 100})]
         if make is _metre:
-            calls += [lambda: api.apply_corridor_swap(sh, {
+            calls += [lambda: rest(api.apply_corridor_swap, sh, {
                           "id": "lane-b", **RULE, "target_id": "lane", "width_m": 30,
                           "centerline": [{"x": -100, "y": 20}, {"x": 200, "y": 20}],
                           "altitude_floor_m": 0, "altitude_ceiling_m": 120}),
-                      lambda: api.apply_nfz_edit(sh, "zone", {"op": "translate", "dx": 2.0}),
-                      lambda: api.apply_nfz_edit(sh, "zone", {"op": "rotate",
+                      lambda: rest(api.apply_nfz_edit, sh, "zone", {"op": "translate", "dx": 2.0}),
+                      lambda: rest(api.apply_nfz_edit, sh, "zone", {"op": "rotate",
                                                               "angle_deg": 10})]
         for call in calls:
             e = _refused(call, api.ApiError)
@@ -260,9 +261,18 @@ def test_the_grpc_hot_apply_dry_run_refuses_the_body():
             assert err.code == "INVALID_ARGUMENT" and WHY in err.message, err
         else:
             raise AssertionError("the gRPC dry run accepted a metre body with no frame")
-    # with a frame the dry run accepts it and hands the runner a rule
-    sh, res, rule = Harness._dry_shield(None, SimpleNamespace(policy=_framed()), [],
-                                        _HotBody(at=1.0, index=0, body=dict(body)))
+    # with a frame the metre body is refused too since 2026-11-26 (WP1-14:
+    # a body gives WGS84 only, naming the tool-side conversion); converted
+    # tool side, the dry run accepts it and hands the runner a rule
+    framed = SimpleNamespace(policy=_framed())
+    try:
+        Harness._dry_shield(None, framed, [], _HotBody(at=1.0, index=0, body=dict(body)))
+    except HarnessError as err:
+        assert err.code == "INVALID_ARGUMENT" and "wgs84_from_metres" in err.message, err
+    else:
+        raise AssertionError("the gRPC dry run accepted a metre body")
+    ll = wgs84_from_metres(dict(body), framed.policy.frame_origin)
+    sh, res, rule = Harness._dry_shield(None, framed, [], _HotBody(at=1.0, index=0, body=ll))
     assert rule.id == "grpc-z" and all(v.geographic for v in rule.vertices)
 
 
@@ -319,7 +329,7 @@ def test_the_comparison_switch_cannot_reach_a_bundle_or_a_flight():
     assert base.point_form == POINTS_WGS84
     sh = Shield(base)
     sh.wgs84_writes = False
-    sh.hot_apply(_zone())
+    sh.hot_apply(geo(_zone(), sh))
     assert sh.policy.point_form == POINTS_LEGACY_MIXED, sh.policy.point_form
     with tempfile.TemporaryDirectory() as td:
         try:

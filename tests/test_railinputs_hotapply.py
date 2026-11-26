@@ -36,16 +36,25 @@ sys.path.insert(0, str(ROOT / "tests"))
 from guardrail import load_policy                                    # noqa: E402
 from guardrail import api as A                                       # noqa: E402
 from guardrail.compiler import ConstraintCompiler                    # noqa: E402
-from guardrail.models import Action4D, State                         # noqa: E402
+from guardrail.models import Action4D, State, wgs84_from_metres      # noqa: E402
 from guardrail.replay import EpisodeRecord, rail_shield              # noqa: E402
 
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 SKIP = "SKIP"
-# A POST /dynamic_nfz body states the three ConstraintBase fields (IR schema 3.0.0).
-ZONE = {"id": "nfz-rest", "scope": "mission", "constraint_type": "hard", "priority": "P0",
-        "violation_action": "project_fix",
-        "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
-                                       {"x": 50, "y": 50}, {"x": 40, "y": 50}]}
+# A POST /dynamic_nfz body states the three ConstraintBase fields (IR schema
+# 3.0.0) and its vertices in WGS84 (WP1-14, 2026-11-26): laid out in metres in
+# POLICY's frame and converted tool side, as a client in metres does.
+ORIGIN = load_policy(POLICY).frame_origin
+
+
+def _ll(body: dict) -> dict:
+    return wgs84_from_metres(body, ORIGIN)
+
+
+ZONE = _ll({"id": "nfz-rest", "scope": "mission", "constraint_type": "hard", "priority": "P0",
+            "violation_action": "project_fix",
+            "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
+                         {"x": 50, "y": 50}, {"x": 40, "y": 50}]})
 
 
 def _flying():
@@ -226,9 +235,9 @@ def test_the_pymavlink_rail_takes_a_hot_apply_between_two_ticks():
             real_sleep(dt)
             if not sent and R.time.time() >= 3.0:
                 sent.append(httpx.post(f"http://127.0.0.1:{port}/dynamic_nfz",
-                                       json={**ZONE, "id": "nfz-rest", "vertices": [
+                                       json=_ll({**ZONE, "id": "nfz-rest", "vertices": [
                                            {"x": 24, "y": 24}, {"x": 28, "y": 24},
-                                           {"x": 28, "y": 28}, {"x": 24, "y": 28}]},
+                                           {"x": 28, "y": 28}, {"x": 24, "y": 28}]}),
                                        timeout=10))
         R.time.sleep = sleep
     out, metrics, rows, events, sim, R = T._fly_pymavlink_rail(

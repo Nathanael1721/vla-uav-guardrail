@@ -754,21 +754,26 @@ def test_both_recorders_take_the_manifest_frame_transient_local():
     latched on /guardrail/manifest; both record commands record it (first in
     their lists, which stay equal) and subscribe it transient_local through
     sitl/bag_qos_overrides.yaml, so a start frame published before the
-    recorder discovers the topic is recorded all the same. Only that topic
-    is overridden (a transient_local subscription would not match a
-    volatile publisher), and --custom-data stays off and last. Fails on
-    71aabb3: neither command named the topic or the overrides."""
+    recorder discovers the topic is recorded all the same. Only the latched
+    topics are overridden (a transient_local subscription would not match a
+    volatile publisher): the manifest and, since 2026-11-26 (WP4-19), the
+    Shield's /shield/csp and the stub's /vla/prefix_csp, both latched
+    publishers (guardrail/csp_topic.py). --custom-data stays off and last.
+    Fails on 71aabb3: neither command named the topic or the overrides."""
+    from guardrail.csp_topic import CSP_TOPIC, PILOT_CSP_TOPIC
     from guardrail.manifest import MANIFEST_TOPIC
     qos = yaml.safe_load((ROOT / "sitl" / "bag_qos_overrides.yaml").read_text(encoding="utf-8"))
-    assert qos == {MANIFEST_TOPIC: {"history": "keep_last", "depth": 10,
-                                    "reliability": "reliable",
-                                    "durability": "transient_local"}}, qos
+    latched = {"history": "keep_last", "depth": 10, "reliability": "reliable",
+               "durability": "transient_local"}
+    assert qos == {MANIFEST_TOPIC: latched, CSP_TOPIC: latched,
+                   PILOT_CSP_TOPIC: latched}, qos
     native = RUN_ROS2_DEMO.read_text(encoding="utf-8")
     block = native.split('ros2 bag record -s mcap -o "$OUT/bag"', 1)[1].split(">", 1)[0]
     assert block.split()[:3] == ["\\", "--qos-profile-overrides-path",
                                  '"$DIR/bag_qos_overrides.yaml"'], block.split()[:3]
     mine = ENTRYPOINT.read_text(encoding="utf-8").split("BAG_TOPICS=(", 1)[1].split(")", 1)[0]
     assert _topics(block)[0] == _topics(mine)[0] == MANIFEST_TOPIC
+    assert {CSP_TOPIC, PILOT_CSP_TOPIC} <= set(_topics(block)), _topics(block)
     assert block.split()[-2:] == ['"${BAG_CUSTOM[@]}"', "\\"], "--custom-data must stay last"
     if not find_bash():
         return SKIP

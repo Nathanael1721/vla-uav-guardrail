@@ -84,8 +84,10 @@ Neither model was trained with rule text in its prompt. The A/B measures what
 the prompt change does to a model that never saw one - a measurement, not an
 expected effect - and the record says so (`model_trained_on_prefix` False).
 The CSP is the one compiled before take-off at the rule clock's reading
-(generation 0): a policy hot-applied in flight does not reach the prompt
-(WP4-19's item), as in the stress harness's consumer A/B.
+(generation 0): a policy hot-applied in flight does not reach this prompt.
+(The stress harness's consumer A/B follows a hot-apply since 2026-11-26,
+WP4-19: guardrail/csp_topic.py carries generation N to the VLA stub; this
+follow mission's prompt path does not read it.)
 
 WHAT IS RECORDED (prefix_record)
 

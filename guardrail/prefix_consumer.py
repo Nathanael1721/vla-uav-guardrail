@@ -112,9 +112,20 @@ take-off, from the policy the pilot's node loaded, with the spatial filter
 off (one CSP serves the whole mission, so every rule in force is in its
 action sets, not only those near the first lookahead window). A policy whose
 action sets change during the mission (a schedule edge) is refused, and so
-is a scenario with mid-flight events by the harness
-(experiments/sweep_scenarios.py prefix_consumer_refusal): generation N's CSP
-reaching the pilot is audit card WP4-19's plumbing, not built here.
+is one that holds a moving zone (its geometry changes with the clock, under
+the same rule ids).
+
+GENERATION N (2026-11-26, audit card WP4-19). A hot-apply makes a new
+generation of the policy. `PrefixConsumer.swap` takes that generation's CSP
+(compiled by `static_csp` from the generation's policy, at the rule clock of
+the hot-apply, static over the rest of the flight) and the policy it was
+compiled from, and replaces the CSP the consumer flies in ONE assignment:
+every tick decides on one generation, never half of two. The CSP stays
+static per generation: a generation whose rules would still switch with the
+clock after it (a windowed switch, a moving zone) is refused, as at take-off.
+guardrail/csp_topic.py carries the generation from the Shield to the pilot
+on a rail; the stress harness swaps it at the event, headless
+(experiments/sweep_scenarios.py).
 """
 from __future__ import annotations
 
@@ -231,9 +242,17 @@ def static_csp(policy, mission: Mission, *, now: datetime | None = None,
     of the mission (`now` .. `now` + `duration_s`, sampled at each minute
     boundary): a rule that switches in flight needs the next generation's
     CSP, which this pilot is not given (module docstring). With no clock, or
-    no duration, nothing can switch and nothing is sampled. compile_csp's own
-    refusals (CSPBudgetExceeded, CSPUnenforcedRules, CSPAltitudeConflict)
-    pass through."""
+    no duration, nothing can switch and nothing is sampled. Raises
+    ValueError too for a policy that holds a moving zone (a dynamic_nfz with
+    a motion: its polygon moves with the clock under the same rule id, which
+    no action set shows). compile_csp's own refusals (CSPBudgetExceeded,
+    CSPUnenforcedRules, CSPAltitudeConflict) pass through."""
+    from .scenario_events import has_moving_zone
+    if has_moving_zone(policy):
+        raise ValueError(f"{policy.policy_id}: a moving zone (a dynamic_nfz with a motion) "
+                         f"changes its polygon with the clock under the same rule id: the "
+                         f"prefix consumer flies one CSP per generation, for static "
+                         f"policies only")
     comp = ConstraintCompiler(policy)
     csp = comp.compile_csp(mission, lookahead_s, now, region_margin_m=None)
     if now is not None and duration_s:
@@ -342,6 +361,72 @@ def _turned(a: Action4D, deg: float) -> Action4D:
                     vz_up=a.vz_up, yaw_rate=a.yaw_rate)
 
 
+class _View:
+    """What one CSP decides, built once per CSP: the CSP, the policy it was
+    compiled from, that policy's compiled IR, the horizons of the sampled
+    test and the prepared zone rings and corridor tubes of the path test.
+    Immutable once built, so a PrefixConsumer swaps generations by replacing
+    the whole object (PrefixConsumer.swap)."""
+
+    __slots__ = ("csp", "policy", "ir", "horizons", "tubes", "zones")
+
+    def __init__(self, csp, policy, ir, horizons, tubes, zones):
+        self.csp, self.policy, self.ir = csp, policy, ir
+        self.horizons, self.tubes, self.zones = horizons, tubes, zones
+
+    @classmethod
+    def build(cls, csp: CSP | None, policy) -> "_View":
+        if csp is None:
+            return cls(None, policy, None, (), (), ())
+        if policy is None:
+            raise ValueError("a CSP is consumed with the policy it was compiled from "
+                             "(its rule ids name that policy's zones and corridors)")
+        if not policy.matches_hash(csp.policy_hash):
+            raise ValueError(f"CSP is for {csp.policy_hash}, policy is "
+                             f"{policy.policy_hash}")
+        ir = compiled_ir(policy)
+        look = float(csp.lookahead_s)
+        n = max(1, int(math.ceil(look / HORIZON_STEP_S - 1e-9)))
+        horizons = tuple(look * (k + 1) / n for k in range(n))
+        by_id = {c.id: c for c in policy.constraints}
+        margin = corridor_margin_m(csp)
+        tubes = []
+        for cid in csp.forbidden_action_set.no_translate_out_of_corridors:
+            c = by_id[cid]
+            # The Shield's tube (Shield._corridor_tube), which contains
+            # every point its distance check accepts.
+            line = LineString(c.points())
+            tube = line.buffer(c.half_width_m / math.cos(math.pi / 64.0), quad_segs=16)
+            shapely.prepare(tube)
+            # The margin's inner tube and the true tube: buffered by the
+            # plain distance, so their chords cut INSIDE the circle and
+            # every point of the inner one is at most half - margin from
+            # the centerline, of the true one at most half (module
+            # docstring, THE CORRIDOR MARGIN). Both None for a tube no
+            # wider than twice the margin: the Shield's tube alone is
+            # tested there (the "segment" test as pab2 flew it).
+            inner = true = None
+            if c.half_width_m - margin > 0.0:
+                inner = line.buffer(c.half_width_m - margin, quad_segs=16)
+                true = line.buffer(c.half_width_m, quad_segs=16)
+                shapely.prepare(inner)
+                shapely.prepare(true)
+            tubes.append((cid, tube, inner, true))
+        rings = {r.rule.id: r.buffered for r in ir.fences}
+        zones = []
+        for fid in csp.forbidden_action_set.no_translate_into_polygons:
+            z = by_id[fid]
+            ring = rings.get(fid)
+            if ring is None:
+                # A zone the IR has no ring for keeps the sampled test.
+                continue
+            shapely.prepare(ring)
+            zones.append((fid, ring,
+                          float(getattr(z, "altitude_floor_m", -math.inf)),
+                          float(getattr(z, "altitude_ceiling_m", math.inf))))
+        return cls(csp, policy, ir, horizons, tuple(tubes), tuple(zones))
+
+
 class PrefixConsumer:
     """A pilot law flown through the CSP's action sets (module docstring).
 
@@ -363,75 +448,96 @@ class PrefixConsumer:
         self._law = law.act if hasattr(law, "act") else law
         if not callable(self._law):
             raise TypeError("a pilot law has act(state) or is callable")
-        self.csp = csp
-        self.policy = policy
         self.wraps = wraps
         self.arm = "off" if csp is None else "on"
         self._side = 1.0
         self.stats: dict[str, Any] = {"ticks": 0, "clamped": 0, "turned": 0, "stopped": 0,
                                       "no_admissible": 0, "nonfinite_passed": 0,
                                       "max_turn_deg": 0.0}
-        self._ir = None
-        self._horizons: tuple[float, ...] = ()
-        self._tubes: tuple = ()
-        self._zones: tuple = ()
-        if csp is not None:
-            if policy is None:
-                raise ValueError("a CSP is consumed with the policy it was compiled from "
-                                 "(its rule ids name that policy's zones and corridors)")
-            if not policy.matches_hash(csp.policy_hash):
-                raise ValueError(f"CSP is for {csp.policy_hash}, policy is "
-                                 f"{policy.policy_hash}")
-            self._ir = compiled_ir(policy)
-            look = float(csp.lookahead_s)
-            n = max(1, int(math.ceil(look / HORIZON_STEP_S - 1e-9)))
-            self._horizons = tuple(look * (k + 1) / n for k in range(n))
-            by_id = {c.id: c for c in policy.constraints}
-            margin = corridor_margin_m(csp)
-            tubes = []
-            for cid in csp.forbidden_action_set.no_translate_out_of_corridors:
-                c = by_id[cid]
-                # The Shield's tube (Shield._corridor_tube), which contains
-                # every point its distance check accepts.
-                line = LineString(c.points())
-                tube = line.buffer(c.half_width_m / math.cos(math.pi / 64.0), quad_segs=16)
-                shapely.prepare(tube)
-                # The margin's inner tube and the true tube: buffered by the
-                # plain distance, so their chords cut INSIDE the circle and
-                # every point of the inner one is at most half - margin from
-                # the centerline, of the true one at most half (module
-                # docstring, THE CORRIDOR MARGIN). Both None for a tube no
-                # wider than twice the margin: the Shield's tube alone is
-                # tested there (the "segment" test as pab2 flew it).
-                inner = true = None
-                if c.half_width_m - margin > 0.0:
-                    inner = line.buffer(c.half_width_m - margin, quad_segs=16)
-                    true = line.buffer(c.half_width_m, quad_segs=16)
-                    shapely.prepare(inner)
-                    shapely.prepare(true)
-                tubes.append((cid, tube, inner, true))
-            self._tubes = tuple(tubes)
-            rings = {r.rule.id: r.buffered for r in self._ir.fences}
-            zones = []
-            for fid in csp.forbidden_action_set.no_translate_into_polygons:
-                z = by_id[fid]
-                ring = rings.get(fid)
-                if ring is None:
-                    # A zone the IR has no ring for keeps the sampled test.
-                    continue
-                shapely.prepare(ring)
-                zones.append((fid, ring,
-                              float(getattr(z, "altitude_floor_m", -math.inf)),
-                              float(getattr(z, "altitude_ceiling_m", math.inf))))
-            self._zones = tuple(zones)
+        # Everything the CSP decides, in ONE object (_View), so a swap to
+        # generation N's CSP (swap) is one assignment and a tick reads one
+        # generation's CSP, policy and geometry together (module docstring,
+        # GENERATION N). `csp0` is the CSP taken off with (the identity the
+        # node announces and record() reports); `swaps` every later one.
+        self._view = _View.build(csp, policy)
+        self.csp0 = csp
+        self.swaps: list[dict[str, Any]] = []
+        # Ticks decided on each generation's CSP (the on arm only; written
+        # into record() only once a swap has happened).
+        self.generation_ticks: dict[int, int] = {}
+
+    # The CSP-dependent state, read through the current view.
+    @property
+    def csp(self) -> CSP | None:
+        return self._view.csp
+
+    @property
+    def policy(self):
+        return self._view.policy
+
+    @property
+    def generation(self) -> int | None:
+        """The generation of the CSP the next tick decides on (None: no CSP)."""
+        return None if self._view.csp is None else int(self._view.csp.generation)
+
+    @property
+    def _ir(self):
+        return self._view.ir
+
+    @property
+    def _horizons(self) -> tuple[float, ...]:
+        return self._view.horizons
+
+    @property
+    def _tubes(self) -> tuple:
+        return self._view.tubes
+
+    @property
+    def _zones(self) -> tuple:
+        return self._view.zones
+
+    def swap(self, csp: CSP, policy, *, t: float | None = None,
+             source: str | None = None) -> dict[str, Any]:
+        """Fly `csp` (generation N's, compiled from `policy`) from the next
+        tick on. The new view is built first - a CSP of another policy, or
+        of a generation not above the one flown, raises ValueError and
+        nothing changes - then put in place in one assignment. Returns the
+        swap's record (also appended to `swaps`): the generation flown
+        before, the new CSP's identity (csp_record), and `t` and `source` as
+        the caller gives them. Only the on arm swaps: the off arm holds no
+        CSP."""
+        if self.arm != "on":
+            raise ValueError("the prefix-off arm holds no CSP, so it swaps none")
+        if csp is None:
+            raise ValueError("a swap needs generation N's CSP")
+        before = self.generation
+        if int(csp.generation) <= int(before):
+            raise ValueError(f"generation {csp.generation}'s CSP is not newer than the "
+                             f"generation {before} flown")
+        view = _View.build(csp, policy)
+        rec = {"from_generation": before, **csp_record(csp),
+               "t": None if t is None else round(float(t), 4), "source": source}
+        self._view = view
+        self.swaps.append(rec)
+        return rec
 
     def record(self) -> dict[str, Any]:
-        return consumer_record(self.arm, self.csp, self.wraps)
+        """consumer_record of the CSP taken off with. After a swap
+        (GENERATION N) also `csp_generations`, every swap's record, and
+        `generation_ticks`, the ticks decided on each generation; a flight
+        with no swap has the record it always had, key for key."""
+        rec = consumer_record(self.arm, self.csp0, self.wraps)
+        if self.swaps:
+            rec["csp_generations"] = [dict(s) for s in self.swaps]
+            rec["generation_ticks"] = {str(g): n for g, n in
+                                       sorted(self.generation_ticks.items())}
+        return rec
 
     # ------------------------------------------------------------------ #
 
-    def _clamp(self, a: Action4D, state: State) -> Action4D:
-        al = self.csp.allowed_action_set
+    def _clamp(self, a: Action4D, state: State, view: _View | None = None) -> Action4D:
+        csp = (view or self._view).csp
+        al = csp.allowed_action_set
         vx, vy, vz, yr = a.vx, a.vy, a.vz_up, a.yaw_rate
         cap = al.horizontal_speed_max_mps
         speed = math.hypot(vx, vy)
@@ -444,7 +550,7 @@ class PrefixConsumer:
         band = al.altitude_band_m_agl
         rng = al.vz_range_mps
         if band is not None and math.isfinite(state.up):
-            look = float(self.csp.lookahead_s)
+            look = float(csp.lookahead_s)
             lo_v, hi_v = (band[0] - state.up) / look, (band[1] - state.up) / look
             # Inside the band one lookahead ahead...
             vz = _clip(vz, lo_v, hi_v)
@@ -465,7 +571,8 @@ class PrefixConsumer:
             return a
         return Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
 
-    def inadmissible(self, a: Action4D, state: State) -> list[str]:
+    def inadmissible(self, a: Action4D, state: State,
+                     view: _View | None = None) -> list[str]:
         """The polygons `a` would translate into and the corridors it would
         leave within the lookahead ("polygon:<id>" / "corridor:<id>", as
         action_violations names them), at the first horizon that has any;
@@ -473,17 +580,19 @@ class PrefixConsumer:
         it crosses from outside (where its altitudes meet the zone's band)
         and the corridors whose tube it leaves from inside (module docstring:
         a path from inside a ring or outside a tube is the Shield's to
-        recover, and is judged as before)."""
-        for h in self._horizons:
-            geo = [v for v in action_violations(a, self.csp, state, self.policy,
-                                                dt=h, ir=self._ir)
-                   if v.startswith(_GEO)]
+        recover, and is judged as before). `view`: the CSP's view to judge
+        under (act passes the one its tick read); default the current."""
+        v = view or self._view
+        for h in v.horizons:
+            geo = [w for w in action_violations(a, v.csp, state, v.policy,
+                                                dt=h, ir=v.ir)
+                   if w.startswith(_GEO)]
             if geo:
                 return geo
-        if not (self._tubes or self._zones) or not all(
-                math.isfinite(v) for v in (state.x, state.y, state.up)):
+        if not (v.tubes or v.zones) or not all(
+                math.isfinite(c) for c in (state.x, state.y, state.up)):
             return []
-        look = float(self.csp.lookahead_s)
+        look = float(v.csp.lookahead_s)
         x1, y1 = state.x + a.vx * look, state.y + a.vy * look
         if math.hypot(x1 - state.x, y1 - state.y) <= 1e-9:
             return []
@@ -491,10 +600,10 @@ class PrefixConsumer:
         path = LineString([(state.x, state.y), (x1, y1)])
         up0, up1 = state.up, state.up + a.vz_up * look
         lo, hi = min(up0, up1), max(up0, up1)
-        out = [f"polygon:{fid}" for fid, ring, floor, ceil in self._zones
+        out = [f"polygon:{fid}" for fid, ring, floor, ceil in v.zones
                if lo <= ceil and hi >= floor
                and not area_covers(ring, start) and area_meets(path, ring)]
-        for cid, tube, inner, true in self._tubes:
+        for cid, tube, inner, true in v.tubes:
             if not area_covers(tube, start):
                 continue                    # outside: the Shield's to recover
             if not area_covers(tube, path):
@@ -521,15 +630,20 @@ class PrefixConsumer:
     def act(self, state: State) -> Action4D:
         a = self._law(state)
         self.stats["ticks"] += 1
-        if self.csp is None:
+        # One view per tick (module docstring, GENERATION N): a swap made
+        # while this tick runs is read by the next tick, never half-way.
+        v = self._view
+        if v.csp is None:
             return a
-        if not all(math.isfinite(v) for v in (a.vx, a.vy, a.vz_up, a.yaw_rate)):
+        g = int(v.csp.generation)
+        self.generation_ticks[g] = self.generation_ticks.get(g, 0) + 1
+        if not all(math.isfinite(c) for c in (a.vx, a.vy, a.vz_up, a.yaw_rate)):
             self.stats["nonfinite_passed"] += 1
             return a
-        b = self._clamp(a, state)
+        b = self._clamp(a, state, v)
         if b is not a:
             self.stats["clamped"] += 1
-        if not self.inadmissible(b, state):
+        if not self.inadmissible(b, state, v):
             return b
         moving = math.hypot(b.vx, b.vy) > 1e-9
         if moving:
@@ -537,13 +651,13 @@ class PrefixConsumer:
                 sides = (self._side,) if deg >= 180.0 else (self._side, -self._side)
                 for side in sides:
                     c = _turned(b, side * deg)
-                    if not self.inadmissible(c, state):
+                    if not self.inadmissible(c, state, v):
                         self._side = side
                         self.stats["turned"] += 1
                         self.stats["max_turn_deg"] = max(self.stats["max_turn_deg"], deg)
                         return c
             stop = Action4D(vx=0.0, vy=0.0, vz_up=b.vz_up, yaw_rate=b.yaw_rate)
-            if not self.inadmissible(stop, state):
+            if not self.inadmissible(stop, state, v):
                 self.stats["stopped"] += 1
                 return stop
         self.stats["no_admissible"] += 1

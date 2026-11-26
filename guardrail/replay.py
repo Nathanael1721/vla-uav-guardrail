@@ -1782,6 +1782,12 @@ class EpisodeRecord:
         self._held: list[str] | None = None
         self._held_by: int | None = None
         self.generations: list[dict] = []
+        # Called as on_generation(row, policy, t) after each generation's
+        # files and event are written (write_generation): a rail's Shield
+        # node sets it to publish generation N's CSP to the pilot
+        # (guardrail/csp_topic.py, --csp-topic on, 2026-11-26). None (the
+        # default): nothing is called, as before.
+        self.on_generation: Callable[[dict, Policy, float | None], None] | None = None
         self.episode_id: int = int(wall_ns())
         self.ended = False
         self.event("episode_start", wall_ns=self.episode_id,
@@ -1929,6 +1935,9 @@ class EpisodeRecord:
             self.event("cost_map_failed", t=t, generation=g,
                        error=cm_err or err or "no cost map written")
         self.event("policy_generation", t=t, **row)
+        if self.on_generation is not None:
+            # After the files and the event: the hook reads csp_g<N>.json.
+            self.on_generation(row, pol, t)
         return row
 
     def generation_writer(self, reason: str,
@@ -1973,18 +1982,30 @@ class EpisodeRecord:
         without it takes the polygon_fence as the rails always sent it.
 
         `later` (a list): the generation's write is queued on it, as
-        hot_applied(later=...) does; the Shield's hot-apply is not."""
+        hot_applied(later=...) does; the Shield's hot-apply is not.
+
+        The rails write their zone in local metres (a route zone, a zone
+        around the aircraft). Since 2026-11-26 the Shield takes an absolute
+        position in WGS84 only (WP1-14), so the zone is converted here, tool
+        side, about the policy's frame origin (models.wgs84_from_metres: the
+        same lat/lon the Shield wrote at ingest before). A policy with no
+        frame origin is left to the Shield, which refuses the zone as before
+        (models.NoFrameOrigin)."""
         try:
             from .shield import as_dynamic_nfz
         except ImportError:
             rule = fence
         else:
             rule = as_dynamic_nfz(fence)
+        origin = getattr(getattr(shield, "policy", None), "frame_origin", None)
+        if origin is not None and getattr(shield, "wgs84_writes", True):
+            from .models import wgs84_from_metres
+            rule = wgs84_from_metres(rule, origin)
         shield.hot_apply(rule)
         self.hot_applied(rule.id, t=t, later=later)
         # The rule AS STORED in the live policy: since 2026-11-17 (WP1-14) a
-        # Shield over a policy with a frame writes the metre points as WGS84
-        # (Shield._in_frame), so the rule handed in is not what was applied.
+        # Shield over a policy with a frame stores lat/lon only, so the rule
+        # handed in is not exactly what was applied (it is bound to the frame).
         find = getattr(shield, "_find", None)
         if find is not None:
             try:

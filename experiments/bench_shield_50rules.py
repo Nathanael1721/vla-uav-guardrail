@@ -111,7 +111,7 @@ import shapely                                                      # noqa: E402
 
 from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E402
                               KinematicEnvelope, Policy, PolygonFence,
-                              State)
+                              State, wgs84_from_metres)
 from guardrail.shield import Shield                                 # noqa: E402
 
 # The grid. 8 x 6 squares of 12 m at a 40 m pitch, 2 m margin: 28 m of open
@@ -438,6 +438,9 @@ def main(argv=None) -> int:
                                  constraint_type="hard", priority="P0", violation_action="project_fix", scope="mission",
                                  vertices=[{"x": -30, "y": -30}, {"x": -20, "y": -30},
                                            {"x": -20, "y": -20}, {"x": -30, "y": -20}])
+            # WGS84-only entry (WP1-14, 2026-11-26): converted tool-side,
+            # outside the timed hot-apply.
+            fence = wgs84_from_metres(fence, sh.policy.frame_origin)
             t0 = time.perf_counter()
             sh.hot_apply(fence)
             ms_hot.append((time.perf_counter() - t0) * 1e3)

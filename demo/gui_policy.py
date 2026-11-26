@@ -101,8 +101,10 @@ def read_base(base_path: str | Path = BASE_POLICY):
         return (copy.deepcopy(FALLBACK_KEEP), "0.1.0", PAS_HOME,
                 f"base policy read failed ({e}) - using built-in envelope constraints")
     try:
-        from guardrail.models import load_policy
-        origin = load_policy(base_path, runtime=False).frame_origin
+        # The base may be a stored metre document: it is READ for its frame
+        # only (the legacy read, WP1-14); what the GUI writes is WGS84.
+        from guardrail.models import load_legacy_metre_policy
+        origin = load_legacy_metre_policy(base_path, runtime=False).frame_origin
     except Exception as e:                                      # noqa: BLE001
         return (keep, version, PAS_HOME,
                 f"base policy {Path(base_path).name} did not validate ({e}); "

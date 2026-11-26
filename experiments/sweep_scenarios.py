@@ -130,9 +130,14 @@ THE PREFIX CONSUMER (2026-11-16, WP4-15)
 A profile with `prefix_consumer: action_set` flies every episode's pilot law
 through guardrail.prefix_consumer.PrefixConsumer (the grant's default
 action-set adapter): the prefix-on arm with the Prefix Compiler's CSP for the
-cell (prefix_csp: compiled once, before take-off, for static policies only),
-the prefix-off arm without it. The two arms then differ by the Prefix alone,
-so for such a pilot a differing pair is the measurement, not a defect
+cell (prefix_csp: compiled before take-off, static over the flight), the
+prefix-off arm without it. Since 2026-11-26 (audit card WP4-19) a scenario's
+mid-flight event makes a new generation whose CSP the prefix-on arm swaps in
+at the event (prefix_generation_csp; on a rail it travels from the Shield
+node to the VLA stub, guardrail/csp_topic.py, and prefix_generation_problems
+checks the pilot followed); an event whose rules go on changing with the
+clock is refused (prefix_consumer_refusal). The two arms then differ by the
+Prefix alone, so for such a pilot a differing pair is the measurement, not a defect
 (arms_summary keeps "the arms must be one flight" for every other pilot),
 and the rails fly both arms (`--prefix on|off` to the VLA stub; rail_refusal
 still refuses the prefix-off and paraphrase arms of a pilot that reads
@@ -378,6 +383,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _REPO = ROOT
 sys.path.insert(0, str(ROOT))
 
+from guardrail import csp_topic as CT                              # noqa: E402
 from guardrail import hold_flight as HF                            # noqa: E402
 from guardrail import kpi as K                                     # noqa: E402
 from guardrail import prefix_consumer as PC                        # noqa: E402
@@ -1830,6 +1836,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         consumer = arm_consumer(
             spec, policy, dfl, seed, arm,
             lambda s: _pilot(m, kind, s, None if rsp is None else rsp.accel_mps2))
+    # Rows carry the Shield's and the pilot's CSP generation on the prefix-on
+    # arm of a consumer over a scenario with events only (GENERATION N,
+    # 2026-11-26): every other episode's rows are the ones they were.
+    track_generations = (consumer is not None and getattr(consumer, "arm", None) == "on"
+                         and bool(spec.events))
     subj = spec.mission.subject
     relabels = sorted(subj.reclassify if subj else [], key=lambda r: r.at_s)
     subj_class = subj.class_ if subj else None
@@ -2024,13 +2035,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         while pending and pending[0].at_sim_t <= t_now + 1e-9:
             ev = pending.pop(0)
             if consumer is not None:
-                # Reached only by an event injected into a stepped episode: a
-                # scenario that declares events is refused before take-off
-                # (prefix_consumer_refusal).
-                raise ValueError(f"{ev.type} at {ev.at_sim_t:g} s: the prefix consumer "
-                                 f"flies the CSP compiled before take-off, and an event "
-                                 f"changes the rules under it (generation N's CSP "
-                                 f"reaching the pilot is not built: audit card WP4-19)")
+                # A scenario's own event the consumer cannot follow is refused
+                # before take-off (prefix_consumer_refusal); this stops one
+                # injected into a stepped episode before it changes the rules.
+                no = consumer_event_refusal(ev)
+                if no:
+                    raise ValueError(f"{ev.type} at {ev.at_sim_t:g} s: the prefix consumer "
+                                     f"cannot follow it ({no}; audit card WP4-19)")
             rec = apply_event(ev, es, st, heading, t_now)
             for rid, prio in K.rule_priorities(shield.policy).items():
                 priorities.setdefault(rid, prio)
@@ -2041,6 +2052,29 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                     es.shields[0].policy.canonical_bytes())
             if not rec.get("refused"):
                 imposed = True
+            if (consumer is not None and getattr(consumer, "arm", None) == "on"
+                    and not rec.get("refused")
+                    and shield.policy.generation > consumer.generation):
+                # GENERATION N (audit card WP4-19, 2026-11-26): the
+                # generation's CSP, compiled from the flying Shield's policy
+                # at this tick's rule clock (to the second, as a rail records
+                # it) and static over the rest of the flight, is swapped in
+                # BEFORE this tick's pilot call - the swap the VLA stub makes
+                # on a rail when the Shield's /shield/csp arrives, here with
+                # no lag. The policy is a snapshot with its own rule list, as
+                # a rail's generation writer takes it.
+                live = shield.policy
+                gen_pol = live.model_copy(update={"constraints": list(live.constraints)})
+                reading = CT.clock_reading(clock() if clock is not None else None)
+                try:
+                    gen_csp = prefix_generation_csp(spec, gen_pol, dfl, seed,
+                                                    clock=reading, t_s=t_now)
+                except ValueError as e:
+                    raise ValueError(f"{ev.type} at {ev.at_sim_t:g} s: generation "
+                                     f"{gen_pol.generation}'s CSP cannot be flown by the "
+                                     f"prefix consumer ({e}; audit card WP4-19)") from e
+                swap = consumer.swap(gen_csp, gen_pol, t=t_now, source="headless event")
+                swap["rule_clock_reading"] = reading
         if subj:
             due = [r for r in relabels if r.at_s <= t_now + 1e-9]
             new_class = due[-1].class_ if due else subj.class_
@@ -2425,6 +2459,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         if oracle is not None:
             row["perceived"] = {"x": seen.x, "y": seen.y, "up": seen.up}
             row["true_violations"] = [v.model_dump() for v in true_vios]
+        if track_generations:
+            # The prefix-on arm of a consumer over a scenario with events
+            # only (GENERATION N): the Shield's generation and the one the
+            # pilot's CSP was, under a rail row's names
+            # (guardrail/csp_topic.generation_lag).
+            row["generation"] = shield.policy.generation
+            row["pilot_csp_generation"] = consumer.generation
         rows.append(row)
 
         if p0(true_vios):
@@ -2751,6 +2792,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     if consumer is not None:
         # Only on a prefix-consumer episode: what the consumer was and did.
         extra["prefix_consumer"] = dict(consumer.record(), stats=dict(consumer.stats))
+        if track_generations:
+            # How the pilot's CSP followed the Shield's generations (0 rows
+            # of lag here by construction: the swap precedes the tick's
+            # pilot call).
+            extra["prefix_consumer"]["generation_tracking"] = CT.generation_lag(rows)
     if veh is not None:
         # Only under a response arm, so a headline episode's table carries
         # exactly the keys it always did (plus its `vehicle_response` label).
@@ -2941,16 +2987,46 @@ LABELS_NOT_APPLIED = ("the cell's outcome and fail-safe labels were derived for 
                       "consumes the CSP, so they are not applied (its gates are)")
 
 
+def consumer_event_refusal(ev) -> str | None:
+    """Why the prefix consumer cannot follow this mid-flight event, or None.
+    Since 2026-11-26 (audit card WP4-19) generation N's CSP reaches the
+    pilot (guardrail/csp_topic.py; headless, the swap at the event in
+    run_episode): an EVENT-DRIVEN change is followed. Refused are the events
+    whose rules go on changing with the CLOCK after the event, which a CSP
+    static over the rest of the flight (prefix_consumer.static_csp) cannot
+    serve: a switch or swap with a `window` (a schedule edge after the
+    event), and a zone given a motion (spawned moving, or set translating or
+    rotating at a rate)."""
+    p = ev.payload or {}
+    if "window" in p:
+        return (f"a {ev.type} with a `window`: a clock-driven schedule edge after the "
+                f"event, which a CSP static over the rest of the flight cannot serve")
+    if (ev.type == "spawn_polygon_fence" and p.get("motion") is not None) or \
+            (ev.type == "translate_polygon_fence" and "mps" in p) or \
+            (ev.type == "rotate_polygon_fence" and "deg_per_s" in p):
+        return (f"a {ev.type} that sets a zone moving: its polygon changes with the "
+                f"clock under one rule id, which a CSP static over the rest of the flight "
+                f"cannot serve")
+    return None
+
+
 def prefix_consumer_refusal(spec: ScenarioSpec) -> str | None:
     """Why the prefix consumer cannot fly this scenario, or None. It flies
-    one CSP, compiled before take-off: a scenario whose rules change in
-    flight (any mid-flight event) needs generation N's CSP at the pilot,
-    which is audit card WP4-19's plumbing and is not built."""
-    if spec.events:
-        return (f"{spec.scenario_id}: a prefix-consumer arm of a scenario with "
-                f"{len(spec.events)} mid-flight event(s): the consumer flies the CSP "
-                f"compiled before take-off, and generation N's CSP reaching the pilot is "
-                f"not built (audit card WP4-19); static families only")
+    one CSP per generation of the policy: compiled before take-off for
+    generation 0, and since 2026-11-26 (audit card WP4-19) at each
+    mid-flight event for the generation the event makes (headless, the swap
+    in run_episode; on a rail, guardrail/csp_topic.py). A scenario is
+    refused only for an event whose rules go on changing with the clock
+    after it (consumer_event_refusal). Until that date every scenario with
+    an event was refused (static families only)."""
+    why = [f"event {k} at {ev.at_sim_t:g} s, {r}" for k, ev in enumerate(spec.events)
+           for r in [consumer_event_refusal(ev)] if r]
+    if why:
+        return (f"{spec.scenario_id}: a prefix-consumer arm of a scenario whose rules "
+                f"change with the clock after an event (" + "; ".join(why) + "): the "
+                f"consumer flies one CSP per generation, static over the rest of the flight "
+                f"(prefix_consumer.static_csp); clock-driven edges stay refused (audit card "
+                f"WP4-19 delivers event-driven generations only)")
     return None
 
 
@@ -2971,18 +3047,48 @@ def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0, *,
     rules over the token budget, a rule the Shield does not enforce)."""
     from guardrail.csp import CSPBudgetExceeded, CSPUnenforcedRules
     pol = policy if policy is not None else spec.policy.load(ROOT)
-    rm = rail_mission(spec, pol, defaults, seed)
+    mission, clock_start, max_s = prefix_mission(spec, pol, defaults, seed,
+                                                 max_s_add=max_s_add)
+    try:
+        return PC.static_csp(pol, mission, now=clock_start, duration_s=max_s)
+    except (CSPBudgetExceeded, CSPUnenforcedRules) as e:
+        raise ValueError(f"{spec.scenario_id}: no CSP for the prefix consumer "
+                         f"({type(e).__name__}: {e})") from e
+
+
+def prefix_mission(spec: ScenarioSpec, policy, defaults=None, seed: int = 0, *,
+                   max_s_add: float = 0.0):
+    """(mission, clock start, flight length) the prefix consumer's CSPs are
+    compiled for: the mission as the rails are told it (rail_mission, each
+    number as rail_node_args writes it, so the VLA stub builds the same one
+    from its arguments), the scenario's clock, and the rail's flight length
+    (rail_max_s) that a CSP must hold static over."""
+    rm = rail_mission(spec, policy, defaults, seed)
 
     def r(v):
         return None if v is None else float(_num(v))
     target = None if rm["target"] is None else tuple(r(v) for v in rm["target"])
     mission = PC.consumer_mission(tuple(r(v) for v in rm["start"]), target, r(rm["speed"]))
+    return mission, rm["clock_start"], rail_max_s(rm["max_s"], max_s_add)
+
+
+def prefix_generation_csp(spec: ScenarioSpec, policy, defaults=None, seed: int = 0, *,
+                          clock, t_s: float | None, max_s_add: float = 0.0):
+    """Generation N's CSP for the prefix consumer (audit card WP4-19,
+    2026-11-26): `policy` is the generation's (the flying Shield's after a
+    hot-apply, or a rail run's policy_g<N>.json), compiled for the cell's
+    consumer mission (prefix_mission) at the rule clock reading `clock` (ISO
+    text to the second, as a generation records it, or None: no clock), static
+    over the rest of the flight from mission time `t_s`
+    (guardrail.csp_topic.generation_csp, the call the VLA stub makes on the
+    rail). Raises ValueError where no such CSP exists."""
+    from guardrail.csp import CSPBudgetExceeded, CSPUnenforcedRules
+    mission, _, max_s = prefix_mission(spec, policy, defaults, seed, max_s_add=max_s_add)
     try:
-        return PC.static_csp(pol, mission, now=rm["clock_start"],
-                             duration_s=rail_max_s(rm["max_s"], max_s_add))
+        return CT.generation_csp(policy, mission, clock=clock, t_s=t_s, max_s=max_s)
     except (CSPBudgetExceeded, CSPUnenforcedRules) as e:
-        raise ValueError(f"{spec.scenario_id}: no CSP for the prefix consumer "
-                         f"({type(e).__name__}: {e})") from e
+        raise ValueError(f"{spec.scenario_id}: no generation {policy.generation} CSP for the "
+                         f"prefix consumer ({type(e).__name__}: {e})") from e
 
 
 def arm_consumer(spec: ScenarioSpec, policy, defaults, seed: int, arm: dict, law):
@@ -3007,7 +3113,12 @@ def arm_consumer(spec: ScenarioSpec, policy, defaults, seed: int, arm: dict, law
     if rec.get("action_set_sha256") != got:
         raise ValueError(f"the arm record's CSP ({rec.get('action_set_sha256')}) is not "
                          f"the one this cell and seed compile to ({got})")
-    return PC.PrefixConsumer(law, csp, policy, wraps=wraps)
+    # The consumer's own copy of the policy (its own rule list), as a rail's
+    # stub loads its own: the flying Shield's hot-apply bumps the generation
+    # on ITS Policy object, which must not change the one the take-off CSP
+    # was compiled from (GENERATION N, 2026-11-26).
+    own = policy.model_copy(update={"constraints": list(policy.constraints)})
+    return PC.PrefixConsumer(law, csp, own, wraps=wraps)
 
 
 def scoring_spec(spec: ScenarioSpec, ep) -> ScenarioSpec:
@@ -3072,18 +3183,37 @@ def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
 
 
 def prefix_generation_problems(meta: dict, generations: dict | None,
-                               rows=()) -> list[str]:
+                               rows=(), metrics: dict | None = None,
+                               csp_for=None, *, records: dict | None = None,
+                               made_by: set | None = None) -> list[str]:
     """Why a rail flight of a prefix-consumer arm is not that arm's flight
-    because its rules changed in flight: the Shield flew a generation above
-    0 (a policy_g<N>.json of the run, `generations`, or a log row's
-    `generation`) while the consumer flew generation 0's CSP, which
-    prefix_flight_problems alone cannot see - the node announces the CSP it
-    took off with. The harness refuses such a change up front
-    (guardrail/harness_service.py _consumer_takes_no_events, and
-    prefix_consumer_refusal for a scenario's own events); this is the
-    backstop for one that reached the Shield anyway (a client of the
-    mission's REST endpoint, an old harness). [] for every flight without a
-    prefix consumer."""
+    because of how its rules changed in flight, which prefix_flight_problems
+    alone cannot see (the node announces the CSP it took off with). The
+    Shield's generations above 0 come from the run's policy_g<N>.json
+    (`generations`) and the log rows' `generation`. [] for every flight
+    without a prefix consumer, and for one whose Shield stayed on
+    generation 0.
+
+      * A scenario that declares NO event (`meta["events"]` 0): any
+        generation above 0 is a change the harness did not ask for (a client
+        of the mission's REST endpoint, an old harness; the gRPC harness
+        refuses one up front, guardrail/harness_service.py
+        _consumer_takes_no_events), so the flight is not its arm's, on
+        either arm, as before 2026-11-26.
+      * A scenario with events (since 2026-11-26, audit card WP4-19): with
+        `made_by` (the generations the run's own accepted scenario_event
+        records made, run_generation_events), a generation above 0 that no
+        scenario event made (a REST hot-apply, a --dynamic zone) is a change
+        the scenario does not declare - the Shield node publishes it to the
+        pilot all the same - so the flight is not its arm's, on either arm.
+        Otherwise the prefix-off arm holds no CSP, so the change leaves its
+        pilot as it is; the prefix-on arm must have FOLLOWED the Shield
+        (guardrail.csp_topic.tracking_problems over the rows'
+        `pilot_csp_generation`, the VLA node's announcements in `metrics`
+        (`prefix_csp_topic.pilot`) and, with `csp_for(policy,
+        rule_clock_reading, t)`, each announced generation's CSP against the
+        one the run's policy_g<N>.json compiles to, at the clock reading and
+        time the run's `records` hold for it)."""
     want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
     if not want.get("pilot_reads_prefix"):
         return []
@@ -3093,26 +3223,64 @@ def prefix_generation_problems(meta: dict, generations: dict | None,
               and not isinstance(r.get("generation"), bool) and r["generation"] > 0}
     if not above:
         return []
-    return [f"the Shield's rules changed in flight (generation(s) {sorted(above)}) while "
-            f"the prefix consumer flew generation 0's CSP: a prefix-consumer arm takes no "
-            f"mid-flight rule change (generation N's CSP at the pilot is audit card "
-            f"WP4-19, not built)"]
+    if not int(meta.get("events") or 0):
+        return [f"the Shield's rules changed in flight (generation(s) {sorted(above)}) on a "
+                f"scenario that declares no event: a prefix-consumer arm follows only the "
+                f"scenario's own events (audit card WP4-19), so this is not its flight"]
+    if made_by is not None:
+        undeclared = sorted(above - set(made_by))
+        if undeclared:
+            return [f"generation(s) {undeclared} of the Shield's rules were made by no "
+                    f"scenario_event of the run: a change the scenario does not declare "
+                    f"(a REST hot-apply, a --dynamic zone), which a prefix-consumer arm "
+                    f"does not take (audit card WP4-19), so this is not its flight"]
+    arm = (want.get("consumer") or {}).get("arm")
+    if arm != "on":
+        return []
+    topic = (metrics or {}).get("prefix_csp_topic")
+    topic = topic if isinstance(topic, dict) else {}
+    return [f"generation N's CSP at the pilot (audit card WP4-19): {p}"
+            for p in CT.tracking_problems(rows, announcements=topic.get("pilot"),
+                                          generations=generations, csp_for=csp_for,
+                                          records=records)]
 
 
-def prefix_flight_record(metrics: dict, meta: dict) -> dict | None:
+def prefix_generation_record(meta: dict, rows, metrics: dict | None) -> dict | None:
+    """What a rail flight's prefix-on arm shows of generation N's CSP at the
+    pilot (None for every other flight, and for a scenario without events):
+    the lag per generation measured on the Shield's rows
+    (guardrail.csp_topic.generation_lag), what the Shield node published and
+    what the VLA node announced (metrics.json `prefix_csp_topic`)."""
+    want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
+    if (not want.get("pilot_reads_prefix") or not int(meta.get("events") or 0)
+            or (want.get("consumer") or {}).get("arm") != "on"):
+        return None
+    topic = (metrics or {}).get("prefix_csp_topic")
+    return {"lag": CT.generation_lag(rows), "lag_max_s": CT.LAG_MAX_S,
+            "topic": topic if isinstance(topic, dict) else None}
+
+
+def prefix_flight_record(metrics: dict, meta: dict, rows=None) -> dict | None:
     """What a rail flight's VLA node announced of its prefix arm beside what
     the harness expected (None without a prefix consumer): the node's record,
-    and whether its whole-CSP content hash is the harness's."""
+    and whether its whole-CSP content hash is the harness's. With `rows`, the
+    prefix-on arm of a scenario with events also carries
+    `generation_tracking` (prefix_generation_record, 2026-11-26); every
+    other record is the one it was."""
     want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
     if not want.get("pilot_reads_prefix"):
         return None
     c = want.get("consumer") or {}
     ident = metrics.get("vla_identity") if isinstance(metrics.get("vla_identity"), dict) else {}
     got = ident.get("prefix") if isinstance(ident.get("prefix"), dict) else {}
-    return {"announced": got or None, "expected": c,
-            "csp_content_hash_agrees": (None if c.get("csp_content_hash") is None
-                                        else got.get("csp_content_hash")
-                                        == c.get("csp_content_hash"))}
+    out = {"announced": got or None, "expected": c,
+           "csp_content_hash_agrees": (None if c.get("csp_content_hash") is None
+                                       else got.get("csp_content_hash")
+                                       == c.get("csp_content_hash"))}
+    gen = None if rows is None else prefix_generation_record(meta, rows, metrics)
+    if gen is not None:
+        out["generation_tracking"] = gen
+    return out
 
 
 # The version of the self-contained keys episode_extras() adds; a reader
@@ -3572,6 +3740,12 @@ RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--n
 # and checked static over. Checked only for a mission that carries --prefix,
 # so every other mission's check is the one it was.
 RAIL_STUB_PREFIX_FLAGS = ("--prefix", "--clock-start", "--max-s")
+# Generation N's CSP at the pilot (audit card WP4-19, 2026-11-26;
+# guardrail/csp_topic.py): sent to a prefix-consumer mission of a scenario
+# with events only (rail_node_args), and then both nodes must declare it -
+# the Shield node publishes /shield/csp and the stub's prefix-on arm follows
+# it. Every other mission is sent none and checked as it was.
+RAIL_CSP_TOPIC_FLAGS = (CT.FLAG,)
 # The Shield node's REST hot-apply listener (sitl/ros2_shield_node.py,
 # "HOT-APPLY ON THE FLYING SHIELD"). A campaign sends none of these; the gRPC
 # harness's rail episode (guardrail/harness_service.py, 2026-11-10) asks for
@@ -4408,8 +4582,9 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
         text, so it would re-fly the canonical arm's flight under another id.
         Since 2026-11-16 the prefix arms of a PREFIX-CONSUMER episode are
         flown (`--prefix on|off`: the stub's pilot through the CSP, or
-        without it), unless the scenario has mid-flight events
-        (prefix_consumer_refusal); its paraphrase arms stay refused.
+        without it), unless the scenario has an event whose rules go on
+        changing with the clock (prefix_consumer_refusal; until 2026-11-26
+        any mid-flight event); its paraphrase arms stay refused.
     Until 2026-11-06 the rail flew its own mission only (sitl_refusal and
     _mission_mismatch: the pad, StubVLA, 15 m), and every scenario but
     rail-mission-stub-vla was refused; the clock refusal had been stale
@@ -4545,7 +4720,12 @@ def check_rail_flags(args: list[str]) -> None:
         raise UnsupportedScenario(f"neither {SITL_NODE} nor {SITL_STUB} declares "
                                   f"{unknown}: the nodes would drop them")
     stub_wanted = RAIL_STUB_FLAGS + (RAIL_STUB_PREFIX_FLAGS if "--prefix" in emitted else ())
-    for name, wanted, have in (("Shield node", RAIL_SHIELD_FLAGS, node),
+    shield_wanted = RAIL_SHIELD_FLAGS
+    if CT.FLAG in emitted:
+        # Generation N's CSP (2026-11-26): both nodes must read the flag.
+        stub_wanted += RAIL_CSP_TOPIC_FLAGS
+        shield_wanted += RAIL_CSP_TOPIC_FLAGS
+    for name, wanted, have in (("Shield node", shield_wanted, node),
                                ("VLA stub", stub_wanted, stub)):
         missing = sorted((emitted & set(wanted)) - have)
         if missing:
@@ -4957,7 +5137,9 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
     `max_s_add`: a lengthened hil campaign's seconds past the rail cap
     (--hil-max-s-add; 0, the profile's length, otherwise). `episode`: for a
     prefix-consumer episode the list ends in `--prefix=on|off`, the VLA
-    stub's arm; for every other episode (and None) it is the list it was."""
+    stub's arm, after `--csp-topic=on` when the scenario has events
+    (generation N's CSP to the pilot, 2026-11-26); for every other episode
+    (and None) it is the list it was."""
     pargs = rail_policy_args(spec, backend, bundles_dir)
     try:
         pol = spec.policy.load(ROOT)
@@ -5028,6 +5210,13 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                     f"prefix-consumer arm {getattr(episode, 'arm_tag', episode.prefix)} "
                     f"flown {float(max_s_add):g} s longer (--hil-max-s-add): its CSP is not "
                     f"static over the lengthened flight ({type(e).__name__}: {e})") from e
+        if spec.events:
+            # GENERATION N (audit card WP4-19, 2026-11-26): the Shield node
+            # publishes each generation's CSP and the stub's prefix-on arm
+            # follows it (guardrail/csp_topic.py). Both arms are sent it, so
+            # the two Shields of a pair do the same work; only the on arm's
+            # pilot reads it. A cell without events is sent none.
+            args.append(f"{CT.FLAG}=on")
         args.append(f"--prefix={episode.prefix}")
     check_rail_flags(args)
     return args
@@ -5113,15 +5302,37 @@ def run_generations(run_dir: Path) -> dict:
     """{generation: Policy} from a rail run's own policy_g<N>.json files (the
     take-off policy and every hot-applied generation), read without the
     flight loaders' runtime gate (a hot-applied zone is a dynamic_nfz, which
-    a policy FILE may not fly). {} when there are none."""
-    from guardrail.models import policy_from_raw
+    a policy FILE may not fly). {} when there are none. These are recorded
+    documents, read in the form they were recorded in: a run flown before
+    WP1-14 (2026-11-26) may hold local metres."""
+    from guardrail.models import legacy_metre_policy_from_raw
     out = {}
     for f in sorted(Path(run_dir).glob("policy_g*.json")):
         tail = f.stem[len("policy_g"):]
         if tail.isdigit():
-            out[int(tail)] = policy_from_raw(json.loads(f.read_text(encoding="utf-8")),
-                                             source=f.name, runtime=False)
+            out[int(tail)] = legacy_metre_policy_from_raw(
+                json.loads(f.read_text(encoding="utf-8")), source=f.name, runtime=False)
     return out
+
+
+def run_generation_events(run_dir: Path) -> tuple[dict, set]:
+    """What a rail run's own events.jsonl records of its policy generations
+    (audit card WP4-19, 2026-11-26): ({N: the first `policy_generation`
+    record of N - its `rule_clock_reading` and mission time `t`}, {N: made
+    by an accepted `scenario_event` of the run}). prefix_generation_problems
+    checks a consumer arm's generations against both. ({}, set()) without
+    an events.jsonl."""
+    records: dict[int, dict] = {}
+    made_by: set[int] = set()
+    for r in _jsonl_dicts(Path(run_dir) / "events.jsonl"):
+        n = r.get("generation")
+        if not isinstance(n, int) or isinstance(n, bool):
+            continue
+        if r.get("kind") == "policy_generation":
+            records.setdefault(n, r)
+        elif r.get("kind") == "scenario_event" and not r.get("refused"):
+            made_by.add(n)
+    return records, made_by
 
 
 def _owner(r: dict) -> str:
@@ -6388,8 +6599,13 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
         raise RuntimeError(f"{tag}: the cell's stress was not realised: "
                            + "; ".join(problems))
     gens = run_generations(out_dir)
+    gen_records, gen_made_by = run_generation_events(out_dir)
     not_the_arm = (prefix_flight_problems(metrics, meta)
-                   + prefix_generation_problems(meta, gens, rows))
+                   + prefix_generation_problems(
+                       meta, gens, rows, metrics,
+                       csp_for=lambda p, clock, t: prefix_generation_csp(
+                           spec, p, defaults, seed, clock=clock, t_s=t),
+                       records=gen_records, made_by=gen_made_by))
     if not_the_arm:
         raise RuntimeError(f"{tag}: not the prefix arm's flight: " + "; ".join(not_the_arm))
     phys = None
@@ -6427,7 +6643,7 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if rail_fsm_requested(extra_args)[0] is not None:
         extra["fsm_config"] = fsm_config_result(metrics)
     if meta.get("arm_record"):
-        extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta, rows)
     if phys is not None:
         extra["rail_physics"] = phys["physics"]
     # score() reads the scenario's own window, as sitl_extra did.
@@ -7029,8 +7245,14 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if stress_problems:
         problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
     gens = run_generations(run_dir)
+    gen_records, gen_made_by = run_generation_events(run_dir)
     not_the_arm = (prefix_flight_problems(metrics, meta)
-                   + prefix_generation_problems(meta, gens, rows))
+                   + prefix_generation_problems(
+                       meta, gens, rows, metrics,
+                       csp_for=lambda p, clock, t: prefix_generation_csp(
+                           spec, p, defaults, seed, clock=clock, t_s=t,
+                           max_s_add=max_s_add),
+                       records=gen_records, made_by=gen_made_by))
     if not_the_arm:
         # Fail closed: a mission that did not fly the arm it is named for is
         # an error, never a scored episode of that arm.
@@ -7064,7 +7286,7 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
     if meta.get("arm_record"):
-        extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta, rows)
     if literal_loiter_asked(extra_args):
         extra["literal_loiter"] = literal_loiter_record(metrics)
     if rail_fsm_requested(extra_args)[0] is not None:
@@ -7214,10 +7436,28 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
                            + "; ".join(ground_problems))
     pol = spec.policy.load(ROOT)
     gens = run_generations(run_dir)
+    if meta.get("arm_record"):
+        # A prefix-consumer run (2026-11-26, audit card WP4-19): checked as
+        # the campaign accepted it (run_hil / run_sitl), so a re-score never
+        # scores a flight that was not its arm's, and its document carries
+        # the arm record with generation N's measured lag (prefix_flight_record).
+        gen_records, gen_made_by = run_generation_events(run_dir)
+        cell, add = ep.cell.spec, flight_max_s_add(meta)
+        not_the_arm = (prefix_flight_problems(metrics, meta)
+                       + prefix_generation_problems(
+                           meta, gens, rows, metrics,
+                           csp_for=lambda p, clock, t: prefix_generation_csp(
+                               cell, p, defaults, ep.seed, clock=clock, t_s=t,
+                               max_s_add=add),
+                           records=gen_records, made_by=gen_made_by))
+        if not_the_arm:
+            raise RuntimeError("not the prefix arm's flight: " + "; ".join(not_the_arm))
     max_s = meta.get("max_s")
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=max_s,
                        dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(run_dir))
+    if meta.get("arm_record"):
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta, rows)
     if stored is not None:
         # Checked when the run was accepted (rail_stress_check); kept as found.
         extra["sim_stressors"] = stored.get("sim_stressors")

@@ -1,0 +1,330 @@
+{
+ "tool": "tools/nonsetpoint_ticks.py",
+ "prefix": "ntFIN5_",
+ "budget_ms": 100.0,
+ "runs_read": 654,
+ "setpoint_ticks": 183961,
+ "setpoint_set_mode_ticks": 477,
+ "setpoint_set_mode_tick_ms": {
+  "n": 477,
+  "p50": 16.506,
+  "p95": 33.706,
+  "p99": 43.683,
+  "max": 45.863,
+  "over_budget": 0
+ },
+ "set_mode_ticks_by_mode": {
+  "GUIDED": {
+   "setpoint": 72,
+   "nonsetpoint": 0
+  },
+  "LAND": {
+   "setpoint": 6,
+   "nonsetpoint": 19
+  },
+  "LOITER": {
+   "setpoint": 354,
+   "nonsetpoint": 0
+  },
+  "RTL": {
+   "setpoint": 45,
+   "nonsetpoint": 262
+  }
+ },
+ "nonsetpoint_ticks_without_phases": 0,
+ "unparsed_lines": 0,
+ "groups": {
+  "all": {
+   "to_publish_ms": {
+    "n": 119087,
+    "p50": 6.854,
+    "p95": 15.278,
+    "p99": 19.594,
+    "max": 41.696,
+    "over_budget": 0
+   },
+   "whole_tick_ms": {
+    "n": 119087,
+    "p50": 8.367,
+    "p95": 17.621,
+    "p99": 22.006,
+    "max": 87.757,
+    "over_budget": 0
+   }
+  },
+  "fsm_after:Land": {
+   "to_publish_ms": {
+    "n": 6562,
+    "p50": 8.256,
+    "p95": 19.121,
+    "p99": 21.417,
+    "max": 41.696,
+    "over_budget": 0
+   },
+   "whole_tick_ms": {
+    "n": 6562,
+    "p50": 10.151,
+    "p95": 21.441,
+    "p99": 23.939,
+    "max": 87.757,
+    "over_budget": 0
+   }
+  },
+  "fsm_after:None": {
+   "to_publish_ms": {
+    "n": 5523,
+    "p50": 9.106,
+    "p95": 13.719,
+    "p99": 18.805,
+    "max": 24.612,
+    "over_budget": 0
+   },
+   "whole_tick_ms": {
+    "n": 5523,
+    "p50": 11.493,
+    "p95": 16.405,
+    "p99": 21.695,
+    "max": 71.928,
+    "over_budget": 0
+   }
+  },
+  "fsm_after:RTL": {
+   "to_publish_ms": {
+    "n": 107002,
+    "p50": 6.682,
+    "p95": 15.211,
+    "p99": 18.802,
+    "max": 30.693,
+    "over_budget": 0
+   },
+   "whole_tick_ms": {
+    "n": 107002,
+    "p50": 8.017,
+    "p95": 17.528,
+    "p99": 21.373,
+    "max": 61.035,
+    "over_budget": 0
+   }
+  },
+  "set_mode_request": {
+   "to_publish_ms": {
+    "n": 281,
+    "p50": 17.85,
+    "p95": 26.811,
+    "p99": 30.693,
+    "max": 41.696,
+    "over_budget": 0
+   },
+   "whole_tick_ms": {
+    "n": 281,
+    "p50": 21.041,
+    "p95": 30.375,
+    "p99": 33.068,
+    "max": 43.861,
+    "over_budget": 0
+   }
+  }
+ },
+ "slowest": [
+  {
+   "run": "ntFIN5_390_failsafe-rtl-zone",
+   "tick": 352,
+   "t": 35.165,
+   "to_publish_ms": 18.132,
+   "whole_tick_ms": 87.757,
+   "set_mode": null,
+   "fsm_state_after": "Land",
+   "tick_phases_ms": {
+    "pre_shield": 0.2,
+    "hot_apply": 0.001,
+    "shield": 15.555,
+    "fsm": 2.194,
+    "hold": 0.181,
+    "publish": 0.001,
+    "post_publish": 69.625,
+    "deferred": 0.006,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_218_dyn-nfz-spawn-ahead",
+   "tick": 164,
+   "t": 16.368,
+   "to_publish_ms": 11.342,
+   "whole_tick_ms": 71.928,
+   "set_mode": null,
+   "fsm_state_after": null,
+   "tick_phases_ms": {
+    "pre_shield": 0.208,
+    "hot_apply": 0.001,
+    "shield": 10.02,
+    "fsm": 1.091,
+    "hold": 0.021,
+    "publish": 0.001,
+    "post_publish": 60.586,
+    "deferred": 0.006,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_241_dyn-nfz-spawn-ahead",
+   "tick": 455,
+   "t": 45.476,
+   "to_publish_ms": 5.958,
+   "whole_tick_ms": 61.035,
+   "set_mode": null,
+   "fsm_state_after": "RTL",
+   "tick_phases_ms": {
+    "pre_shield": 0.139,
+    "hot_apply": 0.001,
+    "shield": 3.613,
+    "fsm": 2.174,
+    "hold": 0.031,
+    "publish": 0.0,
+    "post_publish": 55.077,
+    "deferred": 0.005,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_092_standoff-approach-angles",
+   "tick": 401,
+   "t": 40.031,
+   "to_publish_ms": 5.641,
+   "whole_tick_ms": 56.055,
+   "set_mode": null,
+   "fsm_state_after": "RTL",
+   "tick_phases_ms": {
+    "pre_shield": 0.227,
+    "hot_apply": 0.001,
+    "shield": 3.527,
+    "fsm": 1.839,
+    "hold": 0.046,
+    "publish": 0.001,
+    "post_publish": 50.414,
+    "deferred": 0.004,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_550_three-simultaneous-violation",
+   "tick": 386,
+   "t": 38.59,
+   "to_publish_ms": 14.687,
+   "whole_tick_ms": 54.819,
+   "set_mode": null,
+   "fsm_state_after": "RTL",
+   "tick_phases_ms": {
+    "pre_shield": 0.195,
+    "hot_apply": 0.001,
+    "shield": 12.039,
+    "fsm": 2.407,
+    "hold": 0.044,
+    "publish": 0.001,
+    "post_publish": 40.132,
+    "deferred": 0.003,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_248_dyn-nfz-spawn-ahead",
+   "tick": 654,
+   "t": 65.383,
+   "to_publish_ms": 9.798,
+   "whole_tick_ms": 50.05,
+   "set_mode": null,
+   "fsm_state_after": "RTL",
+   "tick_phases_ms": {
+    "pre_shield": 0.173,
+    "hot_apply": 0.001,
+    "shield": 7.684,
+    "fsm": 1.893,
+    "hold": 0.047,
+    "publish": 0.0,
+    "post_publish": 40.252,
+    "deferred": 0.005,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_389_failsafe-rtl-zone",
+   "tick": 104,
+   "t": 10.369,
+   "to_publish_ms": 7.012,
+   "whole_tick_ms": 45.872,
+   "set_mode": null,
+   "fsm_state_after": "Land",
+   "tick_phases_ms": {
+    "pre_shield": 0.184,
+    "hot_apply": 0.001,
+    "shield": 4.503,
+    "fsm": 2.267,
+    "hold": 0.056,
+    "publish": 0.001,
+    "post_publish": 38.86,
+    "deferred": 0.004,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_652_wind-beyond-authority",
+   "tick": 148,
+   "t": 14.752,
+   "to_publish_ms": 41.696,
+   "whole_tick_ms": 43.861,
+   "set_mode": "LAND",
+   "fsm_state_after": "Land",
+   "tick_phases_ms": {
+    "pre_shield": 0.124,
+    "hot_apply": 0.0,
+    "shield": 5.803,
+    "fsm": 3.329,
+    "hold": 32.44,
+    "publish": 0.0,
+    "post_publish": 2.165,
+    "deferred": 0.003,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_648_wind-beyond-authority",
+   "tick": 142,
+   "t": 14.115,
+   "to_publish_ms": 40.088,
+   "whole_tick_ms": 42.617,
+   "set_mode": "LAND",
+   "fsm_state_after": "Land",
+   "tick_phases_ms": {
+    "pre_shield": 0.186,
+    "hot_apply": 0.001,
+    "shield": 9.32,
+    "fsm": 4.612,
+    "hold": 25.968,
+    "publish": 0.001,
+    "post_publish": 2.529,
+    "deferred": 0.003,
+    "n_deferred": 0
+   }
+  },
+  {
+   "run": "ntFIN5_185_dyn-nfz-spawn-ahead",
+   "tick": 289,
+   "t": 28.896,
+   "to_publish_ms": 6.209,
+   "whole_tick_ms": 42.152,
+   "set_mode": null,
+   "fsm_state_after": null,
+   "tick_phases_ms": {
+    "pre_shield": 0.162,
+    "hot_apply": 0.001,
+    "shield": 5.452,
+    "fsm": 0.582,
+    "hold": 0.011,
+    "publish": 0.001,
+    "post_publish": 35.943,
+    "deferred": 0.006,
+    "n_deferred": 0
+   }
+  }
+ ]
+}

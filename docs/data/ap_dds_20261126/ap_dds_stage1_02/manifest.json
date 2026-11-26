@@ -1,0 +1,8 @@
+{
+  "code_revision": "21493e67f945",
+  "vla_model_hash": "guardrail.vla_stub.StubVLA@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+  "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "random_seed": 0,
+  "sim_speedup": 1.0,
+  "topology": "dev"
+}

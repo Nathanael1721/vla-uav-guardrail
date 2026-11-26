@@ -27,6 +27,7 @@ from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E4
                                 TOPOLOGY_HIL, TOPOLOGY_PROJECTAIRSIM,
                                 build_manifest, is_kpi_grade,
                                 normalize_topology, sim_speedup_from_scene)
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -1278,7 +1279,7 @@ def test_an_audit_record_after_a_hot_apply_carries_the_new_policy_hash():
     # After the first tick a Shield that enforces the grant's mid-flight
     # update model takes the zone only as a dynamic_nfz (2026-10-07).
     import guardrail.shield as _S
-    sh.hot_apply(_S.as_dynamic_nfz(zone) if hasattr(_S, "as_dynamic_nfz") else zone)
+    sh.hot_apply(geo(_S.as_dynamic_nfz(zone) if hasattr(_S, "as_dynamic_nfz") else zone, sh))
     # 0.5 m off the zone's centre, so its nearest edge is the WEST one and the
     # 1 m/s east command is not the way out. At the exact centre every edge
     # is a tie, which since 2026-11-03 goes to the edge the command heads for

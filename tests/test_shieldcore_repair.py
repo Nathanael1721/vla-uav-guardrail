@@ -73,9 +73,33 @@ class _OldChain(Shield):
     as Shield._decide ran them until 2026-11-23 (529e787), on the WORLD
     action outside the operator interface: `_rescue` and
     `_slower_opened_escape` called directly (WP3-04b moved both behind the
-    body-frame interface, repair.ClearanceEscape / repair.OpenedEscape)."""
+    body-frame interface, repair.ClearanceEscape / repair.OpenedEscape).
+
+    Since 2026-11-26 the Shield's stack carries the BODY action and calls
+    these three with it (WP3-04). Each verbatim world-frame method is run
+    on the world reading of what it is handed (the tick's frame,
+    `tick.frame.to_world`) and what it returns is handed back through the
+    same frame (`tick.frame.to_body`), so the comparison is still the
+    world-frame chain and last resorts against the body-carrying ones."""
+
+    def _repair_chain(self, tick, state, raw, skip, repairs, raw_violations=()):
+        f = tick.frame
+        fixed, repairs, blocking, passes = self._world_repair_chain(
+            tick, state, f.to_world(raw), skip, repairs, raw_violations)
+        return f.to_body(fixed), repairs, blocking, passes
 
     def _clearance_escape(self, tick, state, raw, fixed, repairs, blocking, best_effort):
+        f = tick.frame
+        out = self._world_clearance_escape(tick, state, f.to_world(raw), f.to_world(fixed),
+                                           repairs, blocking, best_effort)
+        return None if out is None else f.to_body(out)
+
+    def _opened_escape(self, tick, state, raw, flags, enforced):
+        f = tick.frame
+        out = self._world_opened_escape(tick, state, f.to_world(raw), flags, enforced)
+        return None if out is None else (f.to_body(out[0]), out[1])
+
+    def _world_clearance_escape(self, tick, state, raw, fixed, repairs, blocking, best_effort):
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         clean, best = self._rescue(state, raw, fixed, cap)
         if clean is not None:
@@ -89,10 +113,10 @@ class _OldChain(Shield):
             return best
         return None
 
-    def _opened_escape(self, tick, state, raw, flags, enforced):
+    def _world_opened_escape(self, tick, state, raw, flags, enforced):
         return self._slower_opened_escape(state, raw, flags, enforced)
 
-    def _repair_chain(self, tick, state, raw, skip, repairs, raw_violations=()):
+    def _world_repair_chain(self, tick, state, raw, skip, repairs, raw_violations=()):
         prev, tick.skip = tick.skip, frozenset(skip)
         try:
             fixed = self._repair_kinematic(raw, repairs)

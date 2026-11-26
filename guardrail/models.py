@@ -74,15 +74,20 @@ origin) are a view, computed when the Shield or the compiler first reads them
 and cached per origin (XY; guardrail/projection.py) - since IR schema 3.1.0
 (2026-11-03), not at load. Every shipped policy states its `origin` and writes
 its points in lat/lon since that date (tools/convert_policies_wgs84.py). A policy
-written in metres is the legacy form and keeps loading, and hashing, exactly as
-before; it is the READ form of old bundles, runs and lock recipes, and
-`Policy.point_form` labels it (POINTS_LEGACY_METRES / POINTS_LEGACY_MIXED). Every
-writer into a policy with a frame converts metre input at ingest about its
-frame origin (rule_in_wgs84; projection.raw_points_in_wgs84; demo/gui_policy.py);
-since 2026-11-18 a write with points into a policy with NO frame origin is
-refused (NoFrameOrigin), so no writer produces the legacy form any more; it is
-only read back. Altitude is metres above ground by default; `altitude_ref: MSL` is
-declarable and refused for flight (the Shield has no ground-elevation source).
+written in metres is the legacy form, labelled by `Policy.point_form`
+(POINTS_LEGACY_METRES / POINTS_LEGACY_MIXED): the READ form of old bundles, runs
+and lock recipes, which the IR (Policy.model_validate) still parses and hashes
+exactly as before. Since 2026-11-26 the DSL ENTRY takes WGS84 only (see "WGS84-only
+entry" below): load_policy / policy_from_raw / load_layered refuse a metre
+document (ProjectedCoordinatesRefused), and the declared re-reads use
+load_legacy_metre_policy; the Shield's event entries and the REST bodies refuse
+an absolute position in metres, and our own metre-based callers convert it tool
+side with `wgs84_from_metres`. Until then every writer into a policy with a
+frame converted metre input at ingest (deviation 1 of the final report). Since
+2026-11-18 a write with points into a policy with NO frame origin is refused
+(NoFrameOrigin), so no writer produces the legacy form any more. Altitude is
+metres above ground by default; `altitude_ref: MSL` is declarable and refused
+for flight unless the rail gives a ground (X-11).
 
 docs/DESIGN-policy-dsl-grant-form.md records the decisions and what still
 differs from the reference implementation.
@@ -632,7 +637,7 @@ class XY(BaseModel):
 
     A WGS84 point validated on its own (a rule outside any policy) has no
     frame yet: reading its x/y raises, unless it was given metres beside
-    lat/lon (a REST body pre-projected in the policy's frame, a dump), which
+    lat/lon (a dump; a REST body may not carry them since 2026-11-26), which
     it then keeps as its view until a policy binds it. A model_dump writes
     the view beside lat/lon (as every dump did before 3.1.0); the canonical IR
     does not (`_STORED`).
@@ -1653,9 +1658,12 @@ class Policy(BaseModel):
         metre rules onto a frameless base or of a whole metre document, and
         demo/gen_random_scenario.py --metres (removed). They are only READ
         back: a lock recipe on a metre base or recording `wgs84_writes:
-        false` is rebuilt as its run flew (bundle.derive legacy_read). Every
-        writer into a policy with a frame converts (models.rule_in_wgs84,
-        projection.raw_points_in_wgs84, demo/gui_policy.py); the one
+        false` is rebuilt as its run flew (bundle.derive legacy_read). Since
+        2026-11-26 the entries (load_policy / policy_from_raw, the REST
+        bodies, the Shield's events, a new bundle.derive) refuse metre
+        input (ProjectedCoordinatesRefused), our own metre callers convert
+        tool side (wgs84_from_metres), and these forms are read only by
+        load_legacy_metre_policy / legacy_metre_policy_from_raw; the one
         exception is Shield.wgs84_writes=False, a comparison switch no
         flight path sets, whose result write_bundle and the flight loader
         refuse. The flight loader REFUSES the legacy forms since 2026-11-18
@@ -2541,6 +2549,145 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     return type(rule).model_validate(data, context=ctx)
 
 
+# --------------------------------------------------------------------------- #
+# WGS84-only entry (WP1-14, 2026-11-26)
+# --------------------------------------------------------------------------- #
+#
+# The grant (Policy DSL page): "WGS84 latitude / longitude is canonical ...
+# ENU / NED projection is computed lazily by the Prefix Compiler and Safety
+# Shield from the WGS84 + AGL fields - the DSL itself never carries projected
+# coordinates". Until 2026-11-26 every entry still ACCEPTED an absolute
+# position in local metres and converted it at ingest (deviation 1 of the
+# final report): load_policy / policy_from_raw read a metre document, the REST
+# hot-apply bodies took {x, y} vertices, and the Shield's spawn / move / swap /
+# pre-start add took metre rules. Since then every entry takes an absolute
+# position in WGS84 lat/lon only and refuses metres (ProjectedCoordinatesRefused
+# for a document; Shield HotApplyRefused, HTTP 422 over REST, for an event),
+# naming the one tool-side conversion below. A RELATIVE edit stays in metres,
+# as in the grant's own scenario events (stress-testing page: width_m,
+# height_m, ahead_of_vehicle_m, mps): translate (dx, dy), rotate, scale, and
+# the rings the Shield computes from them.
+#
+# Our own callers that work in local metres (the stress harness's scenario
+# events, the harness's REST forwards, tools, demos) convert tool-side through
+# `wgs84_from_metres`, about the frame origin of the policy they write into
+# (Policy.frame_origin; GET /policy `origin` over REST), before they call.
+# The legacy metre READ of a document is `load_legacy_metre_policy` /
+# `legacy_metre_policy_from_raw`, used only by the declared re-reads and the
+# converters that write WGS84 from it: bundle.load_for_flight legacy_read
+# (VLAGUARD_LEGACY_READ=1), tools/bundle_census.py, tools/convert_policies_
+# wgs84.py, the bundle export CLI (WGS84 about --origin) and demo/gui_policy.py's
+# base read. A recorded run's policy_g<N>.json is read in the form it was
+# recorded in: by legacy_metre_policy_from_raw in
+# manifest.resolve_run_generation_chain, harness_service._blob_is and
+# experiments/sweep_scenarios.run_generations, and through the IR
+# (Policy.model_validate) in guardrail/replay.py. A bundle's IR is read through
+# the IR as before; a lock recipe through bundle.derive legacy_read.
+
+TOOL_SIDE_CONVERSION = "guardrail.models.wgs84_from_metres"
+
+
+class ProjectedCoordinatesRefused(ValueError):
+    """An absolute position given in local metres (projected coordinates) at a
+    DSL, REST, gRPC or in-process entry, which takes WGS84 lat/lon only
+    (WP1-14, 2026-11-26). `policy` is the validated policy when a whole
+    document was refused (so a caller can name it), else None."""
+
+    def __init__(self, message: str, policy: "Policy | None" = None):
+        super().__init__(message)
+        self.policy = policy
+
+
+def projected_input_message(what: str) -> str:
+    """The one wording every entry refuses a metre position with."""
+    return (f"{what}: an absolute position is given in local metres ({{x, y}}). "
+            f"The DSL never carries projected coordinates (grant, Policy DSL page; "
+            f"WP1-14): give every vertex / centre / centerline point as "
+            f"{{lat, lon}}. A tool that works in metres converts them itself, "
+            f"before it sends them, with {TOOL_SIDE_CONVERSION}(<rule or body>, "
+            f"<the policy's frame origin>) (the policy's `origin`, GET /policy "
+            f"over REST); a whole metre policy file with "
+            f"tools/convert_policies_wgs84.py. Relative edits (translate dx/dy, "
+            f"rotate, scale) stay in metres")
+
+
+def rule_metre_points(rule) -> int:
+    """How many of `rule`'s points are given in local metres only (no
+    lat/lon): 0 for a rule in WGS84 or without points."""
+    if isinstance(rule, CircleFence):
+        pts = [rule.center]
+    elif isinstance(rule, (PolygonFence, DynamicNFZ)):
+        pts = rule.vertices
+    elif isinstance(rule, (Corridor, CorridorSwap)):
+        pts = rule.centerline
+    else:
+        return 0
+    return sum(1 for v in pts if not v.geographic)
+
+
+def refuse_metre_rule(rule, what: str | None = None) -> None:
+    """Raise ProjectedCoordinatesRefused when `rule` gives a point in metres."""
+    if rule_metre_points(rule):
+        raise ProjectedCoordinatesRefused(projected_input_message(
+            what or f"{getattr(rule, 'type', type(rule).__name__)} "
+                    f"{getattr(rule, 'id', '?')!r}"))
+
+
+def wgs84_from_metres(obj, origin: tuple[float, float] | None, *,
+                      what: str = "input"):
+    """THE tool-side conversion (WP1-14, 2026-11-26): `obj` with every
+    absolute metre point (x North, y East of `origin`) written as WGS84
+    lat/lon about `origin`, the frame origin of the policy it goes into
+    (Policy.frame_origin; GET /policy `origin` over REST).
+
+    `obj` is a rule (a model: models.rule_in_wgs84, which also binds it to
+    the frame) or raw JSON - a rule or REST body dict, a list of point dicts
+    (the raw twin, as projection.raw_points_in_wgs84 converts it). Every
+    point goes through projection.metres_to_wgs84, the conversion the Shield
+    and the REST endpoint applied at ingest until 2026-11-26, so a caller
+    that converts here writes the same lat/lon, bit for bit, as the ingest
+    wrote; and each converted point is checked to project back within
+    CONSISTENCY_TOL_M (1 um) of the metres given, as rule_in_wgs84 checks
+    it, else ValueError. Points already in lat/lon are kept.
+
+    `origin` None (a policy with no WGS84 frame) and a metre point to
+    convert: NoFrameOrigin, as every writer refuses it."""
+    is_model = isinstance(obj, BaseModel)
+    if origin is None:
+        n = rule_metre_points(obj) if is_model else _raw_metre_points(obj)
+        if n:
+            raise NoFrameOrigin(no_frame_message(what))
+        return obj
+    if is_model:
+        return rule_in_wgs84(obj, origin)
+    return _raw_in_wgs84(obj, (float(origin[0]), float(origin[1])))
+
+
+def _raw_metre_points(node) -> int:
+    from .projection import metre_point_count
+    return metre_point_count(node)
+
+
+def _raw_in_wgs84(node, fo: tuple[float, float]):
+    """projection.raw_points_in_wgs84 with rule_in_wgs84's 1-um check."""
+    from .projection import _is_metric_point, _num
+    if isinstance(node, list):
+        return [_raw_in_wgs84(v, fo) for v in node]
+    if not isinstance(node, dict):
+        return node
+    if _is_metric_point(node):
+        x, y = _num(node["x"], "x"), _num(node["y"], "y")
+        lat, lon = metres_to_wgs84(fo, x, y)
+        n, e = projection_for(*fo).to_local(lat, lon)
+        if abs(n - x) > CONSISTENCY_TOL_M or abs(e - y) > CONSISTENCY_TOL_M:
+            raise ValueError(f"the metre point ({x}, {y}) written as WGS84 ({lat}, {lon}) "
+                             f"about {fo} projects back to ({n}, {e}); more than "
+                             f"{CONSISTENCY_TOL_M} m away, so it is not converted")
+        return {**{k: v for k, v in node.items() if k not in ("x", "y", "lat", "lon")},
+                "lat": lat, "lon": lon}
+    return {k: _raw_in_wgs84(v, fo) for k, v in node.items()}
+
+
 def _geo_canonical(node):
     """Drop the derived x/y from every point that carries lat/lon."""
     if isinstance(node, list):
@@ -3216,7 +3363,9 @@ def load_layered(paths: list[str | Path], *, policy_id: str | None = None,
     layers = []
     for p in paths:
         raw = parse_policy_text(Path(p).read_text(encoding="utf-8"), str(p))
-        layers.append(Policy.model_validate(raw))
+        layer = Policy.model_validate(raw)
+        refuse_projected_policy(layer, str(p))           # WP1-14: WGS84 only
+        layers.append(layer)
     merged = merge_layers(layers, policy_id=policy_id, version=version)
     if runtime:
         _refuse_unenforced(merged, " + ".join(str(p) for p in paths), ground)
@@ -3273,21 +3422,65 @@ def _refuse_unenforced(pol: Policy, source: str, ground=None) -> None:
               "(bundle, schema, export).")
 
 
+def refuse_projected_policy(pol: Policy, source: str = "<policy>") -> None:
+    """Raise ProjectedCoordinatesRefused when `pol` stores a point in local
+    metres (Policy.point_form: the legacy read forms; WP1-14, 2026-11-26)."""
+    if pol.point_form in LEGACY_POINT_FORMS:
+        n = sum(1 for g in _rule_points(pol) if not g)
+        raise ProjectedCoordinatesRefused(
+            projected_input_message(f"{source} ({pol.policy_id}@{pol.version}): {n} "
+                                    f"point(s) stored as {pol.point_form}")
+            + ". To READ a recorded document in that form (a re-run of a recorded "
+              "flight, a census of old bundles), use models.load_legacy_metre_policy",
+            policy=pol)
+
+
 def policy_from_raw(raw, *, source: str = "<policy>", runtime: bool = True,
                     ground=None, context: dict | None = None) -> Policy:
     """Raw document -> validated, linted Policy. The single DSL entry point
     behind load_policy, the REST ingest and the GeoJSON converter. `ground`:
     see load_policy.
 
+    WGS84 ONLY (WP1-14, 2026-11-26): a document that gives a point in local
+    metres ({x, y}; Policy.point_form a legacy form) is refused
+    (ProjectedCoordinatesRefused, naming the tool-side conversion). The
+    legacy read of such a document is legacy_metre_policy_from_raw.
+
     `context` is for a reader of a STORED document only (a run's
     policy_g<N>.json): its era, era_context, under which a document written
     before IR schema 4.0.0 may leave `scope` out. Every ingest gives none, so
     every new document states every required field."""
+    return _policy_from_raw(raw, source=source, runtime=runtime, ground=ground,
+                            context=context, legacy_read=False)
+
+
+def legacy_metre_policy_from_raw(raw, *, source: str = "<policy>", runtime: bool = True,
+                                 ground=None, context: dict | None = None) -> Policy:
+    """policy_from_raw that also READS the legacy metre form (a document whose
+    points are stored in local metres, Policy.point_form; WP1-14). For the
+    declared re-reads of recorded documents only - bundle.load_for_flight
+    legacy_read (VLAGUARD_LEGACY_READ=1), tools/bundle_census.py,
+    tools/convert_policies_wgs84.py, the bundle export CLI, demo/gui_policy.py's
+    base read, and the readers
+    of a recorded run's policy_g<N>.json (manifest.resolve_run_generation_chain,
+    harness_service._blob_is, experiments/sweep_scenarios.run_generations) -
+    never for a new document: the DSL never carries projected coordinates. A
+    WGS84 or point-free document loads exactly as policy_from_raw loads it."""
+    return _policy_from_raw(raw, source=source, runtime=runtime, ground=ground,
+                            context=context, legacy_read=True)
+
+
+def _policy_from_raw(raw, *, source: str, runtime: bool, ground, context: dict | None,
+                     legacy_read: bool) -> Policy:
     pol = Policy.model_validate(raw, context=context)
     problems = pol.lint()
     if problems:
         raise ValueError(f"{source}: the policy does not pass the DSL lint:\n  - "
                          + "\n  - ".join(problems))
+    # After the schema and the lint, so a broken document is refused for its
+    # own defect (the WP1 negative corpus), then for its metres.
+    if not legacy_read:
+        refuse_projected_policy(pol, source)
     if runtime:
         _refuse_unenforced(pol, source, ground)
     return pol
@@ -3322,3 +3515,14 @@ def load_policy(path: str | Path, *, runtime: bool = True, ground=None) -> Polic
     p = Path(path)
     raw = parse_policy_text(p.read_text(encoding="utf-8"), str(p))
     return policy_from_raw(raw, source=str(p), runtime=runtime, ground=ground)
+
+
+def load_legacy_metre_policy(path: str | Path, *, runtime: bool = True,
+                             ground=None) -> Policy:
+    """load_policy that also READS a document stored in the legacy metre form
+    (WP1-14, 2026-11-26; see legacy_metre_policy_from_raw): for the declared
+    re-reads of recorded documents only."""
+    p = Path(path)
+    raw = parse_policy_text(p.read_text(encoding="utf-8"), str(p))
+    return legacy_metre_policy_from_raw(raw, source=str(p), runtime=runtime,
+                                        ground=ground)

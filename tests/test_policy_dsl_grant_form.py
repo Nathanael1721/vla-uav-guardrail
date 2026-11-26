@@ -41,9 +41,11 @@ from guardrail.models import (GRANT_TYPES, HASH_SCHEME,             # noqa: E402
                               MODE_ACTIONS, PRIOR_SCHEME_V2, REFERENCE_FORM,
                               RUNTIME_TYPES, SHIELD_ACTS_ON, Action4D, CircleFence,
                               Constraint, DynamicNFZ, Policy, State,
-                              load_layered, load_policy, merge_layers,
-                              policy_from_raw, polygon_problem)
+                              legacy_metre_policy_from_raw, load_layered,
+                              load_legacy_metre_policy, load_policy,
+                              merge_layers, policy_from_raw, polygon_problem)
 from guardrail.shield import Shield                                # noqa: E402
+from wgs84_fixture import wgs84_doc                                # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -344,20 +346,20 @@ def test_the_converter_writes_what_the_reference_can_hold_and_says_what_it_canno
     # whole-policy reference form, and its hash the reference hash.
     sq = [{"lat": 25.0421, "lon": 121.5310}, {"lat": 25.0428, "lon": 121.5310},
           {"lat": 25.0428, "lon": 121.5318}]
-    whole = policy_from_raw({"policy_id": "geo", "version": "0.1.0", "constraints": [
+    whole = policy_from_raw(wgs84_doc({"policy_id": "geo", "version": "0.1.0", "constraints": [
         {"id": "f", "type": "polygon_fence", **HARD_P0, "vertices": sq, "margin_m": 0.0},
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
-         "alt_max_m": 90}]}, runtime=False)
+         "alt_max_m": 90}]}), runtime=False)
     conv = to_reference(whole)
     assert conv.complete and conv.doc == whole.reference_ir()
     assert conv.reference_hash == whole.reference_hash() is not None
     # Nothing convertible: no document and no hash, never an invented one.
-    kin = policy_from_raw(_raw(constraints=[{**REG_KIN}]))
+    kin = policy_from_raw(wgs84_doc(_raw(constraints=[{**REG_KIN}])))
     none = to_reference(kin)
     assert none.doc is None and none.reference_hash is None and "kin" in none.omitted
     # A metre fence needs a WGS84 anchor; a margin ring and a schedule are
     # left out unless asked for, and then written stricter and recorded.
-    metre = policy_from_raw(_raw(constraints=[
+    metre = legacy_metre_policy_from_raw(_raw(constraints=[      # the legacy form's case
         _square("nfz", 10, 10, 20, margin_m=2.0),
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
          "alt_max_m": 60, "valid_time": {"recurrence": {"days": ["Mon"]}}}]))
@@ -524,7 +526,7 @@ def test_a_ring_hashes_the_same_whatever_order_it_is_written_in():
     sq = [{"x": 10, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 15}, {"x": 10, "y": 15}]
     spellings = [sq[k:] + sq[:k] for k in range(4)]
     spellings += [list(reversed(s)) for s in spellings]
-    pols = [policy_from_raw(_raw(constraints=[_square("z", 0, 0, 1) | {"vertices": s}]))
+    pols = [policy_from_raw(wgs84_doc(_raw(constraints=[_square("z", 0, 0, 1) | {"vertices": s}])))
             for s in spellings]
     assert len({p.policy_hash for p in pols}) == 1, "the hash depends on vertex order"
     stored = [(v.x, v.y) for v in pols[0].constraints[0].vertices]
@@ -561,7 +563,7 @@ def test_a_ring_hashes_the_same_whatever_order_it_is_written_in():
               "    type: polygon_fence\n    constraint_type: hard\n    scope: mission\n"
               "    priority: P0\n    violation_action: project_fix\n    vertices:\n"
               + "".join(f"      - {{x: {v['x']}, y: {v['y']}}}\n" for v in spellings[6]))
-    src = load_policy(p)
+    src = load_legacy_metre_policy(p)              # a metre bundle: the legacy READ
     back = B.check_bundle(B.write_bundle(src, _tmp("cw.tar.gz"), signer=None,
                                           allow_legacy_metres=True)).policy
     assert back.policy_hash == src.policy_hash
@@ -579,7 +581,8 @@ def test_a_bundle_written_under_ir_2_still_verifies():
     raw = _raw(constraints=[_square("z", 0, 0, 10) | {
         "vertices": [{"x": 0, "y": 10}, {"x": 10, "y": 10}, {"x": 10, "y": 0},
                      {"x": 0, "y": 0}], "violation_action": "repair"}])
-    pol = policy_from_raw(raw)
+    # A bundle written before IR 3.0.0 holds the legacy metre form: a READ.
+    pol = legacy_metre_policy_from_raw(raw)
     old = pol._ir2_dump(mode="json", exclude_none=True)
     assert old["constraints"][0]["violation_action"] == "repair"
     ir = canonical_json(old)
@@ -620,7 +623,7 @@ def test_every_rule_must_state_its_type_priority_and_breach_action():
     for field in ("constraint_type", "priority", "violation_action"):
         r = _raw()
         del r["constraints"][0][field]
-        _refused(lambda r=r: policy_from_raw(r), field, "Field required")
+        _refused(lambda r=r: policy_from_raw(wgs84_doc(r)), field, "Field required")
         text = (f"policy_id: t\nversion: 0.1.0\nconstraints:\n  - id: alt\n"
                 f"    type: altitude_envelope\n    alt_min_m: 5\n    alt_max_m: 30\n"
                 + "".join(f"    {k}: {v}\n" for k, v in HARD_P0.items() if k != field))
@@ -648,22 +651,22 @@ def test_every_rule_must_state_its_scope():
     from guardrail.models import era_context, ir_schema_defaults
     r = _raw()
     del r["constraints"][0]["scope"]
-    _refused(lambda: policy_from_raw(r), "scope", "Field required")
+    _refused(lambda: policy_from_raw(wgs84_doc(r)), "scope", "Field required")
     text = ("policy_id: t\nversion: 0.1.0\nconstraints:\n  - id: alt\n"
             "    type: altitude_envelope\n    alt_min_m: 5\n    alt_max_m: 30\n"
             + "".join(f"    {k}: {v}\n" for k, v in HARD_P0.items() if k != "scope"))
     _refused(lambda: load_policy(_yaml(text)), "scope", "Field required")
     nul = _raw()
     nul["constraints"][0]["scope"] = None
-    _refused(lambda: policy_from_raw(nul), "scope is required")
+    _refused(lambda: policy_from_raw(wgs84_doc(nul)), "scope is required")
     for bad in ("everywhere", "Mission", "", 1):
         x = _raw()
         x["constraints"][0]["scope"] = bad
-        _refused(lambda x=x: policy_from_raw(x), "scope")
+        _refused(lambda x=x: policy_from_raw(wgs84_doc(x)), "scope")
     for good in ("global", "mission", "segment", "waypoint"):
         x = _raw()
         x["constraints"][0]["scope"] = good
-        assert policy_from_raw(x).constraints[0].scope == good
+        assert policy_from_raw(wgs84_doc(x)).constraints[0].scope == good
     # A rule built in code, with no document behind it, states it too.
     _refused(lambda: CircleFence(id="c", type="circle_fence", constraint_type="hard",
                                  priority="P0", violation_action="project_fix",
@@ -832,7 +835,7 @@ def test_every_grant_rule_type_is_declarable():
     members = typing.get_args(typing.get_args(Constraint)[0])
     names = {typing.get_args(m.model_fields["type"].annotation)[0] for m in members}
     assert set(GRANT_TYPES) <= names, set(GRANT_TYPES) - names
-    pol = policy_from_raw(_all_nine(), runtime=False)
+    pol = policy_from_raw(wgs84_doc(_all_nine()), runtime=False)
     assert sorted({c.type for c in pol.constraints}) == sorted(GRANT_TYPES)
     assert pol.policy_hash.startswith("sha256:")
 
@@ -949,11 +952,15 @@ def test_a_point_in_two_frames_that_disagree_is_refused():
 
 
 def test_a_hot_applied_metre_fence_on_a_geographic_policy_still_bundles():
-    """Mixing frames ACROSS rules is what a hot-apply produces; the bundle of
-    the policy in force must load again, in the same frame."""
-    from guardrail.models import PolygonFence
+    """A fence laid out in metres and hot-applied to a geographic policy: the
+    bundle of the policy in force must load again, in the same frame. Until
+    2026-11-17 the fence was stored in metres (frames mixed ACROSS rules);
+    since then it is stored in WGS84, and since 2026-11-26 (WP1-14) the
+    caller converts it before the Shield sees it (models.wgs84_from_metres)."""
+    from guardrail.models import PolygonFence, wgs84_from_metres
     pol = load_policy(_yaml(WORKED_EXAMPLE), runtime=False)
-    Shield(pol).hot_apply(PolygonFence(**_square("nfz-hot", 500, 500, 20)))
+    Shield(pol).hot_apply(wgs84_from_metres(PolygonFence(**_square("nfz-hot", 500, 500, 20)),
+                                            pol.frame_origin))
     back = B.check_bundle(B.write_bundle(pol, _tmp("h.tar.gz"), signer=None)).policy
     assert back.policy_hash == pol.policy_hash and back.generation == 1
     assert back.constraints[-1].vertices[0].x == 500
@@ -983,7 +990,7 @@ def test_the_strict_checks_each_refuse_their_defect():
             {"id": "hi", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 30, "alt_max_m": 40}]),
     }
     for word, raw in cases.items():
-        _refused(lambda raw=raw: policy_from_raw(raw), word)
+        _refused(lambda raw=raw: policy_from_raw(wgs84_doc(raw)), word)
 
 
 def test_a_schedule_must_name_a_day_and_write_its_clock_as_hh_mm():
@@ -994,22 +1001,22 @@ def test_a_schedule_must_name_a_day_and_write_its_clock_as_hh_mm():
     case below loaded."""
     def with_window(rec):
         return _raw(constraints=[{**OUR_FENCE, "valid_time": {"recurrence": rec}}])
-    _refused(lambda: policy_from_raw(with_window({"days": []})), "names no day")
+    _refused(lambda: policy_from_raw(wgs84_doc(with_window({"days": []}))), "names no day")
     for t in ("10:75", "23:60", "24:00"):
-        _refused(lambda t=t: policy_from_raw(with_window(
-            {"days": ["Mon"], "start_time": t, "end_time": "23:00"})), "out of range")
-    _refused(lambda: policy_from_raw(with_window(
-        {"days": ["Mon"], "start_time": "10:00", "end_time": "22:99"})), "out of range")
+        _refused(lambda t=t: policy_from_raw(wgs84_doc(with_window(
+            {"days": ["Mon"], "start_time": t, "end_time": "23:00"}))), "out of range")
+    _refused(lambda: policy_from_raw(wgs84_doc(with_window(
+        {"days": ["Mon"], "start_time": "10:00", "end_time": "22:99"}))), "out of range")
     for t in ("7:30", " 7:30", "+7:30", "10:-5", "1_0:30", "07:3", "0730",
               "١٠:30"):            # Arabic-Indic digits pass int()
-        _refused(lambda t=t: policy_from_raw(with_window(
-            {"days": ["Mon"], "start_time": t, "end_time": "23:00"})), "is not HH:MM")
+        _refused(lambda t=t: policy_from_raw(wgs84_doc(with_window(
+            {"days": ["Mon"], "start_time": t, "end_time": "23:00"}))), "is not HH:MM")
     # The forms the DSL has always meant still load: "24:00" ends the day,
     # a window may wrap past midnight, and no `days` key means every day.
     for rec in ({"days": ["Mon"], "start_time": "22:00", "end_time": "24:00"},
                 {"days": ["Sun"], "start_time": "22:00", "end_time": "06:00"},
                 {"start_time": "00:00", "end_time": "23:59"}):
-        policy_from_raw(with_window(rec))
+        policy_from_raw(wgs84_doc(with_window(rec)))
 
 
 def test_the_conflict_lint_is_not_over_eager():
@@ -1029,11 +1036,11 @@ def test_the_conflict_lint_is_not_over_eager():
           "constraint_type": "soft"}],
     ]
     for cons in ok:
-        policy_from_raw(_raw(constraints=cons))
+        policy_from_raw(wgs84_doc(_raw(constraints=cons)))
     # ...but a night window that wraps INTO the day window does conflict.
     wrap = {"recurrence": {"days": ["Sun"], "start_time": "22:00", "end_time": "09:00"}}
-    _refused(lambda: policy_from_raw(_raw(constraints=[
-        {**ok[0][0]}, {**ok[0][1], "valid_time": wrap}])), "no height in common")
+    _refused(lambda: policy_from_raw(wgs84_doc(_raw(constraints=[
+        {**ok[0][0]}, {**ok[0][1], "valid_time": wrap}]))), "no height in common")
 
 
 def test_the_polygon_check_agrees_with_shapely_on_the_rings_it_was_tested_on():
@@ -1076,9 +1083,9 @@ def test_the_polygon_check_agrees_with_shapely_on_the_rings_it_was_tested_on():
 
 
 def test_a_fence_with_a_doubled_vertex_loads():
-    pol = policy_from_raw(_raw(constraints=[{"id": "d", "type": "polygon_fence", **HARD_P0,
+    pol = policy_from_raw(wgs84_doc(_raw(constraints=[{"id": "d", "type": "polygon_fence", **HARD_P0,
         "vertices": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 0},
-                     {"x": 10, "y": 10}, {"x": 0, "y": 10}]}]))
+                     {"x": 10, "y": 10}, {"x": 0, "y": 10}]}])))
     assert len(pol.constraints[0].vertices) == 5, "kept as written"
 
 
@@ -1263,11 +1270,11 @@ def test_a_hand_written_locked_by_is_refused_and_a_merged_one_is_a_listed_extens
     both hand-written forms passed the DSL entry point, and the extension
     list had no locked_by entry."""
     hand = _raw(constraints=[{**REG_FENCE, "locked_by": ["regulation"]}])
-    _refused(lambda: policy_from_raw(hand), "does not pass the DSL lint",
+    _refused(lambda: policy_from_raw(wgs84_doc(hand)), "does not pass the DSL lint",
              "airport: locked_by ['regulation']", "no layers_merged")
     bare = {**_raw(constraints=[{**REG_FENCE, "layer": "mission", "locked_by": []}]),
             "layers_merged": ["regulation", "mission"]}
-    _refused(lambda: policy_from_raw(bare), "airport: locked_by [] says nothing")
+    _refused(lambda: policy_from_raw(wgs84_doc(bare)), "airport: locked_by [] says nothing")
     # What merge_layers writes still passes every entry point, reloads from
     # the grant form, and is listed as a grant-form extension.
     m = merge_layers([_layer("regulation", REG_FENCE),
@@ -1276,7 +1283,7 @@ def test_a_hand_written_locked_by_is_refused_and_a_merged_one_is_a_listed_extens
     assert "airport.locked_by" in m.grant_form_extensions(), m.grant_form_extensions()
     g = m.to_grant_form(origin=(25.0, 121.5))
     assert g["constraints"][0]["locked_by"] == ["regulation"], g["constraints"][0]
-    back = policy_from_raw(json.loads(json.dumps(g)), runtime=False)
+    back = policy_from_raw(wgs84_doc(json.loads(json.dumps(g))), runtime=False)
     assert back.constraints[0].locked_by == ["regulation"]
     assert "airport.locked_by" in back.grant_form_extensions()
     # The null: a policy nobody merged has no such field and no such entry.
@@ -1334,9 +1341,9 @@ def test_a_merge_hashes_post_merge_and_the_cli_writes_its_bundle():
 # --------------------------------------------------------------------------- #
 
 def test_a_circle_fence_is_enforced_and_stored_as_centre_and_radius():
-    pol = policy_from_raw({"policy_id": "c", "constraints": [
+    pol = policy_from_raw(wgs84_doc({"policy_id": "c", "constraints": [
         {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 50, "y": 0},
-         "radius_m": 10, "margin_m": 0.0}]})
+         "radius_m": 10, "margin_m": 0.0}]}))
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
     assert sh.state_is_unsafe(State(x=50.0, y=9.9, up=10.0)), "inside the disc"
     assert not sh.state_is_unsafe(State(x=50.0, y=10.2, up=10.0)), \
@@ -1366,8 +1373,8 @@ def test_the_circle_polygon_resolution_is_pinned():
     change enforcement under an unchanged policy_hash, so it is pinned here and
     a change needs an IR_SCHEMA_VERSION bump (models.IR_SCHEMA_VERSION)."""
     assert CircleFence.SEGMENTS == 32
-    pol = policy_from_raw({"policy_id": "c", "constraints": [
-        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 0, "y": 0}, "radius_m": 10}]})
+    pol = policy_from_raw(wgs84_doc({"policy_id": "c", "constraints": [
+        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 0, "y": 0}, "radius_m": 10}]}))
     assert len(pol.constraints[0].vertices) == 32
 
 
@@ -1393,9 +1400,9 @@ def test_declarable_only_rules_are_refused_for_flight_and_loaded_as_declarations
 def test_msl_is_declarable_and_refused_for_flight():
     raw = _raw()
     raw["constraints"][0]["altitude_ref"] = "MSL"
-    pol = policy_from_raw(raw, runtime=False)
+    pol = policy_from_raw(wgs84_doc(raw), runtime=False)
     assert pol.constraints[0].altitude_ref == "MSL"
-    _refused(lambda: policy_from_raw(raw), "MSL")
+    _refused(lambda: policy_from_raw(wgs84_doc(raw)), "MSL")
 
 
 # A take-off point ~100 m south of the school yard's centroid, outside every
@@ -1454,9 +1461,9 @@ def test_the_frame_gate_guarantees_a_stated_frame_not_a_correct_one():
     assert any(n.startswith("nfz-school-yard:") for n in src["runtime_notes"]), src
     assert load_policy(WGS84).start_conflicts(), "wgs84_taipei states the centroid too"
     # A zone whose margin ring alone reaches the origin counts as well.
-    ring = policy_from_raw(_raw(constraints=[_square("near", 0.5, 0.5, 10, margin_m=1.0)]))
+    ring = policy_from_raw(wgs84_doc(_raw(constraints=[_square("near", 0.5, 0.5, 10, margin_m=1.0)])))
     assert ring.start_conflicts()
-    clear = policy_from_raw(_raw(constraints=[_square("far", 5, 5, 10, margin_m=1.0)]))
+    clear = policy_from_raw(wgs84_doc(_raw(constraints=[_square("far", 5, 5, 10, margin_m=1.0)])))
     assert clear.start_conflicts() == []
 
 
@@ -1477,10 +1484,10 @@ def test_the_breach_action_notes_say_what_the_shield_now_does():
     it stops for and requests. Each note is checked against the Shield's own
     behaviour, so the two cannot drift apart unnoticed."""
     def env(action, kind="hard"):
-        return policy_from_raw(_raw(constraints=[
+        return policy_from_raw(wgs84_doc(_raw(constraints=[
             {"id": "alt", "type": "altitude_envelope", "scope": "mission",
              "priority": "P0", "alt_min_m": 5, "alt_max_m": 60,
-             "constraint_type": kind, "violation_action": action}]))
+             "constraint_type": kind, "violation_action": action}])))
     for act in sorted(SHIELD_ACTS_ON):
         assert env(act).runtime_notes() == [], act
     for act in sorted(MODE_ACTIONS):
@@ -1504,10 +1511,10 @@ def test_the_breach_action_notes_say_what_the_shield_now_does():
 
 
 def test_a_dynamic_nfz_moves_as_declared():
-    pol = policy_from_raw({"policy_id": "d", "constraints": [
+    pol = policy_from_raw(wgs84_doc({"policy_id": "d", "constraints": [
         {"id": "m", "type": "dynamic_nfz", **HARD_P0,
          "vertices": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}],
-         "motion": {"vx_mps": 2.0, "vy_mps": -1.0, "yaw_rate_dps": 90.0}}]}, runtime=False)
+         "motion": {"vx_mps": 2.0, "vy_mps": -1.0, "yaw_rate_dps": 90.0}}]}), runtime=False)
     z = pol.constraints[0]
     assert isinstance(z, DynamicNFZ)
     assert z.ring_at(0) == [(0, 0), (10, 0), (10, 10), (0, 10)]
@@ -1536,7 +1543,7 @@ def test_the_grant_form_is_produced_and_reloads_to_the_same_rules():
     for src in (_yaml(WORKED_EXAMPLE), WGS84):
         pol = load_policy(src, runtime=False)
         g = pol.to_grant_form()
-        back = policy_from_raw(json.loads(json.dumps(g)), runtime=False)
+        back = policy_from_raw(wgs84_doc(json.loads(json.dumps(g))), runtime=False)
         assert back.to_grant_form() == g
         for a, b in zip(pol.constraints, back.constraints):
             pa = [(v.lat, v.lon) for v in getattr(a, "vertices", None) or []]
@@ -1557,7 +1564,7 @@ def test_a_metre_policy_needs_an_anchor_for_the_grant_form():
     pol = _metre_demo()
     _refused(lambda: pol.to_grant_form(), "Pass origin=")
     g = pol.to_grant_form(origin=(25.04245, 121.5314))
-    back = policy_from_raw(json.loads(json.dumps(g)))
+    back = policy_from_raw(wgs84_doc(json.loads(json.dumps(g))))
     for a, b in zip(pol.constraints, back.constraints):
         for va, vb in zip(getattr(a, "vertices", []) or [], getattr(b, "vertices", []) or []):
             assert abs(va.x - vb.x) < 1e-6 and abs(va.y - vb.y) < 1e-6, (va, vb)
@@ -1602,7 +1609,7 @@ def test_load_bundle_applies_the_flight_gate():
     bundle holding a rule every other flight loader refuses (then a 20 m
     dynamic_nfz; the Shield of that day reported the zone's centre as safe -
     the rule silently ignored)."""
-    pol = policy_from_raw(UNENF_RAW, runtime=False)
+    pol = policy_from_raw(wgs84_doc(UNENF_RAW), runtime=False)
     b = B.write_bundle(pol, _tmp("dist.tar.gz"), signer=None)
     assert Shield.unenforceable(pol), "the reason for the gate: the Shield cannot enforce it"
     _refused(lambda: B.load_bundle(b, require_signature=False), "cannot enforce", "people")
@@ -1613,7 +1620,7 @@ def test_a_scenario_cannot_fly_a_bundle_the_shield_would_ignore():
     """guardrail/scenario_spec.py loads `bundle_path` scenarios through
     load_bundle - the stress-harness path the grant's scenarios take."""
     from guardrail.scenario_spec import PolicyRef
-    pol = policy_from_raw(UNENF_RAW, runtime=False)
+    pol = policy_from_raw(wgs84_doc(UNENF_RAW), runtime=False)
     b = B.write_bundle(pol, _tmp("dist.tar.gz"), signer=None)
     _refused(lambda: PolicyRef(bundle_path=str(b)).load(ROOT), "cannot enforce")
 
@@ -1643,14 +1650,14 @@ def test_the_loaders_never_hand_the_shield_a_rule_it_does_not_enforce():
         # The switch and swap targets ("poly", "tube") are runtime types, so
         # they are kept and the lint still resolves them.
         rules = [r for r in nine["constraints"] if r["type"] in RUNTIME_TYPES] + [rule]
-        pol = policy_from_raw({**nine, "origin": {"lat": 25.0410, "lon": 121.5310},
-                               "constraints": rules}, runtime=False)
+        pol = policy_from_raw(wgs84_doc({**nine, "origin": {"lat": 25.0410, "lon": 121.5310},
+                               "constraints": rules}), runtime=False)
         assert pol.unenforced_rules(), rule["type"]
         if rule["type"] not in S.ENFORCED_TYPES:
             _refused(lambda: Shield(pol), "does not enforce", rule["id"])
     msl = _raw()
     msl["constraints"][0]["altitude_ref"] = "MSL"
-    pol = policy_from_raw(msl, runtime=False)
+    pol = policy_from_raw(wgs84_doc(msl), runtime=False)
     assert pol.unenforced_rules() and Shield.unenforceable(pol)
     print(f"      over-refused (the Shield enforces them, the loaders wait for the "
           f"compiler): {sorted(S.ENFORCED_TYPES - RUNTIME_TYPES)}; held from policy "
@@ -1686,7 +1693,7 @@ def test_a_reference_form_bundle_is_an_exchange_format_not_a_flight_artefact():
     records - the third hash never reaches a run. A reference-form bundle
     without the delta (the reference's own; or one with it stripped) is still
     refused, for the old reason."""
-    pol = policy_from_raw(_raw(), runtime=True)       # no scope/layer, `repair`
+    pol = policy_from_raw(wgs84_doc(_raw()), runtime=True)       # no scope/layer, `repair`
     b = B.write_bundle(pol, _tmp("x.tar.gz"), signer=None, ir_form="reference")
     chk = B.check_bundle(b)
     declared = chk.manifest["policy_hash"]
@@ -1771,7 +1778,7 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
     # and this project's entry is checked against the source policy the
     # reference_delta rebuilds. Forging that entry alone passed every test
     # until the review's mutation M18 removed the check; it is refused here.
-    src = policy_from_raw(_raw(), runtime=True)
+    src = policy_from_raw(wgs84_doc(_raw()), runtime=True)
     rb = B.write_bundle(src, _tmp("rf.tar.gz"), signer=None, ir_form="reference")
     assert B.check_bundle(rb).hashes[HASH_SCHEME] == src.policy_hash
     with tarfile.open(rb, "r:gz") as tar:
@@ -1848,7 +1855,7 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
         {"id": "dz", "type": "dynamic_nfz", **HARD_P0,
          "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}],
          "motion": {"vx_mps": 1.0}}])
-    p = _yaml(json.dumps(raw), "dz.json")
+    p = _yaml(json.dumps(_framed(raw)), "dz.json")
     _refused(lambda: load_policy(p), "dz: dynamic_nfz is enforced by the Shield", "nfz_s",
              "moves")
     _refused(lambda: B.load_for_flight(None, p), "nfz_s")
@@ -1858,8 +1865,7 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     assert any(n.startswith("dz: the frame origin") for n in pol.runtime_notes()), \
         pol.runtime_notes()
     assert Shield(pol).state_is_unsafe(State(x=1.0, y=-3.0, up=10.0))
-    b = B.write_bundle(pol, _tmp("dz.tar.gz"), signer=None,
-                       allow_legacy_metres=True)          # a metre fixture
+    b = B.write_bundle(pol, _tmp("dz.tar.gz"), signer=None)
     _refused(lambda: B.load_for_flight(b, allow_unverified=True), "nfz_s")
     _refused(lambda: B.load_bundle(b, require_signature=False), "nfz_s")
     assert B.load_bundle(b, require_signature=False, runtime=False).policy_hash == pol.policy_hash
@@ -1908,7 +1914,7 @@ def test_every_reader_of_keep_out_zones_takes_a_dynamic_zone_without_motion():
         {"id": "zero", "type": "dynamic_nfz", **HARD_P0,
          "vertices": [{"x": 60, "y": -5}, {"x": 70, "y": -5}, {"x": 70, "y": 5}],
          "motion": {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}])
-    p = _yaml(json.dumps(raw), "still.json")
+    p = _yaml(json.dumps(_framed(raw)), "still.json")
     pol = load_policy(p)                              # flies: nothing held
     assert [c.id for c in pol.static_keepout_zones()] == ["poly", "disc", "still", "zero"]
     moving = DynamicNFZ.model_validate({**raw["constraints"][3], "id": "mov",
@@ -1949,21 +1955,21 @@ def test_the_lint_compares_every_pair_of_hard_height_limits():
         {"id": "env", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 100, "alt_max_m": 120},
         {"id": "tube", "type": "corridor", **HARD_P0, "width_m": 20, "altitude_floor_m": 30,
          "altitude_ceiling_m": 80, "centerline": TUBE_LINE}])
-    _refused(lambda: policy_from_raw(env_vs_tube), "env", "tube", "no height in common")
+    _refused(lambda: policy_from_raw(wgs84_doc(env_vs_tube)), "env", "tube", "no height in common")
     two_tubes = _raw(constraints=[
         {"id": "low", "type": "corridor", **HARD_P0, "width_m": 20, "altitude_floor_m": 10,
          "altitude_ceiling_m": 20, "centerline": TUBE_LINE},
         {"id": "high", "type": "corridor", **HARD_P0, "width_m": 20, "altitude_floor_m": 30,
          "altitude_ceiling_m": 40, "centerline": TUBE_LINE}])
-    _refused(lambda: policy_from_raw(two_tubes), "low", "high", "no height in common")
+    _refused(lambda: policy_from_raw(wgs84_doc(two_tubes)), "low", "high", "no height in common")
     overlapping = copy.deepcopy(two_tubes)
     overlapping["constraints"][1]["altitude_floor_m"] = 15
-    policy_from_raw(overlapping)
+    policy_from_raw(wgs84_doc(overlapping))
     agl_msl = _raw(constraints=[
         {"id": "agl", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 20},
         {"id": "msl", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 30, "alt_max_m": 40,
          "altitude_ref": "MSL"}])
-    policy_from_raw(agl_msl, runtime=False)          # not compared: not a conflict
+    policy_from_raw(wgs84_doc(agl_msl), runtime=False)          # not compared: not a conflict
 
 
 def test_the_lint_refuses_a_corridor_no_flight_can_be_inside():
@@ -1976,7 +1982,7 @@ def test_the_lint_refuses_a_corridor_no_flight_can_be_inside():
             "altitude_ceiling_m": 20, "centerline": TUBE_LINE}       # y in [-10, 10]
     nfz = _square("nfz", -20, -20, 140, altitude_ceiling_m=100, margin_m=0.0)
     buried = _raw(constraints=[tube, nfz])
-    _refused(lambda: policy_from_raw(buried), "tube", "nfz", "lies wholly inside")
+    _refused(lambda: policy_from_raw(wgs84_doc(buried)), "tube", "nfz", "lies wholly inside")
     loads = {
         "a soft zone": [tube, {**nfz, "constraint_type": "soft"}],
         "a zone band that leaves heights free": [tube, {**nfz, "altitude_floor_m": 15}],
@@ -1991,31 +1997,31 @@ def test_the_lint_refuses_a_corridor_no_flight_can_be_inside():
     }
     for name, cons in loads.items():
         try:
-            policy_from_raw(_raw(constraints=cons), runtime=False)
+            policy_from_raw(wgs84_doc(_raw(constraints=cons)), runtime=False)
         except ValueError as e:
             raise AssertionError(f"{name}: refused - {str(e)[:300]}") from None
     # The margin ring counts (the Shield forbids polygon + margin)...
-    _refused(lambda: policy_from_raw(_raw(constraints=[
-        tube, _square("nfz", -9, -9, 118, margin_m=2.0)])), "lies wholly inside")
+    _refused(lambda: policy_from_raw(wgs84_doc(_raw(constraints=[
+        tube, _square("nfz", -9, -9, 118, margin_m=2.0)]))), "lies wholly inside")
     # ...a tube that only touches the zone's boundary keeps its touching
     # points, so it is not reported...
-    policy_from_raw(_raw(constraints=[tube, {
+    policy_from_raw(wgs84_doc(_raw(constraints=[tube, {
         "id": "edge", "type": "polygon_fence", **HARD_P0, "margin_m": 0.0, "vertices": [
             {"x": -10, "y": -10}, {"x": 110, "y": -10}, {"x": 110, "y": 10},
-            {"x": -10, "y": 10}]}]), runtime=False)
+            {"x": -10, "y": 10}]}])), runtime=False)
     # ...and two always-on zones that cover the tube together are a conflict.
     halves = [tube, _square("west", -20, -20, 70, margin_m=0.0),
               _square("east", 45, -20, 80, margin_m=0.0)]
-    _refused(lambda: policy_from_raw(_raw(constraints=halves)), "west", "east",
+    _refused(lambda: policy_from_raw(wgs84_doc(_raw(constraints=halves))), "west", "east",
              "lies wholly inside")
     # Two hard corridors with no point in common; crossing ones load.
     far = {"id": "far", "type": "corridor", **HARD_P0, "width_m": 20,
            "centerline": [{"x": 0, "y": 100}, {"x": 100, "y": 100}]}
-    _refused(lambda: policy_from_raw(_raw(constraints=[tube, far])), "tube", "far",
+    _refused(lambda: policy_from_raw(wgs84_doc(_raw(constraints=[tube, far]))), "tube", "far",
              "no point in common")
-    policy_from_raw(_raw(constraints=[tube, {**far, "centerline": [
-        {"x": 50, "y": -50}, {"x": 50, "y": 100}]}]))
-    policy_from_raw(_raw(constraints=[tube, {**far, "constraint_type": "soft"}]))
+    policy_from_raw(wgs84_doc(_raw(constraints=[tube, {**far, "centerline": [
+        {"x": 50, "y": -50}, {"x": 50, "y": 100}]}])))
+    policy_from_raw(wgs84_doc(_raw(constraints=[tube, {**far, "constraint_type": "soft"}])))
     # The negative corpus holds one file of each.
     for name in ("corridor_inside_nfz.yaml", "disjoint_hard_corridors.yaml"):
         _refused(lambda name=name: load_policy(ROOT / "policies" / "negative" / name),
@@ -2027,16 +2033,16 @@ def test_the_lint_checks_what_a_switch_or_swap_points_at():
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
         {"id": "s", "type": "corridor_swap", **HARD_P0, "target_id": "alt", "width_m": 20,
          "centerline": TUBE_LINE}])
-    _refused(lambda: policy_from_raw(swap_env, runtime=False), "not a corridor")
+    _refused(lambda: policy_from_raw(wgs84_doc(swap_env), runtime=False), "not a corridor")
     self_target = _raw(constraints=[
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
         {"id": "sw", "type": "time_window_switch", **HARD_P0, "target_id": "sw", "active": False}])
-    _refused(lambda: policy_from_raw(self_target, runtime=False), "cannot target itself")
+    _refused(lambda: policy_from_raw(wgs84_doc(self_target), runtime=False), "cannot target itself")
     at_event = _raw(constraints=[
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
         {"id": "a", "type": "time_window_switch", **HARD_P0, "target_id": "alt", "active": True},
         {"id": "b", "type": "time_window_switch", **HARD_P0, "target_id": "a", "active": False}])
-    _refused(lambda: policy_from_raw(at_event, runtime=False), "not an event")
+    _refused(lambda: policy_from_raw(wgs84_doc(at_event), runtime=False), "not an event")
 
 
 def test_check_bundle_runs_the_lint():
@@ -2064,10 +2070,10 @@ def test_load_layered_applies_the_flight_gate():
 def test_a_grant_form_corridor_gets_the_references_band():
     """A corridor's geometry block, like a fence's, takes the reference's
     0-200 m band; the flat form keeps this project's 0-1000 m."""
-    g = policy_from_raw(_raw(constraints=[{"id": "t", "type": "corridor", **HARD_P0, "geometry": {
-        "centerline": TUBE_LINE, "width_m": 20}}])).constraints[0]
+    g = policy_from_raw(wgs84_doc(_raw(constraints=[{"id": "t", "type": "corridor", **HARD_P0, "geometry": {
+        "centerline": TUBE_LINE, "width_m": 20}}]))).constraints[0]
     assert (g.altitude_floor_m, g.altitude_ceiling_m) == (0.0, 200.0)
-    f = policy_from_raw(_raw(constraints=[REG_TUBE])).constraints[0]
+    f = policy_from_raw(wgs84_doc(_raw(constraints=[REG_TUBE]))).constraints[0]
     assert (f.altitude_floor_m, f.altitude_ceiling_m) == (0.0, 1000.0)
 
 
@@ -2118,7 +2124,7 @@ def test_the_published_schema_describes_the_authoring_form():
         # not in it, so the document as written is not an IR...
         assert list(canon.iter_errors(d)), d["policy_id"]
         # ...while the IR the loader makes of it is.
-        ir = policy_from_raw(d, runtime=False).canonical_ir()
+        ir = policy_from_raw(wgs84_doc(d), runtime=False).canonical_ir()
         assert not list(canon.iter_errors(ir)), d["policy_id"]
     for f in sorted((ROOT / "policies").glob("*.yaml")):
         errs = list(root.iter_errors(_json_doc(f.read_text(encoding="utf-8"))))

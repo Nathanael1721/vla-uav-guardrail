@@ -61,6 +61,7 @@ for _p in (ROOT, ROOT / "experiments", ROOT / "tools", ROOT / "tests", ROOT / "s
 from guardrail import terrain                                           # noqa: E402
 from guardrail.models import State                                      # noqa: E402
 from guardrail.scenario_spec import Library, ScenarioSpec               # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 
 DEM = "experiments/worlds/dem_cmac_wgs84.json"
 SITL_POLICY = ROOT / "experiments" / "policies" / "msl_dem_sitl.yaml"
@@ -731,7 +732,7 @@ def test_the_backstop_is_capped_by_an_msl_ceiling_in_force_all_flight():
             if cc["id"] == "msl-ceiling":
                 cc.update(upd)
         from guardrail.models import policy_from_raw
-        p2 = policy_from_raw(raw, source="t", runtime=False)
+        p2 = policy_from_raw(wgs84_doc(raw), source="t", runtime=False)
         c2, src2 = A.policy_ceiling_m(p2, 15.0, ground=g, home_msl_m=584.0)
         assert abs(c2 - (60.0 + top - 584.0)) < 1e-9 and "capped" not in src2, (upd, c2)
     # Without a ground: as before.
@@ -763,7 +764,7 @@ def test_the_backstop_is_capped_by_an_msl_ceiling_in_force_all_flight():
             if cc["id"] == "msl-corridor":
                 cc.update(upd)
         r2["constraints"] += extra
-        p3 = policy_from_raw(r2, source="t", runtime=False)
+        p3 = policy_from_raw(wgs84_doc(r2), source="t", runtime=False)
         c4, src4 = A.policy_ceiling_m(p3, 15.0, ground=g, home_msl_m=584.0)
         assert abs(c4 - (60.0 + top - 584.0)) < 1e-9 and "capped" not in src4, (upd, c4)
     # A keep-out MSL zone bounds nothing above or beside it: the AGL band's
@@ -789,7 +790,7 @@ def test_the_fence_column_reads_an_msl_zone_above_home():
         if cc["id"] == "msl-ridge-nfz":
             cc.update(altitude_floor_m=500, altitude_ceiling_m=700)
     from guardrail.models import policy_from_raw
-    p2 = policy_from_raw(raw, source="t", runtime=False)
+    p2 = policy_from_raw(wgs84_doc(raw), source="t", runtime=False)
     f2, _ = A.policy_fences(p2, column_m=45.0, ground=g, home_msl_m=584.0)
     assert [z["id"] for z in f2] == ["msl-ridge-nfz"]
     # Read without the ground the same 500-700 band is MSL metres compared

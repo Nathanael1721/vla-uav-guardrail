@@ -73,6 +73,7 @@ except ImportError as e:                                           # noqa: BLE00
     C = K = None
     _IMPORT_ERROR = e
 from guardrail.compiler import ConstraintCompiler, Mission         # noqa: E402
+from wgs84_fixture import wgs84_doc                     # noqa: E402
 
 # The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
 # scope since 4.0.0, 2026-11-06), at the values they defaulted to before
@@ -1244,7 +1245,8 @@ def test_the_naive_baseline_loses_p0_rules_the_compiler_keeps():
     # ...and the report says which of the two cases it is in
     import yaml
     d = Path(tempfile.mkdtemp())
-    (d / "mix.yaml").write_text(yaml.safe_dump(MIX, sort_keys=False), encoding="utf-8")
+    (d / "mix.yaml").write_text(yaml.safe_dump(wgs84_doc(MIX), sort_keys=False),
+                              encoding="utf-8")
     at_tight = K.coverage_report(d, budget_tokens=tight)["totals"]
     assert (at_tight["n_p0_covered"], at_tight["baseline_n_p0_covered"]) == (2, 1), at_tight
     assert at_tight["kpi_discriminates"] is True, at_tight
@@ -1459,7 +1461,8 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     _need()
     import yaml
     d = Path(tempfile.mkdtemp())
-    (d / "mix.yaml").write_text(yaml.safe_dump(MIX, sort_keys=False), encoding="utf-8")
+    (d / "mix.yaml").write_text(yaml.safe_dump(wgs84_doc(MIX), sort_keys=False),
+                              encoding="utf-8")
     alone = K.coverage_report(d)["totals"]
     # A time_window_switch was the example until 2026-10-08, when it became
     # flyable; then distance_envelope until 2026-11-03 (WP1-07). No
@@ -1471,7 +1474,8 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
          "altitude_floor_m": 0, "altitude_ceiling_m": 100},
         {"id": "people", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 600,
          "alt_max_m": 700, "altitude_ref": "MSL"}]}
-    (d / "people.yaml").write_text(yaml.safe_dump(people, sort_keys=False), encoding="utf-8")
+    (d / "people.yaml").write_text(yaml.safe_dump(wgs84_doc(people), sort_keys=False),
+                                 encoding="utf-8")
     rep = K.coverage_report(d)
     t = rep["totals"]
     assert t["n_policies"] == 2 and t["n_compiled"] == 1, t
@@ -2382,7 +2386,7 @@ def _hot():
     dynamic_nfz is held back from policy files (models.FLIGHT_HELD_TYPES;
     the one without motion flies since 2026-11-15, C-16)."""
     from guardrail.models import policy_from_raw
-    return policy_from_raw(json.loads(json.dumps(HOT)), source="HOT", runtime=False)
+    return policy_from_raw(wgs84_doc(json.loads(json.dumps(HOT))), source="HOT", runtime=False)
 
 
 def test_the_hot_apply_types_compile_and_a_switch_or_swap_flies():
@@ -2408,17 +2412,17 @@ def test_the_hot_apply_types_compile_and_a_switch_or_swap_flies():
     assert sorted(p.split(":")[0] for p in held) == ["dyn"], held
     assert all("nfz_s" in p and "moves" in p for p in held), held
     try:
-        policy_from_raw(json.loads(json.dumps(HOT)), source="HOT")   # the flight gate
+        policy_from_raw(wgs84_doc(json.loads(json.dumps(HOT))), source="HOT")   # the flight gate
     except ValueError as e:
         assert "dyn:" in str(e) and "dyn-still:" not in str(e) and "nfz_s" in str(e), str(e)
     else:
         raise AssertionError("a policy file declaring a moving dynamic_nfz loaded for flight")
     no_zones = {**HOT, "constraints": [c for c in HOT["constraints"]
                                        if c["type"] != "dynamic_nfz"]}
-    flies = policy_from_raw(json.loads(json.dumps(no_zones)), source="HOT-no-zones")
+    flies = policy_from_raw(wgs84_doc(json.loads(json.dumps(no_zones))), source="HOT-no-zones")
     assert flies.flight_problems() == []
     still = {**HOT, "constraints": [c for c in HOT["constraints"] if c["id"] != "dyn"]}
-    flies = policy_from_raw(json.loads(json.dumps(still)), source="HOT-still")
+    flies = policy_from_raw(wgs84_doc(json.loads(json.dumps(still))), source="HOT-still")
     assert flies.flight_problems() == [], "a zone without motion flies (C-16)"
     csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION),
                                               now=MON.replace(hour=8, minute=15),
@@ -2528,7 +2532,7 @@ def test_without_a_clock_a_switch_applies_only_where_the_shield_applies_it():
     raw["constraints"].append({"id": "sw-a-always", "type": "time_window_switch", **HARD_P0,
                                "target_id": "fence-a", "active": False})
     from guardrail.models import policy_from_raw
-    pol = policy_from_raw(raw, runtime=False)
+    pol = policy_from_raw(wgs84_doc(raw), runtime=False)
     csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION), now=None,
                                               budget_tokens=1000)
     dec = {r.id: r for r in csp.selection.rules}
@@ -2864,12 +2868,12 @@ def test_a_dynamic_zone_names_only_the_motion_it_has():
         if motion is not None:
             r["motion"] = motion
         return r
-    pol = policy_from_raw({"policy_id": "motions", "constraints": [
+    pol = policy_from_raw(wgs84_doc({"policy_id": "motions", "constraints": [
         zone("go", 0, {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}),
         zone("spin", 20, {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": -7.5}),
         zone("both", 40, {"vx_mps": 0.0, "vy_mps": 1.5, "yaw_rate_dps": 3.0}),
         zone("creep", 60, {"vx_mps": 0.03, "vy_mps": 0.0, "yaw_rate_dps": 0.0}),
-        zone("still", 80, None)]}, runtime=False)
+        zone("still", 80, None)]}), runtime=False)
     by = {c.id: c for c in pol.constraints}
     want_sentence = {
         "go": "Never enter zone 'go', which moves at 2 m/s.",
@@ -3039,10 +3043,10 @@ def _two_switches(first_active: bool):
          "active": first_active, "valid_time": _weekdays("08:00", "09:00", ("Mon",))}
     b = {"id": "sw-narrow", "type": "time_window_switch", **HARD_P0, "target_id": "fence-s",
          "active": not first_active, "valid_time": _weekdays("08:30", "08:45", ("Mon",))}
-    return policy_from_raw({"policy_id": "two-switches", "constraints": [
+    return policy_from_raw(wgs84_doc({"policy_id": "two-switches", "constraints": [
         {"id": "fence-s", "type": "polygon_fence",
          "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
-         "vertices": _sq(40, -5, 50, 5)}, a, b]}, runtime=False)
+         "vertices": _sq(40, -5, 50, 5)}, a, b]}), runtime=False)
 
 
 def test_the_last_switch_in_policy_order_decides_as_in_the_shield():
@@ -3087,10 +3091,10 @@ def test_a_moving_zone_far_from_the_path_is_never_filtered_by_region():
     _need()
     from guardrail.models import policy_from_raw
     far = _sq(500, 500, 510, 510)
-    pol = policy_from_raw({"policy_id": "far-zones", "constraints": [
+    pol = policy_from_raw(wgs84_doc({"policy_id": "far-zones", "constraints": [
         {"id": "far-moving", "type": "dynamic_nfz", **HARD_P0, "vertices": far,
          "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
-        {"id": "far-still", "type": "dynamic_nfz", **HARD_P0, "vertices": far}]}, runtime=False)
+        {"id": "far-still", "type": "dynamic_nfz", **HARD_P0, "vertices": far}]}), runtime=False)
     csp = ConstraintCompiler(pol).compile_csp(_mission(tx=100.0, ty=0.0), now=None,
                                               budget_tokens=1000)
     dec = {r.id: r.decision for r in csp.selection.rules}

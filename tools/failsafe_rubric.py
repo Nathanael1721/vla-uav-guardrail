@@ -348,6 +348,7 @@ def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM
     2026-11-10: "rail" for the KPI-grade labels). Returns (run, records)."""
     log: list[dict] = []
     orig_cls, orig_filter = SW.Shield, SH.Shield.filter
+    orig_filter_body = SH.Shield.filter_body
     made = [0]
 
     def factory(*a, **k):
@@ -356,18 +357,28 @@ def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM
             k["escalation"] = True
         return orig_cls(*a, **k)
 
-    def rec_filter(self, *a, **k):
-        d = orig_filter(self, *a, **k)
+    def rec(self, d):
         if getattr(self, "fsm", None) is not None:
             log.append(getattr(d, "fsm_record", None) or {})
         return d
 
-    SW.Shield, SH.Shield.filter = factory, rec_filter
+    def rec_filter(self, *a, **k):
+        return rec(self, orig_filter(self, *a, **k))
+
+    # The harness hands the flying Shield the body frame (filter_body), which
+    # since 2026-11-26 does not go through the world-frame `filter`: both
+    # entries are recorded, each decision once.
+    def rec_filter_body(self, *a, **k):
+        d, eb = orig_filter_body(self, *a, **k)
+        return rec(self, d), eb
+
+    SW.Shield, SH.Shield.filter, SH.Shield.filter_body = factory, rec_filter, rec_filter_body
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
                              lib.defaults, seed, response=response, **_rail_kw(response))
     finally:
-        SW.Shield, SH.Shield.filter = orig_cls, orig_filter
+        SW.Shield, SH.Shield.filter, SH.Shield.filter_body = \
+            orig_cls, orig_filter, orig_filter_body
     return run, log
 
 
@@ -392,6 +403,7 @@ def prescribed(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
     rail. Returns (run, records), as `counterfactual`."""
     log: list[dict] = []
     orig_cls, orig_filter = SW.Shield, SH.Shield.filter
+    orig_filter_body = SH.Shield.filter_body
     made = [0]
 
     def factory(*a, **k):
@@ -400,23 +412,40 @@ def prescribed(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
             k["escalation"] = True
         return orig_cls(*a, **k)
 
-    def held_filter(self, state, *a, **k):
-        d = orig_filter(self, state, *a, **k)
+    def held(self, state, d) -> bool:
+        """Record the decision; True when its request is held (a stop)."""
         if getattr(self, "fsm", None) is None:
-            return d
+            return False
         rec = getattr(d, "fsm_record", None) or {}
         log.append(rec)
-        if unsafe_request(rec) and not (rec.get("flags") or {}).get("stop_illegal"):
-            d = d.model_copy(update={"emitted": SH.BRAKE,
-                                     "emitted_violations": self._check(state, SH.BRAKE)})
-        return d
+        return unsafe_request(rec) and not (rec.get("flags") or {}).get("stop_illegal")
 
-    SW.Shield, SH.Shield.filter = factory, held_filter
+    def stopped(self, state, d):
+        return d.model_copy(update={"emitted": SH.BRAKE,
+                                    "emitted_violations": self._check(state, SH.BRAKE)})
+
+    def held_filter(self, state, *a, **k):
+        d = orig_filter(self, state, *a, **k)
+        return stopped(self, state, d) if held(self, state, d) else d
+
+    # The harness hands the flying Shield the body frame (filter_body), which
+    # since 2026-11-26 does not go through the world-frame `filter`: the stop
+    # is made there too, its body reading at the state's heading (as
+    # filter_body turned the decision's emitted stop until then).
+    def held_filter_body(self, state, *a, **k):
+        d, eb = orig_filter_body(self, state, *a, **k)
+        if held(self, state, d):
+            d = stopped(self, state, d)
+            eb = SH.Shield._emitted_body(SH._repair.BodyFrame(state.yaw_deg), d)
+        return d, eb
+
+    SW.Shield, SH.Shield.filter, SH.Shield.filter_body = factory, held_filter, held_filter_body
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
                              lib.defaults, seed, response=response, **_rail_kw(response))
     finally:
-        SW.Shield, SH.Shield.filter = orig_cls, orig_filter
+        SW.Shield, SH.Shield.filter, SH.Shield.filter_body = \
+            orig_cls, orig_filter, orig_filter_body
     return run, log
 
 

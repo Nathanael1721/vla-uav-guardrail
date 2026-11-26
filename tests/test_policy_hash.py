@@ -268,9 +268,14 @@ def test_the_dynamic_runs_rebuild_from_the_lock():
             assert "scope" in str(e) and "Field required" in str(e), e
         else:
             raise AssertionError(f"a {era} recipe without scope was accepted")
-    got = derive(load_policy(DEMO), [rule], ir_schema_version="3.1.0")
+    # (a recipe recorded in metres is a READ, legacy_read; a new derivation
+    # takes WGS84 only since 2026-11-26, WP1-14, converted tool side)
+    got = derive(load_policy(DEMO), [rule], ir_schema_version="3.1.0", legacy_read=True)
     assert got.constraints[-1].scope is None and got.constraints[-1].effective_scope == "mission"
-    stated = derive(load_policy(DEMO), [{**rule, "scope": "mission"}], ir_schema_version="4.0.0")
+    from guardrail.models import wgs84_from_metres
+    stated = derive(load_policy(DEMO), [wgs84_from_metres({**rule, "scope": "mission"},
+                                                          load_policy(DEMO).frame_origin)],
+                    ir_schema_version="4.0.0")
     assert stated.constraints[-1].scope == "mission"
     assert stated.policy_hash != got.policy_hash, "an absent scope hashed as a stated one"
 

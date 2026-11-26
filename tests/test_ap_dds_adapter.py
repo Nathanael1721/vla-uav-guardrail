@@ -164,7 +164,7 @@ def _node_module():
     class Node:
         def __init__(self, name):
             self.name, self.pubs, self.subs, self.timers = name, {}, {}, []
-            self.calls, self.n_publishers = [], 1
+            self.calls, self.n_publishers, self.qos = [], 1, {}
 
         def get_logger(self):
             return types.SimpleNamespace(info=lambda s: None, warn=lambda s: None,
@@ -178,7 +178,7 @@ def _node_module():
             self.subs[topic] = cb
 
         def create_publisher(self, typ, topic, qos):
-            self.pubs[topic] = _Pub()
+            self.pubs[topic], self.qos[topic] = _Pub(), qos
             return self.pubs[topic]
 
         def create_client(self, typ, name):
@@ -287,6 +287,50 @@ def test_modes_are_not_forwarded_without_the_flag():
     M = _node_module()
     node = M.ApDdsAdapterNode(None)
     assert M.TOPIC_MODE_REQUEST not in node.subs and node.cli_mode is None
+
+
+def test_the_shields_delivery_monitor_accepts_the_adapters_reports():
+    """RUNBOOK-ap-dds step 6's open point: the Shield node's setpoint-delivery
+    monitor reads this node as it reads the MAVLink adapter. Same topic and
+    depth as the Shield's subscription (ros2_shield_node imports TOPIC_SENT
+    from mavlink_adapter_node and SENT_QOS_DEPTH from guardrail.delivery),
+    and the Shield's own sequence - stamp, publish, feed every report and
+    beat to a DeliveryMonitor - ends with every setpoint answered, no gap and
+    no shortfall. Flown on ap_dds_stage1_01 (26 Nov): 244 published, 244
+    reports, 101 beats, no gap."""
+    import time
+    from guardrail.delivery import (SENT_QOS_DEPTH, DeliveryMonitor,
+                                    grade_reasons, parse_report)
+    M = _node_module()
+    assert M.TOPIC_SENT == A.TOPIC_SENT == "/mavlink_adapter/sent"
+    node = M.ApDdsAdapterNode(None)
+    assert node.qos[M.TOPIC_SENT] == SENT_QOS_DEPTH, node.qos
+    sent = node.pubs[M.TOPIC_SENT]
+    on_sp = node.subs[M.TOPIC_SETPOINT]
+    node.subs[M.TOPIC_AP_POSE](_pose(45.0))
+    mon, read = DeliveryMonitor(), 0
+
+    def drain():
+        nonlocal read
+        for msg in sent.sent[read:]:
+            rec = parse_report(msg.data)
+            assert rec is not None, msg.data
+            mon.report(rec, time.monotonic())
+        read = len(sent.sent)
+
+    for i in range(30):
+        mon.published(time.monotonic())      # stamped before the publish
+        on_sp(_Msg(data=[1.0, 0.5 * (i % 3), 0.0, 0.0]))
+        drain()
+        if i % 10 == 9:
+            node.timers[0]()                  # the 1 Hz beat
+            drain()
+    mon.close(time.monotonic())
+    s = mon.summary()
+    assert (s["published"], s["reports"], s["beats"]) == (30, 30, 3), s
+    assert s["shortfall"] == 0 and s["n_gaps"] == 0 and s["delivery_gaps"] == [], s
+    assert s["adapter_n_sent"] == 30 and s["adapter_n_in"] == 30, s
+    assert grade_reasons(s) == [], grade_reasons(s)
 
 
 # --------------------------------------------------------------------------- #

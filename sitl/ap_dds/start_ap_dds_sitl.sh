@@ -59,7 +59,14 @@ mkdir -p "$RUN_DIR"
 cd "$RUN_DIR"
 printf 'DDS_DOMAIN_ID %s\n' "$DOMAIN" > "$RUN_DIR/dds_domain.parm"
 
-nohup ros2 run micro_ros_agent micro_ros_agent udp4 -p "$DDS_PORT" \
+# The 4.5 DDS client creates its participant, topics and services by XML
+# reference (participant_profile, ...), so the agent loads the profile file
+# from the same checkout (libraries/AP_DDS/README.md: `-r dds_xrce_profile.xml`).
+# Without it the agent logs "Profile 'participant_profile' not found" and no
+# /ap/* topic appears.
+PROFILE="$AP_DDS_DIR/libraries/AP_DDS/dds_xrce_profile.xml"
+[ -f "$PROFILE" ] || { echo "no $PROFILE in the DDS checkout"; exit 1; }
+nohup ros2 run micro_ros_agent micro_ros_agent udp4 -p "$DDS_PORT" -r "$PROFILE" \
   > "$RUN_DIR/agent.log" 2>&1 &
 AGENT=$!
 trap 'kill $AGENT 2>/dev/null || true' EXIT INT TERM

@@ -32,27 +32,31 @@ from guardrail.compiler import ConstraintCompiler, Mission              # noqa: 
 from guardrail.csp import CSPUnenforcedRules                            # noqa: E402
 from guardrail.models import Action4D, State, policy_from_raw           # noqa: E402
 from guardrail.shield import Shield                                     # noqa: E402
+from wgs84_fixture import geo, geo_ring, wgs84_doc             # noqa: E402
 
 H = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
      "violation_action": "project_fix"}
 
+# The frame origin every fixture states (the Project AirSim home-geo-point):
+# since 2026-11-18 (WP1-14) an event's metres are written as WGS84 about it
+# and a policy with no frame origin refuses them; since 2026-11-26 a policy
+# document is loaded in WGS84 only, so the fixtures, laid out in metres, are
+# written in WGS84 about it (wgs84_doc) and their DEM is placed in it.
+FRAME = (35.6895, 139.6917)
 
-def _slope_dem(reach=10.0, origin=None):
+
+def _slope_dem(reach=10.0, origin="frame"):
     """Ground rising 0.5 m per metre east from 100 m MSL at x = 0; `origin`
-    the WGS84 frame it is placed in (None: a metre-only world)."""
+    the WGS84 frame it is placed in (default FRAME, the fixtures' frame since
+    2026-11-26; None: a metre-only world)."""
+    origin = FRAME if origin == "frame" else origin
     xs = [-50.0 + 10.0 * i for i in range(21)]
     elev = [[100.0 + 0.5 * (x + 50.0) for x in xs] for _ in range(11)]
     return terrain.GridGround(-50.0, -50.0, 10.0, elev, "test slope", reach_m=reach,
                               origin=origin)
 
 
-# The frame origin a policy that receives events states (the Project AirSim
-# home-geo-point): since 2026-11-18 (WP1-14) an event's metres are written as
-# WGS84 about it, and a policy with no frame origin refuses them.
-FRAME = (35.6895, 139.6917)
-
-
-def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0), origin=None):
+def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0), origin="frame"):
     env_r = {"id": "env", "type": "altitude_envelope", **H,
              "alt_min_m": env[0], "alt_max_m": env[1]}
     zone_r = {"id": "zone", "type": "polygon_fence", **H, "margin_m": 1.0,
@@ -62,6 +66,7 @@ def _raw(ref="MSL", env=(150.0, 250.0), zone=(0.0, 180.0), origin=None):
     if ref:
         env_r["altitude_ref"] = zone_r["altitude_ref"] = ref
     out = {"policy_id": "msl-dem-test", "constraints": [env_r, zone_r]}
+    origin = FRAME if origin == "frame" else origin
     if origin is not None:
         out["origin"] = {"lat": origin[0], "lon": origin[1]}
     return out
@@ -93,7 +98,7 @@ def test_grid_ground_is_bilinear_bounded_and_round_trips():
 
 
 def test_keep_in_narrows_and_keep_out_widens_over_the_band():
-    pol = policy_from_raw(_raw(), ground=_slope_dem())
+    pol = policy_from_raw(wgs84_doc(_raw()), ground=_slope_dem())
     env, zone = pol.constraints
     e = terrain.agl_rule(env, _slope_dem(), (120.0, 130.0))
     z = terrain.agl_rule(zone, _slope_dem(), (120.0, 130.0))
@@ -111,7 +116,7 @@ def test_a_dem_shield_is_never_looser_than_the_true_msl_rule():
     the DEM, the aircraft holding its MSL height, is flagged by the Shield at
     the query point; and none of those it passes breaks the rule."""
     g = _slope_dem(reach=12.0)
-    sh = Shield(policy_from_raw(_raw(), ground=g), ground=g, up_ref="terrain", escalation=False,
+    sh = Shield(policy_from_raw(wgs84_doc(_raw()), ground=g), ground=g, up_ref="terrain", escalation=False,
                 lookahead_s=2.0, dt=0.5)
     missed = flagged = 0
     for x, z, vx, vz in itertools.product((-40.0, -10.0, 0.0, 15.0, 30.0),
@@ -132,7 +137,7 @@ def test_the_band_is_read_at_the_query_point_not_the_whole_dem():
     """Over the low end of the slope the ceiling is far higher than over the
     whole DEM's highest ground: a pose legal there is not flagged."""
     g = _slope_dem(reach=10.0)
-    sh = Shield(policy_from_raw(_raw(), ground=g), ground=g, up_ref="terrain",
+    sh = Shield(policy_from_raw(wgs84_doc(_raw()), ground=g), ground=g, up_ref="terrain",
                 escalation=False)
     # 240 m MSL at x = -40 (ground 105): up 135; the local ceiling is
     # 250 - 115 = 135 (legal), the whole DEM's 250 - 200 = 50 (illegal).
@@ -149,7 +154,7 @@ def test_the_band_is_read_at_the_query_point_not_the_whole_dem():
 
 def test_an_msl_zone_band_follows_the_ground_and_hot_apply_works_over_a_dem():
     g = _slope_dem(reach=5.0, origin=FRAME)
-    sh = Shield(policy_from_raw(_raw(origin=FRAME), ground=g), ground=g, up_ref="terrain",
+    sh = Shield(policy_from_raw(wgs84_doc(_raw(origin=FRAME)), ground=g), ground=g, up_ref="terrain",
                 escalation=False)
     # Zone 0-180 m MSL over x 60..80 (ground 155..165): at 170 MSL the
     # aircraft is in the band and must be stopped short; at 190 it overflies.
@@ -162,7 +167,7 @@ def test_an_msl_zone_band_follows_the_ground_and_hot_apply_works_over_a_dem():
                       vertices=[{"x": -30, "y": -5}, {"x": -20, "y": -5},
                                 {"x": -20, "y": 5}, {"x": -30, "y": 5}],
                       altitude_floor_m=0.0, altitude_ceiling_m=150.0)
-    sh.hot_apply(zone)
+    sh.hot_apply(geo(zone, sh))
     # Ground ~110 there: 140 MSL is inside the zone's band, 160 above it.
     inside = {r["id"]: r for r in sh.rule_status(State(x=-25.0, y=0.0, up=30.0))}
     above = {r["id"]: r for r in sh.rule_status(State(x=-25.0, y=0.0, up=50.0))}
@@ -173,8 +178,8 @@ def test_agl_and_flat_msl_policies_decide_as_before():
     """Opt-in: no DEM, no local runtime - the runtime has no MSL entries and
     every decision is the plain one (flat MSL = the AGL policy shifted)."""
     flat = terrain.FlatGround(100.0, "t")
-    s_flat = Shield(policy_from_raw(_raw(), ground=flat), ground=flat, escalation=False)
-    s_agl = Shield(policy_from_raw(_raw(ref=None, env=(50.0, 150.0), zone=(-100.0, 80.0))),
+    s_flat = Shield(policy_from_raw(wgs84_doc(_raw()), ground=flat), ground=flat, escalation=False)
+    s_agl = Shield(policy_from_raw(wgs84_doc(_raw(ref=None, env=(50.0, 150.0), zone=(-100.0, 80.0)))),
                    escalation=False)
     assert s_flat._rt.msl == () and s_agl._rt.msl == ()
     n = 0
@@ -190,7 +195,7 @@ def test_agl_and_flat_msl_policies_decide_as_before():
 
 def test_the_csp_compiles_msl_over_a_ground_and_states_it():
     g = _slope_dem()
-    pol = policy_from_raw(_raw(), ground=g)
+    pol = policy_from_raw(wgs84_doc(_raw()), ground=g)
     m = Mission(task_text="fly east", start_x=-40.0, start_y=0.0, target_x=40.0,
                 target_y=0.0, cruise_alt_m=60.0, speed_pref_mps=3.0)
     try:
@@ -209,11 +214,11 @@ def test_the_csp_compiles_msl_over_a_ground_and_states_it():
     assert "declared 0-180 m MSL over ground at 100-150 m MSL under the mission" in text, text
     # A flat ground states its one elevation.
     flat = terrain.FlatGround(100.0, "t")
-    csp2 = ConstraintCompiler(policy_from_raw(_raw(), ground=flat), ground=flat).compile_csp(m)
+    csp2 = ConstraintCompiler(policy_from_raw(wgs84_doc(_raw()), ground=flat), ground=flat).compile_csp(m)
     assert "Stay between 50 m and 150 m altitude (heights above ground: declared " \
            "150-250 m MSL over ground at 100 m MSL)" in csp2.natural_language_prompt
     # An AGL policy's CSP is byte for byte what a compiler without a ground makes.
-    agl = policy_from_raw(_raw(ref=None))
+    agl = policy_from_raw(wgs84_doc(_raw(ref=None)))
     a1 = ConstraintCompiler(agl).compile_csp(m, issued_at="2026-11-17T00:00:00")
     a2 = ConstraintCompiler(agl, ground=g).compile_csp(m, issued_at="2026-11-17T00:00:00")
     assert a1.model_dump() == a2.model_dump()
@@ -235,7 +240,7 @@ def test_the_csp_compiles_a_keep_in_band_narrower_than_the_relief():
                 "id": "env", "type": "corridor", **H, "altitude_ref": "MSL",
                 "centerline": [{"x": -45, "y": 0}, {"x": 45, "y": 0}],
                 "width_m": 20.0, "altitude_floor_m": 150.0, "altitude_ceiling_m": 200.0}
-        pol = policy_from_raw(raw, ground=g)
+        pol = policy_from_raw(wgs84_doc(raw), ground=g)
         csp = ConstraintCompiler(pol, ground=g).compile_csp(m, budget_tokens=512)
         lo, hi = csp.allowed_action_set.altitude_band_m_agl
         # Near the start (x -40 by 10 m: ground 100-110): floor 50, ceiling
@@ -251,7 +256,7 @@ def test_a_dem_needs_a_declared_terrain_height_reference():
     Shield refuses a GridGround without up_ref='terrain', and
     terrain_relative_up converts a height above home."""
     g = _slope_dem()
-    pol = policy_from_raw(_raw(), ground=g)
+    pol = policy_from_raw(wgs84_doc(_raw()), ground=g)
     for ref in (None, "home"):
         try:
             Shield(pol, ground=g, up_ref=ref, escalation=False)
@@ -261,7 +266,7 @@ def test_a_dem_needs_a_declared_terrain_height_reference():
             raise AssertionError(f"a DEM Shield built with up_ref={ref!r}")
     # A flat ground needs no declaration (every caller before 2026-11-17).
     flat = terrain.FlatGround(100.0, "t")
-    Shield(policy_from_raw(_raw(), ground=flat), ground=flat, escalation=False)
+    Shield(policy_from_raw(wgs84_doc(_raw()), ground=flat), ground=flat, escalation=False)
     # Home at x = -40 (ground 105 m MSL), aircraft 30 m above home at x = 20
     # (ground 135): 105 + 30 = 135 m MSL, i.e. 0 m above the ground there.
     assert terrain.terrain_relative_up(30.0, 105.0, g, 20.0, 0.0) == 0.0
@@ -283,16 +288,16 @@ def test_a_dem_is_read_only_in_its_own_frame():
     assert terrain.GridGround.from_dict(g.to_dict()).origin == (25.0, 121.5)
     raw = _raw()
     try:
-        policy_from_raw(raw, ground=g)             # a metre-only policy, no origin
+        policy_from_raw(wgs84_doc(raw), ground=g)             # a policy in another frame
     except ValueError as e:
         assert "frame" in str(e), e
     else:
-        raise AssertionError("a georeferenced DEM read in a metre-only policy")
+        raise AssertionError("a georeferenced DEM read in a policy of another frame")
     raw["origin"] = {"lat": 25.0, "lon": 121.5}
-    pol = policy_from_raw(raw, ground=g)
+    pol = policy_from_raw(wgs84_doc(raw), ground=g)
     Shield(pol, ground=g, up_ref="terrain", escalation=False)
     raw["origin"] = {"lat": 25.001, "lon": 121.5}
-    pol2 = policy_from_raw(raw, ground=terrain.FlatGround(100.0, "t"))
+    pol2 = policy_from_raw(wgs84_doc(raw), ground=terrain.FlatGround(100.0, "t"))
     for ground in (g, g0):
         try:
             Shield(pol2, ground=ground, up_ref="terrain", escalation=False)
@@ -311,7 +316,7 @@ def test_an_msl_corridor_over_a_dem_reuses_its_tube():
         "id": "cor", "type": "corridor", **H, "altitude_ref": "MSL",
         "centerline": [{"x": -45, "y": 0}, {"x": 45, "y": 0}],
         "width_m": 20.0, "altitude_floor_m": 130.0, "altitude_ceiling_m": 260.0}]}
-    sh = Shield(policy_from_raw(raw, ground=g), ground=g, up_ref="terrain",
+    sh = Shield(policy_from_raw(wgs84_doc(raw), ground=g), ground=g, up_ref="terrain",
                 escalation=False)
     bands = set()
     for k in range(400):
@@ -356,7 +361,7 @@ def test_the_kpi_tool_runs_its_dsl_kpis_in_a_stated_frame():
     dem = T.load_dem()
     assert dem.origin == T.FRAME and terrain.GridGround.load(T.DEM_PATH).origin is None
     for raw in (T.fifty_rule_msl_raw(), T.family_policy()):
-        pol = policy_from_raw(raw, ground=dem)
+        pol = policy_from_raw(wgs84_doc(raw), ground=dem)
         assert pol.point_form == "wgs84" and pol.frame_origin == T.FRAME, raw["policy_id"]
     with tempfile.TemporaryDirectory() as td:
         kp = T.dsl_kpis(dem, 0, 1, 4, 2, Path(td))

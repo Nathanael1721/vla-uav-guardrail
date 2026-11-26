@@ -324,6 +324,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from .models import wgs84_from_metres
 from .scenario_spec import (Episode, Family, Library, PolicyRef, ScenarioEvent,  # noqa: F401
                             arm_episodes, episode_arms, load_profile)
 
@@ -912,7 +913,8 @@ _NO_REST_FORM = {
 
 
 def rest_body_of_event(ev, *, zone_k: int | None = None,
-                       last_zone: str | None = None) -> dict:
+                       last_zone: str | None = None,
+                       origin: tuple[float, float] | None = None) -> dict:
     """The REST hot-apply body (guardrail/api.py) that makes a flying Shield
     apply ScenarioEvent `ev` as the rail's mission node applies the same event
     from its --events file (2026-11-14, WP4-03): guardrail.scenario_events.
@@ -940,6 +942,17 @@ def rest_body_of_event(ev, *, zone_k: int | None = None,
     before it), an edit with no `id` edits the last zone spawned. None: the
     payload must name it (INVALID_ARGUMENT otherwise).
 
+    WGS84 ONLY (WP1-14, 2026-11-26). A ScenarioEvent's absolute positions
+    (a spawn's `vertices`, a swap's `centerline`) are written in local
+    metres, the stress library's frame (or in {lat, lon}, passed as given);
+    the REST endpoint takes {lat, lon} only. Metres are
+    converted here, tool side, about `origin` - the frame origin of the
+    policy the mission flies (Policy.frame_origin, what GET /policy states
+    as `origin`) - with models.wgs84_from_metres, the conversion the
+    endpoint applied at ingest until then, so the zone written is the same.
+    An event with such points and no `origin` is FAILED_PRECONDITION.
+    Relative edits (translate dx_m / dy_m, rotate, scale) stay in metres.
+
     Raises HarnessError UNIMPLEMENTED for a form with no REST body (a zone
     placed against the vehicle, a change of motion, an expected refusal:
     _NO_REST_FORM says why), INVALID_ARGUMENT for a payload neither the
@@ -961,6 +974,28 @@ def rest_body_of_event(ev, *, zone_k: int | None = None,
             raise HarnessError("INVALID_ARGUMENT", f"{t}: `{key}` is required")
         return _finite(v, f"{t} {key}")
 
+    def point(v, what: str) -> dict:
+        # {lat, lon} as given (WGS84), else {x, y} / [x, y] local metres.
+        if isinstance(v, dict) and v.get("lat") is not None and v.get("lon") is not None:
+            return {"lat": _finite(v["lat"], f"{t} {what} lat"),
+                    "lon": _finite(v["lon"], f"{t} {what} lon")}
+        x, y = (v["x"], v["y"]) if isinstance(v, dict) else (v[0], v[1])
+        return {"x": _finite(x, f"{t} {what} x"), "y": _finite(y, f"{t} {what} y")}
+
+    def latlon(pts: list[dict], what: str) -> list[dict]:
+        if not any("x" in v for v in pts):
+            return pts                                 # given in WGS84 already
+        if origin is None:
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"{t}: its {what} are local metres and the REST "
+                               f"endpoint takes {{lat, lon}} only (WP1-14); no frame "
+                               f"origin was given to convert them about (the policy's "
+                               f"`origin`)")
+        try:
+            return wgs84_from_metres(pts, origin, what=f"{t} {what}")
+        except ValueError as err:
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: {err}") from None
+
     if t == "spawn_polygon_fence":
         if "vertices" not in p:
             raise HarnessError("UNIMPLEMENTED", f"{t}: " + _NO_REST_FORM["vehicle"])
@@ -969,15 +1004,14 @@ def rest_body_of_event(ev, *, zone_k: int | None = None,
             raise HarnessError("INVALID_ARGUMENT", f"{t}: vertices must be a list of at "
                                                    f"least three {{x, y}} points")
         try:
-            pts = [{"x": _finite(v["x"], f"{t} vertex x"), "y": _finite(v["y"], f"{t} vertex y")}
-                   for v in verts]
-        except (KeyError, TypeError):
-            raise HarnessError("INVALID_ARGUMENT", f"{t}: every vertex is {{x, y}} in "
-                                                   f"metres") from None
+            pts = [point(v, "vertex") for v in verts]
+        except (KeyError, TypeError, IndexError):
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: every vertex is {{lat, lon}} or "
+                                                   f"{{x, y}} in metres") from None
         body: dict[str, Any] = {
             "type": "dynamic_nfz",
             "id": zone_id(None if zone_k is None else f"dyn-nfz-{zone_k}", "spawns"),
-            "vertices": pts,
+            "vertices": latlon(pts, "vertices"),
             "priority": p.get("priority", "P0"),
             "constraint_type": p.get("constraint_type", "hard"),
             "violation_action": p.get("violation_action", "repair"),
@@ -1019,12 +1053,10 @@ def rest_body_of_event(ev, *, zone_k: int | None = None,
         tgt = p.get("target_id")
         if not isinstance(tgt, str) or not tgt:
             raise HarnessError("INVALID_ARGUMENT", f"{t}: `target_id` is required")
-        cl = []
-        for v in p.get("centerline") or []:
-            x, y = (v["x"], v["y"]) if isinstance(v, dict) else (v[0], v[1])
-            cl.append({"x": _finite(x, f"{t} centerline x"), "y": _finite(y, f"{t} centerline y")})
+        cl = [point(v, "centerline") for v in p.get("centerline") or []]
         body = {"type": "corridor_swap", **_EVENT_RULE_BASE, "id": p.get("id") or f"swap-{tgt}",
-                "target_id": tgt, "centerline": cl, "width_m": num("width_m")}
+                "target_id": tgt, "centerline": latlon(cl, "centerline"),
+                "width_m": num("width_m")}
         for k in ("altitude_floor_m", "altitude_ceiling_m"):
             if k in p:
                 body[k] = num(k)
@@ -1034,7 +1066,7 @@ def rest_body_of_event(ev, *, zone_k: int | None = None,
     raise HarnessError("INVALID_ARGUMENT", f"event type {t!r} has no REST hot-apply form")
 
 
-def scenario_rest_timeline(spec) -> list[dict]:
+def scenario_rest_timeline(spec, origin: tuple[float, float] | None = None) -> list[dict]:
     """A scenario's own events as the REST forwards a harness-driven rail
     episode makes (StartEpisode drive_scenario_events, 2026-11-14): in the
     order the mission applies them (by at_sim_t, ties as written: run_episode's
@@ -1042,15 +1074,21 @@ def scenario_rest_timeline(spec) -> list[dict]:
     route (rest_route). Each entry: {index, at_sim_t, type, payload, body,
     method, path}.
 
+    `origin` is the frame origin the events' metre positions are converted
+    about (rest_body_of_event); None reads it from the scenario's own policy
+    (spec.policy), the policy the mission flies.
+
     Raises FAILED_PRECONDITION naming every event that has no REST form (the
     scenario then flies only with the mission's own --events), and
     INVALID_ARGUMENT when the scenario has no events to drive."""
     order = sorted(enumerate(spec.events), key=lambda x: x[1].at_sim_t)
+    if origin is None and any(_event_has_points(ev) for ev in spec.events):
+        origin = _policy_origin(spec)
     k, last = 0, None
     out, problems = [], []
     for i, ev in order:
         try:
-            body = rest_body_of_event(ev, zone_k=k, last_zone=last)
+            body = rest_body_of_event(ev, zone_k=k, last_zone=last, origin=origin)
         except HarnessError as err:
             problems.append(f"#{i} {ev.type} at {ev.at_sim_t:g} s ({err.code}: {err.message})")
             body = None
@@ -1071,6 +1109,23 @@ def scenario_rest_timeline(spec) -> list[dict]:
         raise HarnessError("INVALID_ARGUMENT", f"{spec.scenario_id} has no events of its own "
                                                f"for the harness to drive")
     return out
+
+
+def _event_has_points(ev) -> bool:
+    """Does ScenarioEvent `ev` give absolute positions (a spawn's vertices, a
+    swap's centerline), which a REST body carries as lat/lon?"""
+    p = ev.payload or {}
+    return ((ev.type == "spawn_polygon_fence" and "vertices" in p)
+            or (ev.type == "swap_corridor" and bool(p.get("centerline"))))
+
+
+def _policy_origin(spec) -> tuple[float, float] | None:
+    """The frame origin of the policy scenario `spec` flies (None: it has
+    none, or it does not load)."""
+    try:
+        return spec.policy.load(ROOT).frame_origin
+    except Exception:                                       # noqa: BLE001
+        return None
 
 
 def flown_start_policy_hash(manifest: dict | None, held: dict) -> str | None:
@@ -1322,13 +1377,15 @@ def rail_bag_and_audit(run_dir: str | Path, ep_dir: str | Path, *,
 
 def _blob_is(blob: bytes, recorded: str) -> bool:
     """Is `blob` the canonical IR the hash `recorded` names? Its SHA-256, or
-    (an older run's shortened hash) the policy it parses to matching it."""
+    (an older run's shortened hash) the policy it parses to matching it.
+    The blob is a recorded generation, read in the form it was recorded in
+    (an older run's may hold local metres; WP1-14)."""
     if "sha256:" + hashlib.sha256(blob).hexdigest() == recorded:
         return True
     try:
-        from .models import policy_from_raw
-        return bool(policy_from_raw(json.loads(blob), source="generation",
-                                    runtime=False).matches_hash(recorded))
+        from .models import legacy_metre_policy_from_raw
+        return bool(legacy_metre_policy_from_raw(json.loads(blob), source="generation",
+                                                 runtime=False).matches_hash(recorded))
     except Exception:                                            # noqa: BLE001
         return False
 
@@ -2029,20 +2086,26 @@ class Harness:
         """Refuse a mid-flight rule change (HotApply, EmitEvent, a session
         HotApply forwarded while it flies) to an episode whose pilot consumes
         the CSP (2026-11-16, profile `prefix_consumer`), before anything is
-        queued, forwarded or acked: the pilot flies the CSP compiled before
-        take-off, so a Shield that moved to generation N while the pilot kept
-        generation 0's CSP would be scored and bundled as the arm's flight -
-        the reason a scenario with mid-flight events is refused for the
-        consumer (experiments/sweep_scenarios.py prefix_consumer_refusal).
-        Both arms are refused alike, so the pair stays one scenario."""
+        queued, forwarded or acked. Since 2026-11-26 (audit card WP4-19)
+        generation N's CSP follows the SCENARIO's own events to the pilot
+        (headless at the event; on a rail with --csp-topic, which only such
+        a scenario is sent): a change injected here is one the scenario does
+        not declare. This refusal is what keeps it out of such an episode:
+        once applied, a rail's Shield node would publish that generation to
+        the pilot like any other (EpisodeRecord.on_generation fires for every
+        generation, a REST hot-apply's too). A rail flight the stress harness
+        scores is also refused afterwards, on either arm, when a generation
+        above 0 was made by no scenario_event of the run
+        (experiments/sweep_scenarios.py prefix_generation_problems). Both
+        arms are refused alike, so the pair stays one scenario."""
         if getattr(e.ep, "prefix_consumer", None):
             raise HarnessError(
                 "FAILED_PRECONDITION",
                 f"{rpc} refused: episode {e.episode_id} is arm {e.ep.arm_tag} of a pilot "
                 f"that consumes the CSP (guardrail.prefix_consumer, profile "
-                f"{e.profile or '?'}), which flies the CSP compiled before take-off; a "
-                f"mid-flight rule change needs generation N's CSP at the pilot, which is "
-                f"not built (audit card WP4-19). Its rules cannot change in flight")
+                f"{e.profile or '?'}); generation N's CSP reaches that pilot only for the "
+                f"scenario's own declared events (audit card WP4-19), so its rules cannot "
+                f"be changed in flight from here")
 
     def hot_apply(self, episode_id: str = "", at_sim_t: float = 0.0,
                   body: dict | None = None, *, session_id: str = "",
@@ -3033,7 +3096,8 @@ class Harness:
             except ValidationError as err:
                 raise HarnessError("INVALID_ARGUMENT",
                                    f"ScenarioEvent refused: {err}") from None
-            timeline.append(item("emit_event", ev.at_sim_t, rest_body_of_event(ev),
+            timeline.append(item("emit_event", ev.at_sim_t,
+                                 rest_body_of_event(ev, origin=_policy_origin(mission)),
                                  scenario_event=ev.type))
         timeline.sort(key=lambda x: x["at_sim_t"])            # stable: ties as queued
         store = (Path(rig.store or (cfg.store if cfg else None) or self.runs_dir / "rail_runs")
@@ -3075,7 +3139,7 @@ class Harness:
                                                "type": type_, "payload": dict(payload or {})})
         except ValidationError as err:
             raise HarnessError("INVALID_ARGUMENT", f"ScenarioEvent refused: {err}") from None
-        body = rest_body_of_event(ev)
+        body = rest_body_of_event(ev, origin=e.policy.frame_origin)
         ack = self._rail_hot_apply(
             e, at_sim_t, body, now, source="emit_event", kind=ev.type,
             extra={"scenario_event": ev.type},

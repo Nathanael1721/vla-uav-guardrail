@@ -73,6 +73,18 @@ demo/out/<--tag>/vla_prefix/csp_g0.json. Without `--prefix` - every mission
 flown until this date - nothing here runs: the law is published as it
 always was and the identity record is the one it was, key for key.
 
+GENERATION N (2026-11-26, audit card WP4-19). With `--prefix on
+--csp-topic on` the prefix-on arm follows the Shield's hot-applies: it reads
+the Shield node's latched /shield/csp (each generation's policy and CSP),
+compiles that generation's CSP for its own mission at the generation's rule
+clock reading, static over the rest of --max-s, and swaps it into the
+consumer in one assignment, so its next tick decides on it
+(guardrail.csp_topic.GenerationFollower). It announces the generation it
+flies - at take-off and after every swap, or a refusal - on the latched
+/vla/prefix_csp, which the Shield node stamps on its rows. /vla/identity
+still announces the CSP taken off with. Without `--csp-topic on` (or on the
+prefix-off arm, which holds no CSP) nothing of this runs.
+
 Run (after `source /opt/ros/jazzy/setup.bash`):
 
     ~/venv-ros/bin/python sitl/ros2_vla_stub_node.py [--bundle B | --policy P] [--yaw-rate 0.2]
@@ -95,6 +107,7 @@ for _p in (ROOT, ROOT / "sitl"):
         sys.path.insert(0, str(_p))
 
 from guardrail import Action4D, State                          # noqa: E402
+from guardrail import csp_topic as CT                          # noqa: E402
 from guardrail import prefix_consumer as PC                    # noqa: E402
 from guardrail.bundle import load_for_flight                   # noqa: E402
 from guardrail.compiler import ConstraintCompiler              # noqa: E402
@@ -265,6 +278,29 @@ def flight_length_from(text) -> float | None:
     return s
 
 
+def prefix_mission(args, mission, start=None):
+    """The consumer's mission (guardrail.prefix_consumer.consumer_mission)
+    from this node's arguments: the start (--start, else the mission's),
+    the target (none with --no-target), the speed and cruise altitude. Every
+    generation's CSP is compiled for it (prefix_pilot, generation_follower)."""
+    s = ((mission.start_x, mission.start_y) if start is None
+         else (float(start[0]), float(start[1])))
+    target = (None if getattr(args, "no_target", False)
+              else (mission.target_x, mission.target_y))
+    return PC.consumer_mission(s, target, mission.speed_pref_mps,
+                               cruise_alt_m=mission.cruise_alt_m)
+
+
+def generation_follower(args, consumer, mission, start=None):
+    """GENERATION N (module docstring): the GenerationFollower of the
+    prefix-on arm with `--csp-topic on`; None otherwise (no --prefix, the
+    off arm, or the flag off): nothing then follows the Shield."""
+    if getattr(args, "csp_topic", "off") != "on" or getattr(args, "prefix", None) != "on":
+        return None
+    return CT.GenerationFollower(consumer, prefix_mission(args, mission, start),
+                                 max_s=flight_length_from(getattr(args, "max_s", None)))
+
+
 def prefix_pilot(args, policy, mission, pilot, pilot_rec: dict, start=None
                  ) -> tuple[object, dict, dict | None, object]:
     """(pilot, its record, the /vla/identity `prefix` record, the CSP) for
@@ -283,12 +319,7 @@ def prefix_pilot(args, policy, mission, pilot, pilot_rec: dict, start=None
     wraps = pilot_rec["model_id"]
     csp = None
     if arm == "on":
-        s = ((mission.start_x, mission.start_y) if start is None
-             else (float(start[0]), float(start[1])))
-        target = (None if getattr(args, "no_target", False)
-                  else (mission.target_x, mission.target_y))
-        cm = PC.consumer_mission(s, target, mission.speed_pref_mps,
-                                 cruise_alt_m=mission.cruise_alt_m)
+        cm = prefix_mission(args, mission, start)
         csp = PC.static_csp(policy, cm,
                             now=clock_start_from(getattr(args, "clock_start", None)),
                             duration_s=flight_length_from(getattr(args, "max_s", None)))
@@ -427,6 +458,13 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--tag", default=None,
                     help="--prefix on: the run directory demo/out/<tag>, where the CSP "
                          "is written (vla_prefix/csp_g0.json)")
+    # GENERATION N (module docstring): the Shield node's flag too.
+    ap.add_argument("--csp-topic", choices=("on", "off"), default="off",
+                    help="--prefix on: follow the Shield's generations on /shield/csp "
+                         "(swap in generation N's CSP) and announce the one flown on "
+                         "/vla/prefix_csp (guardrail/csp_topic.py, WP4-19). Default off: "
+                         "the CSP taken off with is flown throughout, as before "
+                         "2026-11-26")
     return ap
 
 
@@ -474,13 +512,34 @@ if HAVE_ROS:
                                     pilot=pilot, start=start,
                                     has_target=not args.no_target, prefix=prefix)
             self.pub_id.publish(String(data=json.dumps(ident)))
+            # GENERATION N (module docstring): the prefix-on arm with
+            # --csp-topic on follows the Shield's /shield/csp. Its
+            # subscription runs on this node's one executor, as the 10 Hz
+            # tick does, so a swap never lands inside a tick. A topic SROS 2
+            # refuses is logged and the arm flies its take-off CSP (the
+            # harness then refuses the flight: no generation announced).
+            self.follower = generation_follower(args, self.vla, mission, start)
+            self.pub_gen = None
+            if self.follower is not None:
+                try:
+                    self.pub_gen = self.create_publisher(String, CT.PILOT_CSP_TOPIC, latched)
+                    self.create_subscription(String, CT.CSP_TOPIC, self._on_shield_csp,
+                                             latched)
+                except Exception as e:                           # noqa: BLE001
+                    self.pub_gen = None
+                    self.get_logger().error(f"{CT.CSP_TOPIC} not followed: "
+                                            f"{type(e).__name__}: {e}")
+                else:
+                    self.pub_gen.publish(String(data=json.dumps(
+                        self.follower.announcement())))
             self.create_timer(0.1, self._tick)                 # 10 Hz - the contract
             if prefix is not None:
                 self.create_timer(10.0, self._prefix_stats)
                 self.get_logger().info(
                     f"prefix arm {prefix['arm']}: {prefix['id']} around {prefix['wraps']}, "
                     f"CSP action sets {prefix['action_set_sha256']} "
-                    f"(file {prefix.get('csp_file')})")
+                    f"(file {prefix.get('csp_file')})"
+                    + (f"; following {CT.CSP_TOPIC}" if self.pub_gen is not None else ""))
             self.get_logger().info(
                 f"VLA stub up: pilot {pilot['type']} ({pilot['model_id']}), policy "
                 f"{policy.policy_id} {policy.policy_hash} "
@@ -502,10 +561,34 @@ if HAVE_ROS:
             self.pub.publish(Float32MultiArray(
                 data=body_action(self.vla, self.state, self.yaw_rate)))
 
+        def _on_shield_csp(self, msg: String) -> None:
+            """A /shield/csp message (GENERATION N): a newer generation is
+            compiled and swapped in (GenerationFollower.take) and the
+            generation flown announced on /vla/prefix_csp."""
+            try:
+                doc = json.loads(msg.data)
+            except ValueError:
+                doc = None
+            ann = self.follower.take(doc)
+            if ann is None:
+                return
+            self.pub_gen.publish(String(data=json.dumps(ann)))
+            if ann.get("refused"):
+                self.get_logger().error(f"generation {ann.get('generation')} refused: "
+                                        f"{ann['refused']}")
+            else:
+                self.get_logger().info(
+                    f"prefix arm on: generation {ann['generation']} CSP swapped in "
+                    f"(action sets {ann['action_set_sha256']})")
+
         def _prefix_stats(self) -> None:
-            # What the consumer did so far (its tick counts), for the console
-            # log of a prefix mission.
-            self.get_logger().info(f"prefix arm {self._prefix['arm']}: {self.vla.stats}")
+            # What the consumer did so far (its tick counts, and the ticks
+            # per CSP generation once it has swapped), for the console log
+            # of a prefix mission.
+            extra = (f", ticks per generation {self.vla.generation_ticks}"
+                     if getattr(self.vla, "swaps", None) else "")
+            self.get_logger().info(f"prefix arm {self._prefix['arm']}: {self.vla.stats}"
+                                   + extra)
 
 
 def check_args(args) -> None:

@@ -22,6 +22,7 @@ from guardrail import holdpoint as HP  # noqa: E402
 from guardrail import load_policy  # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
@@ -40,7 +41,7 @@ def _spinning_bar() -> Shield:
                      altitude_floor_m=0, altitude_ceiling_m=1000, margin_m=1.0,
                      motion={"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 3.0})
     sh = Shield(load_policy(DEMO), escalation=False)
-    sh.spawn_nfz(bar, t=0.0)
+    sh.spawn_nfz(geo(bar, sh), t=0.0)
     sh.filter(FLOWN, Action4D(), t=SEARCH_T)
     return sh
 

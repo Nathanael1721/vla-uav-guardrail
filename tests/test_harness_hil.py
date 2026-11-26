@@ -182,18 +182,32 @@ def _ev(at, typ, payload) -> ScenarioEvent:
 def test_each_event_form_maps_to_the_rest_body_and_route_the_endpoint_takes():
     """rest_body_of_event: the routes, the defaults the mission writes made
     explicit, the zone ids resolved as the mission's EventState would, and
-    the forms with no REST body refused with why."""
+    the forms with no REST body refused with why. Since 2026-11-26 (WP1-14)
+    the endpoint takes absolute positions in WGS84 only: an event's metre
+    vertices / centerline are converted tool side about the policy's frame
+    origin (models.wgs84_from_metres), lat/lon ones are passed as given, and
+    metres with no origin to convert them about are FAILED_PRECONDITION."""
+    from guardrail.models import wgs84_from_metres
+    o = (-35.363261, 149.16523)                      # sim_demo_policy's origin
     verts = [{"x": 1, "y": 2}, {"x": 3, "y": 2}, {"x": 3, "y": 5}]
-    spawn = H.rest_body_of_event(_ev(1, "spawn_polygon_fence", {"vertices": verts}), zone_k=2)
+    ll = wgs84_from_metres([{"x": 1.0, "y": 2.0}, {"x": 3.0, "y": 2.0},
+                            {"x": 3.0, "y": 5.0}], o)
+    assert all(set(v) == {"lat", "lon"} for v in ll), ll
+    spawn = H.rest_body_of_event(_ev(1, "spawn_polygon_fence", {"vertices": verts}), zone_k=2,
+                                 origin=o)
     assert spawn == {"type": "dynamic_nfz", "id": "dyn-nfz-2",
-                     "vertices": [{"x": 1.0, "y": 2.0}, {"x": 3.0, "y": 2.0},
-                                  {"x": 3.0, "y": 5.0}],
+                     "vertices": ll,
                      "priority": "P0", "constraint_type": "hard", "violation_action": "repair",
                      "scope": "mission", "altitude_floor_m": 0.0,
                      "altitude_ceiling_m": 1000.0, "margin_m": 1.0}, spawn
     assert H.rest_route(spawn)[:2] == ("POST", "/hot_apply")
+    given = H.rest_body_of_event(_ev(1, "spawn_polygon_fence", {"id": "g", "vertices": ll}))
+    assert given["vertices"] == ll, given                # lat/lon: as given, no origin needed
+    code_, why = TR._refused(H.rest_body_of_event,
+                             _ev(1, "spawn_polygon_fence", {"id": "g", "vertices": verts}))
+    assert code_ == "FAILED_PRECONDITION" and "WP1-14" in why, (code_, why)
     moving = H.rest_body_of_event(_ev(1, "spawn_polygon_fence", {
-        "id": "m", "vertices": verts, "motion": {"vx_mps": 1.0}, "margin_m": 2}))
+        "id": "m", "vertices": verts, "motion": {"vx_mps": 1.0}, "margin_m": 2}), origin=o)
     assert moving["motion"] == {"vx_mps": 1.0} and moving["margin_m"] == 2.0
     cases = [
         (_ev(2, "translate_polygon_fence", {"dx_m": 4, "dy_m": -1}),
@@ -213,9 +227,9 @@ def test_each_event_form_maps_to_the_rest_body_and_route_the_endpoint_takes():
     on = H.rest_body_of_event(_ev(3, "activate_rule", {"rule_id": "nfz-1", "window": win}))
     assert on["id"] == "sw-nfz-1-on" and on["valid_time"] == {"recurrence": win}, on
     swap = H.rest_body_of_event(_ev(4, "swap_corridor", {
-        "target_id": "c1", "centerline": [[0, 0], {"x": 10, "y": 0}], "width_m": 6}))
-    assert swap["id"] == "swap-c1" and swap["centerline"] == [{"x": 0.0, "y": 0.0},
-                                                               {"x": 10.0, "y": 0.0}], swap
+        "target_id": "c1", "centerline": [[0, 0], {"x": 10, "y": 0}], "width_m": 6}), origin=o)
+    assert swap["id"] == "swap-c1" and swap["centerline"] == wgs84_from_metres(
+        [{"x": 0.0, "y": 0.0}, {"x": 10.0, "y": 0.0}], o), swap
     # no REST form, with why; nothing to name the zone by
     for ev, code, word in (
             (_ev(1, "spawn_polygon_fence", {"width_m": 10, "height_m": 5,
@@ -229,7 +243,7 @@ def test_each_event_form_maps_to_the_rest_body_and_route_the_endpoint_takes():
             (_ev(1, "deactivate_rule", {"rule_id": "r", "expect_refused": True}),
              "UNIMPLEMENTED", "expect_refused"),
             (_ev(1, "scale_radius", {"factor": 2}), "INVALID_ARGUMENT", "`id`"),
-            (_ev(1, "spawn_polygon_fence", {"vertices": verts}), "INVALID_ARGUMENT", "`id`"),
+            (_ev(1, "spawn_polygon_fence", {"vertices": ll}), "INVALID_ARGUMENT", "`id`"),
             (_ev(1, "spawn_polygon_fence", {"id": "z", "vertices": verts[:2]}),
              "INVALID_ARGUMENT", "three")):
         code_, why = TR._refused(H.rest_body_of_event, ev)

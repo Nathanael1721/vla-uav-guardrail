@@ -61,6 +61,7 @@ from guardrail import load_policy                                 # noqa: E402
 from guardrail.models import Action4D, State                      # noqa: E402
 from guardrail.scenario_spec import Library, ScenarioSpec         # noqa: E402
 from guardrail.shield import Shield                               # noqa: E402
+from wgs84_fixture import geo, geo_ring, wgs84_doc             # noqa: E402
 
 LIBRARY = Library(ROOT / "experiments" / "scenarios.yaml")
 DEFAULTS = LIBRARY.defaults
@@ -2694,14 +2695,14 @@ def test_a_motion_swap_on_a_policy_zone_keeps_it_where_it_is():
         # the first one's edit. It states a frame origin: since 2026-11-18
         # (WP1-14) an edit's metres are written as WGS84 about it, and a
         # policy with no frame origin refuses them.
-        return policy_from_raw({"policy_id": "drift",
+        return policy_from_raw(wgs84_doc({"policy_id": "drift",
                                 "origin": {"lat": 35.6895, "lon": 139.6917},
                                 "constraints": [
             {"id": "z", "type": "dynamic_nfz",
              "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
              "vertices": [{"x": 100, "y": 0}, {"x": 110, "y": 0},
                           {"x": 110, "y": 10}, {"x": 100, "y": 10}],
-             "motion": {"vx_mps": 1.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}]},
+             "motion": {"vx_mps": 1.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}]}),
             runtime=False)
     sh = Shield(drift_policy())
     st = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
@@ -2761,13 +2762,22 @@ def test_a_brake_tick_is_checked_as_the_zero_action_it_flew():
     phantom = Violation(rule_id="phantom", category="geofence",
                         detail="the repaired action's, never flown", predicted_at_s=0.0)
 
+    def with_phantom(d):
+        if d.setpoint == "brake":
+            d = d.model_copy(update={"emitted_violations":
+                                     list(d.emitted_violations) + [phantom]})
+        return d
+
+    # Both entries: the harness hands its Shield the body frame (filter_body,
+    # which since 2026-11-26 does not go through the world-frame `filter`),
+    # its judges the world frame (filter).
     class Spy(S.Shield):
         def filter(self, *a, **kw):
-            d = super().filter(*a, **kw)
-            if d.setpoint == "brake":
-                d = d.model_copy(update={"emitted_violations":
-                                         list(d.emitted_violations) + [phantom]})
-            return d
+            return with_phantom(super().filter(*a, **kw))
+
+        def filter_body(self, *a, **kw):
+            d, eb = super().filter_body(*a, **kw)
+            return with_phantom(d), eb
     real = S.Shield
     S.Shield = Spy
     try:
@@ -3130,10 +3140,10 @@ def test_a_rail_step_is_judged_under_the_rules_of_the_instant_before():
     g1 = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
     sh = Shield(g1)
     sh.filter(State(x=-50.0, y=-50.0, up=15.0), Action4D())
-    sh.hot_apply(as_dynamic_nfz(PolygonFence(
+    sh.hot_apply(geo(as_dynamic_nfz(PolygonFence(
         id="dyn-top", type="polygon_fence", constraint_type="hard", priority="P0",
         violation_action="project_fix", scope="mission", margin_m=1.0,
-        vertices=[XY(x=-5, y=-5), XY(x=5, y=-5), XY(x=5, y=5), XY(x=-5, y=5)])))
+        vertices=[XY(x=-5, y=-5), XY(x=5, y=-5), XY(x=5, y=5), XY(x=-5, y=5)])), sh))
     gens = {0: pol, 1: g1}
     old = [dict(r, generation=(1 if i >= 2 else 0)) for i, r in enumerate(rows)]
     m = S.rail_measurements(old, pol, gens)
@@ -4213,7 +4223,7 @@ def _rail_generations(spec, run):
     from guardrail.models import policy_from_raw
 
     def snap(p):
-        return policy_from_raw(json.loads(p.canonical_bytes()), source="test", runtime=False)
+        return policy_from_raw(wgs84_doc(json.loads(p.canonical_bytes())), source="test", runtime=False)
     sh = Shield(spec.policy.load(ROOT))
     out = {sh.policy.generation: snap(sh.policy)}
     es = S._EventState(shields=[sh])

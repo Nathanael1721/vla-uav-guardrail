@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 import follow_vlm as F                                           # noqa: E402
 from guardrail import State                                      # noqa: E402
 from guardrail.models import DynamicNFZ, Policy                  # noqa: E402
+from wgs84_fixture import geo, geo_ring              # noqa: E402
 
 HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
            "violation_action": "project_fix"}
@@ -146,11 +147,11 @@ def test_a_refusal_mid_descent_holds_and_gives_the_descent_up():
 
     def spawn(d):
         if state["applied_at"] is None and d.up < 7.0:
-            sh.hot_apply(DynamicNFZ.model_validate({
+            sh.hot_apply(geo(DynamicNFZ.model_validate({
                 "id": "spawned-plaza", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0,
                 "altitude_floor_m": 0.0, "altitude_ceiling_m": 3.0,
                 "vertices": [{"x": 25, "y": -5}, {"x": 35, "y": -5},
-                             {"x": 35, "y": 5}, {"x": 25, "y": 5}]}))
+                             {"x": 35, "y": 5}, {"x": 25, "y": 5}]}), sh))
             state["applied_at"] = len(d.cmds)
 
     drone = FakeDrone(30.0, 0.0, 8.0, on_move=spawn)

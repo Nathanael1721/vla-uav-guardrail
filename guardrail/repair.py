@@ -57,6 +57,12 @@ decisions did not change. Until 2026-11-21 the operators were handed the
 world action and the Shield turned once around the whole stack
 (Shield.filter_body); an operator registered before then that read the
 action as North / East now reads forward / right (the same at heading 0).
+Since 2026-11-26 the Shield's chain and the first-feasible loop CARRY the
+body action from one operator to the next as well, and read it in the
+world frame only for each re-check (`_check` of `ctx.to_world(action)`);
+the tick's frame (`BodyFrame`) and every context of the tick share one
+memo of the pair, so the world reading of each carried body action is the
+one the world-frame chain had, and the decisions did not change.
 
 The Shield's two LAST RESORTS act through the same interface since
 2026-11-23 (WP3-04b): ClearanceEscape (Shield._rescue, the heading flown
@@ -71,10 +77,13 @@ the world-frame last resorts at random headings). So every repair that can
 change the flown action - the chain's operators and both last resorts -
 acts on the frame the VLA emits in; Brake (a stop, zero in every frame)
 and SoftRelax (which gives up rules, then re-runs the chain) change no
-action themselves. One input check is outside: Sanitise zeroes non-finite
-channels of the world action before the chain, so a body action with one
-non-finite horizontal channel loses both horizontal channels at a heading
-that is not a quarter turn (fail-safe: more conservative, never less).
+action themselves. Sanitise, the input check for non-finite channels, runs
+on the action in the frame the caller hands it in: on the body action for
+`Shield.filter_body` / `advise_body` (since 2026-11-26), so a non-finite
+body channel is zeroed alone at every heading (until then it ran on the
+world action, and one non-finite horizontal body channel took both
+horizontal channels with it at a heading that is not a quarter turn); on
+the world action for the world-frame wrappers `Shield.filter` / `advise`.
 
 An operator written to the grant's signature exactly - `repair(action,
 violation, ir)`, no `ctx`, no `categories` - is accepted too: `register`
@@ -168,8 +177,67 @@ def _channels(a: Action4D) -> tuple:
     return (a.vx, a.vy, a.vz_up, a.yaw_rate)
 
 
+class _FramePair:
+    """The one rotation pair between the BODY frame the VLA emits in and the
+    WORLD frame the rules are written in, at one heading (`heading_deg`,
+    0 = North, clockwise positive), LOSSLESS on its own results: `to_body`
+    remembers each body action it builds (in `frame_memo`, by identity and
+    value) and `to_world` of that same, unmodified body action returns the
+    world action it was made from, not a re-rotation of it (which at a
+    heading that is not a whole number of quarter turns could differ in the
+    last bits); `pair` records a body action and its world reading the same
+    way. Shared by the tick's frame (`BodyFrame`) and every RepairContext of
+    that tick (the same `frame_memo`), so a body action keeps one world
+    reading wherever on the tick it is read."""
+
+    def to_body(self, world: Action4D) -> Action4D:
+        """`world` as the body-frame Action4D at the tick's heading: the body
+        action this pair already made from it (or `pair` paired it with),
+        unchanged, else a new one, remembered."""
+        memo = self.frame_memo
+        hit = memo.get(("w", id(world)))
+        if (hit is not None and hit[0] is world and _same_values(_channels(world), hit[2])
+                and _same_values(_channels(hit[1]), hit[3])):
+            return hit[1]
+        fwd, right, up, yaw_rate = to_body(world, self.heading_deg)
+        body = Action4D.model_construct(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+        vals = _channels(body)
+        memo[("b", id(body))] = (body, world, vals)
+        memo[("w", id(world))] = (world, body, _channels(world), vals)
+        return body
+
+    def to_world(self, body: Action4D) -> Action4D:
+        """A body-frame action at the tick's heading in the world frame: the
+        world action `to_body` made it from (or `pair` paired it with) when
+        it is one of those, unchanged; `frames.from_body` otherwise."""
+        hit = self.frame_memo.get(("b", id(body)))
+        if hit is not None and hit[0] is body and _same_values(_channels(body), hit[2]):
+            return hit[1]
+        return from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, self.heading_deg)
+
+    def pair(self, body: Action4D, world: Action4D) -> None:
+        """Record `body` and `world` as one action read in the two frames:
+        `to_world(body)` is `world` and `to_body(world)` is `body` from now
+        on (each while it is unmodified)."""
+        bvals, wvals = _channels(body), _channels(world)
+        self.frame_memo[("b", id(body))] = (body, world, bvals)
+        self.frame_memo[("w", id(world))] = (world, body, wvals, bvals)
+
+
 @dataclass
-class RepairContext:
+class BodyFrame(_FramePair):
+    """One monitor tick's frame (Shield, since 2026-11-26, WP3-04): the
+    tick's heading and the memo of the rotation pair every RepairContext of
+    the tick shares. The Shield carries the action in the body frame through
+    its stack and reads it in the world frame only where a rule's geometry
+    is judged or forecast, and for the decision's records, through this
+    pair."""
+    heading_deg: float
+    frame_memo: dict = field(default_factory=dict, repr=False, compare=False)
+
+
+@dataclass
+class RepairContext(_FramePair):
     """What an operator may read, beyond the grant's (action, violation, ir).
 
     `repairs` is the list the chain logs its Repair records into: an operator
@@ -202,7 +270,11 @@ class RepairContext:
     (tests/test_shieldcore_repair.py compares them with the old chain at
     random headings) while every operator speaks the body frame. The same
     holds for the Shield's two last resorts (ClearanceEscape, OpenedEscape
-    below; since 2026-11-23), each run with a context of its own."""
+    below; since 2026-11-23). Since 2026-11-26 every context of a tick
+    shares the tick's frame memo (`BodyFrame`, the Shield's `tick.frame`):
+    the Shield's own stack carries the body action too, and the body action
+    the chain hands on is read in the world frame as the same world action
+    wherever it is read on that tick."""
     shield: Any
     state: State
     repairs: list
@@ -213,35 +285,13 @@ class RepairContext:
     pass_no: int = 0
     heading_deg: float | None = None
     # id(body) -> (body, world, body's channels); id(world) -> body. Shared by
-    # the copies `dataclasses.replace` makes (first-feasible's trials).
+    # the copies `dataclasses.replace` makes (first-feasible's trials), and
+    # by every context of a Shield tick (`BodyFrame.frame_memo`).
     frame_memo: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self):
         if self.heading_deg is None:
             self.heading_deg = float(getattr(self.state, "yaw_deg", 0.0) or 0.0)
-
-    def to_body(self, world: Action4D) -> Action4D:
-        """`world` as the body-frame Action4D at the tick's heading."""
-        memo = self.frame_memo
-        hit = memo.get(("w", id(world)))
-        if (hit is not None and hit[0] is world and _same_values(_channels(world), hit[2])
-                and _same_values(_channels(hit[1]), hit[3])):
-            return hit[1]
-        fwd, right, up, yaw_rate = to_body(world, self.heading_deg)
-        body = Action4D.model_construct(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
-        vals = _channels(body)
-        memo[("b", id(body))] = (body, world, vals)
-        memo[("w", id(world))] = (world, body, _channels(world), vals)
-        return body
-
-    def to_world(self, body: Action4D) -> Action4D:
-        """A body-frame action at the tick's heading in the world frame: the
-        world action `to_body` made it from when it is one of `to_body`'s,
-        unchanged; `frames.from_body` otherwise."""
-        hit = self.frame_memo.get(("b", id(body)))
-        if hit is not None and hit[0] is body and _same_values(_channels(body), hit[2]):
-            return hit[1]
-        return from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, self.heading_deg)
 
     @property
     def raw_body(self) -> Action4D:
@@ -1006,8 +1056,8 @@ def ledger_record(passes: list) -> list:
             for k, atts in passes]
 
 
-__all__ = ["CATEGORIES", "CHAIN_LOOP", "CHAIN_PRE", "ClearanceEscape", "FIRST_FEASIBLE",
-           "GrantOperator", "HookOperator", "OpenedEscape", "PathRepair", "REGISTRY",
+__all__ = ["BodyFrame", "CATEGORIES", "CHAIN_LOOP", "CHAIN_PRE", "ClearanceEscape",
+           "FIRST_FEASIBLE", "GrantOperator", "HookOperator", "OpenedEscape", "PathRepair", "REGISTRY",
            "REPAIR_MODES", "RESULTS", "RepairAttempt", "RepairContext", "RepairOperator",
            "adapt", "default_operators", "last_resort_operators", "ledger_record", "register",
            "with_path_repair"]

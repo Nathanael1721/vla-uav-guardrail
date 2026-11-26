@@ -195,7 +195,8 @@ from typing import Any
 
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
-                     LEGACY_POINT_FORMS, era_context, ir2_rule_view, load_policy)
+                     LEGACY_POINT_FORMS, ProjectedCoordinatesRefused, era_context,
+                     ir2_rule_view, load_legacy_metre_policy, load_policy)
 from .projection import LOCAL_QUANTUM_M
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -2495,7 +2496,18 @@ def load_for_flight(bundle: str | Path | None = None,
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
-        pol = load_policy(yaml_path, ground=ground)
+        if legacy_read:
+            # A declared read of a recorded flight: the one place a YAML in
+            # the legacy metre form is read for flight (WP1-14).
+            pol = load_legacy_metre_policy(yaml_path, ground=ground)
+        else:
+            try:
+                pol = load_policy(yaml_path, ground=ground)
+            except ProjectedCoordinatesRefused as exc:
+                if exc.policy is None:
+                    raise
+                raise LegacyPointFormRefused(
+                    _not_wgs84_message(exc.policy, yaml_path, is_bundle=False)) from None
         rec = policy_source_record("yaml", str(yaml_path), pol.policy_hash)
     # Whether THIS load required the chain (the effective value, from the
     # argument or VLAGUARD_REQUIRE_CHAIN): a run that says chain "verified"
@@ -2547,8 +2559,10 @@ def load_yaml_for_flight(path: str | Path, *, say=print) -> tuple[Policy, dict]:
     rules, same flight_problems refusal, same hash), so a run of these
     scripts on any policies/*.yaml is unchanged.
 
-    Headless tools and tests that read a metre document on purpose still use
-    models.load_policy; this is for an entry point about to fly."""
+    Since 2026-11-26 models.load_policy refuses a metre document as well
+    (ProjectedCoordinatesRefused); a tool that reads one on purpose, as a
+    declared re-read, uses models.load_legacy_metre_policy. This is for an
+    entry point about to fly."""
     pol, rec = load_for_flight(None, path)
     if rec.get("legacy_read"):
         say(f"[policy] LEGACY READ ({LEGACY_READ_ENV}=1): {Path(path).name} has "
@@ -3121,10 +3135,15 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     """Rebuild a hot-applied policy exactly as Shield.hot_apply produces it:
     each rule appended, generation bumped once per rule.
 
-    On a base with a frame (every stored policy since 2026-11-03), a rule's
-    metre points are written as WGS84 about the base's frame origin, as
-    Shield._in_frame writes them since 2026-11-17 (WP1-14,
-    models.rule_in_wgs84), so the rebuilt policy hashes as the live one did.
+    On a base with a frame (every stored policy since 2026-11-03), a NEW
+    derivation takes rules in WGS84 only, as the Shield's hot-apply entry
+    does since 2026-11-26 (WP1-14): a rule with a point in metres is
+    refused (models.ProjectedCoordinatesRefused; convert it tool-side with
+    models.wgs84_from_metres). A READ (`legacy_read=True`: the lock's
+    recipes, recorded in metres) still writes a recipe's metre points as
+    WGS84 about the base's frame origin, as Shield._in_frame wrote them from
+    2026-11-17 (models.rule_in_wgs84), so the rebuilt policy hashes as the
+    live one did.
 
     On a base with no frame (a policy written only in metres, the legacy
     read form) a rule with points is REFUSED (models.NoFrameOrigin), as the
@@ -3146,7 +3165,7 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     Before 4.0.0 a recipe may leave `scope` out, and it stays absent, as it
     flew (models.era_context); under 4.0.0 a recipe states it."""
     from pydantic import TypeAdapter
-    from .models import IR2_RULE_DEFAULTS, Constraint, rule_in_wgs84
+    from .models import IR2_RULE_DEFAULTS, Constraint, refuse_metre_rule, rule_in_wgs84
     if not wgs84_writes and not legacy_read:
         raise ValueError("derive(wgs84_writes=False) rebuilds a recorded run's metre "
                          "writes, a read of the legacy form: pass legacy_read=True; "
@@ -3160,6 +3179,11 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
         if ir2 and isinstance(raw, dict):
             raw = {**IR2_RULE_DEFAULTS, **raw}
         rule = ta.validate_python(raw, context=era)
+        if not legacy_read and frame is not None:
+            # A new derivation takes WGS84 rules only, as the Shield's
+            # hot-apply entry does since 2026-11-26 (WP1-14); a base with no
+            # frame refuses any rule with points below (NoFrameOrigin).
+            refuse_metre_rule(rule, f"derive: hot_apply rule {getattr(rule, 'id', '?')!r}")
         if wgs84_writes and not (legacy_read and frame is None):
             rule = rule_in_wgs84(rule, frame)
         pol.constraints.append(rule)
@@ -3688,7 +3712,9 @@ def _main(argv: list[str] | None = None) -> int:
                         help="with --reference: fold margin rings into the "
                              "vertices and drop schedules (stricter), recorded")
         a = ap.parse_args(argv[1:])
-        pol = load_policy(a.policy, runtime=False)
+        # A converter: it READS a stored metre document too (the legacy form,
+        # WP1-14) and writes it in WGS84 about --origin, or refuses it.
+        pol = load_legacy_metre_policy(a.policy, runtime=False)
         org = tuple(float(v) for v in a.origin.split(",")) if a.origin else None
         if a.reference:
             from .reference_convert import to_reference
@@ -3765,7 +3791,11 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"REFUSED  {exc}")
             return 2
     else:
-        pol = load_policy(args.policy, runtime=False)
+        try:
+            pol = load_policy(args.policy, runtime=False)
+        except ProjectedCoordinatesRefused as exc:      # WP1-14: WGS84 only
+            print(f"REFUSED  {exc}")
+            return 2
         # A bundle is a release: refuse to publish content under a version the
         # lock already gives to different content.
         why = _release_check(pol, args.policy)

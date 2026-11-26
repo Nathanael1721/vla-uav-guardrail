@@ -257,9 +257,11 @@ def test_a_post_nfz_payload_is_hot_applied_onto_its_base():
     stated = {**payload, "constraint_type": "hard", "priority": "P0",
               "violation_action": "project_fix", "scope": "mission"}
     assert pol.constraints[-1].scope == "mission"
+    from guardrail.models import wgs84_from_metres
     for route, body in ((api.apply_legacy_nfz, payload), (api.apply_dynamic_nfz, stated)):
         live = Shield(load_policy(DEMO))
-        route(live, dict(body))
+        # over REST the body is WGS84 (WP1-14, 2026-11-26): converted tool side
+        route(live, wgs84_from_metres(dict(body), live.policy.frame_origin))
         assert live.policy.policy_hash == pol.policy_hash, (route.__name__,
                                                              "ingest and the API disagree")
     assert G.ingest(stated, base).policy_hash == pol.policy_hash

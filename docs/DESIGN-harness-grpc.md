@@ -800,12 +800,19 @@ checkout):
 with the five bodies as files (a proposal, not a flown design: speed-cap
 flies east along y = -40 from x = -40 at its 5 m/s cap, so this zone is
 spawned beside the track 80 m ahead, moved onto it, turned, grown and
-switched off; where to put it is the flight's own decision):
+switched off; where to put it is the flight's own decision). Since
+2026-11-26 (WP1-14) a body gives absolute positions in WGS84 only: the zone's
+corners, (x, y) = (40, -62), (50, -62), (50, -47), (40, -47) m about
+sim_demo_policy.yaml's frame origin (-35.363261, 149.16523), are written as
+lat/lon with `guardrail.models.wgs84_from_metres` (a body with {x, y}
+vertices is answered 422). The relative edits stay in metres:
 
     zone.json        {"type": "dynamic_nfz", "id": "nfz-h1", "constraint_type": "hard",
                       "scope": "mission", "priority": "P0", "violation_action": "project_fix",
-                      "vertices": [{"x": 40, "y": -62}, {"x": 50, "y": -62},
-                                   {"x": 50, "y": -47}, {"x": 40, "y": -47}]}
+                      "vertices": [{"lat": -35.362901673886, "lon": 149.164547037266},
+                                   {"lat": -35.362811842358, "lon": 149.164547037266},
+                                   {"lat": -35.362811842358, "lon": 149.164712270186},
+                                   {"lat": -35.362901673886, "lon": 149.164712270186}]}
     translate.json   {"type": "dynamic_nfz", "op": "translate", "id": "nfz-h1", "dx": 0, "dy": 14}
     rotate.json      {"type": "dynamic_nfz", "op": "rotate", "id": "nfz-h1", "angle_deg": 30}
     scale.json       {"type": "dynamic_nfz", "op": "scale", "id": "nfz-h1", "factor": 1.5}

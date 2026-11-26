@@ -528,15 +528,27 @@ def test_on_the_rail_vehicle_the_autopilots_estimate_is_flown_as_the_rig_flew_it
     frozen denial reports no verdict."""
     seen = []
 
+    # Both entries: the harness hands its Shield the body frame (filter_body,
+    # which since 2026-11-26 does not go through the world-frame `filter`),
+    # its judges the world frame (filter).
     class Spy(Shield):
         def filter(self, state, *a, **kw):
             if getattr(state, "fix_ok", None) is False:
                 seen.append(getattr(state, "estimator_ok", None))
             return super().filter(state, *a, **kw)
 
+        def filter_body(self, state, *a, **kw):
+            if getattr(state, "fix_ok", None) is False:
+                seen.append(getattr(state, "estimator_ok", None))
+            return super().filter_body(state, *a, **kw)
+
     class Withheld(Shield):
         def filter(self, state, *a, **kw):
             return super().filter(state.model_copy(update={"estimator_ok": None}), *a, **kw)
+
+        def filter_body(self, state, *a, **kw):
+            return super().filter_body(state.model_copy(update={"estimator_ok": None}),
+                                       *a, **kw)
 
     kw = dict(response=SW.RAIL_VEHICLE["response"],
               autopilot_hold=SW.RAIL_VEHICLE["autopilot_hold"],
