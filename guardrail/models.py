@@ -226,6 +226,12 @@ DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 Scope = Literal["global", "mission", "segment", "waypoint"]
 Layer = Literal["regulation", "site", "mission"]
 AltitudeRef = Literal["AGL", "MSL"]
+# The schema's word for altitude_ref (policies/policy_dsl.schema.json): the
+# grant says heights are "AGL by default"; until 2026-11-26 the schema gave
+# the default (null) without saying what it means.
+ALTITUDE_REF_DOC = ("The datum of this rule's heights. null (or absent) means AGL, "
+                    "metres above ground, the DSL's default. MSL is an opt-in that "
+                    "flies only with a declared ground-elevation source.")
 # The grant's six, exactly (Policy DSL page, ConstraintBase). Until IR schema
 # 3.0.0 (2026-11-02) there was a seventh, `repair`: this repository's spelling
 # since July of what the grant calls project_fix - the Shield's projection
@@ -972,7 +978,7 @@ class PolygonFence(_Banded, _CanonicalRing, ConstraintBase):
     altitude_floor_m: float = 0.0
     altitude_ceiling_m: float = 1000.0
     margin_m: float = 1.0            # extra safety ring around the polygon
-    altitude_ref: AltitudeRef | None = None
+    altitude_ref: AltitudeRef | None = Field(default=None, description=ALTITUDE_REF_DOC)
 
     _given_vertices: list | None = PrivateAttr(default=None)
 
@@ -1087,7 +1093,7 @@ class AltitudeEnvelope(ConstraintBase):
     type: Literal["altitude_envelope"]
     alt_min_m: float
     alt_max_m: float
-    altitude_ref: AltitudeRef | None = None
+    altitude_ref: AltitudeRef | None = Field(default=None, description=ALTITUDE_REF_DOC)
 
     # The worked example and the reference say altitude_min_m; the taxonomy
     # table says alt_min / alt_max.
@@ -1241,7 +1247,7 @@ class Corridor(_Tube, ConstraintBase):
     width_m: float = Field(gt=0)             # full width; half is the tolerance
     altitude_floor_m: float = 0.0
     altitude_ceiling_m: float = 1000.0
-    altitude_ref: AltitudeRef | None = None
+    altitude_ref: AltitudeRef | None = Field(default=None, description=ALTITUDE_REF_DOC)
 
     GRANT_GEOMETRY: ClassVar[frozenset[str]] = _TUBE_GEOMETRY
     GRANT_DEFAULTS: ClassVar[dict[str, Any]] = _TUBE_GRANT_DEFAULTS
@@ -1369,7 +1375,7 @@ class DynamicNFZ(_Banded, _CanonicalRing, ConstraintBase):
     altitude_floor_m: float = 0.0
     altitude_ceiling_m: float = 1000.0
     margin_m: float = 1.0
-    altitude_ref: AltitudeRef | None = None
+    altitude_ref: AltitudeRef | None = Field(default=None, description=ALTITUDE_REF_DOC)
     motion: Motion | None = None         # absent = does not move once spawned
 
     _given_vertices: list | None = PrivateAttr(default=None)
@@ -1444,7 +1450,7 @@ class CorridorSwap(_Tube, ConstraintBase):
     width_m: float = Field(gt=0)
     altitude_floor_m: float = 0.0
     altitude_ceiling_m: float = 1000.0
-    altitude_ref: AltitudeRef | None = None
+    altitude_ref: AltitudeRef | None = Field(default=None, description=ALTITUDE_REF_DOC)
 
     GRANT_ALIASES: ClassVar[dict[str, str]] = {"target": "target_id"}
     GRANT_GEOMETRY: ClassVar[frozenset[str]] = _TUBE_GEOMETRY
@@ -1692,8 +1698,9 @@ class Policy(BaseModel):
         back: a lock recipe on a metre base or recording `wgs84_writes:
         false` is rebuilt as its run flew (bundle.derive legacy_read). Since
         2026-11-26 the entries (load_policy / policy_from_raw, the REST
-        bodies, the Shield's events, a new bundle.derive) refuse metre
-        input (ProjectedCoordinatesRefused), our own metre callers convert
+        bodies, the Shield's events, a new bundle.derive, the Ingest CLI
+        tools/geo_to_policy.py ingest) refuse metre input
+        (ProjectedCoordinatesRefused), our own metre callers convert
         tool side (wgs84_from_metres), and these forms are read only by
         load_legacy_metre_policy / legacy_metre_policy_from_raw; the one
         exception is Shield.wgs84_writes=False, a comparison switch no
@@ -2496,9 +2503,10 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     policy, so a generation's snapshot - what is stored, hashed and signed -
     carried projected coordinates, against "the DSL itself never carries
     projected coordinates" (grant, Policy DSL page). The Shield now passes
-    every rule an event writes through this (Shield._in_frame); so do
-    bundle.derive (a lock recipe on a base with a frame) and, in raw form,
-    tools/geo_to_policy.py ingest (projection.raw_points_in_wgs84).
+    every rule an event writes through this (Shield._in_frame); so does
+    bundle.derive (a lock recipe on a base with a frame). From 2026-11-17
+    until 2026-11-26 tools/geo_to_policy.py ingest converted metre rules in
+    raw form too; it now refuses them, as REST does (WP1-14).
 
     WHAT IS STORED: lat/lon only (the canonical IR drops any metre view), so
     the snapshot and its hash carry no projected coordinate.
@@ -2626,6 +2634,9 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 # events, the harness's REST forwards, tools, demos) convert tool-side through
 # `wgs84_from_metres`, about the frame origin of the policy they write into
 # (Policy.frame_origin; GET /policy `origin` over REST), before they call.
+# The Ingest CLI (tools/geo_to_policy.py ingest, WP1-16) is not such a
+# caller: it is a DSL entry and refuses metres as REST does (since
+# 2026-11-26; from 2026-11-17 it converted them itself).
 # The legacy metre READ of a document is `load_legacy_metre_policy` /
 # `legacy_metre_policy_from_raw`, used only by the declared re-reads and the
 # converters that write WGS84 from it: bundle.load_for_flight legacy_read
@@ -2648,16 +2659,43 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 #   * the DSL entries: load_policy / policy_from_raw / load_layered
 #     (refuse_projected_policy, on the raw document and on the model);
 #   * REST and gRPC: api._points on every body, top level and inside the
-#     grant's `geometry:` block (api._body_points); gRPC HotApply runs the
-#     same handler (api.apply_event); the deprecated POST /nfz refuses any
-#     key it does not define (NfzRequest extra="forbid");
+#     grant's `geometry:` block (api._body_points), which also refuses any
+#     point key other than lat/lon (the schema's additionalProperties
+#     false); gRPC HotApply runs the same handler (api.apply_event); the
+#     deprecated POST /nfz checks its top-level vertices the same way, and
+#     refuses a `geometry:` block (apply_legacy_nfz) but ignores other
+#     body keys it does not define (NfzRequest has no extra="forbid": its
+#     callers send the four rule fields beside the 2026-07 body);
+#   * the Ingest CLI, tools/geo_to_policy.py ingest (WP1-16), for a DSL
+#     rule or a POST /nfz / /dynamic_nfz body read from a file, stdin or a
+#     URL (ProjectedCoordinatesRefused, exit 2, the REST wording; since
+#     2026-11-26, before which it converted metres itself);
 #   * the Shield's events (Shield._in_frame, _given_ring) and a new
 #     bundle.derive (refuse_metre_rule);
-#   * the flight loader: bundle.load_for_flight refuses a policy stored in
-#     local metres (LEGACY_POINT_FORMS) and a bundle whose archived ir.json
-#     writes x/y beside lat/lon (BundleCheck.projected_points: the dump of the
+#   * the flight loaders: bundle.load_for_flight and bundle.load_bundle
+#     (runtime=True; since 2026-11-26) refuse a policy stored in local
+#     metres (LEGACY_POINT_FORMS) and a bundle whose archived ir.json writes
+#     x/y beside lat/lon (BundleCheck.projected_points: the dump of the
 #     bundles hashed before 2026-10-06), unless the load is a declared read
-#     (legacy_read / VLAGUARD_LEGACY_READ=1), which the record then says.
+#     (legacy_read=True, or VLAGUARD_LEGACY_READ=1, which declares it for
+#     EVERY such load in that process: nothing checks that the policy is a
+#     recorded one). load_for_flight's record then says so; load_bundle
+#     returns a Policy only and labels it (mark_legacy_read).
+# NOT a Policy DSL entry, and so not refusing metres: the Stress Testing
+# harness's own event type. The grant (Stress Testing page) defines
+# ScenarioEvent as the harness's scenario type, `payload: dict # event-
+# specific`, and its worked example gives the payload in metres relative to
+# the vehicle (width_m, height_m, ahead_of_vehicle_m, mps). Ours
+# (scenario_spec.ScenarioEvent) reaches the harness from a scenario YAML,
+# the hil rail's --events file, or over the network through the gRPC
+# harness's EmitEvent; the stress library may give a spawn's vertices or a
+# swap's centerline as ABSOLUTE local metres. The harness converts them to
+# WGS84 about the flown policy's frame origin (scenario_events.in_wgs84 in
+# process; harness_service.rest_body_of_event for the REST forward) BEFORE
+# anything reaches a Policy DSL entry - a Shield event or a REST / gRPC
+# hot-apply body - which takes lat/lon only. (scenario_events._point and
+# rest_body_of_event take lat/lon over an x/y written beside it without
+# checking the x/y.)
 # And for an IN-PROCESS caller, one check of the metre forms only:
 #   * Shield construction: no Shield is built on a policy that STORES a point
 #     in local metres (point_form a legacy form) unless a declared read

@@ -21,7 +21,9 @@ hash exactly as before; since 2026-11-03 no shipped policy is written in it
 (tools/convert_policies_wgs84.py), and since 2026-11-17 a metre point an
 event writes into a policy with a frame (REST hot-apply, the Shield's zone
 edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
-tools/geo_to_policy.py ingest) is converted at ingest (`metres_to_wgs84`,
+tools/geo_to_policy.py ingest; since 2026-11-26 REST, the Shield's events, a
+new derive and the ingest tool refuse metres and the caller converts them
+tool side, models.wgs84_from_metres) is converted at ingest (`metres_to_wgs84`,
 models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
 metre form is not STORED, and the converted point is bound to the frame,
 so the live Shield enforces the micrometre view of its stored lat/lon (the
@@ -362,8 +364,10 @@ def raw_point_metres(point: dict, origin) -> tuple[float, float]:
 def raw_points_in_wgs84(node, origin: tuple[float, float]):
     """A copy of raw rule(s) `node` with every metre point {x, y} written as
     {lat, lon} about `origin` (metres_to_wgs84); everything else as it was.
-    The raw-dict twin of models.rule_in_wgs84, for a tool that appends rules
-    to a policy with a frame (tools/geo_to_policy.py ingest, 2026-11-17)."""
+    The raw-dict twin of models.rule_in_wgs84, for a tool that writes metre
+    rules into a policy with a frame (demo/gui_policy.py, tools/msl_dem_kpi.py,
+    tools/wp1_roundtrip_kpi.py; tools/geo_to_policy.py ingest from 2026-11-17
+    until 2026-11-26, when it began to refuse metres as REST does)."""
     if isinstance(node, list):
         return [raw_points_in_wgs84(v, origin) for v in node]
     if not isinstance(node, dict):

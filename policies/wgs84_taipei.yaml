@@ -1,19 +1,21 @@
-# The same kind of policy every other file here expresses in metres, written in
-# WGS84 instead — the frame the DSL spec calls canonical.
+# A policy written in WGS84, the frame the DSL spec calls canonical, as every
+# policy in this directory has been since 2026-11-03.
 #
 # `policy-dsl.md`: "latitude / longitude is canonical... the DSL itself never
-# carries projected coordinates." Every other policy in this repository is in
-# local metres, and `models.py` has carried an admission of that since its first
-# version, together with the prediction that fixing it would be "a loader change
-# only". It was.
+# carries projected coordinates." When this file was written (September 2026)
+# it was the only policy in lat/lon; every other one was in local metres and
+# lat/lon was additive, projected once at load time. That is no longer so.
 #
-# WHY BOTH FORMS STAY SUPPORTED
+# WGS84 ONLY (WP1-14)
 #
-# Local metres are what AirSim, the SITL rails and every delivered artefact use.
-# Converting the project wholesale would invalidate every recorded flight and
-# every existing policy in exchange for no new evidence, so lat/lon is ADDITIVE:
-# a policy may be authored either way, and geographic coordinates are projected
-# once at load time.
+# Since 2026-11-03 every policies/*.yaml is stored and hashed in WGS84 with a
+# stated origin (tools/convert_policies_wgs84.py); local metres are a view the
+# Shield and the Prefix Compiler compute lazily from that origin. Since
+# 2026-11-26 the DSL loaders, REST / gRPC hot-apply, the Shield's events and
+# the Ingest CLI refuse a point given in local metres ({x, y}) or with x/y
+# beside lat/lon; a tool that works in metres converts them first with
+# guardrail.models.wgs84_from_metres. A recorded metre policy is read only
+# through a declared legacy read (models.load_legacy_metre_policy).
 #
 # THE ORIGIN IS REQUIRED, NOT DEFAULTED
 #
