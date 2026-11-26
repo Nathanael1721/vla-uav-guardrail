@@ -54,8 +54,17 @@ WHAT IS CHECKED (`tracking_problems`, the stress harness's backstop)
   * the pilot is never ahead of the Shield;
   * the pilot refused no generation (a refusal leaves it on the old CSP);
   * each announced generation's CSP is the one the harness compiles from the
-    run's own policy_g<N>.json at the same clock reading (its action sets'
-    SHA-256): the binding generation 0 already has (prefix_flight_problems).
+    run's own policy_g<N>.json (its action sets' SHA-256), at the rule clock
+    reading and hot-apply time the run's events.jsonl records for N - the
+    announcement must name those same inputs, so a pilot that compiled at
+    another clock or time is caught, not checked against its own claim: the
+    binding generation 0 already has (prefix_flight_problems).
+
+The harness (experiments/sweep_scenarios.py prefix_generation_problems)
+also refuses, on both arms of a consumer pair, any generation above 0 that
+none of the scenario's own scenario_event records made: the Shield node
+publishes EVERY generation (a REST hot-apply's too), so this is the backstop
+for a change the scenario does not declare.
 
 LAG_MAX_S, 1.0 s, is ten Shield ticks: the Shield writes generation N's
 files (its CSP compile among them) after the hot-apply tick's setpoint, the
@@ -90,6 +99,9 @@ PILOT_SCHEMA = "vla-prefix-csp/1"
 # The latest generation N's CSP may reach the pilot after the Shield's
 # hot-apply tick (module docstring).
 LAG_MAX_S = 1.0
+# Two records of one hot-apply's mission time agree within this: the
+# /shield/csp message rounds it to 4 decimals, events.jsonl to 3.
+T_TOL_S = 0.001
 # The flag both nodes read (each gets every argument): "on" makes the Shield
 # node publish CSP_TOPIC and read PILOT_CSP_TOPIC, and the stub's prefix-on
 # arm read CSP_TOPIC and publish PILOT_CSP_TOPIC. Default off: nothing here
@@ -276,15 +288,33 @@ def generation_lag(rows) -> dict:
     return out
 
 
+def _same_t(a, b) -> bool:
+    """Two mission times of one hot-apply as two records round them (the
+    message to 4 decimals, an events.jsonl record to 3)."""
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return abs(float(a) - float(b)) <= T_TOL_S
+    except (TypeError, ValueError):
+        return False
+
+
 def tracking_problems(rows, *, announcements=None, generations: dict | None = None,
                       csp_for: Callable[[Any, Any, Any], CSP] | None = None,
+                      records: dict | None = None,
                       lag_max_s: float = LAG_MAX_S) -> list[str]:
     """Why the pilot did not follow the Shield's generations (module
     docstring, WHAT IS CHECKED); [] when it did. `announcements`: the
     pilot's PILOT_CSP_TOPIC documents as the Shield node kept them;
     `generations`: {N: Policy} from the run's policy_g<N>.json;
-    `csp_for(policy, rule_clock_reading, t_shield)`: the harness's own
-    generation CSP for the binding check (none: not checked)."""
+    `csp_for(policy, rule_clock_reading, t)`: the harness's own generation
+    CSP for the binding check (none: not checked); `records`: {N: the run's
+    own `policy_generation` record of N} (events.jsonl: its
+    `rule_clock_reading` and mission time `t`). With `records`, an
+    announcement's compile inputs (`rule_clock_reading`, `t_shield`) must
+    be the recorded ones, and the harness compiles from the recorded ones:
+    a pilot that compiled generation N at another clock or time, and
+    announced those, is caught. Without it the announced inputs are used."""
     rows = [r for r in rows if isinstance(r, dict)]
     if not any("pilot_csp_generation" in r for r in rows):
         return [f"no row carries the pilot's CSP generation: the VLA node announced none "
@@ -325,9 +355,21 @@ def tracking_problems(rows, *, announcements=None, generations: dict | None = No
             out.append(f"the pilot's generation {g} CSP is for {a.get('policy_hash')}, the "
                        f"Shield's policy_g{g}.json is {pol.policy_hash}")
             continue
+        clock, t = a.get("rule_clock_reading"), a.get("t_shield")
+        if records is not None:
+            rec = records.get(g)
+            if not isinstance(rec, dict):
+                out.append(f"the pilot flew generation {g}, which the run's events.jsonl "
+                           f"records no policy_generation of")
+                continue
+            if rec.get("rule_clock_reading") != clock or not _same_t(rec.get("t"), t):
+                out.append(f"the pilot compiled generation {g}'s CSP at rule clock {clock!r}, "
+                           f"t={t!r}; the run recorded generation {g} at "
+                           f"{rec.get('rule_clock_reading')!r}, t={rec.get('t')!r}")
+                continue
+            clock, t = rec.get("rule_clock_reading"), rec.get("t")
         try:
-            want = PC.action_set_sha256(csp_for(pol, a.get("rule_clock_reading"),
-                                                a.get("t_shield")))
+            want = PC.action_set_sha256(csp_for(pol, clock, t))
         except Exception as e:                                   # noqa: BLE001
             out.append(f"generation {g}'s CSP cannot be compiled here ({type(e).__name__}: "
                        f"{e})")

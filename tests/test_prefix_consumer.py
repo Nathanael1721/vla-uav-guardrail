@@ -2305,6 +2305,115 @@ def test_the_dynamic_profile_flies_three_template_cells_on_and_off():
         "dynamic_nfz_movement", "corridor_swap", "radius_scaling"}
 
 
+def test_the_binding_compiles_from_the_run_s_own_record_not_the_pilot_s_claim():
+    """tracking_problems with `records` (the run's events.jsonl
+    policy_generation of N): an announcement whose rule clock or hot-apply
+    time is not the recorded one is caught BEFORE compiling - a pilot that
+    compiled generation N at a wrong clock and announced that clock would
+    otherwise pass, since the harness would compile at the same wrong clock
+    - and so is one of a generation the run records nothing of. The
+    recorded time may differ from the message's by its rounding (3 vs 4
+    decimals). The harness compiles from the recorded inputs."""
+    pol0, pol1 = _generation_1()
+    mission = PC.consumer_mission((-100.0, -100.0, 15.0), (100.0, -100.0, 15.0), 4.0)
+    seen = []
+
+    def csp_for(pol, clock, t):
+        seen.append((clock, t))
+        return CT.generation_csp(pol, mission, clock=clock, t_s=t, max_s=60.0)
+    clock = "2026-11-26T10:00:05"
+    good = {"generation": 1, "policy_hash": pol1.policy_hash, "rule_clock_reading": clock,
+            "t_shield": 0.2001,
+            "action_set_sha256": PC.action_set_sha256(csp_for(pol1, clock, 0.2001))}
+    rows = [{"t": round(0.1 * i, 4), "generation": int(i >= 2),
+             "pilot_csp_generation": int(i >= 3)} for i in range(6)]
+    gens = {0: pol0, 1: pol1}
+    records = {1: {"kind": "policy_generation", "generation": 1, "t": 0.2,
+                   "rule_clock_reading": clock}}
+    seen.clear()
+    assert CT.tracking_problems(rows, announcements=[good], generations=gens,
+                                csp_for=csp_for, records=records) == []
+    assert seen == [(clock, 0.2)], seen                    # the recorded inputs
+    forged_clock = dict(good, rule_clock_reading="2026-11-26T03:00:05")
+    forged_clock["action_set_sha256"] = PC.action_set_sha256(
+        csp_for(pol1, forged_clock["rule_clock_reading"], 0.2001))
+    # Without the record, the forged clock is compiled from and passes...
+    assert CT.tracking_problems(rows, announcements=[forged_clock], generations=gens,
+                                csp_for=csp_for) == []
+    # ...with it, it is caught.
+    got = CT.tracking_problems(rows, announcements=[forged_clock], generations=gens,
+                               csp_for=csp_for, records=records)
+    assert len(got) == 1 and "the run recorded generation 1" in got[0], got
+    got = CT.tracking_problems(rows, announcements=[dict(good, t_shield=3.0)],
+                               generations=gens, csp_for=csp_for, records=records)
+    assert len(got) == 1 and "t=3.0" in got[0], got
+    got = CT.tracking_problems(rows, announcements=[good], generations=gens,
+                               csp_for=csp_for, records={})
+    assert len(got) == 1 and "records no policy_generation" in got[0], got
+
+
+def test_a_generation_no_scenario_event_made_is_refused_on_both_arms():
+    """prefix_generation_problems with `made_by` (run_generation_events: the
+    generations the run's own accepted scenario_event records made): a
+    generation above 0 that none made - a REST hot-apply, which the Shield
+    node publishes to the pilot like any other - is not the arm's flight, on
+    the off arm as on the on arm. One the scenario's event made passes the
+    off arm as before."""
+    cid = "rule-deactivated-mid-run"
+    spec = FAMILIES[cid].first.spec
+    metas = {arm: S.rail_meta(spec, _dyn_ep(cid, arm), 1001, "hil", "t_001", "n", None,
+                              "c", DEFAULTS) for arm in ("on", "off")}
+    gens = {0: CORRIDOR, 1: CORRIDOR, 2: CORRIDOR}
+    rows = [{"t": 0.1 * i, "generation": min(2, i // 30), "pilot_csp_generation": 0}
+            for i in range(100)]
+    for arm in ("on", "off"):
+        got = S.prefix_generation_problems(metas[arm], gens, rows, made_by={1})
+        assert len(got) == 1 and "[2]" in got[0] and "scenario_event" in got[0], (arm, got)
+    one = [dict(r, generation=min(1, r["generation"])) for r in rows]
+    assert S.prefix_generation_problems(metas["off"], {0: CORRIDOR, 1: CORRIDOR}, one,
+                                        made_by={1}) == []
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        assert S.run_generation_events(d) == ({}, set())
+        lines = [{"kind": "policy_generation", "generation": 0, "t": None},
+                 {"kind": "policy_generation", "generation": 1, "t": 6.0,
+                  "rule_clock_reading": "2026-11-26T10:00:06"},
+                 {"kind": "scenario_event", "generation": 1, "rule_id": "nfz-school"},
+                 {"kind": "scenario_event", "generation": 1, "refused": True},
+                 {"kind": "policy_generation", "generation": 2, "t": 7.0},
+                 {"kind": "policy_generation", "generation": 1, "t": 99.0}]
+        (d / "events.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines)
+                                        + "not json\n", encoding="utf-8")
+        records, made_by = S.run_generation_events(d)
+        assert sorted(records) == [0, 1, 2] and records[1]["t"] == 6.0, records
+        assert made_by == {1}, made_by
+
+
+def test_a_rescore_checks_a_prefix_consumer_run_as_the_campaign_did():
+    """rescore_rail_run on a prefix-consumer run fails closed as run_hil
+    does (prefix_flight_problems, prefix_generation_problems), so a re-score
+    never scores a flight that was not its arm's: here the VLA node
+    announced no prefix arm."""
+    cid = "rule-deactivated-mid-run"
+    ep = _dyn_ep(cid, "on")
+    spec = ep.cell.spec
+    meta = S.rail_meta(spec, ep, 1001, "hil", "t_001", "n", None, "c", DEFAULTS)
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "metrics.json").write_text(json.dumps({"scenario": meta, "vla_identity": {}}),
+                                        encoding="utf-8")
+        (d / "flight_log.jsonl").write_text(
+            "".join(json.dumps({"t": 0.1 * i, "generation": 0}) + "\n" for i in range(5)),
+            encoding="utf-8")
+        (d / "events.jsonl").write_text("", encoding="utf-8")
+        try:
+            S.rescore_rail_run(d, ep, DEFAULTS)
+        except RuntimeError as e:
+            assert "not the prefix arm's flight" in str(e) and "no prefix arm" in str(e), e
+        else:
+            raise AssertionError("a rescore scored a prefix run whose node announced no arm")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")
            and (len(sys.argv) < 2 or any(a in k for a in sys.argv[1:]))]

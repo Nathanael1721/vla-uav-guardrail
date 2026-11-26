@@ -3184,7 +3184,8 @@ def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
 
 def prefix_generation_problems(meta: dict, generations: dict | None,
                                rows=(), metrics: dict | None = None,
-                               csp_for=None) -> list[str]:
+                               csp_for=None, *, records: dict | None = None,
+                               made_by: set | None = None) -> list[str]:
     """Why a rail flight of a prefix-consumer arm is not that arm's flight
     because of how its rules changed in flight, which prefix_flight_problems
     alone cannot see (the node announces the CSP it took off with). The
@@ -3199,14 +3200,20 @@ def prefix_generation_problems(meta: dict, generations: dict | None,
         refuses one up front, guardrail/harness_service.py
         _consumer_takes_no_events), so the flight is not its arm's, on
         either arm, as before 2026-11-26.
-      * A scenario with events (since 2026-11-26, audit card WP4-19): the
-        prefix-off arm holds no CSP, so the change leaves its pilot as it
-        is; the prefix-on arm must have FOLLOWED the Shield
+      * A scenario with events (since 2026-11-26, audit card WP4-19): with
+        `made_by` (the generations the run's own accepted scenario_event
+        records made, run_generation_events), a generation above 0 that no
+        scenario event made (a REST hot-apply, a --dynamic zone) is a change
+        the scenario does not declare - the Shield node publishes it to the
+        pilot all the same - so the flight is not its arm's, on either arm.
+        Otherwise the prefix-off arm holds no CSP, so the change leaves its
+        pilot as it is; the prefix-on arm must have FOLLOWED the Shield
         (guardrail.csp_topic.tracking_problems over the rows'
         `pilot_csp_generation`, the VLA node's announcements in `metrics`
         (`prefix_csp_topic.pilot`) and, with `csp_for(policy,
         rule_clock_reading, t)`, each announced generation's CSP against the
-        one the run's policy_g<N>.json compiles to)."""
+        one the run's policy_g<N>.json compiles to, at the clock reading and
+        time the run's `records` hold for it)."""
     want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
     if not want.get("pilot_reads_prefix"):
         return []
@@ -3220,6 +3227,13 @@ def prefix_generation_problems(meta: dict, generations: dict | None,
         return [f"the Shield's rules changed in flight (generation(s) {sorted(above)}) on a "
                 f"scenario that declares no event: a prefix-consumer arm follows only the "
                 f"scenario's own events (audit card WP4-19), so this is not its flight"]
+    if made_by is not None:
+        undeclared = sorted(above - set(made_by))
+        if undeclared:
+            return [f"generation(s) {undeclared} of the Shield's rules were made by no "
+                    f"scenario_event of the run: a change the scenario does not declare "
+                    f"(a REST hot-apply, a --dynamic zone), which a prefix-consumer arm "
+                    f"does not take (audit card WP4-19), so this is not its flight"]
     arm = (want.get("consumer") or {}).get("arm")
     if arm != "on":
         return []
@@ -3227,7 +3241,8 @@ def prefix_generation_problems(meta: dict, generations: dict | None,
     topic = topic if isinstance(topic, dict) else {}
     return [f"generation N's CSP at the pilot (audit card WP4-19): {p}"
             for p in CT.tracking_problems(rows, announcements=topic.get("pilot"),
-                                          generations=generations, csp_for=csp_for)]
+                                          generations=generations, csp_for=csp_for,
+                                          records=records)]
 
 
 def prefix_generation_record(meta: dict, rows, metrics: dict | None) -> dict | None:
@@ -5298,6 +5313,26 @@ def run_generations(run_dir: Path) -> dict:
     return out
 
 
+def run_generation_events(run_dir: Path) -> tuple[dict, set]:
+    """What a rail run's own events.jsonl records of its policy generations
+    (audit card WP4-19, 2026-11-26): ({N: the first `policy_generation`
+    record of N - its `rule_clock_reading` and mission time `t`}, {N: made
+    by an accepted `scenario_event` of the run}). prefix_generation_problems
+    checks a consumer arm's generations against both. ({}, set()) without
+    an events.jsonl."""
+    records: dict[int, dict] = {}
+    made_by: set[int] = set()
+    for r in _jsonl_dicts(Path(run_dir) / "events.jsonl"):
+        n = r.get("generation")
+        if not isinstance(n, int) or isinstance(n, bool):
+            continue
+        if r.get("kind") == "policy_generation":
+            records.setdefault(n, r)
+        elif r.get("kind") == "scenario_event" and not r.get("refused"):
+            made_by.add(n)
+    return records, made_by
+
+
 def _owner(r: dict) -> str:
     return ("autopilot" if r.get("flown") is False or r.get("setpoint") == "none"
             else "shield")
@@ -6562,11 +6597,13 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
         raise RuntimeError(f"{tag}: the cell's stress was not realised: "
                            + "; ".join(problems))
     gens = run_generations(out_dir)
+    gen_records, gen_made_by = run_generation_events(out_dir)
     not_the_arm = (prefix_flight_problems(metrics, meta)
                    + prefix_generation_problems(
                        meta, gens, rows, metrics,
                        csp_for=lambda p, clock, t: prefix_generation_csp(
-                           spec, p, defaults, seed, clock=clock, t_s=t)))
+                           spec, p, defaults, seed, clock=clock, t_s=t),
+                       records=gen_records, made_by=gen_made_by))
     if not_the_arm:
         raise RuntimeError(f"{tag}: not the prefix arm's flight: " + "; ".join(not_the_arm))
     phys = None
@@ -7206,12 +7243,14 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if stress_problems:
         problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
     gens = run_generations(run_dir)
+    gen_records, gen_made_by = run_generation_events(run_dir)
     not_the_arm = (prefix_flight_problems(metrics, meta)
                    + prefix_generation_problems(
                        meta, gens, rows, metrics,
                        csp_for=lambda p, clock, t: prefix_generation_csp(
                            spec, p, defaults, seed, clock=clock, t_s=t,
-                           max_s_add=max_s_add)))
+                           max_s_add=max_s_add),
+                       records=gen_records, made_by=gen_made_by))
     if not_the_arm:
         # Fail closed: a mission that did not fly the arm it is named for is
         # an error, never a scored episode of that arm.
@@ -7395,10 +7434,28 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
                            + "; ".join(ground_problems))
     pol = spec.policy.load(ROOT)
     gens = run_generations(run_dir)
+    if meta.get("arm_record"):
+        # A prefix-consumer run (2026-11-26, audit card WP4-19): checked as
+        # the campaign accepted it (run_hil / run_sitl), so a re-score never
+        # scores a flight that was not its arm's, and its document carries
+        # the arm record with generation N's measured lag (prefix_flight_record).
+        gen_records, gen_made_by = run_generation_events(run_dir)
+        cell, add = ep.cell.spec, flight_max_s_add(meta)
+        not_the_arm = (prefix_flight_problems(metrics, meta)
+                       + prefix_generation_problems(
+                           meta, gens, rows, metrics,
+                           csp_for=lambda p, clock, t: prefix_generation_csp(
+                               cell, p, defaults, ep.seed, clock=clock, t_s=t,
+                               max_s_add=add),
+                           records=gen_records, made_by=gen_made_by))
+        if not_the_arm:
+            raise RuntimeError("not the prefix arm's flight: " + "; ".join(not_the_arm))
     max_s = meta.get("max_s")
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=max_s,
                        dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(run_dir))
+    if meta.get("arm_record"):
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta, rows)
     if stored is not None:
         # Checked when the run was accepted (rail_stress_check); kept as found.
         extra["sim_stressors"] = stored.get("sim_stressors")

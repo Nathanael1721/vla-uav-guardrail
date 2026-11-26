@@ -2033,10 +2033,14 @@ class Harness:
         generation N's CSP follows the SCENARIO's own events to the pilot
         (headless at the event; on a rail with --csp-topic, which only such
         a scenario is sent): a change injected here is one the scenario does
-        not declare, which a rail's pilot would not be sent and the harness
-        would refuse after the flight (experiments/sweep_scenarios.py
-        prefix_generation_problems). Both arms are refused alike, so the pair
-        stays one scenario."""
+        not declare. This refusal is what keeps it out of such an episode:
+        once applied, a rail's Shield node would publish that generation to
+        the pilot like any other (EpisodeRecord.on_generation fires for every
+        generation, a REST hot-apply's too). A rail flight the stress harness
+        scores is also refused afterwards, on either arm, when a generation
+        above 0 was made by no scenario_event of the run
+        (experiments/sweep_scenarios.py prefix_generation_problems). Both
+        arms are refused alike, so the pair stays one scenario."""
         if getattr(e.ep, "prefix_consumer", None):
             raise HarnessError(
                 "FAILED_PRECONDITION",

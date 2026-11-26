@@ -26,7 +26,10 @@
 #
 #   dyn-nfz-spawn-ahead     dynamic_nfz_movement  a zone hot-applied 12 m ahead
 #                                                 at 4 m/s at 5 s (the smoke
-#                                                 cell); generation 0 -> 1
+#                                                 cell); generation 0 -> 1.
+#                                                 A STATIONARY mid-flight
+#                                                 spawn: the zone never moves
+#                                                 (see NOT HERE)
 #   corridor-swap-narrowed  corridor_swap         the 40 m corridor swapped for
 #                                                 a 10 m one at 3 s, a pilot
 #                                                 pulling out at 2 m/s; 0 -> 1
@@ -37,6 +40,20 @@
 # Each cell's gates are safety invariants only (P0 escapes, breaches, polygon
 # entries, time to safe, corridor offset), as prefix_ab.yaml's cells are; the
 # prefix-on arm is scored on them, without the outcome and fail-safe labels.
+#
+# NOT HERE: a MOVING zone. The dynamic_nfz_movement cell flown is a
+# stationary mid-flight spawn. The template's worked example
+# (stress-testing.md dyn-nfz-translate-001; the library's dyn-nfz-translate:
+# a spawn and a continuous translate) and dyn-nfz-rotate-spin are refused for
+# the consumer: a zone set moving changes its polygon with the clock under
+# one rule id, which a CSP static over the rest of the flight cannot serve
+# (sweep_scenarios.consumer_event_refusal). dyn-nfz-rotate-step (a 90 degree
+# step rotation at 8 s, event-driven) IS followed, but carries a gate that
+# the bar was hit by the rule-ignorant pilot (`phase2_violation_ticks_bar:
+# {min: 1}`): measured headless 2026-11-26 (seeds 1001 and 1002, one distinct
+# flight pair), its prefix-on arm failed only that gate (0 repairs, P0
+# escape 0, mission success) and its prefix-off arm passed (219 repairs, P0
+# escape 0). It is left out for the same scoring decision as below.
 #
 # NOT HERE: the fourth template, time_window_switch. time-window-switch-event
 # (the smoke's row) is refused for the consumer: its switch carries a weekly
