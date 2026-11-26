@@ -71,6 +71,7 @@ from guardrail.scenario_events import EventState, apply_event      # noqa: E402
 from guardrail.scenario_spec import ScenarioEvent                  # noqa: E402
 from guardrail.shield import HotApplyRefused, Shield               # noqa: E402
 from wgs84_fixture import geo, geo_ring, rest                  # noqa: E402
+from recorded_legacy import write_recorded_metre_bundle           # noqa: E402
 
 RULE = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "project_fix"}
@@ -350,7 +351,9 @@ def test_the_flight_loader_flies_wgs84_only_and_names_the_bundle_to_fly():
     naming the flight-ready WGS84 bundle of the same policy beside it when
     there is one; until then it flew, labelled, and a spawned zone was
     refused mid-flight. A recorded flight is re-run under legacy_read
-    (argument or VLAGUARD_LEGACY_READ=1) and its record says so. A framed
+    (argument or VLAGUARD_LEGACY_READ=1) and its record says so - since the
+    third fix of 2026-11-26 for a policy the lock records only, so the
+    legacy-metre bundle made here is refused under it too. A framed
     policy flies with no new key in its record; a point-free one with no
     origin flies as before (it carries no projected coordinate) but is not
     flight_ready, and wgs84_successor names its framed version."""
@@ -380,13 +383,21 @@ def test_the_flight_loader_flies_wgs84_only_and_names_the_bundle_to_fly():
         pol, rec = load_for_flight(new, allow_unverified=True)
         assert pol.point_form == POINTS_WGS84
         assert not {"legacy_read", "point_form", "point_note"} & set(rec), rec
-        # the read of a recorded flight: by argument, or by the rig's variable
-        pol, rec = load_for_flight(old, allow_unverified=True, legacy_read=True)
+        # the read of a recorded flight: by argument, or by the rig's
+        # variable; of a policy the lock records only (this one is new)
+        e = _refused(lambda: load_for_flight(old, allow_unverified=True, legacy_read=True),
+                     LegacyPointFormRefused)
+        assert "not a recorded policy" in str(e), e
+        key, recorded = write_recorded_metre_bundle(d)
+        pol, rec = load_for_flight(recorded, allow_unverified=True, legacy_read=True)
         assert rec["legacy_read"] is True and rec["point_form"] == POINTS_LEGACY_METRES
+        assert rec["recorded_as"] == key, rec
         saved = os.environ.get(LEGACY_READ_ENV)
         os.environ[LEGACY_READ_ENV] = "1"
         try:
-            assert load_for_flight(old, allow_unverified=True)[1]["legacy_read"] is True
+            assert load_for_flight(recorded, allow_unverified=True)[1]["legacy_read"] is True
+            _refused(lambda: load_for_flight(old, allow_unverified=True),
+                     LegacyPointFormRefused)
         finally:
             if saved is None:
                 os.environ.pop(LEGACY_READ_ENV, None)

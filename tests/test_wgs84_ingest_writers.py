@@ -62,6 +62,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import api                                          # noqa: E402
 from wgs84_fixture import rest                                  # noqa: E402
+from recorded_legacy import write_recorded_metre_yaml             # noqa: E402
 from guardrail.bundle import (LEGACY_POINT_NOTE, check_lock,       # noqa: E402
                               LegacyPointFormRefused,
                               load_for_flight, load_lock, policy_candidates)
@@ -483,7 +484,9 @@ def test_flight_refuses_the_legacy_form_and_labels_its_read():
     document; until then it flew it, labelled. Every policies/*.yaml flies
     with no label; a refusal of one of them for its point form is a failure,
     not a skip. The legacy form loads under legacy_read only (a re-run of a
-    recorded flight), and its record says so."""
+    recorded flight), and its record says so; since the third fix of
+    2026-11-26 only for a policy the lock records (a new metre document is
+    refused under it too)."""
     n = 0
     for p in POLICIES:
         try:
@@ -505,6 +508,13 @@ def test_flight_refuses_the_legacy_form_and_labels_its_read():
             assert POINTS_LEGACY_METRES in str(e) and "VLAGUARD_LEGACY_READ" in str(e), e
         else:
             raise AssertionError("a metre-only document was flown")
+        try:
+            load_for_flight(yaml_path=f, legacy_read=True)
+        except LegacyPointFormRefused as e:
+            assert "not a recorded policy" in str(e), e
+        else:
+            raise AssertionError("a declared read flew a metre document never recorded")
+        _, f = write_recorded_metre_yaml(Path(d))
         pol, rec = load_for_flight(yaml_path=f, legacy_read=True)
     assert rec["legacy_read"] is True
     assert rec["point_form"] == POINTS_LEGACY_METRES == pol.point_form

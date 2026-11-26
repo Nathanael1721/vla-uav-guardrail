@@ -193,11 +193,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
-                     REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
+                     REFERENCE_FORM, TOOL_SIDE_CONVERSION, Policy, _prune_nulls,
+                     canonical_json,
                      LEGACY_POINT_FORMS, ProjectedCoordinatesRefused, era_context,
-                     ir2_rule_view, load_legacy_metre_policy, load_policy,
-                     mark_legacy_read)
+                     ir2_rule_view, legacy_metre_policy_from_raw,
+                     load_legacy_metre_policy, load_policy, mark_legacy_read,
+                     parse_policy_text)
 from .projection import LOCAL_QUANTUM_M, xy_beside_latlon_count
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -255,7 +259,9 @@ CHAIN_NONE = "none"
 # Set to 1 by a rail that flies only bundles whose chain was verified.
 REQUIRE_CHAIN_ENV = "VLAGUARD_REQUIRE_CHAIN"
 # Set to 1 to re-run a recorded flight under its legacy metre-only policy:
-# load_for_flight's `legacy_read` (WP1-14, 2026-11-18).
+# load_for_flight's `legacy_read` (WP1-14, 2026-11-18). Since 2026-11-26 it
+# reads a RECORDED policy only (recorded_as: its hash is in the lock);
+# anything else is refused with it set too.
 LEGACY_READ_ENV = "VLAGUARD_LEGACY_READ"
 # The authority a key certified by more than one signs under (load_signer).
 SIGNING_AUTHORITY_ENV = "VLAGUARD_SIGNING_AUTHORITY"
@@ -269,7 +275,9 @@ class BundleSignatureError(ValueError):
 
 class LegacyPointFormRefused(ValueError):
     """A flight loader was given a policy whose points are stored in local
-    metres, the legacy read form (load_for_flight, WP1-14 2026-11-18)."""
+    metres, the legacy read form (load_for_flight, WP1-14 2026-11-18), or
+    with x/y beside lat/lon; or, under a declared legacy read, such a policy
+    that is not a recorded artefact (recorded_as, since 2026-11-26)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -1567,7 +1575,9 @@ def _previous_policy(previous) -> Policy | None:
     The previous bundle is a recorded artefact the diff is taken against,
     not a policy about to fly: its load is a declared legacy read
     (legacy_read=True), so an older version issued in local metres or with
-    x/y beside lat/lon still gives its diff (WP1-14, 2026-11-26)."""
+    x/y beside lat/lon still gives its diff (WP1-14, 2026-11-26) when it is
+    a recorded policy (recorded_as: the lock records every shipped
+    version); an unrecorded one is refused like any other read."""
     if previous is None or isinstance(previous, Policy):
         return previous
     p = Path(previous)
@@ -2372,6 +2382,147 @@ def _refuse_for_flight(chk: BundleCheck, name: str, ground=None) -> None:
     _refuse_unenforced(chk.flight_policy, name, ground)
 
 
+# --------------------------------------------------------------------------- #
+# A declared legacy read reads a RECORDED policy only (WP1-14, 2026-11-26)
+# --------------------------------------------------------------------------- #
+#
+# `legacy_read` / VLAGUARD_LEGACY_READ=1 is meant as a READ: re-running a
+# recorded flight under the policy it flew. Until the third fix of
+# 2026-11-26 it was a declaration nothing checked, so with the variable set
+# the flight loaders flew a NEW document in local metres (independent
+# review, third round: a fresh polygon_fence in {x, y} with no origin loaded
+# through load_for_flight and a Shield was built on it). Now a declared read
+# is accepted only when the policy is a recorded artefact: one form of its
+# policy_hash, computed as the era of its document computes it, is one the
+# lock records (recorded_as). Policy bundles are not committed (.gitignore:
+# byte-derivable from the tracked YAML), so a bundle is recorded when the
+# policy it holds is; a run's own policy_g<N>.json is read by its own
+# readers (models.read_recorded_policy and legacy_metre_policy_from_raw in
+# manifest.resolve_run_generation_chain, the replay tools), which never go
+# through these loaders.
+
+_RECORDED_CACHE: dict = {}
+
+
+def recorded_policy_hashes(lock_path: str | Path | None = None) -> dict[str, str]:
+    """Every hash policies/policy.lock.json records -> the record that holds
+    it: a lock key (`id@version`) or `derived <name>`.
+
+    Each entry gives its policy_hash, its `hashes` (the same content under a
+    later scheme) and its legacy 16-hex forms; a shared entry gives each
+    file's pin; each `derived` recipe (a policy that existed only mid-flight,
+    a hot-applied generation) gives its policy_hash and legacy forms. Every
+    version is there, the ones a later entry says it `migrated_from`
+    included: the lock never rewrites or drops an entry. The lock is read
+    once and cached against its path, size and modification time, so a
+    declared read costs a stat. No lock file: nothing is recorded, and every
+    declared read is refused."""
+    p = Path(lock_path) if lock_path else LOCK_PATH
+    try:
+        st = p.stat()
+    except OSError:
+        return {}
+    key = (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    got = _RECORDED_CACHE.get(key)
+    if got is not None:
+        return got
+    lock = load_lock(p)
+    out: dict[str, str] = {}
+
+    def add(label: str, pin: dict) -> None:
+        for h in (pin.get("policy_hash"), *(pin.get("hashes") or {}).values(),
+                  *(pin.get("legacy_hashes") or {}).values()):
+            if isinstance(h, str) and h:
+                out.setdefault(h, label)
+
+    for k, ent in (lock.get("policies") or {}).items():
+        if not isinstance(ent, dict):
+            continue
+        add(k, ent)
+        for pin in (ent.get("shared_by_files") or {}).values():
+            if isinstance(pin, dict):
+                add(k, pin)
+    for d in lock.get("derived") or []:
+        if isinstance(d, dict):
+            add(f"derived {d.get('name')}", d)
+    _RECORDED_CACHE.clear()
+    _RECORDED_CACHE[key] = out
+    return out
+
+
+def recorded_as(pol: Policy, *declared: str | None,
+                lock_path: str | Path | None = None) -> str | None:
+    """The lock record `pol` is (recorded_policy_hashes), or None when it is
+    not a recorded policy.
+
+    `pol`'s hash is taken in every form Policy.hash_form knows of the era its
+    document was written in: the current scheme (policy_hash), a prior
+    scheme (prior_hashes: v2 for a geographic policy), the IR 2.x forms
+    (ir2_hashes: `repair` spelt, rings as given) and the legacy 16-hex forms
+    (legacy_hashes). A policy read from its recorded document, of any era,
+    reproduces the hash its lock entry holds in one of them. `declared`: the
+    hashes the artefact itself names that its reader verified against it (a
+    bundle's manifest, BundleCheck.hashes)."""
+    known = recorded_policy_hashes(lock_path)
+    if not known:
+        return None
+    for h in (pol.policy_hash, *pol.prior_hashes().values(),
+              *pol.ir2_hashes().values(), *pol.legacy_hashes().values(), *declared):
+        if h and h in known:
+            return known[h]
+    return None
+
+
+def _declared_hashes(chk: "BundleCheck") -> tuple:
+    """The hashes a bundle names that check_bundle verified."""
+    return (chk.manifest.get("policy_hash"),
+            *(h for h in (chk.hashes or {}).values() if isinstance(h, str)))
+
+
+def _require_recorded(pol: Policy, path, what: str, *, is_bundle: bool,
+                      declared: tuple = ()) -> str:
+    """The lock record of a declared legacy read (recorded_as), or
+    LegacyPointFormRefused: the read is accepted for a recorded policy only."""
+    got = recorded_as(pol, *declared)
+    if got is not None:
+        return got
+    msg = (f"{Path(path).name} ({pol.policy_id}@{pol.version}): {what}, and it is "
+           f"not a recorded policy: no form of its policy_hash is in "
+           f"policies/policy.lock.json (any version, migrated ones included, or a "
+           f"lock derivation). A declared legacy read ({LEGACY_READ_ENV}=1, "
+           f"load_for_flight legacy_read) reads a recorded policy only, to re-run "
+           f"a flight under the policy it flew; a new document is never flown in "
+           f"projected coordinates (grant, Policy DSL page; WP1-14). ")
+    succ = wgs84_successor(path, pol) if is_bundle else None
+    if succ is not None:
+        msg += f"Fly its WGS84 bundle {succ.name} instead."
+    else:
+        msg += ("Give its points as {lat, lon}: a tool that has metres converts "
+                f"them with {TOOL_SIDE_CONVERSION} (tools/convert_policies_wgs84.py "
+                "states the origin and raises the version).")
+    raise LegacyPointFormRefused(msg)
+
+
+def _declared_yaml_read(path, ground) -> tuple[Policy, str, str]:
+    """A declared legacy read of a policy YAML/JSON that the strict read
+    refused: the document read as it was recorded - in the era it may belong
+    to (era_context(None): a document written before IR schema 4.0.0 leaves
+    `scope` out, as every policies/*.yaml at a metre version did), the
+    legacy point forms included - and accepted only when it is a recorded
+    policy (_require_recorded). Returns (policy, lock record, point_note)."""
+    p = Path(path)
+    raw = parse_policy_text(p.read_text(encoding="utf-8"), str(p))
+    pol = legacy_metre_policy_from_raw(raw, source=str(p), ground=ground,
+                                       context=era_context(None))
+    if pol.point_form in LEGACY_POINT_FORMS:
+        what, note = _metre_what(pol), LEGACY_POINT_NOTE
+    elif (n := xy_beside_latlon_count(raw)):
+        what, note = f"{n} point(s) give x/y beside lat/lon", RECORDED_READ_NOTE
+    else:
+        what, note = "it is read in an earlier IR era (scope left out)", RECORDED_READ_NOTE
+    return pol, _require_recorded(pol, p, what, is_bundle=False), note
+
+
 def load_bundle(path: str | Path, *, require_signature: bool = True,
                 trust_store: str | Path | dict | None = None,
                 runtime: bool = True, ground=None,
@@ -2409,7 +2560,10 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     unless the load is a declared read: `legacy_read=True`, or None with
     VLAGUARD_LEGACY_READ=1 in the environment, as load_for_flight reads it.
     The policy of a declared read is labelled (models.mark_legacy_read), so
-    a Shield can be built on it. Until then this function, whose docstring
+    a Shield can be built on it; since the third fix of 2026-11-26 the read
+    is accepted for a recorded policy only (recorded_as: its hash is in
+    policies/policy.lock.json), and any other is refused with the variable
+    set too. Until the second fix this function, whose docstring
     said it applied load_for_flight's gate, applied neither refusal (review
     2026-11-26). It returns a Policy only, so the read is not recorded
     here: a flight entry point uses load_for_flight, whose record says it.
@@ -2434,15 +2588,32 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
         return chk.policy
     pol = chk.flight_policy
     if legacy_read is None:
-        legacy_read = os.environ.get(LEGACY_READ_ENV, "").strip().lower()             not in ("", "0", "false", "no")
+        legacy_read = os.environ.get(LEGACY_READ_ENV, "").strip().lower() \
+            not in ("", "0", "false", "no")
     # The two point-form refusals of load_for_flight (docstring).
     if chk.projected_points and not legacy_read:
         raise LegacyPointFormRefused(_xy_beside_message(chk.projected_points, pol, path))
     if pol.point_form in LEGACY_POINT_FORMS and not legacy_read:
         raise LegacyPointFormRefused(_not_wgs84_message(pol, path, is_bundle=True))
     if chk.projected_points or pol.point_form in LEGACY_POINT_FORMS:
+        # A declared read of a recorded policy only (recorded_as).
+        _require_recorded(pol, path, _read_what(chk, pol), is_bundle=True,
+                          declared=_declared_hashes(chk))
         mark_legacy_read(pol)
     return pol
+
+
+def _metre_what(pol: Policy) -> str:
+    what = f"its points are stored as {pol.point_form}"
+    if pol.frame_origin is None:
+        what += " and it has no WGS84 frame origin"
+    return what
+
+
+def _read_what(chk: "BundleCheck", pol: Policy) -> str:
+    if pol.point_form in LEGACY_POINT_FORMS:
+        return _metre_what(pol)
+    return f"its ir.json writes x/y beside lat/lon on {chk.projected_points} point(s)"
 
 
 def load_for_flight(bundle: str | Path | None = None,
@@ -2499,12 +2670,22 @@ def load_for_flight(bundle: str | Path | None = None,
     is one (wgs84_successor; tools/bundle_census.py lists them all). Until
     2026-11-18 such a policy flew, labelled, and a spawned zone was then
     refused mid-flight. `legacy_read=True` (None reads VLAGUARD_LEGACY_READ,
-    1 = on) is the one exception, and it is meant as a READ: re-running a
-    recorded flight under the policy it flew. It is a declaration, not a
-    check: nothing verifies that the policy was recorded, and the
-    environment variable declares it for every load_for_flight in the
-    process. The record then carries `legacy_read: true`, `point_form` and
-    `point_note`, so a run loaded under it says so.
+    1 = on) is the one exception, and it is a READ: re-running a recorded
+    flight under the policy it flew. Since the third fix of 2026-11-26 it
+    is checked, not only declared: the read is accepted only when the
+    policy is a recorded artefact - one form of its policy_hash, as the era
+    of its document computes it, is in policies/policy.lock.json (any
+    version, migrated_from ones included, or a lock derivation; recorded_as)
+    - and anything else is refused (LegacyPointFormRefused, naming the WGS84
+    successor bundle or models.wgs84_from_metres) with the variable set too.
+    Until then nothing verified that the policy was recorded, so a new
+    document in local metres flew under the variable (independent review,
+    third round). A YAML is read in the era it may belong to (a document
+    written before IR schema 4.0.0 leaves `scope` out, as every metre
+    version of policies/*.yaml did), which the hash then pins. The record
+    carries `legacy_read: true`, `point_form`, `point_note` and
+    `recorded_as` (the lock record it matched), so a run loaded under it
+    says so.
 
     Since 2026-11-26 a bundle whose archived ir.json writes x/y beside
     lat/lon (BundleCheck.projected_points: the dump of the bundles hashed
@@ -2557,18 +2738,34 @@ def load_for_flight(bundle: str | Path | None = None,
             if not legacy_read:
                 raise LegacyPointFormRefused(
                     _xy_beside_message(chk.projected_points, pol, bundle))
+            rec["recorded_as"] = _require_recorded(
+                pol, bundle, _read_what(chk, pol), is_bundle=True,
+                declared=_declared_hashes(chk))
             rec["legacy_read"] = True
             rec["point_form"] = pol.point_form
             rec["projected_points"] = chk.projected_points
             rec["point_note"] = XY_BESIDE_NOTE
             mark_legacy_read(pol)
+        elif pol.point_form in LEGACY_POINT_FORMS and legacy_read:
+            # A declared read of a recorded policy only (recorded_as); the
+            # metre-form refusal without one is below, for both paths.
+            rec["recorded_as"] = _require_recorded(
+                pol, bundle, _read_what(chk, pol), is_bundle=True,
+                declared=_declared_hashes(chk))
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
+        read = None
         if legacy_read:
             # A declared read of a recorded flight: the one place a YAML in
-            # the legacy metre form is read for flight (WP1-14).
-            pol = load_legacy_metre_policy(yaml_path, ground=ground)
+            # a projected form is read for flight (WP1-14), and only a
+            # recorded one (_declared_yaml_read). A document the strict read
+            # takes loads as it, with no legacy key.
+            try:
+                pol = load_policy(yaml_path, ground=ground)
+            except (ProjectedCoordinatesRefused, ValidationError):
+                pol, recorded, note = _declared_yaml_read(yaml_path, ground)
+                read = (recorded, note)
         else:
             try:
                 pol = load_policy(yaml_path, ground=ground)
@@ -2580,6 +2777,14 @@ def load_for_flight(bundle: str | Path | None = None,
                 raise LegacyPointFormRefused(
                     _not_wgs84_message(exc.policy, yaml_path, is_bundle=False)) from None
         rec = policy_source_record("yaml", str(yaml_path), pol.policy_hash)
+        if read is not None:
+            rec["recorded_as"] = read[0]
+            if pol.point_form not in LEGACY_POINT_FORMS:
+                # x/y beside lat/lon, or an earlier era: the metre form's
+                # keys are written below.
+                rec["legacy_read"] = True
+                rec["point_form"] = pol.point_form
+                rec["point_note"] = read[1]
     # Whether THIS load required the chain (the effective value, from the
     # argument or VLAGUARD_REQUIRE_CHAIN): a run that says chain "verified"
     # without it says how the bundle was, not what the rail demanded.
@@ -2590,9 +2795,9 @@ def load_for_flight(bundle: str | Path | None = None,
     if notes:
         rec["runtime_notes"] = notes
     # WGS84 only (docstring): a policy stored in the legacy metre form is
-    # refused unless this load is a declared read of a recorded flight
-    # (legacy_read), and then the record says so. A WGS84 or point-free
-    # policy adds no key, so its record is what it was. The keys say how
+    # refused unless this load is a declared read of a recorded policy
+    # (legacy_read, recorded_as), and then the record says so. A WGS84 or
+    # point-free policy adds no key, so its record is what it was. The keys say how
     # POINTS are stored; bundle.FRAME_FORM is unrelated (a hash form in a
     # lock entry's migration record).
     form = pol.point_form
@@ -2601,6 +2806,11 @@ def load_for_flight(bundle: str | Path | None = None,
             raise LegacyPointFormRefused(
                 _not_wgs84_message(pol, bundle if bundle else yaml_path,
                                    is_bundle=bool(bundle)))
+        if "recorded_as" not in rec:
+            # Each path above checks it; a read is never flown unchecked.
+            rec["recorded_as"] = _require_recorded(
+                pol, bundle if bundle else yaml_path,
+                _metre_what(pol), is_bundle=bool(bundle))
         rec["legacy_read"] = True
         rec["point_form"] = form
         rec["point_note"] = LEGACY_POINT_NOTE
@@ -2626,9 +2836,10 @@ def load_yaml_for_flight(path: str | Path, *, say=print) -> tuple[Policy, dict]:
     stored in local metres (models.LEGACY_POINT_FORMS) flew through them
     without a word, while every other rail refused it at load. Now they get
     the same refusal (LegacyPointFormRefused) and the same one exception: a
-    declared read, meant for a recorded flight (VLAGUARD_LEGACY_READ=1, a
-    declaration for every load in the process that nothing checks), which
-    is announced through `say` so the console says the run was a read. A
+    declared read of a recorded flight (VLAGUARD_LEGACY_READ=1, which since
+    the third fix of 2026-11-26 reads a policy the lock records only and
+    refuses any other; load_for_flight), announced through `say` so the
+    console says the run was a read. A
     WGS84 or point-free policy loads exactly as load_policy loaded it (same
     rules, same flight_problems refusal, same hash), so a run of these
     scripts on any policies/*.yaml is unchanged.
@@ -2636,7 +2847,7 @@ def load_yaml_for_flight(path: str | Path, *, say=print) -> tuple[Policy, dict]:
     Since 2026-11-26 models.load_policy refuses a metre document as well
     (ProjectedCoordinatesRefused); a tool that reads one on purpose, as a
     declared re-read, uses models.load_legacy_metre_policy. This is for an
-    entry point about to fly."""
+    entry point about to fly, and so is gated on the lock."""
     pol, rec = load_for_flight(None, path)
     if rec.get("legacy_read"):
         say(f"[policy] LEGACY READ ({LEGACY_READ_ENV}=1): {Path(path).name} has "
@@ -2670,14 +2881,12 @@ def _xy_beside_message(n: int, pol: Policy, path) -> str:
                 f"tool that has metres converts them with "
                 f"models.wgs84_from_metres. ")
     return msg + (f"To re-run a recorded flight under the policy it flew, a read, "
-                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read).")
+                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read; it reads "
+                  f"a policy policies/policy.lock.json records, nothing else).")
 
 
 def _not_wgs84_message(pol: Policy, path, *, is_bundle: bool) -> str:
-    what = f"its points are stored as {pol.point_form}"
-    if pol.frame_origin is None:
-        what += " and it has no WGS84 frame origin"
-    msg = (f"{Path(path).name} ({pol.policy_id}@{pol.version}): {what}. A flight "
+    msg = (f"{Path(path).name} ({pol.policy_id}@{pol.version}): {_metre_what(pol)}. A flight "
            f"flies a policy bound to a WGS84 frame only; the DSL never carries "
            f"projected coordinates (grant, Policy DSL page; WP1-14). ")
     succ = wgs84_successor(path, pol) if is_bundle else None
@@ -2692,7 +2901,8 @@ def _not_wgs84_message(pol: Policy, path, *, is_bundle: bool) -> str:
         msg += ("Convert it first (tools/convert_policies_wgs84.py states the "
                 "origin and raises the version). ")
     return msg + (f"To re-run a recorded flight under the policy it flew, a read, "
-                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read).")
+                  f"set {LEGACY_READ_ENV}=1 (load_for_flight legacy_read; it reads "
+                  f"a policy policies/policy.lock.json records, nothing else).")
 
 
 def flight_ready(pol: Policy) -> bool:
@@ -2744,6 +2954,14 @@ LEGACY_POINT_NOTE = (
     "bundles, runs and lock recipes from before 2026-11-03; the canonical form "
     "is WGS84 lat/lon about a stated origin (grant: 'the DSL itself never "
     "carries projected coordinates'; WP1-14)")
+# What a flight record says of a recorded policy document read under
+# legacy_read that stores no metre point (x/y beside lat/lon, or a document
+# of an earlier IR era), since 2026-11-26.
+RECORDED_READ_NOTE = (
+    "a recorded policy document read as it was recorded (its IR era; x/y "
+    "beside lat/lon checked against the frame to 1 um and dropped), its hash "
+    "found in policies/policy.lock.json (recorded_as); read as a re-run of a "
+    "recorded flight, not flown as a new policy (WP1-14)")
 
 
 # --------------------------------------------------------------------------- #

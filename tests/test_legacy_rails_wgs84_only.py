@@ -19,7 +19,10 @@ file imports each script's function (no simulator is started) and checks:
     legacy key in the record), for each script's own default --policy too;
   * VLAGUARD_LEGACY_READ=1 re-runs a recorded flight under the metre policy,
     announced on the console and recorded (real_vla_demo puts the keys in
-    metrics.json; a WGS84 run's metrics gain no key);
+    metrics.json; a WGS84 run's metrics gain no key) - since the third fix
+    of 2026-11-26 for a policy the lock records only (a version of
+    policies/sim_demo_policy.yaml written as it was then; tests/
+    recorded_legacy.py): a new metre document is refused with it set too;
   * reading the source: the flight function calls load_flight_policy, never
     models.load_policy, and before it creates or clears its output folder;
     no demo script reads `load_policy(args.` any more.
@@ -41,12 +44,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from guardrail.bundle import (LEGACY_READ_ENV, LEGACY_YAML_RAILS,   # noqa: E402
                               LegacyPointFormRefused, load_yaml_for_flight)
 from guardrail.models import (POINTS_LEGACY_METRES, POINTS_WGS84,   # noqa: E402
                               ProjectedCoordinatesRefused, load_legacy_metre_policy,
                               load_policy)
+from recorded_legacy import write_recorded_metre_yaml              # noqa: E402
 
 RULE = {"scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "project_fix"}
@@ -83,11 +88,19 @@ def _legacy_read(value: str | None):
 
 @contextlib.contextmanager
 def _metre_yaml():
+    """A NEW metre document, never recorded: refused, a declared read too."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "legacy-metre.yaml"
         p.write_text(yaml.safe_dump(copy.deepcopy(METRE_DOC), sort_keys=False),
                      encoding="utf-8")
         yield p
+
+
+@contextlib.contextmanager
+def _recorded_yaml():
+    """A metre document the lock records (fase3-sim-demo@0.1.2 as written)."""
+    with tempfile.TemporaryDirectory() as td:
+        yield write_recorded_metre_yaml(Path(td))[1]
 
 
 def _modules() -> dict:
@@ -124,6 +137,16 @@ def test_the_shared_loader_refuses_metres_and_reads_them_only_as_a_read():
             assert "local-metres" in str(e) and LEGACY_READ_ENV in str(e), e
         else:
             raise AssertionError("load_yaml_for_flight flew a metre policy")
+        # a declared read of a NEW metre document: refused (failed before
+        # the third fix of 2026-11-26: ACCEPTED, and a Shield built on it)
+        with _legacy_read("1"):
+            try:
+                load_yaml_for_flight(p, say=lambda s: None)
+            except LegacyPointFormRefused as e:
+                assert "not a recorded policy" in str(e) and "wgs84_from_metres" in str(e), e
+            else:
+                raise AssertionError("a declared read flew a metre policy never recorded")
+    with _recorded_yaml() as p, _legacy_read(None):
         said = []
         with _legacy_read("1"):
             pol, rec = load_yaml_for_flight(p, say=said.append)
@@ -190,8 +213,19 @@ def test_each_rails_default_policy_still_flies():
 
 
 def test_each_rail_reads_a_metre_policy_under_the_legacy_switch():
+    """A recorded one only: a new metre document is refused with the switch
+    set too (failed before the third fix of 2026-11-26: it flew)."""
     mods = _modules()
     with _metre_yaml() as p, _legacy_read("1"):
+        for name, mod in mods.items():
+            try:
+                mod.load_flight_policy(str(p))
+            except SystemExit as e:
+                msg = str(e.code)
+                assert "REFUSING TO FLY" in msg and "not a recorded policy" in msg, (name, msg)
+            else:
+                raise AssertionError(f"demo/{name}.py flew a metre policy never recorded")
+    with _recorded_yaml() as p, _legacy_read("1"):
         for name, mod in mods.items():
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -206,7 +240,7 @@ def test_real_vla_demo_records_a_legacy_read_in_its_metrics():
     with _legacy_read(None):
         _, rec = rv.load_flight_policy(str(WGS84))
     assert rv.legacy_point_keys(rec) == {}
-    with _metre_yaml() as p, _legacy_read("1"), contextlib.redirect_stdout(io.StringIO()):
+    with _recorded_yaml() as p, _legacy_read("1"), contextlib.redirect_stdout(io.StringIO()):
         _, rec = rv.load_flight_policy(str(p))
     keys = rv.legacy_point_keys(rec)
     assert keys["legacy_read"] is True and keys["point_form"] == POINTS_LEGACY_METRES

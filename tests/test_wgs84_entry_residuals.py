@@ -44,6 +44,11 @@ unknown point key; and Shield.move_nfz refused a models.XY given {lat, lon}
 as "given in local metres". Closed here too. (The Ingest CLI's metre
 conversion, the other finding, is tests/test_geo_to_policy.py.)
 
+The independent review of that fix (2026-11-26) found that a declared
+legacy read (VLAGUARD_LEGACY_READ=1) flew a NEW policy in local metres
+through load_for_flight; a declared read now takes a policy the lock records
+only (bundle.recorded_as; tests/recorded_legacy.py gives the recorded ones).
+
 The REST checks call the guardrail.api handlers the routes call; the FastAPI
 routes are exercised by tests/test_api.py where FastAPI is installed.
 """
@@ -69,6 +74,9 @@ from guardrail.models import (TOOL_SIDE_CONVERSION,                # noqa: E402
                               wgs84_from_metres)
 from guardrail.projection import metres_to_wgs84, xy_beside_latlon_count  # noqa: E402
 from guardrail.shield import HotApplyRefused, Shield               # noqa: E402
+from recorded_legacy import (recorded_metre_policy,                # noqa: E402
+                             recorded_metre_versions, write_recorded_metre_bundle,
+                             write_recorded_metre_yaml)
 
 SITL = ROOT / "policies" / "sim_demo_policy.yaml"      # CMAC origin, SITL rails
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"    # a corridor, PAS origin
@@ -429,7 +437,11 @@ def test_declared_legacy_reads_still_build_a_shield():
         f = Path(tmp) / "metre.json"
         f.write_text(json.dumps(METRE_DOC), encoding="utf-8")
         c = Shield(load_legacy_metre_policy(f, runtime=False))
-        pol2, rec = B.load_for_flight(yaml_path=f, legacy_read=True)
+        # the flight loader's declared read: of a recorded policy only
+        _refused(lambda: B.load_for_flight(yaml_path=f, legacy_read=True),
+                 B.LegacyPointFormRefused)
+        _, recorded = write_recorded_metre_yaml(Path(tmp))
+        pol2, rec = B.load_for_flight(yaml_path=recorded, legacy_read=True)
         assert rec["legacy_read"] is True and pol2.legacy_read
         Shield(pol2)
     d = Shield(mark_legacy_read(Policy.model_validate(copy.deepcopy(METRE_DOC))))
@@ -655,18 +667,21 @@ def test_load_bundle_runtime_applies_the_point_form_refusals():
     declared (legacy_read=True, or VLAGUARD_LEGACY_READ=1), which labels the
     policy; runtime=False (the declaration) and a WGS84 bundle load as
     before; write_bundle's `previous` (a recorded bundle, the one caller)
-    declares the read, so an older metre version still gives its diff."""
+    declares the read, so an older metre version still gives its diff.
+    Since the third fix of 2026-11-26 the declared read takes a recorded
+    policy only, so the metre bundle here is a version the lock records
+    (tests/recorded_legacy.py); a new one is
+    test_a_declared_legacy_read_reads_a_recorded_policy_only."""
     import os
     os.environ.pop(B.LEGACY_READ_ENV, None)
     pol = load_policy(SITL)
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         xy = _legacy16_xy_bundles(pol, d)
-        metre = B.write_bundle(pol.metre_form(), d / "metre.tar.gz", signer=None,
-                               allow_legacy_metres=True)
+        metre = write_recorded_metre_bundle(d)[1]
         good = d / "good.tar.gz"
         assert B.load_bundle(good, require_signature=False).policy_hash == pol.policy_hash
-        for b, words in [(x, ("x/y beside lat/lon",)) for x in xy] +                         [(metre, ("local-metres",))]:
+        for b, words in [(x, ("x/y beside lat/lon",)) for x in xy] +                 [(metre, ("local-metres",))]:
             msg = _refused(lambda: B.load_bundle(b, require_signature=False),
                            B.LegacyPointFormRefused, names_conversion=False)
             for w in (*words, B.LEGACY_READ_ENV):
@@ -691,6 +706,85 @@ def test_load_bundle_runtime_applies_the_point_form_refusals():
         finally:
             B.load_bundle = real
         assert B.check_bundle(new).manifest.get("changelog_diff") is not None
+
+
+def test_a_declared_legacy_read_reads_a_recorded_policy_only():
+    """Third independent review of WP1-14 (2026-11-26): with
+    VLAGUARD_LEGACY_READ=1 (or legacy_read=True), load_for_flight,
+    load_yaml_for_flight and load_bundle(runtime=True) read a NEW policy in
+    local metres - a polygon_fence in {x, y} with no origin, never
+    recorded - and a Shield was built on it (failed before: ACCEPTED). The
+    declared read now takes a recorded artefact only: one form of its
+    policy_hash, as the era of its document computes it, is in
+    policies/policy.lock.json (bundle.recorded_as). Anything else - a new
+    metre YAML, a new metre bundle, a legacy16 bundle writing x/y beside
+    lat/lon of a policy no version of which is locked - is refused
+    (LegacyPointFormRefused, naming models.wgs84_from_metres) with the
+    variable set. The lock's own metre version, written as the file was
+    (scope left out) and bundled as the lab's bundles of the time hold it,
+    is still read, labelled, and says which record it matched."""
+    import os
+    from guardrail.models import Policy
+    os.environ.pop(B.LEGACY_READ_ENV, None)
+    new_doc = {"policy_id": "new-metre", "version": "0.0.1", "constraints": [
+        {"id": "fence", "type": "polygon_fence", **RULE, "margin_m": 1.0,
+         "vertices": [{"x": 10, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10}]}]}
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        new_yaml = d / "new_metre.yaml"
+        new_yaml.write_text(json.dumps(new_doc), encoding="utf-8")
+        new_bundle = B.write_bundle(Policy.model_validate(copy.deepcopy(new_doc)),
+                                    d / "new-metre-v0.0.1.tar.gz", signer=None,
+                                    allow_legacy_metres=True)
+        (d / "xy").mkdir()
+        unlocked = load_policy(SITL).model_copy(update={"policy_id": "new-wgs84"})
+        new_xy = _legacy16_xy_bundles(unlocked, d / "xy")
+        key, old_yaml = write_recorded_metre_yaml(d)
+        _, old_bundle = write_recorded_metre_bundle(d)
+        yaml_loads = {
+            "load_for_flight(yaml_path)": lambda p, **k: B.load_for_flight(yaml_path=p, **k),
+            "load_yaml_for_flight": lambda p, **k: B.load_yaml_for_flight(
+                p, say=lambda s: None)}
+        bundle_loads = {
+            "load_for_flight(bundle)": lambda p, **k: B.load_for_flight(
+                p, allow_unverified=True, **k),
+            "load_bundle(runtime=True)": lambda p, **k: B.load_bundle(
+                p, require_signature=False, **k)}
+        os.environ[B.LEGACY_READ_ENV] = "1"
+        try:
+            for name, load in yaml_loads.items():
+                msg = _refused(lambda: load(new_yaml), B.LegacyPointFormRefused)
+                assert "not a recorded policy" in msg and "local-metres" in msg, (name, msg)
+            for name, load in bundle_loads.items():
+                for b in (new_bundle, *new_xy):
+                    msg = _refused(lambda: load(b), B.LegacyPointFormRefused)
+                    assert "not a recorded policy" in msg, (name, b.name, msg)
+            # The recorded version: read, labelled, a Shield built on it.
+            for name, load in yaml_loads.items():
+                pol, rec = load(old_yaml)
+                assert pol.legacy_read and rec["legacy_read"] is True, name
+                assert rec["recorded_as"] == key and rec["point_form"] == pol.point_form
+                Shield(pol)
+            pol, rec = bundle_loads["load_for_flight(bundle)"](old_bundle)
+            assert pol.legacy_read and rec["recorded_as"] == key, rec
+            got = bundle_loads["load_bundle(runtime=True)"](old_bundle)
+            assert got.legacy_read and got.policy_hash == pol.policy_hash
+            Shield(got)
+        finally:
+            os.environ.pop(B.LEGACY_READ_ENV, None)
+        # The argument is the same declaration, and gated the same way.
+        _refused(lambda: B.load_for_flight(yaml_path=new_yaml, legacy_read=True),
+                 B.LegacyPointFormRefused)
+        _refused(lambda: B.load_bundle(new_bundle, require_signature=False,
+                                       legacy_read=True), B.LegacyPointFormRefused)
+        assert B.load_for_flight(yaml_path=old_yaml, legacy_read=True)[1]["recorded_as"] == key
+    # Every metre version the lock records is recognised as itself; a new
+    # document is not; the lock is read once.
+    for k, pol in recorded_metre_versions():
+        assert B.recorded_as(pol) == k, k
+    assert B.recorded_as(Policy.model_validate(copy.deepcopy(new_doc))) is None
+    assert B.recorded_as(recorded_metre_policy()[1]) == key
+    assert B.recorded_policy_hashes() is B.recorded_policy_hashes()
 
 
 def test_rest_refuses_any_point_key_but_lat_lon():
