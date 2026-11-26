@@ -51,6 +51,15 @@ only (bundle.recorded_as; tests/recorded_legacy.py gives the recorded ones).
 It also found that PATCH /dynamic_nfz move ignored a `geometry:` block; a
 move now refuses any key it does not take.
 
+The independent review of that third fix (2026-11-26) found, in its
+dissent, that the declared read matched the legacy hash forms the lock keeps
+for every entry, those of versions recorded in WGS84 only included, so the
+never-written metre rendering of fase3-sim-demo@0.1.4 read, labelled
+recorded_as that version. A projected document now matches only a lock
+record whose own document was in a legacy point form
+(bundle.projected_era_keys). PATCH translate / rotate / scale now refuse a
+key they do not define, as move does (api.EDIT_KEYS).
+
 The REST checks call the guardrail.api handlers the routes call; the FastAPI
 routes are exercised by tests/test_api.py where FastAPI is installed.
 """
@@ -482,22 +491,25 @@ def test_a_lock_rebuild_and_the_comparison_switch_are_declared_reads():
 # migration helper, POST /nfz, and the readers of recorded artefacts.
 # --------------------------------------------------------------------------- #
 
-def _legacy16_xy_bundles(pol, folder: Path) -> list[Path]:
+def _legacy16_xy_bundles(pol, folder: Path, ir: dict | None = None) -> list[Path]:
     """Bundles as written before 2026-10-06: a 16-hex legacy hash over the
     rebuilt object, the archived ir.json a plain model_dump - which writes
-    each WGS84 point's local x/y view beside its lat/lon. Unsigned."""
+    each WGS84 point's local x/y view beside its lat/lon - or `ir` (a
+    metre-only rendering, say). Unsigned."""
     import gzip
     import io
     import tarfile
-    from guardrail.models import _prune_nulls
+    from guardrail.models import LEGACY_POINT_FORMS, _prune_nulls
     good = B.write_bundle(pol, folder / "good.tar.gz", signer=None,
-                          issued_at="2026-11-26T00:00:00Z")
+                          issued_at="2026-11-26T00:00:00Z",
+                          allow_legacy_metres=pol.point_form in LEGACY_POINT_FORMS)
     with tarfile.open(good, "r:gz") as t:
         man = json.loads(t.extractfile(B.MANIFEST_NAME).read())
     for k in ("hashes", "reference_projection", "multiscale_sha256"):
         man.pop(k, None)
-    ir_bytes = json.dumps(_prune_nulls(pol.model_dump(mode="json"), frozenset()),
-                          sort_keys=True).encode()
+    if ir is None:
+        ir = _prune_nulls(pol.model_dump(mode="json"), frozenset())
+    ir_bytes = json.dumps(ir, sort_keys=True).encode()
     out = []
     for name, h in sorted(set(pol.legacy_hashes().items())):
         mb = json.dumps(dict(man, policy_hash=h), indent=2, sort_keys=True).encode()
@@ -522,16 +534,23 @@ def test_a_legacy16_bundle_writing_xy_beside_latlon_is_a_read_only():
     (allow_unverified) - as a WGS84 policy, with no declared read (failed
     then: all three legacy16 forms ACCEPTED). Now it is refused for flight
     as a metre bundle is (LegacyPointFormRefused), read only under
-    legacy_read, and the record says so."""
+    legacy_read, and the record says so. Since the fourth fix (2026-11-26)
+    the read takes such a bundle of a version locked before 2026-10-06 only
+    (wgs84-taipei-demo@0.1.0, whose bundles of the time wrote it): the same
+    bundle of fase3-sim-demo@0.1.4, recorded in WGS84 only, is refused."""
     import os
     os.environ.pop(B.LEGACY_READ_ENV, None)
     pol = load_policy(SITL)
-    n_points = sum(len(c.vertices) for c in pol.constraints if hasattr(c, "vertices"))
+    old_key = "wgs84-taipei-demo@0.1.0"
+    old = dict(B.policy_candidates())[f"wgs84_taipei.yaml as {old_key}"]
     with tempfile.TemporaryDirectory() as tmp:
         bundles = _legacy16_xy_bundles(pol, Path(tmp))
-        assert bundles
+        (Path(tmp) / "old").mkdir()
+        recorded = _legacy16_xy_bundles(old, Path(tmp) / "old")
+        assert bundles and recorded
         assert B.check_bundle(Path(tmp) / "good.tar.gz").projected_points == 0
-        for b in bundles:
+        for b, p in ([(b, pol) for b in bundles] + [(b, old) for b in recorded]):
+            n_points = sum(len(c.vertices) for c in p.constraints if hasattr(c, "vertices"))
             chk = B.check_bundle(b)
             assert chk.hash_form.startswith("legacy16"), chk.hash_form
             assert chk.projected_points == n_points > 0, chk.projected_points
@@ -539,11 +558,17 @@ def test_a_legacy16_bundle_writing_xy_beside_latlon_is_a_read_only():
             msg = _refused(lambda: B.load_for_flight(bundle=b, allow_unverified=True),
                            B.LegacyPointFormRefused, names_conversion=False)
             assert "x/y beside lat/lon" in msg and B.LEGACY_READ_ENV in msg, msg
+            if p is pol:
+                msg = _refused(lambda: B.load_for_flight(
+                    bundle=b, allow_unverified=True, legacy_read=True),
+                    B.LegacyPointFormRefused, names_conversion=False)
+                assert "WGS84 only" in msg and B.lock_key(pol) in msg, msg
+                continue
             got, rec = B.load_for_flight(bundle=b, allow_unverified=True,
                                          legacy_read=True)
             assert rec["legacy_read"] is True and rec["projected_points"] == n_points
             assert rec["point_note"] == B.XY_BESIDE_NOTE and got.legacy_read
-            assert got.policy_hash == pol.policy_hash
+            assert got.policy_hash == old.policy_hash and rec["recorded_as"] == old_key
         # The harness's InjectPolicy, uploaded archive bytes: refused.
         from guardrail import harness_service as H
         h = H.Harness(runs_dir=Path(tmp) / "runs")
@@ -673,13 +698,20 @@ def test_load_bundle_runtime_applies_the_point_form_refusals():
     Since the third fix of 2026-11-26 the declared read takes a recorded
     policy only, so the metre bundle here is a version the lock records
     (tests/recorded_legacy.py); a new one is
-    test_a_declared_legacy_read_reads_a_recorded_policy_only."""
+    test_a_declared_legacy_read_reads_a_recorded_policy_only. Since the
+    fourth fix the x/y bundles are of a version locked before 2026-10-06
+    (wgs84-taipei-demo@0.1.0), whose bundles of the time wrote that form;
+    the same bundle of a version recorded in WGS84 only is
+    test_a_projected_rendering_of_a_wgs84_only_version_is_refused."""
     import os
     os.environ.pop(B.LEGACY_READ_ENV, None)
     pol = load_policy(SITL)
+    old = dict(B.policy_candidates())["wgs84_taipei.yaml as wgs84-taipei-demo@0.1.0"]
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
-        xy = _legacy16_xy_bundles(pol, d)
+        _legacy16_xy_bundles(pol, d)                      # good.tar.gz: pol, lat/lon only
+        (d / "old").mkdir()
+        xy = _legacy16_xy_bundles(old, d / "old")
         metre = write_recorded_metre_bundle(d)[1]
         good = d / "good.tar.gz"
         assert B.load_bundle(good, require_signature=False).policy_hash == pol.policy_hash
@@ -789,6 +821,135 @@ def test_a_declared_legacy_read_reads_a_recorded_policy_only():
     assert B.recorded_policy_hashes() is B.recorded_policy_hashes()
 
 
+TAIPEI = ROOT / "policies" / "wgs84_taipei.yaml"   # a WGS84 file since its first version
+
+
+def _metre_rendering(pol) -> dict:
+    """The metre rendering of a WGS84 policy that nobody wrote: every point
+    as the unrounded local metres its legacy 16-hex forms digest
+    (models._metric_view of its IR 2.x view, `repair` spelt), its frame
+    origin and everything else kept."""
+    from guardrail.models import _metric_view
+    return json.loads(json.dumps(_metric_view(pol._ir2_dump(
+        mode="json", exclude_none=True, context={"points": "era"}))))
+
+
+def test_a_projected_rendering_of_a_wgs84_only_version_is_refused():
+    """Independent review of the third fix (2026-11-26), the dissent:
+    recorded_as matched a document's legacy 16-hex, prior and IR 2.x hash
+    forms against EVERY lock entry, and the lock keeps the legacy forms of
+    entries locked in WGS84 since 6 Oct too, so with VLAGUARD_LEGACY_READ=1
+    the never-written metre rendering, with origin, of fase3-sim-demo@0.1.4
+    (and of wgs84-taipei-demo@0.1.2) read through load_for_flight,
+    load_yaml_for_flight and load_bundle(runtime=True), labelled recorded_as
+    that version, as YAML, as a bundle and as a pre-6-Oct-format bundle;
+    so did a copy writing x/y beside lat/lon (failed on 6a80730: every load
+    ACCEPTED). Now a document in a legacy point form matches only a lock
+    record whose own document was in one (bundle.projected_era_keys:
+    locked before 2026-10-06, or proved metre by the frame migration), so
+    each is refused, naming the version it reproduces; the recorded metre
+    version fase3-sim-demo@0.1.2 and a pre-6-Oct WGS84 version still read."""
+    import os
+    from guardrail.models import LEGACY_POINT_FORMS, era_context
+    os.environ.pop(B.LEGACY_READ_ENV, None)
+    lock = B.load_lock()
+    yaml_loads = {
+        "load_for_flight(yaml_path)": lambda p, **k: B.load_for_flight(yaml_path=p, **k),
+        "load_yaml_for_flight": lambda p, **k: B.load_yaml_for_flight(
+            p, say=lambda s: None)}
+    bundle_loads = {
+        "load_for_flight(bundle)": lambda p, **k: B.load_for_flight(
+            p, allow_unverified=True, **k),
+        "load_bundle(runtime=True)": lambda p, **k: B.load_bundle(
+            p, require_signature=False, **k)}
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        cases = []
+        for path in (SITL, TAIPEI):
+            pol = load_policy(path)
+            key = B.lock_key(pol)
+            ent = lock["policies"][key]
+            raw = _metre_rendering(pol)
+            metre = legacy_metre_policy_from_raw(copy.deepcopy(raw),
+                                                 context=era_context(None))
+            assert metre.point_form in LEGACY_POINT_FORMS, metre.point_form
+            # The mechanism of the dissent: the rendering reproduces the
+            # legacy forms the lock keeps for this WGS84-only version.
+            assert set(metre.legacy_hashes().values()) & set(
+                ent["legacy_hashes"].values()), key
+            y = d / f"{pol.policy_id}-metre.yaml"
+            y.write_text(json.dumps(raw), encoding="utf-8")
+            xy_doc = pol.model_dump(mode="json", exclude_none=True)
+            assert xy_beside_latlon_count(xy_doc) > 0
+            xy = d / f"{pol.policy_id}-xy.yaml"
+            xy.write_text(json.dumps(xy_doc), encoding="utf-8")
+            b = B.write_bundle(metre, d / f"{pol.policy_id}-metre.tar.gz", signer=None,
+                               issued_at="2026-11-26T00:00:00Z", allow_legacy_metres=True)
+            (d / key).mkdir()
+            old_format = _legacy16_xy_bundles(pol, d / key)
+            (d / key / "mv").mkdir()
+            old_format += _legacy16_xy_bundles(metre, d / key / "mv", ir=raw)
+            cases.append((key, metre, (y, xy), (b, *old_format)))
+        os.environ[B.LEGACY_READ_ENV] = "1"
+        try:
+            for key, metre, yamls, bundles in cases:
+                for p in yamls:
+                    for name, load in yaml_loads.items():
+                        msg = _refused(lambda: load(p), B.LegacyPointFormRefused)
+                        assert "not a recorded policy" in msg and key in msg, (name, msg)
+                        assert "WGS84 only" in msg, (name, msg)
+                for p in bundles:
+                    for name, load in bundle_loads.items():
+                        msg = _refused(lambda: load(p), B.LegacyPointFormRefused,
+                                       names_conversion=False)
+                        assert "not a recorded policy" in msg and key in msg, (name, p.name, msg)
+                assert B.recorded_as(metre) is None, key
+        finally:
+            os.environ.pop(B.LEGACY_READ_ENV, None)
+        # The argument is the same declaration, gated the same way.
+        _refused(lambda: B.load_for_flight(yaml_path=cases[0][2][0], legacy_read=True),
+                 B.LegacyPointFormRefused)
+        _refused(lambda: B.load_bundle(cases[0][3][0], require_signature=False,
+                                       legacy_read=True), B.LegacyPointFormRefused)
+        # A recorded metre-era version still reads, labelled as itself.
+        key, old_yaml = write_recorded_metre_yaml(d)
+        _, old_bundle = write_recorded_metre_bundle(d)
+        os.environ[B.LEGACY_READ_ENV] = "1"
+        try:
+            for name, load in yaml_loads.items():
+                pol, rec = load(old_yaml)
+                assert rec["recorded_as"] == key and pol.legacy_read, name
+                Shield(pol)
+            pol, rec = bundle_loads["load_for_flight(bundle)"](old_bundle)
+            assert rec["recorded_as"] == key and pol.legacy_read
+            Shield(bundle_loads["load_bundle(runtime=True)"](old_bundle))
+        finally:
+            os.environ.pop(B.LEGACY_READ_ENV, None)
+    # The criterion, from the lock's own fields: no hash_scheme of its own
+    # (locked up to 2026-10-06), or on the migrated_from chain below a frame
+    # migration (migration.old_hash_form FRAME_FORM), or a recipe on either.
+    era = B.projected_era_keys(lock)
+    for k, ent in lock["policies"].items():
+        if not ent.get("hash_scheme"):
+            assert k in era, k
+        if (ent.get("migration") or {}).get("old_hash_form") == B.FRAME_FORM:
+            assert k not in era and ent["migrated_from"] in era, k
+        if ent.get("ir_schema_version") in ("3.1.0", "4.0.0"):
+            assert k not in era, k                   # every file in WGS84 since 3 Nov
+    assert {"fase3-sim-demo@0.1.1", "fase3-sim-demo@0.1.2", "wgs84-taipei-demo@0.1.0",
+            "follow-car-citylife-nfz3@0.1.0"} <= era
+    assert not {"fase3-sim-demo@0.1.3", "fase3-sim-demo@0.1.4", "wgs84-taipei-demo@0.1.1",
+                "wgs84-taipei-demo@0.1.2", "distance-envelope-sitl@0.1.0"} & era
+    assert "derived fase3-sim-demo@0.1.1+nfz-dynamic" in era
+    # Every metre version the lock records is still recognised as itself.
+    for k, pol in recorded_metre_versions():
+        assert B.recorded_as(pol) == k, k
+    # A WGS84-era version is recorded by its canonical hash, for a WGS84 read.
+    cur = load_policy(SITL)
+    assert B.recorded_as(cur) == B.lock_key(cur)
+    assert B.recorded_as(cur, projected=True) is None
+
+
 def test_rest_refuses_any_point_key_but_lat_lon():
     """The published schema's point is {lat, lon} with additionalProperties
     false, and a document's point refuses another key (extra_forbidden), but
@@ -876,6 +1037,46 @@ def test_patch_move_refuses_a_geometry_block_and_unknown_keys():
                                         "motion": None})["generation"] == 3
     # translate carries no point; its body is as it was
     assert api.apply_nfz_edit(sh, "z", {"op": "translate", "dx": 1.0})["generation"] == 4
+
+
+def test_patch_translate_rotate_scale_refuse_keys_they_do_not_define():
+    """PATCH /dynamic_nfz/{id} translate, rotate and scale read their own
+    numbers and ignored every other key: a `geometry:` block, top-level
+    vertices, a metre `center` on rotate (the zone turned about its vertex
+    mean) answered 200 and bumped the generation (independent review of the
+    third fix of WP1-14, 2026-11-26; failed before: 200, nothing projected
+    stored). Now 422 naming the key, nothing applied, as a move refuses one
+    (api.EDIT_KEYS). A clean edit, with `layer: mission` or not, applies as
+    before."""
+    sh = Shield(load_policy(SITL))
+    api.apply_dynamic_nfz(sh, {"id": "z", **RULE, "vertices": [
+        _ll(sh, 20, -5), _ll(sh, 30, -5), _ll(sh, 30, 5)]})
+    gen = sh.policy.generation
+    ring = [_ll(sh, 40, -5), _ll(sh, 50, -5), _ll(sh, 50, 5)]
+    metre_block = {"vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]}
+    for body, key in (
+            ({"op": "translate", "dx": 1.0, "dy": 0.0, "geometry": metre_block}, "geometry"),
+            ({"op": "translate", "dx": 1.0, "vertices": ring}, "vertices"),
+            ({"op": "rotate", "angle_deg": 30.0, "center": {"x": 25.0, "y": 0.0}}, "center"),
+            ({"op": "rotate", "angle_deg": 30.0, "center": ring[0]}, "center"),
+            ({"op": "scale", "factor": 1.5, "geometry": {"vertices": ring}}, "geometry"),
+            ({"op": "scale", "factor": 1.5, "X": 1.0}, "X")):
+        try:
+            api.apply_nfz_edit(sh, "z", copy.deepcopy(body))
+        except api.ApiError as e:
+            assert e.status == 422, (body, e.status)
+            assert "unknown key" in e.detail and key in e.detail, e.detail
+        else:
+            raise AssertionError(f"PATCH {body['op']} applied {sorted(body)}")
+        assert sh.policy.generation == gen, body
+    for body in ({"op": "translate", "dx": 1.0, "dy": -1.0},
+                 {"op": "translate", "dx": 1.0, "layer": "mission"},
+                 {"op": "rotate", "angle_deg": 15.0},
+                 {"op": "scale", "factor": 0.5, "layer": "mission"}):
+        gen += 1
+        assert api.apply_nfz_edit(sh, "z", body)["generation"] == gen, body
+    assert set(api.EDIT_KEYS) == {"move", "translate", "rotate", "scale"}
+    assert api.EDIT_KEYS["move"] is api.MOVE_KEYS
 
 
 def test_every_run_resolution_candidate_builds_a_shield():

@@ -2670,7 +2670,8 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 #     callers send the four rule fields beside the 2026-07 body); PATCH
 #     /dynamic_nfz/{id} move refuses any key but op / vertices / motion /
 #     layer, a `geometry:` block included (api.MOVE_KEYS; since 2026-11-26,
-#     before which it dropped one);
+#     before which it dropped one), and translate / rotate / scale any key
+#     but their own (api.EDIT_KEYS; since the fourth fix, 2026-11-26);
 #   * the Ingest CLI, tools/geo_to_policy.py ingest (WP1-16), for a DSL
 #     rule or a POST /nfz / /dynamic_nfz body read from a file, stdin or a
 #     URL (ProjectedCoordinatesRefused, exit 2, the REST wording; since
@@ -2692,7 +2693,12 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
 #     version, migrated ones included, or a lock derivation;
 #     bundle.recorded_as), and any other policy is refused with the
 #     variable set too (until then nothing checked it, so a new metre
-#     document flew under it). load_for_flight's record then says so
+#     document flew under it); since the fourth fix a document in a legacy
+#     point form matches only a lock record whose own document was in one
+#     (bundle.projected_era_keys: locked before 2026-10-06, or proved metre
+#     by the frame migration), never a version recorded in WGS84 only, so
+#     the never-written metre or x/y-beside rendering of such a version is
+#     refused too. load_for_flight's record then says so
 #     (`recorded_as`); load_bundle returns a Policy only and labels it
 #     (mark_legacy_read).
 # NOT a Policy DSL entry, and so not refusing metres: the Stress Testing

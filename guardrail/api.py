@@ -57,7 +57,8 @@ origin (models.NoFrameOrigin).
 PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [{lat, lon}, ...]},
 {"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate", "angle_deg": 30} or
 {"op": "scale", "factor": 1.5}. A move refuses any other key (a `geometry:`
-block included; MOVE_KEYS, since 2026-11-26).
+block included; MOVE_KEYS, since 2026-11-26), and so do translate, rotate
+and scale (EDIT_KEYS, since the fourth fix of 2026-11-26).
 
 POST /time_window_switch: {"target_id": "nfz-school-yard", "active": false,
 "constraint_type": "hard", "scope": "mission", "priority": "P0",
@@ -293,6 +294,13 @@ def apply_dynamic_nfz(shield: Shield, body: dict) -> dict:
 
 # The keys a PATCH /dynamic_nfz/{id} "move" body may carry (WP1-14, 2026-11-26).
 MOVE_KEYS = frozenset({"op", "vertices", "motion", "layer"})
+# ... and each op's (fourth fix of 2026-11-26: translate, rotate and scale
+# ignored any other key, a `geometry:` block or a metre `center` included,
+# and answered 200 with a new generation; nothing projected was stored).
+EDIT_KEYS = {"move": MOVE_KEYS,
+             "translate": frozenset({"op", "dx", "dy", "layer"}),
+             "rotate": frozenset({"op", "angle_deg", "layer"}),
+             "scale": frozenset({"op", "factor", "layer"})}
 
 
 def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
@@ -305,7 +313,10 @@ def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
     generation, the block dropped without a word (third independent review
     of WP1-14; nothing projected was stored). A `geometry:` block's points
     are checked first, as POST /nfz checks them, so x/y there is refused
-    for what it is. translate / rotate / scale carry no point."""
+    for what it is. translate / rotate / scale carry no point, and each
+    refuses any key but its own (EDIT_KEYS; until the fourth fix of
+    2026-11-26 they ignored them: a rotate's metre `center` was dropped and
+    the zone turned about its vertex mean, answering 200)."""
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
@@ -319,6 +330,13 @@ def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
             raise ApiError(422, f"move: unknown key(s) {', '.join(extra)}; a move takes "
                                 f"the zone's top-level `vertices` as {{lat, lon}} points "
                                 f"(and `motion`), no `geometry:` block")
+    elif op in EDIT_KEYS:
+        extra = sorted(str(k) for k in body if k not in EDIT_KEYS[op])
+        if extra:
+            takes = ", ".join(sorted(EDIT_KEYS[op] - {"op", "layer"}))
+            raise ApiError(422, f"{op}: unknown key(s) {', '.join(extra)}; a {op} takes "
+                                f"{takes} only (a relative edit of the zone as it "
+                                f"stands: no point, no `geometry:` block, no centre)")
     try:
         if op == "move":
             ev = shield.move_nfz(zone_id, _points(shield, body.get("vertices")),

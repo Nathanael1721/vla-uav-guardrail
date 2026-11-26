@@ -417,6 +417,28 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
     assert [e["op"] for e in c.get("/events").json()] == ["spawn", "translate", "expire"]
 
 
+def test_routes_refuse_an_edit_key_the_op_does_not_define():
+    """PATCH /dynamic_nfz/{id} translate / rotate / scale answered 200 to a
+    key they do not define (a `geometry:` block, a metre `center`) and
+    dropped it (WP1-14, fourth fix of 2026-11-26): now 422, nothing applied,
+    as a move answers (api.EDIT_KEYS)."""
+    sh = _flying()
+    c = _client(sh)
+    if c is None:
+        return SKIP
+    assert c.post("/dynamic_nfz", json=_geo(ZONE, sh)).status_code == 200
+    for body in ({"op": "translate", "dx": 1, "dy": 0,
+                  "geometry": {"vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0},
+                                            {"x": 5, "y": 5}]}},
+                 {"op": "rotate", "angle_deg": 20, "center": {"x": 10, "y": 0}},
+                 {"op": "scale", "factor": 1.5, "X": 1}):
+        r = c.patch("/dynamic_nfz/nfz-landslide", json=body)
+        assert r.status_code == 422 and "unknown key" in r.json()["detail"], r.text
+    assert c.get("/health").json()["generation"] == 1
+    r = c.patch("/dynamic_nfz/nfz-landslide", json={"op": "rotate", "angle_deg": 20})
+    assert r.status_code == 200 and r.json()["generation"] == 2, r.text
+
+
 def test_routes_switch_swap_and_the_legacy_body():
     from guardrail.models import Policy
     # A frame origin stated: since 2026-11-26 (WP1-14) a swap's centerline is
