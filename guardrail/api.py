@@ -179,9 +179,11 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
     [x, y] pair, or x/y beside lat/lon - is refused with 422, naming the
     tool-side conversion (models.wgs84_from_metres, about the policy's
     `origin` from GET /policy). Until then such a point was accepted and
-    written as WGS84 at ingest (deviation 1 of the final report). The point
-    is placed in the policy's frame when the Shield writes it (a policy with
-    no frame origin refuses it: models.NoFrameOrigin, 422)."""
+    written as WGS84 at ingest (deviation 1 of the final report). Every
+    body's points come here, top level or inside a `geometry:` block
+    (_body_points, since the 2026-11-26 review). The point is placed in the
+    policy's frame when the Shield writes it (a policy with no frame origin
+    refuses it: models.NoFrameOrigin, 422)."""
     if not isinstance(pts, list):
         raise ApiError(422, "vertices / centerline must be a list of {lat, lon} points")
     out = []
@@ -210,6 +212,21 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
             raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
         out.append({"lat": lat, "lon": lon})
     return out
+
+
+def _body_points(shield: Shield, data: dict, key: str) -> dict:
+    """`data` (a copy of a body) with its `key` points (vertices / centerline)
+    through `_points`, wherever the DSL reads them: at the top level, and
+    inside the grant's `geometry:` block (models._normalise_rule lifts it).
+    Until 2026-11-26 only the top level was checked, so a nested body with
+    x/y beside lat/lon was applied (review 2026-11-26, WP1-14). The client's
+    body is not changed."""
+    if key in data:
+        data[key] = _points(shield, data[key])
+    geo = data.get("geometry")
+    if isinstance(geo, dict) and key in geo:
+        data["geometry"] = {**geo, key: _points(shield, geo[key])}
+    return data
 
 
 def _result(ev: dict, **extra) -> dict:
@@ -251,9 +268,7 @@ def apply_dynamic_nfz(shield: Shield, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
-    data = {**body, "type": "dynamic_nfz"}
-    if "vertices" in data:
-        data["vertices"] = _points(shield, data["vertices"])
+    data = _body_points(shield, {**body, "type": "dynamic_nfz"}, "vertices")
     zone = _build(DynamicNFZ, data)
     try:
         return _result(shield.spawn_nfz(zone))
@@ -315,9 +330,7 @@ def apply_corridor_swap(shield: Shield, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ApiError(422, "body must be a JSON object")
     _mission_layer_only(body)
-    data = {**body, "type": "corridor_swap"}
-    if "centerline" in data:
-        data["centerline"] = _points(shield, data["centerline"])
+    data = _body_points(shield, {**body, "type": "corridor_swap"}, "centerline")
     sp = _build(CorridorSwap, data)
     try:
         return _result(shield.hot_apply(sp))
