@@ -373,9 +373,13 @@ def test_a_hot_apply_over_rest_reaches_the_flying_shield_and_its_records():
     _act(N, node)
     clk.t += 0.1
     node._tick()
+    # Laid out in metres, sent as {lat, lon}: REST refuses metre points since
+    # 2026-11-26 (WP1-14), so the client converts them tool side.
+    from guardrail.models import wgs84_from_metres
     zone = {"id": "nfz-rest", **HARD_P0,
-            "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
-                         {"x": 50, "y": 50}, {"x": 40, "y": 50}]}
+            "vertices": wgs84_from_metres([{"x": 40, "y": 40}, {"x": 50, "y": 40},
+                                           {"x": 50, "y": 50}, {"x": 40, "y": 50}],
+                                          node.policy.frame_origin)}
     url = f"http://127.0.0.1:{port}"
     r = httpx.post(f"{url}/dynamic_nfz", json=zone, timeout=10)
     assert r.status_code == 200 and r.json()["generation"] == 1, r.text
@@ -1010,8 +1014,10 @@ def test_a_stranger_cannot_hot_apply_by_sending_its_request_with_its_finished():
     H.issue_cert(pki, "other-client")                   # the CA's, not allowed
     port = _free_port()
     th = A.serve_in_background(sh, "127.0.0.1", port, pki_dir=pki)
-    square = [{"x": 40, "y": 40}, {"x": 50, "y": 40}, {"x": 50, "y": 50},
-              {"x": 40, "y": 50}]
+    # Laid out in metres, sent as {lat, lon} (REST refuses metres, WP1-14).
+    from guardrail.models import wgs84_from_metres
+    square = wgs84_from_metres([{"x": 40, "y": 40}, {"x": 50, "y": 40}, {"x": 50, "y": 50},
+                                {"x": 40, "y": 50}], sh.policy.frame_origin)
     try:
         for i in range(5):
             answer = _coalesced_post(port, pki, "other-client",
