@@ -2761,13 +2761,22 @@ def test_a_brake_tick_is_checked_as_the_zero_action_it_flew():
     phantom = Violation(rule_id="phantom", category="geofence",
                         detail="the repaired action's, never flown", predicted_at_s=0.0)
 
+    def with_phantom(d):
+        if d.setpoint == "brake":
+            d = d.model_copy(update={"emitted_violations":
+                                     list(d.emitted_violations) + [phantom]})
+        return d
+
+    # Both entries: the harness hands its Shield the body frame (filter_body,
+    # which since 2026-11-26 does not go through the world-frame `filter`),
+    # its judges the world frame (filter).
     class Spy(S.Shield):
         def filter(self, *a, **kw):
-            d = super().filter(*a, **kw)
-            if d.setpoint == "brake":
-                d = d.model_copy(update={"emitted_violations":
-                                         list(d.emitted_violations) + [phantom]})
-            return d
+            return with_phantom(super().filter(*a, **kw))
+
+        def filter_body(self, *a, **kw):
+            d, eb = super().filter_body(*a, **kw)
+            return with_phantom(d), eb
     real = S.Shield
     S.Shield = Spy
     try:

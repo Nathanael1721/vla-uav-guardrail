@@ -137,7 +137,6 @@ from . import repair as _repair
 from . import response as _response
 from . import terrain as _terrain
 from .people import PEOPLE_FIELD_RES_M, PeopleField, as_person, is_finite_person
-from .frames import from_body as _from_body, to_body as _to_body
 from .geometry import (area_covers, boundary_depth, enters_interior, nearest_on_polyline,
                        point_in_fence, push_out_direction, ring_contains, ring_distance)
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
@@ -1971,7 +1970,7 @@ class _Tick:
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
                  "_t_first", "given_up", "chain_runs", "ledger", "ahead", "origin",
-                 "committed", "pipe_t", "opened_mps", "clear_v")
+                 "committed", "pipe_t", "opened_mps", "clear_v", "frame")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -2015,6 +2014,11 @@ class _Tick:
         # slowed repair never shrinks its own horizon. 0.0 on every tick of
         # a Shield without one.
         self.clear_v = 0.0
+        # The tick's frame (repair.BodyFrame, since 2026-11-26, WP3-04): its
+        # heading and the memo of the body / world rotation pair the stack
+        # reads the carried body action through. Set by the entry that
+        # opened the tick (Shield._filter, Shield._advise).
+        self.frame: "_repair.BodyFrame | None" = None
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -7398,9 +7402,36 @@ class Shield:
         hold_off_m / hold_reach_m: in Loiter, how far the aircraft is from the
         point its hold flies to and how far a kept hold carries it (X9, since
         2026-11-11; guardrail/hold_flight.py HoldWatch), from the caller that
-        flies the hold; None: not judged."""
+        flies the hold; None: not judged.
+
+        THE WORLD-FRAME WRAPPER (since 2026-11-26, WP3-04). `raw` is a
+        WORLD-frame action (North / East / up), for the offline tools and
+        judges that hold one (tests/test_frame_boundary.py names them);
+        every rail hands the Shield the body frame (`filter_body`). Sanitise
+        runs on `raw` as given, and the finite action is handed to the
+        Shield's stack in the body frame at the state's heading, read back
+        in the world frame as this very action wherever a rule judges it
+        (the tick's frame, repair.BodyFrame): the decision is the one the
+        world-frame stack made, bit for bit."""
+        frame = _repair.BodyFrame(state.yaw_deg)
+        admitted, nonfinite = _sanitise(raw)
+        return self._filter(state, frame.to_body(admitted), frame, nonfinite, t,
+                            rtl_failed=rtl_failed, home_reached=home_reached, landed=landed,
+                            hold_off_m=hold_off_m, hold_reach_m=hold_reach_m)
+
+    def _filter(self, state: State, body: Action4D, frame, nonfinite: list,
+                t: float | None, *, rtl_failed: bool = False, home_reached: bool = False,
+                landed: bool = False, hold_off_m: float | None = None,
+                hold_reach_m: float | None = None) -> ShieldDecision:
+        """The monitor tick (`filter`'s) on the BODY-frame action `body`,
+        already finite (Sanitise ran at the entry, `nonfinite` naming the
+        channels it zeroed), at `frame`'s heading. The stack carries `body`;
+        the world frame is read through `frame` where a rule's geometry is
+        judged or forecast, and for the records (the sliding window's
+        admitted action, the decision's raw and emitted actions)."""
         t0 = time.perf_counter()
         tick = self._begin_tick(t, state)
+        tick.frame = frame
         if (getattr(state, "velocity", None) is not None and self.velocity_response is not None
                 and self._velocity_of(state) is None):
             self.n_velocity_nonfinite += 1
@@ -7416,10 +7447,11 @@ class Shield:
             self._forget_left_openings(dstate)
             # The action subscriber -> the sliding-window buffer -> the
             # violation checker (grant node architecture): the action (made
-            # finite, as _decide makes it) and its predicted trajectory from
-            # the decision state go into the buffer first, and every rule
-            # that judges this action reads that trajectory (_predict).
-            admitted, _ = _sanitise(raw)
+            # finite at the entry) and its predicted trajectory from the
+            # decision state go into the buffer first, and every rule that
+            # judges this action reads that trajectory (_predict). The buffer
+            # records it, and the forecast reads it, in the world frame.
+            admitted = frame.to_world(body)
             if self.clear_response is not None:
                 # The clearance horizon's speed (_clear_horizon_s): the
                 # request's, or the fastest setpoint the vehicle still flies
@@ -7439,7 +7471,7 @@ class Shield:
                             if s[1] is not None), default=0.0)
                 tick.clear_v = max(math.hypot(admitted.vx, admitted.vy), sent)
             self._buffer.admit(tick, dstate, admitted, self._predict(dstate, admitted))
-            decision = self._decide(dstate, raw)
+            decision = self._decide(dstate, body, nonfinite)
             # Zones this tick saw opening on the aircraft: their escape flies
             # at the cap on every later tick until the aircraft is out of the
             # ring (`_opened_on`).
@@ -7487,19 +7519,34 @@ class Shield:
         by every rail's adapter: `sitl/mavlink_adapter_node.py` on the ROS 2
         rail; tests/test_frame_boundary.py).
 
-        BODY IN, BODY OUT (WP3-04 / ARCH-04). The projection computes in the
-        world frame its rules are written in, between the two rotations
-        below; its interface is the body frame on both sides. The round trip
-        is exact at a whole number of quarter turns and within a few ulp
-        elsewhere, and the same body action in a scene that turns with the
-        aircraft is repaired to the same body action at every heading
-        (tests/test_frame_boundary.py).
+        BODY IN, BODY OUT, AND BODY THROUGH (WP3-04 / ARCH-04; since
+        2026-11-26). Sanitise runs on `body` itself (a non-finite channel of
+        the body action is zeroed, and only that channel, at every heading),
+        and the Shield's stack CARRIES the body action: the repair chain
+        hands it from one operator to the next and each operator hands one
+        back (repair.RepairContext), the two last resorts likewise, and what
+        flies is the body action the stack handed on. The rules are world
+        geometry, so the body action is read in the world frame where a rule
+        judges or forecasts it - each re-check (`_check`), each forecast
+        (`_predict`), each operator's geometry - at the tick's heading,
+        through the tick's frame (repair.BodyFrame: one rotation pair,
+        lossless on its own results, shared by every operator context of
+        the tick); and for the records: the decision's `raw` and `emitted`
+        and the sliding window's admitted action are the world readings of
+        the body actions, as the logs, the audit record and the FSM read
+        them. No rotation wraps the stack: an action that passes untouched
+        is handed back as the very body action handed in, not a re-rotation
+        of it. The same body action in a scene that turns with the aircraft
+        is repaired to the same body action at every heading
+        (tests/test_frame_boundary.py), and every decision is the one the
+        world-frame stack made, bit for bit (tests/test_shieldcore_repair.py
+        compares them at random headings).
 
-        The action is turned into the world frame at the state's heading
-        (frames.from_body), filtered by `filter`, and turned back at the same
-        heading (frames.to_body). Until 2026-11-04 the ROS 2 Shield node made
-        those two turns itself around `filter()`; the Shield now takes the
-        body frame at its own boundary, and the node turns nothing.
+        Until 2026-11-04 the ROS 2 Shield node turned the action into the
+        world frame and back around `filter()` itself; from then until
+        2026-11-26 this method made those two turns around `filter()` (the
+        whole stack carried the world action, and Sanitise ran on it). The
+        world-frame `filter` is now a wrapper around the same stack.
 
         Why the repair is the body-frame one: the rules are world geometry
         (a fence on the ground, a distance to a point, an altitude band), and
@@ -7512,15 +7559,15 @@ class Shield:
         (kuanting-vla-uav-guardrail safety_shield/repair.py: each operator
         takes and returns the body action and turns it into the IR's ENU
         plane for its geometry, `body_to_enu` ... `enu_to_body`), and since
-        2026-11-21 (WP3-04) so do ours: the monitor and the records read the
-        world action this method makes, and each repair operator is handed
-        the BODY action at the state's heading and hands one back
+        2026-11-21 (WP3-04) so do ours: each repair operator is handed the
+        BODY action at the state's heading and hands one back
         (`_repair_chain`, repair.RepairContext.to_body / to_world; a
         `_repair_*` method it wraps computes in the world frame between the
-        two). Until then the operators were handed the world action and the
-        only turn was this method's, once around the whole stack; the
-        decisions are the same bit for bit (the interface's rotation pair is
-        lossless on its own results). Since 2026-11-23 (WP3-04b) the two
+        two), and since 2026-11-26 the stack between the operators carries
+        the body action too (above). Until 2026-11-21 the operators were
+        handed the world action and the only turn was this method's, once
+        around the whole stack; the decisions are the same bit for bit (the
+        rotation pair is lossless on its own results). Since 2026-11-23 (WP3-04b) the two
         last resorts `_decide` runs outside the stacks, ClearanceEscape
         (`_rescue`) and the slowed GeofenceEscape (`_slower_opened_escape`),
         are handed the body action and hand one back too (`_clearance_escape`,
@@ -7569,16 +7616,52 @@ class Shield:
         recheck_commanded, advise, handback_unsafe) are straight.
 
         `t` and the other keyword arguments are `filter`'s."""
-        raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)
+        frame = _repair.BodyFrame(state.yaw_deg)
+        admitted, nonfinite = self._admit_body(frame, body)
         on = self.arc_forecast if arc is None else bool(arc)
         prev_arc = getattr(self._local, "arc", False)
         self._local.arc = on
         try:
-            decision = self.filter(state, raw, t, **kw)
+            decision = self._filter(state, admitted, frame, nonfinite, t, **kw)
         finally:
             self._local.arc = prev_arc
-        fwd, right, up, yaw_rate = _to_body(decision.emitted, state.yaw_deg)
-        return decision, Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+        return decision, self._emitted_body(frame, decision)
+
+    @staticmethod
+    def _admit_body(frame, body: Action4D) -> "tuple[Action4D, list[str]]":
+        """`body` made finite (Sanitise, on the body action: the names of the
+        channels zeroed) and paired in `frame` with its world reading.
+
+        A non-finite HEADING cannot turn a finite body action into the world
+        frame either: its horizontal reading is NaN, which every check would
+        pass (_sanitise says why). The horizontal channels are then zeroed in
+        both frames and named, as Sanitise on the world reading named them
+        until 2026-11-26 ("vx,vy"), so the tick is judged, and reported, as
+        it was then."""
+        admitted, nonfinite = _sanitise(body)
+        world = frame.to_world(admitted)
+        if not (math.isfinite(world.vx) and math.isfinite(world.vy)):
+            world, more = _sanitise(world)
+            admitted = Action4D(vx=0.0, vy=0.0, vz_up=admitted.vz_up,
+                                yaw_rate=admitted.yaw_rate)
+            nonfinite = [n for n in ("vx", "vy", "vz_up", "yaw_rate")
+                         if n in nonfinite or n in more]
+        frame.pair(admitted, world)
+        return admitted, nonfinite
+
+    @staticmethod
+    def _emitted_body(frame, decision: ShieldDecision) -> Action4D:
+        """The decision's emitted action in the body frame, as a new Action4D:
+        the body action the stack handed on (`frame`'s pair of the decision's
+        world record), or, for an action the stack did not hand on in the
+        body frame (a stop, the escalation FSM's), its body reading at the
+        tick's heading. A non-finite heading has no body reading: the
+        rotation's own (non-finite horizontal channels), as before
+        2026-11-26, whatever the stack carried."""
+        if not math.isfinite(frame.heading_deg):
+            frame = _repair.BodyFrame(frame.heading_deg)
+        em = frame.to_body(decision.emitted)
+        return Action4D(vx=em.vx, vy=em.vy, vz_up=em.vz_up, yaw_rate=em.yaw_rate)
 
     def _decision_state(self, tick: _Tick, state: State) -> State:
         """The state a decision is made from: `state` itself, except that a
@@ -7655,33 +7738,46 @@ class Shield:
         clear (guardrail/response.py `hold_plan`): the Shield's answer to a
         stop (`raw` zero) from a state with a measured velocity is a stop
         where the stop ends legal, and the recovery the stop point needs
-        where the aircraft's momentum carries it into a rule."""
+        where the aircraft's momentum carries it into a rule.
+
+        `raw` is a WORLD-frame action: the world-frame wrapper of the same
+        stack `advise_body` runs (as `filter` is of `filter_body`'s;
+        Sanitise on `raw` as given)."""
+        frame = _repair.BodyFrame(state.yaw_deg)
+        admitted, nonfinite = _sanitise(raw)
+        return self._advise(state, frame.to_body(admitted), frame, nonfinite)
+
+    def _advise(self, state: State, body: Action4D, frame, nonfinite: list) -> ShieldDecision:
+        """`advise`'s decision on the finite BODY-frame action `body` at
+        `frame`'s heading (`_filter`'s stack, without the tick)."""
         n_refused = self.n_floor_refused
         try:
             rt = self._local_runtime(self._rt, state.x, state.y)
             with self._scope(self._new_tick(None, rt)) as tick:
-                return self._decide(self._decision_state(tick, state), raw)
+                tick.frame = frame
+                return self._decide(self._decision_state(tick, state), body, nonfinite)
         finally:
             self.n_floor_refused = n_refused
 
     def advise_body(self, state: State, body: Action4D) -> tuple[ShieldDecision, Action4D]:
         """`advise` with the action in the BODY frame, as `filter_body` is
-        `filter` (WP3-04 / ARCH-04): `body` turned into the world frame at
-        the state's heading, `advise`, and the emitted action turned back at
-        that heading. Returns `(decision, emitted_body)`, so a rail streams
-        the answer to a stop in the body frame its adapter converts."""
-        raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)
-        decision = self.advise(state, raw)
-        fwd, right, up, yaw_rate = _to_body(decision.emitted, state.yaw_deg)
-        return decision, Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
+        `filter` (WP3-04 / ARCH-04): Sanitise on `body`, the stack carrying
+        the body action and reading it in the world frame only where a rule
+        judges it (`filter_body` says how). Returns `(decision,
+        emitted_body)`, so a rail streams the answer to a stop in the body
+        frame its adapter converts."""
+        frame = _repair.BodyFrame(state.yaw_deg)
+        admitted, nonfinite = self._admit_body(frame, body)
+        decision = self._advise(state, admitted, frame, nonfinite)
+        return decision, self._emitted_body(frame, decision)
 
     def check_body(self, state: State, body: Action4D) -> list[Violation]:
-        """Every rule a BODY-frame action violates from `state` (`_check` on
-        it turned into the world frame at the state's heading): for a rail
-        that shapes the Shield's emitted body action after the projection and
-        re-checks the shaped one before streaming it (demo/run_demo.py)."""
-        return self._check(state, _from_body(body.vx, body.vy, body.vz_up,
-                                             body.yaw_rate, state.yaw_deg))
+        """Every rule a BODY-frame action violates from `state` (`_check`,
+        which judges the world geometry, on its world reading at the state's
+        heading): for a rail that shapes the Shield's emitted body action
+        after the projection and re-checks the shaped one before streaming
+        it (demo/run_demo.py)."""
+        return self._check(state, _repair.BodyFrame(state.yaw_deg).to_world(body))
 
     def _begin_tick(self, t: float | None, state=None) -> _Tick:
         if t is None:
@@ -7795,8 +7891,10 @@ class Shield:
     def _repair_chain(self, tick: _Tick, state: State, raw: Action4D,
                       skip: frozenset, repairs: list, raw_violations=()
                       ) -> tuple[Action4D, list, list, list]:
-        """The repair stack, run for every enforced rule but those in `skip`.
-        Returns (repaired action, repairs, what it still violates, passes):
+        """The repair stack, run for every enforced rule but those in `skip`,
+        on the BODY-frame action `raw` at the tick's heading (`tick.frame`).
+        Returns (repaired action, in the body frame, repairs, what it still
+        violates, passes):
         `passes` is [(pass number, [RepairAttempt, ...]), ...], every operator
         considered in every pass (pass 0 runs before the iterated loop); it is
         also kept on the tick's ledger as this run's (`tick.ledger`).
@@ -7805,21 +7903,22 @@ class Shield:
         order this method always called the `_repair_*` methods it wraps,
         with the same arguments, so its decisions are the old chain's.
 
-        THE FRAME AT THE OPERATOR INTERFACE (WP3-04, since 2026-11-21). The
-        chain carries the action in the world frame its re-checks (`_check`)
-        read; each operator is handed it in the BODY frame at the decision
-        state's heading (`ctx.to_body`) and what it hands back is read in the
-        world frame again (`ctx.to_world`): one conversion each way per
-        operator call. Lossless on the pair's own results
-        (repair.RepairContext), so the default chain decides as it did when
-        the operators were handed the world action, bit for bit. Until
+        THE FRAME (WP3-04). The chain CARRIES the body action (since
+        2026-11-26): each operator is handed the body action the one before
+        it handed on, and hands one back (repair.RepairContext); a re-check
+        (`_check`) reads it in the world frame at the tick's heading
+        (`ctx.to_world`, the tick's frame memo). The pair is lossless on its
+        own results and the memo is the tick's, so every re-check and every
+        operator's geometry reads the world action the world-frame chain
+        read, and the default chain decides as it did, bit for bit. From
+        2026-11-21 until then the chain carried the world action and turned
+        it into the body frame for each operator call and back; before
         2026-11-21 the operators were handed the world action and the only
         rotation was `filter_body`'s, around the whole stack."""
         prev, tick.skip = tick.skip, frozenset(skip)
         tick.chain_runs += 1
         ops, ir = self.repair_operators, tick.rt.ir
-        ctx = _repair.RepairContext(self, state, repairs, raw, tuple(raw_violations),
-                                    tuple(raw_violations), heading_deg=state.yaw_deg)
+        ctx = self._frame_ctx(tick, state, repairs, raw, raw_violations)
         passes: list = []
         tick.ledger.append((tick.chain_runs, passes))
         try:
@@ -7828,9 +7927,9 @@ class Shield:
             else:
                 fixed, pre = raw, []
                 for name in _repair.CHAIN_PRE:
-                    att = ops[name].repair(ctx.to_body(fixed), None, ir, ctx=ctx)
+                    att = ops[name].repair(fixed, None, ir, ctx=ctx)
                     pre.append(att)
-                    fixed = ctx.to_world(att.action)
+                    fixed = att.action
                 passes.append((0, pre))
                 # Clearance and geofence are COUPLED: the anti-stall tangent can
                 # leave the clearance ring violated and the clearance push can aim
@@ -7845,19 +7944,30 @@ class Shield:
                     ctx.pass_no = k
                     atts = []
                     for name in loop:
-                        att = ops[name].repair(ctx.to_body(fixed), None, ir, ctx=ctx)
+                        att = ops[name].repair(fixed, None, ir, ctx=ctx)
                         atts.append(att)
-                        fixed = ctx.to_world(att.action)
+                        fixed = att.action
                     passes.append((k, atts))
-                    still = self._check(state, fixed)
+                    still = self._check(state, ctx.to_world(fixed))
                     if not still:
                         break
                     ctx.open_violations, ctx.open_label = tuple(still), f"after pass {k}"
             # P0 escape guard: repaired action must re-check clean.
-            blocking = self._check(state, fixed)
+            blocking = self._check(state, ctx.to_world(fixed))
         finally:
             tick.skip = prev
         return fixed, repairs, blocking, passes
+
+    def _frame_ctx(self, tick: _Tick, state: State, repairs: list, raw: Action4D,
+                   open_violations=(), open_label: str = "on the raw action"):
+        """A RepairContext on the tick's frame (`tick.frame`: its heading and
+        its memo of the rotation pair) for the BODY-frame action `raw`: the
+        context's `raw` is its world reading, as the operators read it."""
+        frame = tick.frame
+        return _repair.RepairContext(self, state, repairs, frame.to_world(raw),
+                                     tuple(open_violations), tuple(open_violations), open_label,
+                                     heading_deg=frame.heading_deg,
+                                     frame_memo=frame.frame_memo)
 
     def _first_feasible(self, tick: _Tick, ctx, passes: list) -> Action4D:
         """The grant's selection (Safety Shield page: "Tried in priority order.
@@ -7879,8 +7989,8 @@ class Shield:
         state, ir, ops = ctx.state, tick.rt.ir, self.repair_operators
         cfg = self.fsm.config if self.fsm is not None else _fsm.FSMConfig()
         order = self._stack(_repair.FIRST_FEASIBLE)
-        fixed = ctx.raw
-        open_ = self._check(state, fixed)
+        fixed = ctx.raw_body
+        open_ = self._check(state, ctx.raw)
         ctx.open_violations = tuple(open_)
         for k in range(1, _REPAIR_PASSES + 1):
             if not open_:
@@ -7892,19 +8002,17 @@ class Shield:
                 op = ops[name]
                 if target.category not in op.categories:
                     atts.append(_repair.RepairAttempt(
-                        name, "skip", ctx.to_body(fixed),
+                        name, "skip", fixed,
                         f"not a {target.category} violation ({target.rule_id})", (), k))
                     continue
                 trial = list(ctx.repairs)
-                # Body frame at the operator interface, world frame for the
-                # re-check (WP3-04, since 2026-11-21; _repair_chain).
-                att = op.repair(ctx.to_body(fixed), target, ir,
-                                ctx=replace(ctx, repairs=trial))
+                # The body action carried, the world frame for the re-check
+                # (WP3-04, since 2026-11-26; _repair_chain).
+                att = op.repair(fixed, target, ir, ctx=replace(ctx, repairs=trial))
                 if att.result != "ok":
                     atts.append(att)
                     continue
-                att_world = ctx.to_world(att.action)
-                after = self._check(state, att_world)
+                after = self._check(state, ctx.to_world(att.action))
                 if any(v.rule_id == target.rule_id for v in after):
                     atts.append(replace(att, result="fail",
                                         reason=f"{target.rule_id} still violated: {att.reason}"))
@@ -7934,7 +8042,7 @@ class Shield:
                         f"repairs, as the FSM reads it: {att.reason}")))
                     continue
                 ctx.repairs[:] = trial
-                fixed, open_ = att_world, after
+                fixed, open_ = att.action, after
                 ctx.open_violations, ctx.open_label = tuple(after), f"after pass {k}"
                 atts.append(att)
                 won = True
@@ -7952,7 +8060,8 @@ class Shield:
         Returns (action, repairs, relaxed ids, passes) or None, `passes` being
         the run that succeeded (every run, failed ones too, is on the tick's
         ledger). A hard rule is never given up: when hard rules conflict, the
-        fallback below stops or recovers, and the FSM escalates."""
+        fallback below stops or recovers, and the FSM escalates. `raw` and
+        the action returned are in the BODY frame (`_repair_chain`)."""
         rt = tick.rt
         prio = {c.id: c.priority for c in rt.constraints}
         soft = {v.rule_id for v in pool if not rt.hard.get(v.rule_id, True)
@@ -7968,7 +8077,7 @@ class Shield:
             fixed, reps, blocking, passes = self._repair_chain(
                 tick, state, raw, skip | frozenset(given), list(head), raw_violations)
             if not blocking:
-                broken = {v.rule_id for v in self._check(state, fixed)}
+                broken = {v.rule_id for v in self._check(state, tick.frame.to_world(fixed))}
                 tick.given_up = frozenset(given)
                 return fixed, reps, sorted(given & broken), passes
         return None
@@ -8045,7 +8154,10 @@ class Shield:
         (nothing at all, or only monitor_only rules: `violations`), from a
         position a stop would leave illegal (a hard, enforced rule:
         `_stop_illegal`). Returns the decision to fly: the floored action,
-        or `raw` passed through as before.
+        or `raw` passed through as before. `raw` is the BODY-frame action
+        the stack carries (`_decide`); the repair chain carries it too, and
+        the re-checks, the comparisons and the decision's records read it
+        in the world frame at the tick's heading (`tick.frame`).
 
         The monitors forgive a recovery on its trend: a zone left at more
         than 0.1 m/s, a ring opened at more than 0.1 m/s, ANY climb from
@@ -8173,6 +8285,8 @@ class Shield:
         # there are any: a monitor_only rule is never kept).
         allowed = {v.rule_id for v in violations}
         n_led, n_runs = len(tick.ledger), tick.chain_runs
+        w = tick.frame.to_world
+        raw_w = w(raw)
 
         def run(setting):
             """One run of the floors, the opened zones' escape at `setting`
@@ -8186,7 +8300,7 @@ class Shield:
             repairs = _dedupe(repairs)
             why = None
             after: list = []
-            if not repairs or fixed == raw:
+            if not repairs or w(fixed) == raw_w:
                 pass                                    # nothing to floor
             elif blocking:
                 why = "the floored action breaks " + ", ".join(
@@ -8195,7 +8309,7 @@ class Shield:
                 why = ("the run carries a projection theta governs: " + ", ".join(
                     r.operator for r in repairs if _fsm.theta_governs(r, stop_illegal=True)))
             else:
-                after = self._check(state, fixed) if skip else []
+                after = self._check(state, w(fixed)) if skip else []
                 new = sorted({v.rule_id for v in after if v.rule_id not in allowed})
                 if new:
                     why = "the floored action breaks " + ", ".join(new)
@@ -8211,9 +8325,9 @@ class Shield:
                     # at least this fast, and every slower try is the same.
                     flown_at = setting
                     break
-        if why is None and repairs and fixed != raw:
+        if why is None and repairs and w(fixed) != raw_w:
             d = self._traced(
-                ShieldDecision(raw=raw, emitted=fixed, repairs=repairs,
+                ShieldDecision(raw=raw_w, emitted=w(fixed), repairs=repairs,
                                violations=violations, emitted_violations=list(after)),
                 state, tick, passes, [], list(edge), mode, flags)
             if refused is not None:
@@ -8221,9 +8335,10 @@ class Shield:
                       else f"{flown_at:.2f} m/s")
                 d.trace["cap_refused"] = f"flown at {at}; at the cap {refused}"
             return d
-        short = self._escape_shortfall(state, raw, flags, refused) if refused else []
+        short = self._escape_shortfall(state, raw_w, flags, refused) if refused else []
         if short:
-            d = self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations + short,
+            d = self._traced(ShieldDecision(raw=raw_w, emitted=raw_w,
+                                            violations=violations + short,
                                             emitted_violations=violations + short),
                              state, tick, [], [], list(edge), mode, flags)
             self.n_floor_refused += 1
@@ -8231,7 +8346,7 @@ class Shield:
             return d
         del tick.ledger[n_led:]
         tick.chain_runs = n_runs
-        d = self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations,
+        d = self._traced(ShieldDecision(raw=raw_w, emitted=raw_w, violations=violations,
                                         emitted_violations=list(violations)),
                          state, tick, [], [], list(edge), mode, flags)
         if refused is not None:
@@ -8458,52 +8573,55 @@ class Shield:
     # (guardrail/repair.py, THE FRAME): the ClearanceEscape / OpenedEscape
     # operator is handed the action in the BODY frame at the decision
     # state's heading and hands its answer back in it, its world geometry
-    # between RepairContext.to_world and to_body. What it hands back is read
-    # in the world frame again (`ctx.to_world`) for the decision's records
-    # and re-checks: the pair is lossless on its own results, so the flown
-    # action is the world-frame method's, bit for bit, at every heading.
-    # Until 2026-11-23 `_decide` called the two methods on the world action
-    # outside the interface (tests/test_shieldcore_repair.py keeps that
-    # path, verbatim, to compare with).
-
-    def _last_resort_ctx(self, state: State, raw: Action4D, repairs: list,
-                         open_violations=(), open_label: str = "on the raw action"):
-        """A RepairContext for one last-resort call: the decision state's
-        heading, the world raw action, the list the Repair is logged in."""
-        return _repair.RepairContext(self, state, repairs, raw, tuple(open_violations),
-                                     tuple(open_violations), open_label,
-                                     heading_deg=state.yaw_deg)
+    # between RepairContext.to_world and to_body. Since 2026-11-26 the
+    # answer stays in the body frame, as `_decide` carries it, and is read
+    # in the world frame (the tick's frame memo) only for the re-check and
+    # the decision's records: the pair is lossless on its own results, so
+    # the flown action is the world-frame method's, bit for bit, at every
+    # heading. Until 2026-11-23 `_decide` called the two methods on the
+    # world action outside the interface (tests/test_shieldcore_repair.py
+    # keeps that path, verbatim, to compare with).
 
     def _clearance_escape(self, tick: _Tick, state: State, raw: Action4D, fixed: Action4D,
                           repairs: list, blocking, best_effort: bool) -> "Action4D | None":
         """The ClearanceEscape operator on the chain's repaired action
-        `fixed` (handed in the body frame): the heading it chose, in the
-        world frame, its Repair logged in `repairs`; None when it has none
-        to fly (no heading re-checks clean and, unless `best_effort` - a
-        stop is illegal here - no best effort is taken)."""
-        ctx = self._last_resort_ctx(state, raw, repairs, blocking, "after the repair chain")
+        `fixed` (`raw` and `fixed` in the body frame): the heading it chose,
+        in the body frame, its Repair logged in `repairs`; None when it has
+        none to fly (no heading re-checks clean and, unless `best_effort` -
+        a stop is illegal here - no best effort is taken)."""
+        ctx = self._frame_ctx(tick, state, repairs, raw, blocking, "after the repair chain")
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         att = self.last_resort_operators["ClearanceEscape"].repair(
-            ctx.to_body(fixed), None, tick.rt.ir, ctx=ctx, cap=cap, best_effort=best_effort)
-        return ctx.to_world(att.action) if att.result == "fallback" else None
+            fixed, None, tick.rt.ir, ctx=ctx, cap=cap, best_effort=best_effort)
+        return att.action if att.result == "fallback" else None
 
     def _opened_escape(self, tick: _Tick, state: State, raw: Action4D, flags: dict,
                        enforced: list) -> "tuple[Action4D, Repair] | None":
         """The OpenedEscape operator (`_slower_opened_escape`) on the raw
-        action (handed in the body frame): (the slowed escape in the world
+        action (`raw`, in the body frame): (the slowed escape in the body
         frame, its GeofenceEscape Repair), or None."""
-        ctx = self._last_resort_ctx(state, raw, [], enforced)
+        ctx = self._frame_ctx(tick, state, [], raw, enforced)
         att = self.last_resort_operators["GeofenceEscape"].repair(
-            ctx.raw_body, None, tick.rt.ir, ctx=ctx, flags=flags, enforced=enforced)
+            raw, None, tick.rt.ir, ctx=ctx, flags=flags, enforced=enforced)
         if att.result != "ok":
             return None
-        return ctx.to_world(att.action), att.repairs[0]
+        return att.action, att.repairs[0]
 
-    def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
+    def _decide(self, state: State, raw: Action4D, nonfinite=()) -> ShieldDecision:
+        """The decision on `raw`, the BODY-frame action at the tick's heading
+        (`tick.frame`), already made finite at the entry (`nonfinite`: the
+        channels Sanitise zeroed there). The stack carries the body action;
+        every check reads its world reading through the tick's frame
+        (`w`), and the decision records the world readings of the raw and
+        emitted actions (WP3-04, since 2026-11-26; `filter_body`)."""
         tick = self._tick_ctx()
         if tick is None:                        # called outside filter()
-            with self._scope(self._new_tick(None)):
-                return self._decide(state, raw)
+            with self._scope(self._new_tick(None)) as tick:
+                tick.frame = _repair.BodyFrame(state.yaw_deg)
+                return self._decide(state, raw, nonfinite)
+        if tick.frame is None:                  # a tick no entry opened
+            tick.frame = _repair.BodyFrame(state.yaw_deg)
+        w = tick.frame.to_world
         rt = tick.rt
         flags = {"path_repair": self.path_repair, "segment_check": self.segment_check,
                  # Zones whose window opens on the aircraft sooner than it can
@@ -8524,9 +8642,12 @@ class Shield:
         mode = self.repair_mode
         # Finiteness first: every check below is a comparison, and NaN loses them
         # all, so an unsanitised action would be declared legal and passed
-        # straight through. See _sanitise().
-        raw, nonfinite = _sanitise(raw)
-        violations = self._check(state, raw)
+        # straight through. Sanitise ran at the entry, on the action in the
+        # frame it was handed in (`filter_body`: the body action); here it
+        # is said. See _sanitise().
+        nonfinite = list(nonfinite)
+        raw_w = w(raw)
+        violations = self._check(state, raw_w)
         if nonfinite:
             violations = violations + [Violation(
                 rule_id="action-finite", category="contract",
@@ -8570,7 +8691,7 @@ class Shield:
             # POSITION is illegal, where a legal action can still be a crawl.
             if self.repair_mode == "chain" and self._stop_illegal(tick, state):
                 return self._floor_the_escape(tick, state, raw, mode, flags)
-            return self._traced(ShieldDecision(raw=raw, emitted=raw),   # passthrough
+            return self._traced(ShieldDecision(raw=raw_w, emitted=raw_w),   # passthrough
                                 state, tick, [], [], [], mode, flags)
         edge = self._window_edge(tick, violations)
 
@@ -8585,7 +8706,7 @@ class Shield:
             if self.repair_mode == "chain" and self._stop_illegal(tick, state):
                 return self._floor_the_escape(tick, state, raw, mode, flags,
                                               violations, edge)
-            return self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations,
+            return self._traced(ShieldDecision(raw=raw_w, emitted=raw_w, violations=violations,
                                                emitted_violations=list(violations)),
                                 state, tick, [], [], edge, mode, flags)
         monitor = frozenset(v.rule_id for v in violations
@@ -8622,7 +8743,7 @@ class Shield:
                                   detail=f"{gov}: violation_action {strongest} -> "
                                          f"projection skipped, stop")]
             return self._traced(
-                ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
+                ShieldDecision(raw=raw_w, emitted=BRAKE, violations=violations,
                                repairs=_dedupe(reps), braked=True,
                                emitted_violations=self._check(state, BRAKE)),
                 state, tick, [], [last_resort("Brake", "fallback", reps[-1].detail)],
@@ -8642,9 +8763,10 @@ class Shield:
             if slower is not None:
                 cand, rep = slower
                 reps = [rep]
+                cand_w = w(cand)
                 return self._traced(
-                    ShieldDecision(raw=raw, emitted=cand, violations=violations,
-                                   repairs=reps, emitted_violations=self._check(state, cand)),
+                    ShieldDecision(raw=raw_w, emitted=cand_w, violations=violations,
+                                   repairs=reps, emitted_violations=self._check(state, cand_w)),
                     state, tick, [], [last_resort("GeofenceEscape", "ok", rep.detail)],
                     edge, mode, flags, first)
 
@@ -8690,7 +8812,7 @@ class Shield:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 final.append(last_resort("Brake", "fallback", repairs[-1].detail))
                 return self._traced(
-                    ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
+                    ShieldDecision(raw=raw_w, emitted=BRAKE, violations=violations,
                                    repairs=_dedupe(repairs), braked=True,
                                    emitted_violations=self._check(state, BRAKE)),
                     state, tick, passes, final, edge, mode, flags, first)
@@ -8700,10 +8822,13 @@ class Shield:
         # In the common case `fixed` already re-checked clean inside the loop
         # above and this is a repeat; in the best-effort ClearanceEscape branch
         # it is the only check that has ever been run against what gets flown.
+        # The repaired action is the body action the stack handed on; the
+        # decision records, and the check reads, its world reading.
+        fixed_w = w(fixed)
         return self._traced(
-            ShieldDecision(raw=raw, emitted=fixed, violations=violations,
+            ShieldDecision(raw=raw_w, emitted=fixed_w, violations=violations,
                            repairs=_dedupe(repairs), relaxed=relaxed,
-                           emitted_violations=self._check(state, fixed)),
+                           emitted_violations=self._check(state, fixed_w)),
             state, tick, passes, final, edge, mode, flags, first)
 
     def _applied_caps(self, tick: _Tick, d: ShieldDecision) -> "_fsm.KinematicCaps | None":

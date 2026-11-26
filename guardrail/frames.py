@@ -45,16 +45,25 @@ the MAVLink adapter, *after* projection", and "Body-frame -> local-NED
 conversion lives here, applied to every emitted setpoint ... the conversion is
 a single boundary in the codebase." In this codebase:
 
-  * BODY IN, BODY OUT at the Shield. `Shield.filter_body` (and `advise_body`,
-    `check_body`) take the action in the body frame and hand back the emitted
-    action in the body frame. Inside, the projection computes in the world
-    frame its rules are written in: `from_body` at the state's heading, the
-    repair, `to_body` at the same heading - the projection's own internal
-    frame, never seen on either side of its interface. The round trip is
-    exact at a whole number of quarter turns (`_quarter_turns`: the rotation
-    is done as a permutation there) and within a few ulp elsewhere
-    (tests/test_frame_boundary.py: |to_body(from_body(b)) - b| <= 4e-15 m/s
-    over seeded actions at 0, 90, 179.9, -90 and random headings).
+  * BODY IN, BODY THROUGH, BODY OUT at the Shield (since 2026-11-26).
+    `Shield.filter_body` (and `advise_body`, `check_body`) take the action
+    in the body frame and hand back the emitted action in the body frame,
+    and the Shield's stack CARRIES the body action in between: Sanitise
+    runs on it, the repair chain and the last resorts hand it on, and an
+    action no rule touches comes back as the very body action handed in.
+    The rules are world geometry, so the body action is read in the world
+    frame (North / East / up) where a rule judges or forecasts it and for
+    the decision's records, through the tick's one rotation pair
+    (guardrail/repair.py `BodyFrame`, `from_body` / `to_body` at the
+    state's heading, lossless on its own results). Until 2026-11-26
+    filter_body turned the action into the world frame around the whole
+    stack and back (`from_body`, filter, `to_body`), so the stack carried
+    the world action and an untouched action came back as its round trip:
+    exact at a whole number of quarter turns (`_quarter_turns`: the
+    rotation is done as a permutation there) and within a few ulp
+    elsewhere (tests/test_frame_boundary.py: |to_body(from_body(b)) - b|
+    <= 4e-15 m/s over seeded actions at 0, 90, 179.9, -90 and random
+    headings).
   * BODY IN, BODY OUT at every REPAIR OPERATOR (since 2026-11-21). The
     grant's "keeps repair operators acting on the same frame the VLA emits
     in" is honoured at the operator interface (guardrail/repair.py
@@ -84,8 +93,9 @@ a single boundary in the codebase." In this codebase:
     repair.OpenedEscape) handed the body action and handing one back; until
     then `Shield._decide` called both on the world action outside the
     interface, with the same decisions. So every repair that can change the
-    flown action acts on the frame the VLA emits in (Sanitise, the input
-    check for non-finite channels, runs on the world action before the
+    flown action acts on the frame the VLA emits in, and since 2026-11-26
+    so does Sanitise, the input check for non-finite channels (on the body
+    action at `filter_body`; until then on the world action before the
     chain: repair.py's module docstring). Neither side sees local NED
     (ours is North / East / up, the reference's East / North / up). That the
     repair is the body-frame one - the same body action in a scene that
@@ -127,11 +137,14 @@ WHO CALLS THIS
 
 And besides those adapters:
 
-  * `guardrail/shield.py` (`Shield.filter_body`, `advise_body`, `check_body`):
-    `from_body` and `to_body`, the projection's internal world frame. The ROS
-    2 Shield node (`sitl/ros2_shield_node.py`) hands it /vla/action as it
-    arrives and publishes the emitted body action on /shield/setpoint; it
-    rotates nothing itself.
+  * `guardrail/repair.py` (`BodyFrame`, `RepairContext`: `to_world` /
+    `to_body`): the projection's one rotation pair, through which the Shield
+    (`Shield.filter_body`, `advise_body`, `check_body`; guardrail/shield.py
+    itself imports no rotation since 2026-11-26) and every repair operator
+    read the carried body action in the world frame. The ROS 2 Shield node
+    (`sitl/ros2_shield_node.py`) hands the Shield /vla/action as it arrives
+    and publishes the emitted body action on /shield/setpoint; it rotates
+    nothing itself.
   * WORLD -> BODY at a producer whose controller speaks the world frame (the
     producer is upstream of the Shield's input contract; this is not a
     body -> NED crossing): `filter_world_as_body` (`to_body` at the heading the
@@ -168,9 +181,8 @@ And besides those adapters:
   * RECORDS, not commands: `guardrail/audit.py` (`to_body` writes each audit
     record's raw and emitted actions in the grant's body-frame keys),
     `guardrail/repair.py` (`to_body` logs PathRepair's detour waypoint in
-    body frame; and, not a record, `RepairContext.to_world` / `to_body`:
-    the repair-operator interface's rotation pair inside the projection,
-    since 2026-11-21), `demo/real_vla_demo.py` (`from_body` in
+    body frame; and, not a record, the projection's rotation pair above),
+    `demo/real_vla_demo.py` (`from_body` in
     `openvla_raw_to_action`: the step log's `world_action` and its offline
     replay; the flight hands the Shield the body action).
 
@@ -352,10 +364,11 @@ def body_to_local_ned(body, yaw_deg: float) -> tuple:
     "Body-frame -> local-NED conversion lives here, applied to every emitted
     setpoint. Repair operators above never see local-NED; the conversion is a
     single boundary in the codebase." Every rail's adapter calls this one
-    function, after the projection. Apart from the projection's own internal
-    world frame (`Shield.filter_body`: `from_body`, filter, `to_body`; and
-    the repair-operator interface inside it, guardrail/repair.py
-    `RepairContext.to_world` / `to_body`), nothing
+    function, after the projection. Apart from the projection's own reading
+    of its carried body action in the world frame where a rule judges it
+    (guardrail/repair.py `BodyFrame` / `RepairContext` `to_world` /
+    `to_body`, used by `Shield.filter_body` and the repair operators),
+    nothing
     else in the codebase turns a body action into the world or NED frame;
     tests/test_frame_boundary.py fails on a new crossing."""
     fwd, right, up, yaw_rate = _channels(body)
@@ -392,10 +405,12 @@ def filter_world_as_body(shield, state, world: Action4D, t: float | None = None,
     action back bit for bit, else to `Shield.filter` in the world frame, and
     the rails flew the decision's world action. Now no tick is handed over in
     the world frame. The decision's `raw` / `emitted` (world frame, for the
-    logs, the audit record and the KPI re-check) are the Shield's own
-    `from_body` and projection results, so at a heading whose cosine and
-    sine are not both exact they can differ from the producer's world action
-    in the last bits (bounded in tests/test_frame_boundary.py).
+    logs, the audit record and the KPI re-check) are the Shield's own world
+    readings of the body actions (`from_body`), so at a heading whose
+    cosine and sine are not both exact they can differ from the producer's
+    world action in the last bits (bounded in tests/test_frame_boundary.py);
+    the emitted body action is the one the Shield's stack carried (since
+    2026-11-26), the body action handed in on an untouched tick.
 
     `arc` defaults OFF here: the Shield's opt-in forecast of a body command's
     yaw-rate arc is unflown on these rails. None takes the Shield's own
