@@ -51,9 +51,13 @@ on the state the tick logged, in the tick order of the log:
                  filter() is called as the flight rails called it before
                  2026-11-18, without a time (the Shield counts its ticks at
                  10 Hz); since wf21 every rail hands the Shield the body
-                 frame (Shield.filter_body), which is filter() on the
-                 Shield's own world reading of the body action - logged as
-                 the row's `raw` - so the same call replays both;
+                 frame (Shield.filter_body). filter() and filter_body run
+                 the same stack (since 2026-11-26 it carries the body action;
+                 filter() hands it the body reading of the world action it
+                 is given, read back as that very action wherever a rule
+                 judges it), and the decision's `raw` - logged as the row's
+                 `raw` - is the world reading of the body action, so
+                 filter() on the row's `raw` replays both;
   the state      x, y, up, yaw_deg of the row; the position's own doubles
                  from trajectory.json when it has one point per row (the ROS 2
                  rail writes the pose message's doubles there; the flight log

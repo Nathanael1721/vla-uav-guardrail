@@ -14,7 +14,11 @@ heading of the same pose the adapter reads) and publishes the body-frame
 action it returns on /shield/setpoint. Since 2026-11-04 the Shield takes the
 body frame at its own boundary; until then this node rotated the action into
 the world frame (guardrail.frames.from_body) before Shield.filter() and back
-(frames.to_body) after - the same exact rotation, now inside the Shield.
+(frames.to_body) after. Since 2026-11-26 no rotation wraps the Shield's stack
+either: Sanitise, the repair chain and the last resorts carry the body action
+handed in, and the world frame is read only inside the rules' checks and
+forecasts, the operators' geometry and the records (guardrail.repair.
+BodyFrame), so a tick no rule touches streams the very body action received.
 With --arc-forecast on (2026-11-17; off by default) the Shield forecasts a
 body action with a yaw rate along the arc it flies, not along its world
 direction at t = 0; a zero yaw rate (the stub pilot) is forecast the same.
