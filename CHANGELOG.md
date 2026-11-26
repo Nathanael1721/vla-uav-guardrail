@@ -16,6 +16,15 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-26
+
+Patch release for the rows that close without a PI decision (WP3-04, WP1-14,
+WP4-19, ARCH-08): every dated entry below, back to 0.7.0, ships in it. Its
+own smoke (smREL071) flies the five matrix rows; the KPI of record stays
+release 0.7.0's nightly ntFIN5, whose 654 episodes replay with identical
+Shield decisions through the body-frame stack this release ships (WP3-04
+equivalence, 2026-11-26 entry).
+
 ### 2026-11-26 (code, evidence and docs; integrate/1126: the Shield's stack in the body frame, generation N's policy to the prefix consumer, WGS84-only entry, the AP_DDS path flown on SITL, ntFIN5 replayed on the Orin) — five branches merged after an adversarial review each; no Appendix A status changed yet (each row that may close waits for its flight and an independent review)
 
 #### Changed
