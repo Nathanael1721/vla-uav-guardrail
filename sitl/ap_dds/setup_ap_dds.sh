@@ -41,11 +41,18 @@ check() {
   echo "checkout : $AP_DDS_DIR ($(git -C "$AP_DDS_DIR" describe --tags --always 2>/dev/null || echo missing))"
   if [ -x "$bin" ]; then
     echo "binary   : $bin"
-    echo "banner   : $(strings "$bin" | grep -m1 -E '^ArduCopter V[0-9]' || echo '?')"
+    # No `grep -q` / `grep -m1` straight on a pipe here: under pipefail the
+    # writer's SIGPIPE makes the pipeline fail after a match (a false '?' and
+    # a false "NOT compiled in" on 26 Nov). Collect the output first.
+    local banner syms
+    banner="$(strings "$bin" | grep -E '^ArduCopter V[0-9]' || true)"
+    echo "banner   : ${banner%%$'
+'*}"
     # Parameter names are stored split by group ("DDS" + "_ENABLE"), so the
     # literal DDS_ENABLE need not be in the binary. Look for the client class
     # (SITL binaries keep their symbols) or the configure-time define.
-    if nm -C "$bin" 2>/dev/null | grep -q 'AP_DDS_Client'; then
+    syms="$(nm -C "$bin" 2>/dev/null | grep -c 'AP_DDS_Client' || true)"
+    if [ "${syms:-0}" -gt 0 ]; then
       echo "DDS      : compiled in (AP_DDS_Client symbols present)"
     elif grep -qs 'AP_DDS_ENABLED 1' "$AP_DDS_DIR/build/sitl/ap_config.h"; then
       echo "DDS      : compiled in (AP_DDS_ENABLED 1 in build/sitl/ap_config.h)"
@@ -88,6 +95,20 @@ source "/opt/ros/$ROS_DISTRO/setup.bash"
 if [ ! -x "$GEN_DIR/scripts/microxrceddsgen" ] || [ ! -d "$GEN_DIR/share" ]; then
   [ -d "$GEN_DIR/.git" ] || git clone --recurse-submodules \
       https://github.com/ardupilot/Micro-XRCE-DDS-Gen.git "$GEN_DIR"
+  # The fork pins Gradle 7.6, which cannot run on Java 21 (Ubuntu 24.04's
+  # default-jre: "Unsupported class file major version 65"). With Java >= 20
+  # move the wrapper in this separate clone to Gradle 8.5 (the first release
+  # that runs on Java 21) and replace the `classifier` property Gradle 8
+  # removed. Only $GEN_DIR is changed; nothing system-wide.
+  java_major="$(java -version 2>&1 | sed -nE '1s/.*version "([0-9]+).*/\1/p')"
+  if [ "${java_major:-0}" -ge 20 ] \
+     && grep -q 'gradle-7\.' "$GEN_DIR/gradle/wrapper/gradle-wrapper.properties"; then
+    echo "Java $java_major: Micro-XRCE-DDS-Gen wrapper -> Gradle 8.5 (Gradle 7 cannot run on Java >= 20)"
+    sed -i 's#gradle-7\.[0-9.]*-bin\.zip#gradle-8.5-bin.zip#' \
+      "$GEN_DIR/gradle/wrapper/gradle-wrapper.properties"
+    find "$GEN_DIR" -name build.gradle -exec \
+      sed -i -E 's/^(\s*)classifier( *=)? */\1archiveClassifier = /' {} +
+  fi
   (cd "$GEN_DIR" && ./gradlew assemble)
 fi
 export PATH="$PATH:$GEN_DIR/scripts"
@@ -116,8 +137,19 @@ git -C "$AP_DDS_DIR" submodule update --init --recursive --quiet
 # ~/venv-ap from sitl/setup_sitl.sh has them, so it is read, not changed.
 PYBIN=python3
 [ -x "$HOME/venv-ap/bin/python" ] && PYBIN="$HOME/venv-ap/bin/python"
-(cd "$AP_DDS_DIR" && "$PYBIN" ./waf configure --board sitl --enable-DDS \
-   && "$PYBIN" ./waf copter) 2>&1 | tail -n 25
+# waf's option is --enable-dds (lower case; --enable-DDS is refused as
+# "no such option"). The log goes to a file so a failure is not hidden behind
+# a pipe; the binary is checked afterwards.
+build_log="$AP_DDS_DIR/build_ap_dds.log"
+if ! (cd "$AP_DDS_DIR" && "$PYBIN" ./waf configure --board sitl --enable-dds \
+      && "$PYBIN" ./waf copter) >"$build_log" 2>&1; then
+  tail -n 25 "$build_log"
+  echo "BUILD FAIL: ArduCopter SITL with DDS (full log: $build_log)"
+  exit 1
+fi
+tail -n 5 "$build_log"
+[ -x "$AP_DDS_DIR/build/sitl/bin/arducopter" ] \
+  || { echo "BUILD FAIL: $AP_DDS_DIR/build/sitl/bin/arducopter missing"; exit 1; }
 
 # ---- 3. ROS 2 workspace: micro-ROS agent + ardupilot_msgs -------------------
 mkdir -p "$WS/src"
@@ -133,7 +165,20 @@ if ! rosdep check --from-paths "$WS/src" --ignore-src -y >/dev/null 2>&1; then
   echo "  rosdep install --from-paths $WS/src --ignore-src -y"
   exit 2
 fi
-(cd "$WS" && colcon build --symlink-install --packages-up-to micro_ros_agent ardupilot_msgs) \
-  2>&1 | tail -n 15
+# ROS 2 Jazzy's CMake helpers import catkin_pkg from the system Python
+# (/usr/bin/python3, 3.12). A user-level python3 earlier on PATH (e.g.
+# ~/.local/bin/python3.11) lacks it and fails with "No module named
+# 'catkin_pkg'", so the interpreter is pinned. The log goes to a file so a
+# failed package stops this script.
+ws_log="$WS/colcon_build_ap_dds.log"
+if ! (cd "$WS" && colcon build --symlink-install \
+      --packages-up-to micro_ros_agent ardupilot_msgs \
+      --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 \
+                   -DPYTHON_EXECUTABLE=/usr/bin/python3) >"$ws_log" 2>&1; then
+  tail -n 25 "$ws_log"
+  echo "BUILD FAIL: colcon workspace $WS (full log: $ws_log)"
+  exit 1
+fi
+tail -n 5 "$ws_log"
 
 check
