@@ -746,6 +746,52 @@ def test_the_committed_table_still_matches_the_files_it_cites():
     assert checked > 0 or not (ROOT / "training" / "eval_ft2_deploy.json").is_file()
 
 
+def test_the_committed_table_carries_backends_text_as_respec_would_write_it():
+    """`respec` (2026-11-26) refreshes the committed rows from BACKENDS
+    without re-reading the run folders: run again on the committed JSON it
+    changes no row, and the committed md is that JSON rendered."""
+    if not COMMITTED_TABLE.is_file():
+        return SKIP
+    t = json.loads(COMMITTED_TABLE.read_text(encoding="utf-8"))
+    before = json.dumps(t["rows"], sort_keys=True)
+    assert V.respec(t, t.get("respec_utc") or "x") == []
+    assert json.dumps(t["rows"], sort_keys=True) == before, \
+        "a BACKENDS entry changed: run `python tools/vla_backend_table.py respec`"
+    md = (ROOT / "deploy" / "evidence" / "vla_backend_table.md").read_text(encoding="utf-8")
+    assert md == V.render_markdown(t) + "\n", "the committed md is not its JSON re-rendered"
+    assert _committed_default_ok(t), "respec must keep the default line as named"
+
+
+def test_a_row_without_weights_here_gets_the_same_cells_from_build_and_from_respec():
+    t = _build()
+    for bid in ("cognitivedrone", "bitvla"):
+        assert _row(t, bid)["cells"] == V.spec_only_cells(V.BACKENDS[bid]), bid
+    cd = _row(t, "cognitivedrone")["cells"]
+    assert cd["rate_orin"] == cd["closed_loop_hil_c1"] == "weights not obtained"
+    bv = _row(t, "bitvla")["cells"]
+    assert bv["rate_orin"].startswith("not R1") and "1.479 s" in bv["rate_orin"]
+    assert "conformance" in bv["closed_loop_hil_c1"] and "flight policy" in bv["closed_loop_hil_c1"]
+    assert "| not on this host; on the AGX Orin since 2026-11-22" in V.render_markdown(t)
+
+
+def test_respec_leaves_measured_cells_and_drops_text_an_entry_no_longer_has():
+    t = _build()
+    row = _row(t, "stub")
+    row["cells"]["rate_desktop"] = "R1: kept"
+    row["c1"] = "an old reason"
+    old_bv = _row(t, "bitvla")
+    old_bv["orin_load"] = "old"
+    old_bv["cells"]["rate_orin"] = "weights not obtained"
+    changed = V.respec(t, "2026-11-26T00:00:00Z")
+    assert changed == ["bitvla"]
+    assert row["cells"]["rate_desktop"] == "R1: kept"
+    assert row["c1"] == V.BACKENDS["stub"]["c1"]
+    assert _row(t, "bitvla")["orin_load"] == V.BACKENDS["bitvla"]["orin_load"]
+    cd = _row(t, "cognitivedrone")
+    assert "orin_load" not in cd and "weights_elsewhere" not in cd
+    assert "respec" in V.render_markdown(t).split("\n")[2]
+
+
 # --------------------------------------------------------------------------- #
 # protocol 2 (2026-11-16): C2, the Orin benches, the matrices, the default line
 # --------------------------------------------------------------------------- #

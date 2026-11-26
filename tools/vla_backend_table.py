@@ -13,6 +13,8 @@
         --allow-gpu --model-root ~/models --topology hil   # the AGX Orin: no bitsandbytes
     python tools/vla_backend_table.py measure --backend openvla_7b_int8wo \
         --allow-gpu --model-root ~/models --topology hil   # an attempt: a refusal is recorded
+    python tools/vla_backend_table.py respec    # row text changed in BACKENDS, nothing
+        # measured anew: re-render the committed table from its own JSON
     python tools/vla_backend_table.py serving --bench <bench JSONs> --vram-budget-gb 10 \
         [--desktop-baseline-gb 3.4]   # for benches without a per-run reading before the load
         # AerialVLA serving configurations (demo/vla_server_v2.py bench), added to
@@ -140,7 +142,8 @@ flight script's default (`--csp off`); `--csp on` times the longer prompt
 with the Constraint Summary Pack ahead of the question, as `real_vla_demo.py
 --csp on` flies it. Either way the prompt and its token count are recorded,
 because the rate depends on the prompt length. CognitiveDrone and BitVLA have
-no weights and no loader on this machine (see the table).
+no weights on this machine (see the table): CognitiveDrone has published
+none, and BitVLA's arm checkpoint was loaded on the AGX Orin only (22 Nov).
 
 A power mode is not visible to this tool: on the Orin pass it with --note
 (`nvpmodel -q`, and whether jetson_clocks locked the clocks).
@@ -524,6 +527,10 @@ _C2_AERIAL_4BIT = ("not flyable on the AGX Orin as built: the 4-bit load needs b
 # What each backend is, where its weights live, and the code that flies it.
 # `weights_root` paths are relative to --model-root (D:/models on the lab
 # desktop, /models in the containers); `weights_repo` paths to the repository.
+# A row whose weights are not on this host but were loaded on another
+# (`unavailable` plus `weights_elsewhere`) states that host and its record in
+# the weights column, its Orin load in the Orin cell (`orin_load`) and its
+# own C1 reason (`c1`) instead of "weights not obtained" (2026-11-26, ARCH-06).
 BACKENDS = {
     "stub": {
         "label": "Stub (hand-written P-controller, no model)",
@@ -669,17 +676,35 @@ BACKENDS = {
         "kind": "quantised / bit-efficient camera + language VLA",
         "inputs": "image + instruction",
         "weights_repo": [], "weights_root": [],
-        "code": "demo/vla_server_foreign.py (family bitvla; adapter only, 2026-11-17)",
-        "unavailable": ("no checkpoint on this machine; the published ones are LIBERO arm "
-                        "fine-tunes (hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), "
-                        "none for a drone, and the adapter (serve --model bitvla) refuses "
-                        "until one is downloaded. The grant lists it "
+        "code": ("demo/vla_server_foreign.py (family bitvla; adapter 2026-11-17, loader "
+                 "fixed against the real checkpoint 2026-11-22)"),
+        "unavailable": ("no checkpoint on this machine (the desktop that builds this table); "
+                        "the published ones are LIBERO arm fine-tunes "
+                        "(hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), none for a "
+                        "drone. On 22 Nov 2026 the LIBERO-Spatial one was downloaded to the "
+                        "AGX Orin and loaded there by BitVLA's own model code through the "
+                        "adapter (serve --model bitvla): load 5.94 s (warm page cache), "
+                        "5,585 MiB GPU after load, median 1.479 s per answer (n = 20, about "
+                        "0.68 Hz; 0.60 Hz over TCP), 5 of 5 frames to a finite Action4D that "
+                        "the client's strict reader and Shield.filter accept. An arm "
+                        "checkpoint, so a conformance check, not a flight policy; never flown "
+                        "(docs/data/bitvla_loader_20261122/README.md). The grant lists it "
                         "with CognitiveDrone, OpenVLA and in-house stubs as backends the "
                         "slot must accept (Architecture constraints p.2-3); the reference "
                         "design names it as a smaller backend to swap in if a 7 B model "
                         "misses 10 Hz on the Orin (docs/04-risks-and-fallbacks/"
                         "fallback-gates.md), with its citation still to be added"),
-        "c1": "not flown: weights not obtained", "c2": "weights not obtained",
+        "weights_elsewhere": ("not on this host; on the AGX Orin since 2026-11-22 "
+                              "(bitvla-libero-spatial, an arm checkpoint, "
+                              "docs/data/bitvla_loader_20261122/)"),
+        "orin_load": ("not R1: the real loader on the AGX Orin, 22 Nov 2026 (bf16, PyTorch "
+                      "eager): load 5.94 s, median 1.479 s per answer (n = 20), 0.60 Hz over "
+                      "TCP; conformance 5/5 frames; an arm checkpoint, not a flight policy "
+                      "(docs/data/bitvla_loader_20261122/README.md)"),
+        "c1": ("not flown: the only BitVLA checkpoints are LIBERO arm fine-tunes; the one "
+               "loaded on the AGX Orin (22 Nov) is a conformance check, not a flight policy"),
+        "c2": ("not flown: the same arm checkpoint, which reads no follow hint and is not a "
+               "flight policy"),
     },
 }
 # The OpenVLA-7B keys `measure` times, and the precision each loads.
@@ -1199,7 +1224,8 @@ def backend_of_identity(identity: dict | None) -> tuple[str, str | None]:
             return "aerialvla_ft_run2", "aerialvla"
         return f"aerialvla_ft:{name}", "aerialvla"
     if head in ("cognitivedrone", "bitvla"):
-        # 2026-11-17 (ARCH-06): adapters only, no weights obtained. Any run of
+        # 2026-11-17 (ARCH-06): adapters only, no weights obtained (BitVLA's
+        # arm checkpoint was loaded on the AGX Orin on 2026-11-22). Any run of
         # theirs keeps a name of its own (other_records), never the row: the
         # only BitVLA checkpoints are LIBERO arm fine-tunes, whose flight is
         # not follow evidence, and CognitiveDrone has published none.
@@ -1994,6 +2020,49 @@ def c2_cell(flights: list[dict], spec: dict) -> str:
         text += (f"; {len(rest)} more hil follow{'s' if len(rest) != 1 else ''} outside C2"
                  + (f" (the {len(censored)} censored among them)" if censored else ""))
     return text + " (see the C2 section)"
+
+
+def spec_only_cells(spec: dict) -> dict:
+    """The five cells of a row with no weights on this host and nothing
+    measured (no record, no R1, no flight): each follows from the row's
+    BACKENDS entry alone, as build_table derives it. `respec` refreshes such
+    a row from here (tests hold the two to the same cells)."""
+    assert spec.get("unavailable"), "only a row with no weights on this host"
+    return {"rate_desktop": "n/a (no weights here)",
+            "rate_orin": spec.get("orin_load") or "weights not obtained",
+            "closed_loop_desktop": "n/a (no weights here)",
+            "closed_loop_hil_c1": ("weights not obtained" if not spec.get("weights_elsewhere")
+                                   else spec.get("c1") or C1_TO_FLY),
+            "closed_loop_hil_c2": c2_cell([], spec)}
+
+
+def respec(t: dict, when: str) -> list[str]:
+    """Refresh a committed table's rows from BACKENDS without re-reading the
+    run folders: every row's own text (label, reasons, notes) is replaced by
+    its BACKENDS entry, and the cells of a row that measured nothing on any
+    host this table reads (no weights here, no record, no R1) are re-derived
+    from that entry (spec_only_cells). Measured cells are left as they are.
+    Returns the backends whose cells changed."""
+    changed = []
+    for r in t["rows"]:
+        spec = BACKENDS.get(r["backend"])
+        if spec is None:
+            continue
+        for k in [k for k in r if k in _SPEC_TEXT_KEYS and k not in spec]:
+            del r[k]
+        r.update({k: v for k, v in spec.items()})
+        if spec.get("unavailable") and not r.get("records") and not r.get("r1_results"):
+            cells = spec_only_cells(spec)
+            if cells != r["cells"]:
+                changed.append(r["backend"])
+            r["cells"] = cells
+    t["respec_utc"] = when
+    return changed
+
+
+# The BACKENDS keys a row copies (build_table: {**spec}); respec drops one an
+# entry no longer has.
+_SPEC_TEXT_KEYS = frozenset(k for s in BACKENDS.values() for k in s)
 
 
 # --------------------------------------------------------------------------- #
@@ -3163,7 +3232,7 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
         if orin:
             cells["rate_orin"] = _r1_cell(orin)
         elif spec.get("unavailable"):
-            cells["rate_orin"] = "weights not obtained"
+            cells["rate_orin"] = spec.get("orin_load") or "weights not obtained"
         elif bid in SERVED_BACKENDS:
             # R1 does not cover a served model (PROTOCOL R1 served_backends):
             # its Orin timing is its server's bench, and no R1 is owed.
@@ -3188,6 +3257,7 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
         cells["closed_loop_desktop"] = "not C1 - see records" if (cl or cl_missing) else (
             "n/a (no weights here)" if spec.get("unavailable") else "not measured")
         cells["closed_loop_hil_c1"] = ("weights not obtained" if spec.get("unavailable")
+                                       and not spec.get("weights_elsewhere")
                                        else spec.get("c1") or C1_TO_FLY)
         cells["closed_loop_hil_c2"] = c2_cell(
             [m for m in mine if m.get("metric") == "hil_follow"], spec)
@@ -3746,7 +3816,12 @@ def render_markdown(t: dict) -> str:
            + (f" The AerialVLA serving section and that row's desktop rate were added on "
               f"{t['serving_added_utc']} by `python tools/vla_backend_table.py serving`, "
               f"which re-renders this file from vla_backend_table.json without re-reading "
-              f"the run folders." if t.get("serving_added_utc") else ""),
+              f"the run folders." if t.get("serving_added_utc") else "")
+           + (f" The rows' own text (labels, reasons, and the cells of rows that measured "
+              f"nothing) was refreshed from the tool's BACKENDS on {t['respec_utc']} by "
+              f"`python tools/vla_backend_table.py respec`, which re-renders this file from "
+              f"vla_backend_table.json without re-reading the run folders; every measurement "
+              f"is that of {t['created_utc']}." if t.get("respec_utc") else ""),
            "",
            default_line,
            "",
@@ -3756,7 +3831,8 @@ def render_markdown(t: dict) -> str:
     for r in t["rows"]:
         ws = r["weights_status"]
         if not ws:
-            w = "none needed" if not r.get("unavailable") else "not obtained"
+            w = ("none needed" if not r.get("unavailable")
+                 else r.get("weights_elsewhere") or "not obtained")
         else:
             w = "; ".join(f"{x['path']}: {'yes' if x['present'] else 'MISSING'}" for x in ws)
         c = r["cells"]
@@ -3860,6 +3936,12 @@ def main(argv=None) -> int:
                      help="what it is the default for, e.g. \"the follow task\"")
     p_t.add_argument("--default-date", default=None, metavar="YYYY-MM-DD",
                      help="the day the lab named it, as the lab's local date (UTC+8)")
+    p_r = sub.add_parser("respec", help="refresh the committed table's row text from BACKENDS "
+                                        "and re-render it from its own JSON, without "
+                                        "re-reading the run folders (the measurements stay "
+                                        "those of its `table` run)")
+    p_r.add_argument("--table-json", type=Path, default=DEFAULT_TABLE_JSON)
+    p_r.add_argument("--table-md", type=Path, default=DEFAULT_TABLE_MD)
     p_v = sub.add_parser("serving", help="summarise demo/vla_server_v2.py bench results into "
                                          "docs/data and add them to the committed table")
     p_v.add_argument("--bench", type=Path, nargs="+", required=True,
@@ -3931,6 +4013,18 @@ def main(argv=None) -> int:
         if t["contradictions"]:
             print(f"               why: {t['contradictions'][0]['why']}")
         print(f"wrote {_rel(args.out_json)} and {_rel(args.out_md)}")
+        return 0
+    if args.cmd == "respec":
+        # A row's text changed (BACKENDS) but nothing was measured anew: a full
+        # `table` run re-reads the run folders, which a worktree does not have,
+        # and re-dates the set, so the committed default line would be refused
+        # ("named after the set"). Re-render from the committed JSON instead.
+        t = json.loads(args.table_json.read_text(encoding="utf-8"))
+        changed = respec(t, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        write_lf(args.table_json, json.dumps(t, indent=1) + "\n")
+        write_lf(args.table_md, render_markdown(t) + "\n")
+        print("cells re-derived: " + (", ".join(changed) if changed else "none"))
+        print(f"wrote {_rel(args.table_json)} and {_rel(args.table_md)}")
         return 0
     if args.cmd == "serving":
         benches = [json.loads(p.read_text(encoding="utf-8")) for p in args.bench]
