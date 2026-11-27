@@ -178,11 +178,18 @@ also records `issued_at`, `hash_scheme` and `ir_schema_version`.
   public half is tracked in `policies/keys/trusted_signers.json`; the private
   half is `policies/keys/lab-dev-ed25519.pem`, gitignored (with every other
   private-key spelling under `policies/keys/`). Override with
-  `VLAGUARD_SIGNING_KEY` / `VLAGUARD_TRUST_STORE`.
+  `VLAGUARD_SIGNING_KEY` / `VLAGUARD_TRUST_STORE`. *Since 27 Nov 2026* this key
+  and the AGX Orin's are certified by the lab root CA (authority `lab-ca`, a lab
+  decision, not the PI's) and sign as `lab-ca:71d1e071d3985bc6:ed25519:<key>`;
+  the bare `lab-dev` identities were retired at 2026-11-27T00:10:37Z and verify
+  only what they signed before (docs/RUNBOOK-bundle-ca.md,
+  docs/data/bundle_ca_20261127/).
 * **The CA stays swappable.** The grant leaves "Lab-internal CA or ITRI CA?"
-  open. The trust store is data: to switch, add the chosen authority's public
-  key to `trusted_signers.json`, sign with `--key`, and (when the dev key should
-  stop being accepted) remove its entry. No code changes.
+  open. The trust store is data: since 16 Nov an authority is a CA certificate
+  entry and each key a certified signer entry (`issue-cert` / `register-cert`);
+  moving to ITRI's CA is one more entry, a re-sign with `--authority itri-ca`,
+  and `retired_on` on the lab-ca signer entries (docs/RUNBOOK-bundle-ca.md,
+  'Later: moving to ITRI's CA'). No code changes.
 * **Verified on every rail.** `cryptography` is optional. The 3.11 `vla-drone`
   env lacks it, and the setup scripts of the two SITL rails' WSL venvs
   (`sitl/setup_ros2.sh`, `sitl/setup_sitl.sh`) never install it (read from the
@@ -297,9 +304,9 @@ metres — authored lat/lon is projected by `load_policy` first).
   `write_bundle(previous=...)`, and in every flight bundle from 2026-11-21
   (X-10b): `tools/build_flight_bundles.py` diffs each policy against its
   highest lower published version in `bundles/` and its `--check` flags a
-  bundle without the diff. The bundles in `bundles/` predate it; rebuild with
-  `python tools/build_flight_bundles.py` once the signing authority is
-  settled.)
+  bundle without the diff. The flight bundles were rebuilt with it on 25 Nov
+  and re-signed under the Lab CA on 27 Nov, 17 of them; older versions in
+  `bundles/` keep their bare-key signature.)
 * `sitl/ros2_vla_stub_node.py` and `sitl/run_ros2_demo.sh` still read their own
   YAML (WP1-23's stub side); they are outside this unit.
 * No flight was re-flown from a bundle; that needs the simulator. The

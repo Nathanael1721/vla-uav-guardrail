@@ -4,7 +4,7 @@
     "lab-ca": {
       "certificate_pem": "-----BEGIN CERTIFICATE-----\nMIIBxjCCAW2gAwIBAgIUUaPKHN4ZruLahHvFr486N5lk7mkwCgYIKoZIzj0EAwIw\nQDEaMBgGA1UECgwRVkxBIEd1YXJkcmFpbCBMYWIxIjAgBgNVBAMMGVZMQSBHdWFy\nZHJhaWwgTGFiIFJvb3QgQ0EwHhcNMjYxMTAyMTM0MjQxWhcNMzYxMDMwMTM0NzQx\nWjBAMRowGAYDVQQKDBFWTEEgR3VhcmRyYWlsIExhYjEiMCAGA1UEAwwZVkxBIEd1\nYXJkcmFpbCBMYWIgUm9vdCBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLRO\nzq5lLocxY3MhfSAyGgpZYr5zS6kUPCnj4o4o2qIHpxqJcLz/bLcKiFaaLEmhv/JO\nlP+guVfYm61U6M0Mea6jRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/\nBAQDAgGGMB0GA1UdDgQWBBRDxOJiMD1LKpXLCQP7e6k5AqS9JTAKBggqhkjOPQQD\nAgNHADBEAiAHMvYs3n+lMMfbamFcOwKdd3NQacIrsQGRtA5F5FU8KQIgdNQXFiXQ\nNQPNoMFSD8pvYLSiykJQS0Kr/1asjyqVjMI=\n-----END CERTIFICATE-----\n",
       "not_after": "2036-10-30T13:47:41Z",
-      "note": "certificate authority whose signer certificates guardrail.bundle accepts. Which CA is the authority of a delivery is the PI's and ITRI's to name; another CA is one more entry here.",
+      "note": "lab root CA; chosen as the policy-bundle authority by the lab on 2026-11-27 (a lab decision, not the PI's; no PI or ITRI acceptance recorded). guardrail.bundle accepts the signer certificates it issued. ITRI's CA would be one more entry (docs/RUNBOOK-bundle-ca.md, 'Later: moving to ITRI's CA').",
       "registered": "2026-11-27",
       "sha256": "71d1e071d3985bc66ee1b310a6e12e2f2c3892ecf733e9e2aeaf6143cef718f4",
       "subject": "CN=VLA Guardrail Lab Root CA,O=VLA Guardrail Lab"

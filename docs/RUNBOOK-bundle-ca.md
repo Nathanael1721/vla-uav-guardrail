@@ -1,15 +1,16 @@
-# Runbook: put the policy bundles under the CA the PI names (WP1-04, X-10)
+# Runbook: the policy bundles under a CA (Lab CA since 27 Nov 2026; moving to ITRI's CA) (WP1-04, X-10)
 
 The grant's Policy DSL page ("Versioning and signing") asks for each bundle's
 `signed_by` to be a "Lab CA or ITRI CA reference". The code path is built and
 tested since 16 Nov (guardrail/bundle.py; the swap drill in
-tests/test_bundle.py), but which CA signs is the PI's decision (12 Oct, Q5;
-section 9 of docs/FINAL-REPORT.md, decision 1), and on 22 Nov the user
-decided to wait for it. Until then every bundle is signed by a bare lab key
-(`lab-dev:ed25519:...`, chain `none`); the state before the CA is recorded in
+tests/test_bundle.py). Which CA signs was put to the PI (12 Oct, Q5;
+section 9 of docs/FINAL-REPORT.md, decision 1) and not answered; on 22 Nov
+the user decided to wait, and on 27 Nov the user chose the Lab CA (a lab
+decision, not the PI's). Until 27 Nov every bundle was signed by a bare lab
+key (`lab-dev:ed25519:...`, chain `none`); that state is recorded in
 docs/data/bundle_ca_20261126/.
 
-This runbook applies the PI's answer in one session: certify the two bundle
+This runbook applies a choice of CA in one session: certify the two bundle
 keys, re-sign the flight bundles on both hosts, check them, require the chain
 on `hil`, fly one verification mission, and commit the evidence. Every
 command below exists at the time of writing; the flags are those of
@@ -45,7 +46,7 @@ certificate and leaves ITRI issues.
 The trust store is tracked in git, so this is one commit that both hosts
 then carry.
 
-**If the PI names the Lab CA** (its key is on the desktop, in the PKI folder
+**For the Lab CA** (applied 27 Nov, a lab decision; its key is on the desktop, in the PKI folder
 of `python -m guardrail.harness_service gen-pki`, by default
 `%LOCALAPPDATA%\vla-guardrail\harness_pki\`): step 2 does it in one command
 (`--issue-cert`), which lists the CA as authority `lab-ca`, issues a signer
@@ -53,7 +54,7 @@ certificate for BOTH keys from their public halves, pins each under its new
 identity `lab-ca:<CA>:ed25519:<key>`, and retires the bare `lab-dev`
 identities for what is issued from then on. Only public data is written.
 
-**If the PI names ITRI's CA** (its key is not here): ITRI issues one signer
+**If the PI or ITRI names ITRI's CA** (its key is not here): ITRI issues one signer
 certificate (a leaf) for each lab public key. Get the CA certificate and the
 two leaves as PEM files, then:
 
@@ -245,7 +246,7 @@ No code changes. ITRI receives the two PUBLIC keys
 policies/keys/trusted_signers.json) and returns its CA certificate and one
 codeSigning leaf per key, as PEM. Then, on a branch, with nothing flying:
 
-1. Register both leaves (section 1 above, "If the PI names ITRI's CA"). Each
+1. Register both leaves (section 1 above, "If the PI or ITRI names ITRI's CA"). Each
    key is then certified twice (lab-ca and itri-ca), and the tools refuse to
    choose between them by file order.
 2. Re-sign the same bundle list as on 27 Nov on both hosts with
