@@ -227,6 +227,8 @@ _DEFINED_ONLY_IN = {
     "_hhmm_s": {"guardrail/shield.py"},
     "escape_direction": {"guardrail/shield.py"},
     "zone_breached": {"guardrail/shield.py"},
+    # the closed footprint verdict a load-time start check asks (2026-11-27)
+    "zone_footprint_reached": {"guardrail/shield.py"},
     "corridor_breached": {"guardrail/shield.py"},
     "corridor_offset": {"guardrail/shield.py"},
     "in_zone_band": {"guardrail/shield.py"},
@@ -1166,11 +1168,9 @@ _THRESHOLD_COMPARISONS_NOT_VERDICTS = {
         "PLANNING: raises the A* planner's own clearance to at least the "
         "policy's obstacle_clearance limit so plan and Shield agree; it "
         "configures the planner, it judges no position",
-    ("guardrail/models.py", "start_conflicts"):
-        "POLICY LINT: at load, is the frame origin inside a hard keep-out "
-        "zone's footprint or within its margin (`<=`, conservative, every "
-        "height of the column, pure Python because models.py sits below the "
-        "Shield); the loaders record it in runtime_notes, it judges no flight",
+    # models.start_conflicts left this list on 2026-11-27 (X-13): it asks
+    # the Shield's shield.zone_footprint_reached
+    # (tests/test_start_conflicts_onepath.py).
 }
 def _bilinear_read(nodes) -> bool:
     """One sum of four or more products that each index a 2-D grid
