@@ -138,7 +138,8 @@ from . import response as _response
 from . import terrain as _terrain
 from .people import PEOPLE_FIELD_RES_M, PeopleField, as_person, is_finite_person
 from .geometry import (area_covers, boundary_depth, enters_interior, nearest_on_polyline,
-                       point_in_fence, push_out_direction, ring_contains, ring_distance)
+                       point_in_fence, push_out_direction, ring_contains, ring_distance,
+                       ring_edge_distance)
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .projection import derive_frame_origin, ring_order
 from .models import (
@@ -160,7 +161,9 @@ from .models import (
     State,
     SubjectStandoff,
     TimeWindowSwitch,
+    _dedupe_ring,
     _not_looser,
+    _point_in_ring,
     mark_legacy_read,
     no_frame_message,
     point_gives_metres,
@@ -777,6 +780,37 @@ def zone_breached(zone, x: float, y: float, up: float, polygon=None,
     ring AND within its band? `buffered` is the ring compiled once in the IR
     (FenceRecord.buffered); without it the ring is built here."""
     return point_in_fence(x, y, up, zone, polygon, buffered)
+
+
+def zone_footprint_reached(zone, x: float, y: float) -> bool:
+    """Is (x, y) within keep-out zone `zone`'s horizontal footprint: on or
+    inside its polygon, or within its margin of the polygon's edges, the
+    margin ring itself included (`<=`; a negative margin counts as 0)? Bands
+    and schedules are not read. The closed, conservative form of
+    `zone_breached`'s footprint half: at any height inside the band, every
+    point `zone_breached` reports breached is reached here too, but for
+    float rounding on the ring itself (an ulp: the margin is measured
+    exactly here, where `zone_breached` asks the open interior of the margin
+    ring GEOS builds, whose round corners are chords inside the exact one),
+    and a point on the ring or on an edge is reached here where
+    `zone_breached` reports it clear.
+
+    The question a load-time check asks: does a vehicle that starts at
+    (x, y) start inside the zone at some height of its column, at some time?
+    `Policy.start_conflicts` asks it of the frame origin, and through it
+    tools/geo_to_policy.py refuses a take-off point inside a zone. Until
+    2026-11-27 start_conflicts made this test itself in guardrail/models.py
+    (X-13); the arithmetic is the one it made, the boundary test
+    (models._point_in_ring: an edge within 1e-9, else the library's even-odd
+    containment) and the library's edge distance (planar.ring_edge_distance),
+    so every answer is the one it gave (tests/test_start_conflicts_onepath.py
+    holds that code as the oracle). A ring of fewer than three distinct
+    vertices is no footprint: False."""
+    ring = _dedupe_ring([(v.x, v.y) for v in zone.vertices])
+    if len(ring) < 3:
+        return False
+    m = max(zone.margin_m, 0.0)
+    return _point_in_ring(x, y, ring) or ring_edge_distance(x, y, ring) <= m
 
 
 def corridor_offset(corridor, x: float, y: float) -> float:
