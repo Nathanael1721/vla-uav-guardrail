@@ -9353,6 +9353,59 @@ def manifest_base() -> dict:
             "vla_model_hash": m["vla_model_hash"], "topology": TOPOLOGY_HEADLESS}
 
 
+# The manifest fields a campaign's episodes share by construction (one sweep,
+# one pilot, one rail); policy_hash and random_seed are each episode's own.
+MANIFEST_COMMON_FIELDS = ("code_revision", "vla_model_hash", "sim_speedup", "topology")
+
+
+def read_run_manifest(run_dir: Path | str | None) -> dict | None:
+    """A flown rail run's own manifest.json (the Shield node's six fields), or
+    None when the folder has none readable. Never made up."""
+    if run_dir is None:
+        return None
+    try:
+        doc = json.loads((Path(run_dir) / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def campaign_manifest_common(backend: str, base: dict,
+                             manifests: list[dict | None]) -> dict:
+    """The summary's `_manifest_common`.
+
+    Headless: `base`, the manifest every episode of the sweep is built from
+    (manifest_base), as before. A rail campaign (sitl, hil): its episodes'
+    manifests are the Shield node's, so the shared fields are read from the
+    flown runs' own manifest.json files. Until 2026-11-27 the summary of every
+    rail campaign carried the headless base - topology `headless-kinematic`
+    and the headless pilot's hash - beside per-run manifests that said `hil`
+    (pdyn1126's sweep.json: `_backend` "hil", `_manifest_common.topology`
+    "headless-kinematic"). `code_revision` stays the revision that drove and
+    scored the campaign (what tools/kpi_report.py's merge check compares);
+    the runs' own revisions are in `runs_code_revision`. A field the runs
+    disagree on is the sorted list of their values; one no run recorded is
+    None, never the headless value."""
+    if backend == "headless":
+        return base
+    got = [m for m in manifests if isinstance(m, dict)]
+
+    def shared(field):
+        vals = sorted({json.dumps(m.get(field), sort_keys=True) for m in got
+                       if m.get(field) is not None})
+        vals = [json.loads(v) for v in vals]
+        return None if not vals else vals[0] if len(vals) == 1 else vals
+
+    out = {"code_revision": base["code_revision"]}
+    for field in MANIFEST_COMMON_FIELDS[1:]:
+        out[field] = shared(field)
+    out["runs_code_revision"] = shared("code_revision")
+    out["source"] = (f"the flown runs' own manifest.json ({len(got)} of "
+                     f"{len(manifests)} episodes read); code_revision is the "
+                     f"campaign driver's")
+    return out
+
+
 def episode_manifest(base: dict, policy_hash: str, seed: int,
                      sim_s: float, wall_s: float) -> dict:
     """The grant's six fields, in its order, for one episode.
@@ -9526,6 +9579,14 @@ def rail_bundle_events(run_dir: Path, spec: ScenarioSpec, seed: int, *, backend:
                    "policy_hash": hash_of(last) if last is not None else None,
                    "mission_rc": rc, "mission_end": end is not None})
     return events, gens
+
+
+def rail_run_dir(hil_run: dict | None, sitl_run_tag: str | None) -> Path | None:
+    """Where a rail episode's run folder is: the fetched hil run, or the
+    sitl rail's demo/out/<tag>; None when neither is known."""
+    if hil_run is not None:
+        return Path(hil_run["run_dir"])
+    return ROOT / "demo" / "out" / sitl_run_tag if sitl_run_tag else None
 
 
 def write_rail_episode_bundle(ep_dir: Path, run_dir: Path, spec: ScenarioSpec, seed: int,
@@ -10716,6 +10777,7 @@ def main(argv: list[str] | None = None) -> int:
         run = None
         arm_record = None
         hil_run = None
+        sitl_run_tag = None
         try:
             if args.backend == "hil":
                 # Refused before a mission number is spent, so the tags match
@@ -10905,8 +10967,7 @@ def main(argv: list[str] | None = None) -> int:
             # A flown rail episode's bundle under the grant's six names
             # (write_rail_episode_bundle, 2026-11-18), beside the campaign's
             # summary; the run folder keeps its own names and files.
-            rail_dir = (Path(hil_run["run_dir"]) if hil_run is not None
-                        else ROOT / "demo" / "out" / sitl_run_tag)
+            rail_dir = rail_run_dir(hil_run, sitl_run_tag)
             ep_dir = runs / ep.dir_name(stamp)
             write_rail_episode_bundle(
                 ep_dir, rail_dir, spec, ep.seed, {
@@ -10928,6 +10989,10 @@ def main(argv: list[str] | None = None) -> int:
                                      else sitl_run_tag),
                         "rail_run_path": rail_dir.as_posix(), **(extras or {})})
             bundle = _show(ep_dir)
+        if args.backend in RAIL_BACKENDS:
+            # The node's own manifest (the bundle's manifest.json, byte for
+            # byte), for `_manifest_common` (campaign_manifest_common).
+            manifest = read_run_manifest(rail_run_dir(hil_run, sitl_run_tag))
 
         item = {**common, "status": status, "gates_failed": bad, "kpi": res,
                 "seed_consumed": consumed,
@@ -11095,7 +11160,9 @@ def main(argv: list[str] | None = None) -> int:
                     "symmetric copies"},
         "_runtime_s": runtime,
         "_runner": runner_facts(),
-        "_manifest_common": base,
+        "_manifest_common": campaign_manifest_common(
+            args.backend, base, [r.get("manifest") for r in rows_out + cmp_rows + rsp_rows
+                                 if "kpi" in r]),
         "_seeds": {"episodes_consuming_seed": sum(1 for r in scored
                                                   if r.get("seed_consumed")),
                    "episodes_deterministic": sum(1 for r in scored
