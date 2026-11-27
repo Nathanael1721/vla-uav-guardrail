@@ -252,6 +252,10 @@ def test_the_pymavlink_rail_takes_a_hot_apply_between_two_ticks():
     assert (out / "policy_g1.json").is_file()
     assert "nfz-rest" in metrics["nfz_by_zone_s"], metrics["nfz_by_zone_s"]
     assert any(e["kind"] == "hot_apply_listener" for e in events)
+    # WP3-19: report.md names the generation, its mission time and source.
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert (f"| Hot-apply generations | 1: g1 t={ha['events'][0]['t']:.2f} s (REST: "
+            "spawn dynamic_nfz `nfz-rest`) |") in report, report
 
 
 if __name__ == "__main__":
