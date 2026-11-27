@@ -378,6 +378,13 @@ if ! [[ "$SPEEDUP" =~ ^1(\.0+)?$ ]]; then
   exit 2
 fi
 # speedup-check end
+# What this launch declares for the manifest's start frame (ARCH-22,
+# 2026-11-28; guardrail/manifest.py, THE START FRAME AT ARMING): this rail is
+# the grant's dev topology unless VLAGUARD_TOPOLOGY says otherwise, flown at
+# SITL_SPEEDUP. Declarations only, named so in the frame: the end frame's
+# topology is decided from the evidence, its sim_speedup read from the autopilot.
+export VLAGUARD_TOPOLOGY="${VLAGUARD_TOPOLOGY:-dev}"
+export VLAGUARD_SIM_SPEEDUP="$SPEEDUP"
 case "$PHYSICS" in
   sitl) ;;
   gazebo)

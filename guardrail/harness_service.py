@@ -1337,25 +1337,47 @@ def read_held_generations(run_dir: str | Path) -> dict[int, bytes]:
 def rail_bag_and_audit(run_dir: str | Path, ep_dir: str | Path, *,
                        link_audit: bool = False) -> tuple[dict, dict | None]:
     """Two of the grant's six bundle names from a rail run folder (Stress
-    Testing, "Episode bundle"): episode.bag2/ (the run's rosbag2 directory,
-    which the rail records as bag/ and keeps under that name, aliased by
-    alias_tree) and shield_audit.jsonl (the run's, byte for byte: a copy, or
-    with `link_audit` a hard link where the volume allows). Returns
-    ({name: what was done, or why not}, alias_tree's record of the bag or
-    None). Shared by the gRPC Harness's rail session and the stress sweep's
-    rail campaigns (experiments/sweep_scenarios.write_rail_episode_bundle)."""
+    Testing, "Episode bundle"): episode.bag2/ and shield_audit.jsonl (the
+    run's, byte for byte: a copy, or with `link_audit` a hard link where the
+    volume allows). Returns ({name: what was done, or why not}, the record
+    of the bag or None). Shared by the gRPC Harness's rail session and the
+    stress sweep's rail campaigns (experiments/sweep_scenarios.
+    write_rail_episode_bundle).
+
+    episode.bag2/ (ARCH-22, 2026-11-28): the run's rosbag2 recording, which
+    the rail records as bag/ and keeps under that name unchanged, trimmed to
+    begin at its manifest start frame (guardrail/episode_bag.py: the grant's
+    "first frame of every rosbag"); where it cannot be trimmed (no
+    `rosbags`, no start frame, an unreadable recording) bag/ aliased by
+    alias_tree as before, and the record's `trim` says why."""
     import shutil
+    from guardrail.episode_bag import trim_episode_bag
     run_dir, ep_dir = Path(run_dir), Path(ep_dir)
     files: dict[str, str] = {}
     bag_info = None
     bag = run_dir / "bag"
     if bag.is_dir() and any(p.is_file() for p in bag.rglob("*")):
-        bag_info = alias_tree(bag, ep_dir / EPISODE_BAG_DIR)
-        bag_info["source"] = bag.as_posix()
-        files[EPISODE_BAG_DIR + "/"] = (
-            f"written: the run's rosbag2 directory (recorded as bag/, which the run "
-            f"folder keeps) under the grant's name, {len(bag_info['files'])} file(s) "
-            f"as {bag_info['how']}")
+        trim = trim_episode_bag(bag, ep_dir / EPISODE_BAG_DIR)
+        if trim.get("trimmed"):
+            bag_info = {"how": trim["how"], "files": trim["files"],
+                        "trim": {k: v for k, v in trim.items()
+                                 if k not in ("how", "files")}}
+            bag_info["source"] = bag.as_posix()
+            files[EPISODE_BAG_DIR + "/"] = (
+                f"written: the run's rosbag2 recording (bag/, which the run folder keeps "
+                f"as recorded) under the grant's name, trimmed to begin at its manifest "
+                f"start frame ({trim['dropped_before_start']} earlier message(s) left "
+                f"out, {len(trim['carried'])} latched value(s) carried), "
+                f"{len(trim['files'])} file(s)")
+        else:
+            bag_info = alias_tree(bag, ep_dir / EPISODE_BAG_DIR)
+            bag_info["source"] = bag.as_posix()
+            bag_info["trim"] = {"trimmed": False, "why": trim.get("why")}
+            files[EPISODE_BAG_DIR + "/"] = (
+                f"written: the run's rosbag2 directory (recorded as bag/, which the run "
+                f"folder keeps) under the grant's name, {len(bag_info['files'])} file(s) "
+                f"as {bag_info['how']}; not trimmed to its manifest start frame: "
+                f"{trim.get('why')}")
     else:
         files[EPISODE_BAG_DIR + "/"] = (
             f"not written: the run folder {run_dir.name} has no bag/ (the mission "
@@ -3485,10 +3507,13 @@ class Harness:
                                 exporters and the entrypoint's own handling
                                 of an earlier bag read it, and renaming it
                                 is a change on the flying side. The bundle
-                                gets the same files under the grant's name -
-                                an alias (hard links on one volume, copies
-                                otherwise; alias_tree), each with its SHA-256
-                                in kpi.json, not a rename;
+                                gets the recording under the grant's name,
+                                trimmed to begin at its manifest start frame
+                                (2026-11-28, guardrail/episode_bag.py), or
+                                where it cannot be an alias (hard links on
+                                one volume, copies otherwise; alias_tree),
+                                each file with its SHA-256 in kpi.json, not a
+                                rename (rail_bag_and_audit);
           shield_audit.jsonl    the run's, byte for byte;
           harness_events.jsonl  the episode's start, each hot-apply this
                                 server forwarded (the request, its mission

@@ -144,9 +144,12 @@ run's record says what the bag holds of them (`manifest_in_bag`):
              JSON type), and the start frame's fields equal it too - its
              policy hash against generation 0 of the run's policy
              generations, the hash the launch loaded;
-  differs    a field of either frame contradicts the run's records, or the
-             two frames name different episodes: a difference of the run,
-             layer `manifest_frame`, field `<phase>.<field>`;
+  differs    a field of either frame contradicts the run's records, the
+             two frames name different episodes, or (since 2026-11-28) the
+             start frame disagrees with the end frame on a field both carry
+             (`start_vs_end`; policy_hash left out, generation 0 against the
+             last): a difference of the run, layer `manifest_frame`, field
+             `<phase>.<field>` or `start_vs_end.<field>`;
   absent     no end frame on the topic (every bag before 2026-11-21, or an
              episode that never reached its report): said as a limit, not
              a difference, and never filled in from manifest.json; a start
@@ -156,8 +159,16 @@ run's record says what the bag holds of them (`manifest_in_bag`):
 Where the start frame lies is reported, not assumed (`start_frame`): its
 time after the bag's first message and whether it precedes every message
 of the episode topics this tool reads. The recorder starts before the
-Guardrail nodes and records MAVROS from its own start, so the start frame
-is the first frame of the episode's own topics, not of the whole bag.
+Guardrail nodes and records MAVROS from its own start, so in the run's bag/
+the start frame is the first frame of the episode's own topics, not of the
+whole bag; the episode bundle's episode.bag2/ is trimmed to begin at it
+(guardrail/episode_bag.py, 2026-11-28), and there it is the first message.
+
+Since 2026-11-28 the start frame is published at arming with all six fields
+where they can be had then (guardrail/manifest.py, THE START FRAME AT
+ARMING); the ones that are the launch's word (the topology, and sim_speedup
+where the autopilot gave none at take-off) are named under its `declared`
+and marked `declared` in the record. Older start frames carry three.
 
 WHAT "IDENTICAL" MEANS
 
@@ -235,7 +246,7 @@ import export_episodes as X                                      # noqa: E402
 from guardrail import kpi as K                                   # noqa: E402
 from guardrail.manifest import (FRAME_END, FRAME_START,          # noqa: E402
                                 MANIFEST_TOPIC, compare_manifest_frame,
-                                parse_manifest_frame)
+                                compare_start_end, parse_manifest_frame)
 from sitl_stressors import parse_marker                          # noqa: E402
 
 # The topics read (sitl/run_ros2_demo.sh and deploy/docker/entrypoint.sh
@@ -1011,11 +1022,16 @@ def compare_manifest_frames(s: BagStreams, manifest: dict | None,
                                           equal=mine == launch_policy_hash)
             if isinstance(manifest, dict) and "policy_hash" in manifest:
                 got["policy_hash"]["manifest_json_policy_hash"] = manifest["policy_hash"]
+        declared = f.get("declared") or {}
+        for name in declared:                 # the launch's word, not a reading (2026-11-28)
+            if name in got:
+                got[name]["declared"] = True
         note(FRAME_START, got)
         first_episode = s.start_ns            # the episode topics, the frames left out
         rec["start_frame"] = {
             "episode_id": f.get("episode_id"), "fields": got,
             "not_known_yet": sorted(f.get("not_known_yet") or {}),
+            "declared": dict(declared),
             "after_bag_start_s": (None if s.bag_start_ns is None
                                   else round((ts - s.bag_start_ns) / 1e9, 3)),
             "before_every_episode_topic_message": (None if first_episode is None
@@ -1034,6 +1050,7 @@ def compare_manifest_frames(s: BagStreams, manifest: dict | None,
         if len(ends) > 1:
             rec["end_frame"]["note"] = (f"{len(ends)} end frames in one bag: the last "
                                         f"is compared")
+    mismatches: list[str] = []
     if starts and ends:
         a, b = starts[0][1].get("episode_id"), ends[-1][1].get("episode_id")
         rec["same_episode"] = a == b
@@ -1043,6 +1060,20 @@ def compare_manifest_frames(s: BagStreams, manifest: dict | None,
                 # Both from the bag: the start frame's episode against the end's.
                 first = {"layer": "manifest_frame", "field": "start.episode_id",
                          "tick": None, "bag": a, "log": b}
+        # The start frame against the end frame (2026-11-28), both from the
+        # bag: a field they disagree on is flagged, a declared one included
+        # (the launch said one topology, the evidence another).
+        sve = compare_start_end(starts[0][1]["manifest"], ends[-1][1]["manifest"],
+                                starts[0][1].get("declared"))
+        mismatches = [k for k, v in sve.items() if not v["equal"]]
+        rec["start_vs_end"] = {"fields": sve, "mismatches": mismatches,
+                               "policy_hash": ("not compared: the start frame's is "
+                                               "generation 0, the end frame's the last "
+                                               "generation")}
+        if mismatches and first is None:
+            k = mismatches[0]
+            first = {"layer": "manifest_frame", "field": f"start_vs_end.{k}", "tick": None,
+                     "bag": sve[k]["start"], "log": sve[k]["end"]}
     if not ends:
         verdict = "absent"
         rec["why"] = (f"no end frame on {MANIFEST_FRAME_TOPIC}" + (
@@ -1053,7 +1084,7 @@ def compare_manifest_frames(s: BagStreams, manifest: dict | None,
             "Shield node began publishing it)"))
         if counts["differs"]:
             verdict = "differs"
-    elif counts["differs"]:
+    elif counts["differs"] or mismatches:
         verdict = "differs"
     elif end_all_equal:
         verdict = "identical"

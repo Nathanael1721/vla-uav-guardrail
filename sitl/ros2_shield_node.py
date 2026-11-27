@@ -55,11 +55,18 @@ WHAT EVERY RUN RECORDS (WP2-11, WP2-15, WP1-24, WP4-13, WP4-20, WP3-11, WP3-17)
                     (2026-11-21, ARCH-22) the same manifest as a frame of the
                     rosbag: latched (reliable, transient_local, depth 1)
                     std_msgs/String JSON, published at the episode's start
-                    with the fields known then (code revision, generation 0's
-                    policy hash, seed) and again at its end with all six, the
-                    dict manifest.json is written from (guardrail.manifest
-                    manifest_frame). metrics.json `manifest_frames` says what
-                    was published and when.
+                    and again at its end with all six, the dict
+                    manifest.json is written from (guardrail.manifest
+                    manifest_frame). Since 2026-11-28 the start frame goes out
+                    when the autopilot accepts the arm (THE START FRAME AT
+                    ARMING), with the code revision, generation 0's policy
+                    hash, the seed, vla_model_hash from the /vla/identity
+                    received before arming, sim_speedup as the autopilot
+                    answered at take-off and the topology the launch
+                    declared (VLAGUARD_TOPOLOGY), a declaration named under
+                    the frame's `declared`; until then it went out at the
+                    node's start with the first three. metrics.json
+                    `manifest_frames` says what was published and when.
   /shield/csp       (2026-11-26, WP4-19; --csp-topic on only) each
                     generation's policy and CSP, latched (reliable,
                     transient_local, depth 1) std_msgs/String JSON, published
@@ -611,6 +618,7 @@ from guardrail.response import ARDUCOPTER_GUIDED                         # noqa:
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
+                                ARMING_FIELDS, arming_manifest_fields,
                                 FRAME_END, FRAME_START, MANIFEST_TOPIC,
                                 flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade, manifest_frame, pilot_record,
@@ -2823,6 +2831,14 @@ SIM_SPEEDUP_GRACE_S = 5.0
 # the node's start, and on any flown episode it finished long before.
 MANIFEST_START_WAIT_S = 30.0
 
+# How long the start frame, published at arming, waits for that git status
+# (review of 346713b, 2026-11-28). Past it the frame goes out with the
+# policy hash and the seed, code_revision named under `not_known_yet` (the
+# end frame carries it): a frame held back would lie after the episode's
+# own messages, and the bundle's episode.bag2/ begins at it
+# (guardrail/episode_bag.py, which then does not trim).
+MANIFEST_REVISION_WAIT_S = 5.0
+
 
 def fence_read_done(vals: dict, fence_complete_for_s: float,
                     grace_s: float = SIM_SPEEDUP_GRACE_S,
@@ -3394,11 +3410,15 @@ if HAVE_ROS:
             self.pub_fences = self.create_publisher(String, TOPIC_FENCES, LATCHED)
             self.pub_intercept = self.create_publisher(String, "/shield/intercept", 10)
             # THE MANIFEST AS A FRAME OF THE BAG (ARCH-22, 2026-11-21;
-            # guardrail.manifest): latched on /guardrail/manifest, the fields
-            # known now at the episode's start, all six at its end (_report).
-            # The start frame's code_revision runs git, whose status took
-            # over 20 s on a slow tree, so it is computed and published on its
-            # own thread: bring-up waits for nothing. A publisher SROS 2
+            # guardrail.manifest): latched on /guardrail/manifest, the start
+            # frame at arming (THE START FRAME AT ARMING, 2026-11-28:
+            # start_frame_at_arm), all six at the end (_report). The start
+            # frame's code_revision runs git, whose status took over 20 s on
+            # a slow tree, so it is computed on its own thread from here. The
+            # frame is published once the arm is accepted, by bring_up itself
+            # before it asks for the take-off (git long finished), or, while
+            # git still runs, on another thread: bring-up and the climb never
+            # wait for git. A publisher SROS 2
             # refuses (a keystore made before sitl/sros2_policy.xml granted
             # the topic) is recorded and the node flies without it.
             self.manifest_frames: dict = {
@@ -3417,10 +3437,20 @@ if HAVE_ROS:
             # over it.
             self._manifest_lock = threading.Lock()
             self._manifest_closed = False
+            # The launch's fields (START_FIELDS), or why they failed; the
+            # policy hash and seed they are computed from, for a start frame
+            # that does not wait for git past MANIFEST_REVISION_WAIT_S.
+            self._start_fields: dict | None = None
+            self._start_fields_why: str | None = None
+            self._start_launch = (self.policy.policy_hash, self.args.seed)
             self._manifest_start = threading.Thread(
-                target=self._publish_start_frame, name="manifest-start-frame",
-                args=(self.policy.policy_hash, self.args.seed), daemon=True)
+                target=self._compute_start_fields, name="manifest-start-fields",
+                args=self._start_launch, daemon=True)
             self._manifest_start.start()
+            # start_frame_at_arm has run (the arm was accepted), and the
+            # thread that publishes the start frame where git still ran then.
+            self._manifest_armed = False
+            self._manifest_arm: threading.Thread | None = None
             # GENERATION N'S CSP AT THE PILOT (--csp-topic on, 2026-11-26,
             # WP4-19; guardrail/csp_topic.py): each generation's policy and
             # CSP on /shield/csp, latched, published by the episode record's
@@ -3524,24 +3554,109 @@ if HAVE_ROS:
 
         # ---------------- the manifest frames ---------------- #
 
-        def _publish_start_frame(self, policy_hash: str, seed: int) -> None:
-            """THE MANIFEST AS A FRAME OF THE BAG (2026-11-21): the start
-            frame, on its own thread (__init__): the code revision, the hash
-            of the policy loaded at launch (generation 0) and the seed."""
+        def _compute_start_fields(self, policy_hash: str, seed: int) -> None:
+            """The start frame's launch fields (START_FIELDS: the code
+            revision, the hash of the policy loaded at launch - generation 0
+            - and the seed), on their own thread from __init__: the code
+            revision runs git. Never raises; a failure is kept for the
+            start frame's record."""
             try:
-                fields = start_manifest_fields(policy_hash, seed)
+                self._start_fields = start_manifest_fields(policy_hash, seed)
+            except Exception as e:                               # noqa: BLE001
+                self._start_fields_why = f"{type(e).__name__}: {e}"
+
+        def start_frame_at_arm(self) -> None:
+            """THE START FRAME AT ARMING (ARCH-22, 2026-11-28;
+            guardrail.manifest): called once the autopilot accepted the arm,
+            the episode's start. What arming knows is taken here - the
+            /vla/identity received so far, THE TAKE-OFF WAIT's SIM_SPEEDUP.
+            Where the launch's fields are ready (_compute_start_fields: git
+            finished, the usual case) the frame is computed and published
+            here, on the caller's thread - no git, no weights read - so it
+            goes out before bring_up asks for the take-off (review of
+            4edd3f7: from a thread of its own it lost that race by a few ms,
+            and guardrail/episode_bag.py's trim then dropped the take-off
+            command). While git still runs, on its own thread, which waits
+            for it at most MANIFEST_REVISION_WAIT_S. An identity that says
+            the VLA is not ready (pilot_from_identity drops its digest)
+            gives no vla_model_hash: named under `not_known_yet`. Once per
+            episode. Never raises and never waits for git: a failure is
+            recorded under metrics.json `manifest_frames`, not flown on."""
+            try:
+                if self._manifest_armed:
+                    return
+                self._manifest_armed = True
+                identity = not_ready = None
+                if isinstance(self.vla_identity, dict):
+                    model_id, pilot, digest = pilot_from_identity(self.vla_identity)
+                    identity = (model_id, digest)
+                    not_ready = (pilot or {}).get("not_ready_because")
+                speedup = (self.takeoff_speedup or {}).get("sim_speedup")
+                args = (identity, speedup, round(time.time(), 3), not_ready)
+                if not self._manifest_start.is_alive():
+                    self._publish_start_frame(*args)
+                    return
+                self._manifest_arm = threading.Thread(
+                    target=self._publish_start_frame, name="manifest-start-frame",
+                    args=args, daemon=True)
+                self._manifest_arm.start()
             except Exception as e:                               # noqa: BLE001
                 self.manifest_frames[FRAME_START] = {
-                    "published": False, "why": f"{type(e).__name__}: {e}"}
-                return
-            self._publish_manifest_frame(FRAME_START, fields)
+                    "published": False, "at": "arming", "why": f"{type(e).__name__}: {e}"}
 
-        def _publish_manifest_frame(self, phase: str, fields: dict) -> None:
+        def _publish_start_frame(self, identity, takeoff_speedup,
+                                 armed_wall_time: float, not_ready=None) -> None:
+            """The start frame, from start_frame_at_arm (on its caller's
+            thread, or on its own while git still runs): the
+            launch's fields, and vla_model_hash, sim_speedup and topology as
+            arming knew them (guardrail.manifest.arming_manifest_fields: the
+            launch's VLAGUARD_TOPOLOGY, and its VLAGUARD_SIM_SPEEDUP where the
+            autopilot gave no SIM_SPEEDUP, named under the frame's
+            `declared`; nothing from an identity not ready). The launch's
+            fields are waited for at most MANIFEST_REVISION_WAIT_S (review of
+            346713b): a code revision git has not reported by then, or that
+            failed, is named under `not_known_yet`, beside the policy hash
+            and the seed, so the frame never lies after the episode's own
+            messages."""
+            self._manifest_start.join(timeout=MANIFEST_REVISION_WAIT_S)
+            launch, why = self._start_fields, self._start_fields_why
+            launch_not_known: dict = {}
+            if launch is None:
+                try:
+                    policy_hash, seed = self._start_launch
+                    launch = {"policy_hash": policy_hash or UNRESOLVED, "random_seed": int(seed)}
+                except Exception as e:                           # noqa: BLE001
+                    with self._manifest_lock:
+                        self.manifest_frames[FRAME_START] = {
+                            "published": False, "at": "arming",
+                            "why": f"{why or 'no launch fields'}; {type(e).__name__}: {e}"}
+                    return
+                launch_not_known["code_revision"] = (
+                    f"the code revision could not be computed: {why}" if why else
+                    f"git had not reported the code revision {MANIFEST_REVISION_WAIT_S:g} s "
+                    f"after arming; the end frame carries it")
+            try:
+                late, declared, not_known = arming_manifest_fields(identity, takeoff_speedup,
+                                                                   not_ready=not_ready)
+            except Exception as e:                               # noqa: BLE001
+                late, declared = {}, {}
+                not_known = {k: f"{type(e).__name__}: {e}" for k in ARMING_FIELDS}
+            self._publish_manifest_frame(FRAME_START, {**launch, **late},
+                                         declared=declared,
+                                         not_known={**not_known, **launch_not_known},
+                                         armed_wall_time=armed_wall_time)
+
+        def _publish_manifest_frame(self, phase: str, fields: dict, *,
+                                    declared: dict | None = None,
+                                    not_known: dict | None = None,
+                                    armed_wall_time: float | None = None) -> None:
             """Publish one frame (guardrail.manifest.manifest_frame) and record
             it under metrics.json `manifest_frames`. Never raises: the frame
             is evidence about the flight, and its failure is recorded, not
             flown on (2026-11-21)."""
             rec: dict = {"published": False}
+            if phase == FRAME_START:
+                rec.update({"at": "arming", "armed_wall_time": armed_wall_time})
             with self._manifest_lock:
                 if phase == FRAME_START and self._manifest_closed:
                     rec["why"] = ("the episode ended before the start frame was "
@@ -3549,8 +3664,13 @@ if HAVE_ROS:
                     self.manifest_frames[phase] = rec
                     return
                 try:
-                    frame = manifest_frame(phase, fields, episode_id=self.rec.episode_id)
+                    frame = manifest_frame(phase, fields, episode_id=self.rec.episode_id,
+                                           declared=declared, not_known=not_known)
                     rec["fields"] = list(frame["manifest"])
+                    if frame.get("declared"):
+                        rec["declared"] = list(frame["declared"])
+                    if frame.get("not_known_yet"):
+                        rec["not_known_yet"] = list(frame["not_known_yet"])
                     if self.pub_manifest is None:
                         rec["why"] = "no publisher: " + str(self.manifest_frames["refused"])
                     else:
@@ -4485,6 +4605,10 @@ if HAVE_ROS:
                 r = self._call(self.cli_arm, CommandBool.Request(value=True))
                 if r and r.success:
                     log.info("armed")
+                    # The episode starts here: its manifest start frame goes
+                    # out now, before the take-off is asked for (THE START
+                    # FRAME AT ARMING; on its own thread while git still runs).
+                    self.start_frame_at_arm()
                     break
                 time.sleep(2)
                 rclpy.spin_once(self, timeout_sec=0.1)
@@ -6315,14 +6439,19 @@ if HAVE_ROS:
             metrics["topology"] = manifest["topology"]
             # The end frame (THE MANIFEST AS A FRAME OF THE BAG, 2026-11-21):
             # all six fields, this dict, the one manifest.json is written from
-            # below. The start frame goes first: its thread is waited for, at
-            # most MANIFEST_START_WAIT_S (it is long done after any flight).
-            self._manifest_start.join(timeout=MANIFEST_START_WAIT_S)
+            # below. The start frame goes first: its thread (from arming,
+            # where git still ran) is waited for, at most MANIFEST_START_WAIT_S
+            # (it is long done after any flight). An episode that never armed
+            # has no start frame.
+            if self._manifest_arm is not None:
+                self._manifest_arm.join(timeout=MANIFEST_START_WAIT_S)
             self._publish_manifest_frame(FRAME_END, manifest)
             if self.manifest_frames[FRAME_START] is None:
                 self.manifest_frames[FRAME_START] = {
-                    "published": False,
-                    "why": (f"its code revision was still being computed "
+                    "published": False, "at": "arming",
+                    "why": ("the aircraft was never armed: the start frame is published "
+                            "at arming" if not self._manifest_armed else
+                            f"its code revision was still being computed "
                             f"{MANIFEST_START_WAIT_S:g} s after the episode ended")}
             metrics["manifest_frames"] = json.loads(json.dumps(self.manifest_frames))
             if self.ground is not None:
