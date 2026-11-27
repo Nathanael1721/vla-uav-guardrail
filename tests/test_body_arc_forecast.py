@@ -545,8 +545,10 @@ def test_a_campaign_asks_the_node_for_the_arc_and_refuses_a_run_that_did_not_fly
     src = (ROOT / "experiments" / "sweep_scenarios.py").read_text(encoding="utf-8")
     # Both rail launches carry the arc arguments (since 2026-11-21 joined
     # with the hold model's in rail_args, WP3-07 --rail-hold, and the FSM
-    # config's, WP3-07b --rail-fsm-config).
-    assert src.count("rail_args = (rail_arc_args + rail_hold_args + rail_fsm) or None") == 1
+    # config's, WP3-07b --rail-fsm-config; since 2026-11-27 the repair
+    # selection's, WP3-06 --rail-repair-mode).
+    assert src.count("rail_args = (rail_arc_args + rail_repair_args + rail_hold_args "
+                     "+ rail_fsm) or None") == 1
     assert src.count("extra_args=rail_args)") == 2
     assert src.count("arc_forecast_problems(metrics, extra_args)") == 2
 

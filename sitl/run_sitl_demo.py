@@ -566,6 +566,13 @@ def main() -> int:
                          "response (default off on this rail: that response was "
                          "measured on the Project AirSim quad, not on ArduPilot's "
                          "own SITL physics; the velocity is logged either way)")
+    ap.add_argument("--repair-mode", choices=["chain", "first_feasible"], default="chain",
+                    help="the Shield's repair selection (2026-11-27, WP3-06; guardrail/"
+                         "repair.py THE MODES): chain (default, every run before this "
+                         "flag) or first_feasible, the grant's rule (the first operator "
+                         "whose action clears the earliest violation within theta wins; "
+                         "ungated, off by default). Recorded in metrics.json "
+                         "shield_forecast.repair_mode")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
@@ -687,9 +694,15 @@ def main() -> int:
     # clear_response (2026-11-19): the clearance horizon covers the ArduPilot
     # vehicle's stop (0.45 s reaction, 1.75 m/s^2), as on the ROS 2 rail.
     from guardrail.response import ARDUCOPTER_GUIDED
+    # --repair-mode (2026-11-27, WP3-06): chain (default, every run before
+    # the flag) or the grant's first_feasible; recorded in metrics.json
+    # shield_forecast.repair_mode.
+    from guardrail.repair import DEFAULT_REPAIR_MODE
+    repair_mode = getattr(args, "repair_mode", None) or DEFAULT_REPAIR_MODE
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          clock=clock, pipe_clock=lambda: time.time(),
                          clear_response=ARDUCOPTER_GUIDED, **gkw,
+                         repair_mode=repair_mode,
                          path_repair=FOLLOW_RAIL_PATH_REPAIR, **ppl_kw)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
@@ -1178,7 +1191,11 @@ def main() -> int:
             "velocity_source": "LOCAL_POSITION_NED vx/vy/vz (pymavlink)",
             "velocity_ticks": n_vel_used,
             "shield_velocity_ticks": shield.n_velocity_ticks,
-            "velocity_nonfinite": shield.n_velocity_nonfinite},
+            "velocity_nonfinite": shield.n_velocity_nonfinite,
+            # PathRepair (FOLLOW_RAIL_PATH_REPAIR) and the repair selection
+            # (--repair-mode, 2026-11-27, WP3-06) the Shield flew.
+            "path_repair": bool(getattr(shield, "path_repair", False)),
+            "repair_mode": getattr(shield, "repair_mode", repair_mode)},
         # The action frame at the Shield's boundary (WP3-04 / ARCH-04):
         # body, at the heading ATTITUDE gave (0 on the ticks counted here).
         "action_frame": {"shield_input": "body", "heading_source": "ATTITUDE.yaw",

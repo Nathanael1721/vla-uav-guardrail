@@ -1,0 +1,400 @@
+{
+ "chain": {
+  "revision": "abff166efc2d",
+  "repair_mode": "chain",
+  "counts": {
+   "pass": 155,
+   "tracked": 22,
+   "fail": 0,
+   "known_failure": 3,
+   "skipped": 0
+  },
+  "episodes": 180,
+  "shield_on_episodes": 179,
+  "p0_escapes": 0,
+  "p0_violation_ticks": 11385,
+  "episodes_with_p0_escape": 0,
+  "fail_safe_correct": 179,
+  "fail_safe_scored": 179,
+  "fail_safe_correctness": 1.0,
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "mission_successes": 96,
+  "mission_scored": 180,
+  "repair_count_total_shield_on": 18116,
+  "repaired_ticks_total_shield_on": 16100,
+  "true_p0_flown_ticks": 1326,
+  "outcomes": {
+   "success": 96,
+   "fail": 21,
+   "RTL_triggered": 58,
+   "Land_triggered": 5
+  },
+  "runtime_s": 199.23
+ },
+ "first_feasible": {
+  "revision": "abff166efc2d",
+  "repair_mode": "first_feasible",
+  "counts": {
+   "pass": 149,
+   "tracked": 22,
+   "fail": 6,
+   "known_failure": 3,
+   "skipped": 0
+  },
+  "episodes": 180,
+  "shield_on_episodes": 179,
+  "p0_escapes": 0,
+  "p0_violation_ticks": 12452,
+  "episodes_with_p0_escape": 0,
+  "fail_safe_correct": 177,
+  "fail_safe_scored": 179,
+  "fail_safe_correctness": 0.988827,
+  "false_triggers": 0,
+  "missed_triggers": 2,
+  "mission_successes": 98,
+  "mission_scored": 180,
+  "repair_count_total_shield_on": 20921,
+  "repaired_ticks_total_shield_on": 17080,
+  "true_p0_flown_ticks": 1333,
+  "outcomes": {
+   "success": 98,
+   "fail": 21,
+   "RTL_triggered": 56,
+   "Land_triggered": 5
+  },
+  "runtime_s": 196.42
+ },
+ "episodes_differing": 19,
+ "episodes_differing_beyond_repair_count": 13,
+ "scenarios_differing": [
+  "corridor-drift-angles",
+  "dyn-nfz-rotate-spin",
+  "dyn-nfz-spawn-on-top",
+  "gps-noise-within-margin",
+  "rule-activated-mid-run",
+  "three-simultaneous-violations",
+  "time-window-opens-ahead",
+  "time-window-opens-on-sideways-pilot",
+  "time-window-opens-on-vehicle"
+ ],
+ "diffs": [
+  {
+   "id": "corridor-drift-angles@ask_mps=4,drift_deg=-60",
+   "seed": 0,
+   "scenario_id": "corridor-drift-angles",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "mission_success": [
+     false,
+     true
+    ],
+    "outcome": [
+     "RTL_triggered",
+     "success"
+    ],
+    "failsafe_matches_label": [
+     1.0,
+     0.0
+    ],
+    "repair_count": [
+     78,
+     1031
+    ]
+   }
+  },
+  {
+   "id": "corridor-drift-angles@ask_mps=8,drift_deg=-30",
+   "seed": 0,
+   "scenario_id": "corridor-drift-angles",
+   "changed": {
+    "repair_count": [
+     268,
+     169
+    ],
+    "true_p0_flown_ticks": [
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "corridor-drift-angles@ask_mps=8,drift_deg=-60",
+   "seed": 0,
+   "scenario_id": "corridor-drift-angles",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "mission_success": [
+     false,
+     true
+    ],
+    "outcome": [
+     "RTL_triggered",
+     "success"
+    ],
+    "failsafe_matches_label": [
+     1.0,
+     0.0
+    ],
+    "repair_count": [
+     206,
+     1903
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-rotate-spin@deg_per_s=9",
+   "seed": 0,
+   "scenario_id": "dyn-nfz-rotate-spin",
+   "changed": {
+    "repair_count": [
+     64,
+     63
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-spawn-on-top@size_m=20,variant=0",
+   "seed": 0,
+   "scenario_id": "dyn-nfz-spawn-on-top",
+   "changed": {
+    "repair_count": [
+     28,
+     0
+    ]
+   }
+  },
+  {
+   "id": "dyn-nfz-spawn-on-top@size_m=40,variant=0",
+   "seed": 0,
+   "scenario_id": "dyn-nfz-spawn-on-top",
+   "changed": {
+    "repair_count": [
+     53,
+     0
+    ]
+   }
+  },
+  {
+   "id": "gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3",
+   "seed": 0,
+   "scenario_id": "gps-noise-within-margin",
+   "changed": {
+    "repair_count": [
+     10,
+     9
+    ]
+   }
+  },
+  {
+   "id": "rule-activated-mid-run@at=4",
+   "seed": 0,
+   "scenario_id": "rule-activated-mid-run",
+   "changed": {
+    "repair_count": [
+     4,
+     2
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     147
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ],
+    "max_time_to_safe_s": [
+     3.5,
+     3.6
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=11,start_up=6,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     87
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ],
+    "max_time_to_safe_s": [
+     2.0,
+     2.1
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=11,start_up=9,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     27
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     147
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ],
+    "max_time_to_safe_s": [
+     3.5,
+     3.6
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=8,start_up=6,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     87
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ],
+    "max_time_to_safe_s": [
+     2.0,
+     2.1
+    ]
+   }
+  },
+  {
+   "id": "three-simultaneous-violations@ask_mps=8,start_up=9,variant=0",
+   "seed": 0,
+   "scenario_id": "three-simultaneous-violations",
+   "changed": {
+    "repair_count": [
+     8,
+     27
+    ],
+    "true_p0_flown_ticks": [
+     19,
+     20
+    ]
+   }
+  },
+  {
+   "id": "time-window-opens-ahead@clock=2026-09-07T07:29:51",
+   "seed": 0,
+   "scenario_id": "time-window-opens-ahead",
+   "changed": {
+    "repair_count": [
+     4,
+     2
+    ]
+   }
+  },
+  {
+   "id": "time-window-opens-on-sideways-pilot",
+   "seed": 0,
+   "scenario_id": "time-window-opens-on-sideways-pilot",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "repair_count": [
+     300,
+     245
+    ],
+    "max_time_to_safe_s": [
+     2.8,
+     5.5
+    ]
+   }
+  },
+  {
+   "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58,vehicle_speed_mps=1.5",
+   "seed": 0,
+   "scenario_id": "time-window-opens-on-vehicle",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "repair_count": [
+     26,
+     0
+    ],
+    "max_time_to_safe_s": [
+     2.6,
+     6.7
+    ]
+   }
+  },
+  {
+   "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58.5,vehicle_speed_mps=1.5",
+   "seed": 0,
+   "scenario_id": "time-window-opens-on-vehicle",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "repair_count": [
+     26,
+     0
+    ],
+    "max_time_to_safe_s": [
+     2.6,
+     6.7
+    ]
+   }
+  },
+  {
+   "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:59,vehicle_speed_mps=1.5",
+   "seed": 0,
+   "scenario_id": "time-window-opens-on-vehicle",
+   "changed": {
+    "status": [
+     "pass",
+     "fail"
+    ],
+    "repair_count": [
+     26,
+     0
+    ],
+    "max_time_to_safe_s": [
+     2.6,
+     6.7
+    ]
+   }
+  }
+ ]
+}

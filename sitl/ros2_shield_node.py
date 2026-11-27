@@ -619,6 +619,7 @@ from guardrail.models import AltitudeEnvelope, PolygonFence, XY          # noqa:
 from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.shield import (altitude_out_of_band, standoff_breached,       # noqa: E402
                               standoff_ring_m, standoff_rules)
+from guardrail.repair import DEFAULT_REPAIR_MODE, REPAIR_MODES           # noqa: E402
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.people import declared_subject_source                     # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_from_args,       # noqa: E402
@@ -3086,6 +3087,11 @@ if HAVE_ROS:
             # mode it detours round a --subject's stand-off ring only); off is
             # the chain every run before 2026-11-17 flew.
             self.path_repair = getattr(args, "path_repair", "on") == "on"
+            # --repair-mode (2026-11-27, WP3-06): chain (default, what every
+            # flight before this flag flew) or first_feasible, the grant's
+            # selection (guardrail/repair.py THE MODES; ungated, off by
+            # default). Recorded in metrics.json shield_forecast.repair_mode.
+            self.repair_mode = getattr(args, "repair_mode", None) or DEFAULT_REPAIR_MODE
             # clear_response (2026-11-19): the clearance horizon covers the
             # ArduPilot vehicle's stop (0.45 s reaction, 1.75 m/s^2), not an
             # instant 3 m/s^2 one; the de_hil1 flights entered both
@@ -3101,6 +3107,7 @@ if HAVE_ROS:
                                       pipe_clock=self.pipe_rec, **self.world_kw,
                                       **self.ground_kw,
                                       path_repair=self.path_repair,
+                                      repair_mode=self.repair_mode,
                                       clear_response=ARDUCOPTER_GUIDED,
                                       **({"arc_forecast": True} if self.arc else {}))
             self._ev_state = SE.EventState(shields=[self.shield])
@@ -6037,7 +6044,10 @@ if HAVE_ROS:
                     # forecast along its arc (Shield.filter_body).
                     "arc": bool(getattr(self.shield, "arc_forecast", False)),
                     # --path-repair (WP3-06, 2026-11-17).
-                    "path_repair": bool(getattr(self.shield, "path_repair", False))},
+                    "path_repair": bool(getattr(self.shield, "path_repair", False)),
+                    # --repair-mode (WP3-06, 2026-11-27): the selection the
+                    # Shield flew; "chain" is every flight before the flag.
+                    "repair_mode": getattr(self.shield, "repair_mode", DEFAULT_REPAIR_MODE)},
                 # None with no target (--no-target): no goal was declared,
                 # so none was missed either.
                 "reached": self.reached if self.has_target else None,
@@ -6573,6 +6583,13 @@ def make_parser() -> argparse.ArgumentParser:
                          "runs PathRepair after LateralProjection, the grant's order; "
                          "in chain mode it detours round a --subject's stand-off ring "
                          "only. off: the chain every run before 2026-11-17 flew")
+    ap.add_argument("--repair-mode", choices=list(REPAIR_MODES), default=DEFAULT_REPAIR_MODE,
+                    help="the Shield's repair selection (2026-11-27, WP3-06; guardrail/"
+                         "repair.py THE MODES): chain (default, every flight before this "
+                         "flag) is the iterated chain; first_feasible is the grant's rule, "
+                         "the first operator whose action clears the earliest violation "
+                         "within theta wins (UNGATED, detours round zones too; off by "
+                         "default). Recorded in metrics.json shield_forecast.repair_mode")
     ap.add_argument("--arc-forecast", choices=["on", "off"], default="off",
                     help="on: the Shield forecasts a body action with a yaw rate along "
                          "the arc it flies (velocity held in the body frame while the "
