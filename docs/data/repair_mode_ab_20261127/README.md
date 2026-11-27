@@ -5,7 +5,7 @@ in priority order and the first that produces a feasible action within the
 threshold wins. The Shield's default is the iterated chain
 (`repair_mode="chain"`, guardrail/repair.py THE MODES). The grant's rule
 (`repair_mode="first_feasible"`) existed but no flying or library harness
-could select it. Since commit abff166 every harness can:
+could select it. Since commit abff166 three harnesses can:
 `--repair-mode` on sitl/ros2_shield_node.py, sitl/run_sitl_demo.py and the
 headless sweep, `--rail-repair-mode` on the sweep's rails. The default stays
 `chain`.
