@@ -50,10 +50,17 @@ scenarios:
   - scenario_id: corridor-drift-angles
     template: corridor_keep_in
     description: >
-      corridor-drift-out at six drift headings and two asked speeds. With no
-      scenario clock the curfew fence is always in force, so the north-east
-      headings also run into it at the corridor's corner: a keep-in and a
-      keep-out rule repairing against each other.
+      corridor-drift-out at six drift headings and two asked speeds, with the
+      curfew fence in force (unlike corridor-drift-out's Saturday), so the
+      north-east headings also run into it at the corridor's corner: a
+      keep-in and a keep-out rule repairing against each other.
+
+      CLOCK PINNED 2026-11-28 to Monday 09:00, inside the fence's weekday
+      07:30-17:30. Until then the family had no clock: in force headless
+      (no clock = every rule), but on a rail without --clock-start the wall
+      clock decides, and out of hours -60 deg (4 and 8 m/s) and -30 deg at
+      8 m/s fly another flight than the one labelled. Headless the pinned
+      flight is the unpinned one, tick for tick.
 
       WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): once
       the Loiter timeout sends the drifting pilot home (the fail-safe the
@@ -64,6 +71,7 @@ scenarios:
       start_pose: { x: 30.0, y: 0.0, up: 15.0 }
       pilot: { type: constant, action: { vx: 0.0, vy: "$ask_mps" } }
       rotate_deg: "$drift_deg"
+      clock_start: "2026-09-07T09:00:00"     # Monday, inside the curfew's 07:30-17:30
     policy: { path: policies/corridor_survey.yaml }
     # 2026-11-02 (docs/RUBRIC-failsafe.md section 3): long enough to
     # show the fail-safe outcome. Shorter, the run ended while the FSM held

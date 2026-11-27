@@ -1559,6 +1559,109 @@ def test_without_a_campaign_or_a_flight_the_stack_lines_stay_out():
     assert KR.stack_section([{"id": "s", "kind": "stored-table"}], None) is None
 
 
+def _matrix_ep(sid, cell, p0_ticks, *, arm="on", graded=True, n=100):
+    """A minimal stored table of one Shield-matrix cell (rollup() reads it)."""
+    return {"id": f"{sid}@{cell}/{arm}", "scenario_id": sid, "arm": arm,
+            "family": f"hil-stress/t/{sid}@{cell}/shield-{arm}", "kpi_grade": graded,
+            "ticks": n, "p0_escapes": 0, "p0_violation_ticks": p0_ticks}
+
+
+def _matrix_eps(at_speed=(0, 0)):
+    """Every matrix row with one non-vacuous cell, except the at-speed family,
+    whose two cells carry `at_speed` P0 ticks."""
+    eps = [_matrix_ep("high-speed-near-edge", "edge_deg=0", 70),
+           _matrix_ep("dyn-nfz-spawn-ahead", "ahead_m=12", 2),
+           _matrix_ep("dyn-nfz-spawn-on-top", "size_m=40", 0),
+           _matrix_ep("time-window-opens-ahead", "clock=x", 6),
+           _matrix_ep("three-simultaneous-violations", "ask_mps=11", 40),
+           _matrix_ep("gps-noise-within-margin", "sigma=0.3", 12),
+           _matrix_ep("gps-noise-beyond-margin", "sigma=2", 0)]
+    eps += [_matrix_ep("near-edge-at-12mps", f"ask_mps={a}", p)
+            for a, p in zip((12, 20), at_speed)]
+    return eps
+
+
+def test_the_shield_matrix_says_a_row_or_the_at_speed_cell_with_no_p0_tick():
+    """REGRESSION (2026-11-28, the release smoke smREL072). Its two
+    near-edge-at-12mps cells flew with the school-yard zone out of force (no
+    scenario clock: the hil rail read the wall clock, Fri 18:15) and printed
+    "vacuous (no P0 tick)" in the family table, while the gate asked only
+    that every matrix row flew. The report now says, per matrix row, whether
+    it has a non-vacuous cell, and whether every at-speed near-edge cell is
+    non-vacuous; a Shield-off control and, once any episode is KPI-grade, a
+    functional one never count."""
+    KR = _report_module()
+    eps = _matrix_eps((0, 0))
+    eps += [_matrix_ep("near-edge-at-12mps", "ask_mps=12", 90, arm="off"),
+            _matrix_ep("near-edge-at-12mps", "ask_mps=20", 90, graded=False)]
+    m = KR.shield_matrix_section(eps)
+    assert m["basis"] == "kpi_grade_shield_on" and m["episodes"] == 9, m
+    rows = {r["row"]: r for r in m["rows"]}
+    assert [r for r, _ in KR.SHIELD_MATRIX] == list(rows)
+    assert all(r["has_non_vacuous_cell"] for r in rows.values()), rows
+    hs = rows["high-speed near-edge"]
+    assert (hs["cells_flown"], hs["non_vacuous_cells"], hs["vacuous_cells"]) == (3, 1, 2), hs
+    assert rows["dyn-nfz spawn"]["vacuous_cells"] == 1
+    a = m["at_speed_near_edge"]
+    assert (a["cells_flown"], a["non_vacuous_cells"], a["non_vacuous"]) == (2, 0, False), a
+    assert [c["state"] for c in a["cells"]] == ["vacuous", "vacuous"], a
+    assert m["gate_met"] is False and m["gate"] == KR.SHIELD_MATRIX_GATE
+    md = "\n".join(KR._render_shield_matrix(m))
+    assert "## Shield test matrix: a P0 tick in every row" in md
+    assert "At-speed near-edge (`near-edge-at-12mps`): **VACUOUS** - 0 of 2" in md, md
+    assert "Gate: **NOT MET**." in md and KR.SHIELD_MATRIX_GATE in md
+    assert "| high-speed near-edge | `high-speed-near-edge`, `near-edge-at-12mps` | 3 | " \
+           "1 | 2 | 0 | has a non-vacuous cell |" in md, md
+    # One at-speed cell with P0 ticks is not enough; both are.
+    part = KR.shield_matrix_section(_matrix_eps((5, 0)))
+    assert part["at_speed_near_edge"]["non_vacuous_cells"] == 1 and not part["gate_met"]
+    assert "**PARTLY VACUOUS**" in "\n".join(KR._render_shield_matrix(part))
+    ok = KR.shield_matrix_section(_matrix_eps((5, 117)))
+    assert ok["at_speed_near_edge"]["non_vacuous"] and ok["gate_met"], ok
+    assert "Gate: **met**." in "\n".join(KR._render_shield_matrix(ok))
+    # A row that never flew, or flew only vacuous cells, is not met.
+    gone = KR.shield_matrix_section([e for e in _matrix_eps((5, 117))
+                                     if not e["scenario_id"].startswith("gps-noise")])
+    r = {r["row"]: r for r in gone["rows"]}["gps noise / latency"]
+    assert r["cells_flown"] == 0 and not r["has_non_vacuous_cell"] and not gone["gate_met"]
+    assert "| gps noise / latency |" in "\n".join(KR._render_shield_matrix(gone))
+    assert "NOT FLOWN" in "\n".join(KR._render_shield_matrix(gone))
+    flat = [dict(e, p0_violation_ticks=0) if e["scenario_id"] == "three-simultaneous-violations"
+            else e for e in _matrix_eps((5, 117))]
+    r = {r["row"]: r for r in KR.shield_matrix_section(flat)["rows"]}
+    assert not r["three simultaneous violations"]["has_non_vacuous_cell"]
+    # No KPI-grade episode at all (a headless sweep): every Shield-on one,
+    # and the basis says so.
+    fun = KR.shield_matrix_section([dict(e, kpi_grade=False) for e in _matrix_eps((5, 117))])
+    assert fun["basis"].startswith("all_shield_on") and fun["gate_met"], fun
+    assert "functional evidence" in "\n".join(KR._render_shield_matrix(fun))
+
+
+def test_the_shield_matrix_families_are_the_librarys_and_the_smoke_flies_each_row():
+    """SHIELD_MATRIX names library families (a renamed family would leave
+    its row silently empty), each under its matrix row's template, and the
+    smoke profile flies a cell of every row and of near-edge-at-12mps."""
+    KR = _report_module()
+    from guardrail.scenario_spec import Library, expand, load_profile
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    by_id = lib.by_id()
+    template = {"high-speed near-edge": "high_speed_near_edge",
+                "dyn-nfz spawn": "dynamic_nfz_movement",
+                "time-window switch": "time_window_switch",
+                "three simultaneous violations": "three_simultaneous_violations",
+                "gps noise / latency": "sensor_degradation"}
+    eps, _ = expand(lib, load_profile(ROOT / "experiments" / "profiles" / "smoke.yaml"))
+    flown = {e.cell.spec.scenario_id for e in eps}
+    assert len(KR.SHIELD_MATRIX) == 5
+    for row, sids in KR.SHIELD_MATRIX:
+        for sid in sids:
+            assert sid in by_id, (row, sid)
+            assert by_id[sid].template == template[row], (row, sid, by_id[sid].template)
+        assert flown & set(sids), (row, sids)
+    assert KR.AT_SPEED_NEAR_EDGE in dict(KR.SHIELD_MATRIX)["high-speed near-edge"]
+    assert KR.AT_SPEED_NEAR_EDGE in flown
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

@@ -822,6 +822,59 @@ def test_the_smoke_profile_runs_every_stressor_of_the_shield_matrix():
     assert labels == {True, False}, labels
 
 
+def test_a_smoke_or_nightly_cell_under_a_weekly_window_carries_its_scenario_clock():
+    """REGRESSION (2026-11-28, the release smoke smREL072). A cell whose policy
+    has a rule with a weekly window (`valid_time`) and no mission.clock_start
+    has every rule in force headless (no clock = always active), but a rail
+    without --clock-start reads the wall clock: near-edge-at-12mps flew its
+    school-yard zone out of force on Fri 27 Nov from 18:15 and both cells
+    were vacuous (no P0 tick). Every such smoke and nightly cell now has a
+    clock. The two families pinned that day are pinned inside their zone's
+    window for longer than any rail flight (an hour), the rail command
+    carries the pin (--clock-start, to both nodes; the hil rail is given the
+    same arguments, sweep_scenarios.rail_node_args), and the rule clock the
+    Shield node builds from it (guardrail.replay.rule_clock) reads the zone
+    in force, where the wall clock smREL072_041 flew on did not."""
+    from datetime import datetime, timedelta
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as SW
+    from guardrail.replay import rule_clock
+    lib = Library(LIB)
+    pinned = {"near-edge-at-12mps": "nfz-school-yard", "corridor-drift-angles": "nfz-school"}
+    for name in ("smoke", "nightly"):
+        eps, _ = expand(lib, load_profile(PROFILES / f"{name}.yaml"))
+        flown = set()
+        for e in eps:
+            spec = e.cell.spec
+            pol = spec.policy.load(ROOT)
+            timed = [c.id for c in pol.constraints if c.valid_time is not None]
+            assert not timed or spec.mission.clock_start is not None, (
+                name, e.cell.episode_id, timed)
+            rule = pinned.get(spec.scenario_id)
+            if rule is None:
+                continue
+            flown.add(spec.scenario_id)
+            zone = next(c for c in pol.constraints if c.id == rule)
+            t0 = spec.mission.clock_start
+            assert zone.active_at(t0) and zone.active_at(t0 + timedelta(hours=1)), (
+                e.cell.episode_id, t0)
+            args = SW.rail_node_args(spec, e.seed, lib.defaults)
+            assert f"--clock-start={t0.isoformat()}" in args, (e.cell.episode_id, args)
+        assert flown == set(pinned), (name, flown)
+    cell = next(iter(lib.by_id()["near-edge-at-12mps"].cells()))
+    zone = next(c for c in cell.spec.policy.load(ROOT).constraints
+                if c.id == "nfz-school-yard")
+    mission_t = [0.0]
+    scripted, rec = rule_clock(cell.spec.mission.clock_start.isoformat(),
+                               elapsed=lambda: mission_t[0])
+    assert rec["kind"] == "scripted" and rec["start"] == "2026-09-07T09:00:00", rec
+    for s in (0.0, 40.0, 75.0, 675.0):        # up to the rail cap + --hil-max-s-add 600
+        mission_t[0] = s
+        assert zone.active_at(scripted()), (s, scripted())
+    wall, rec = rule_clock(None, wall=lambda z: datetime(2026, 11, 27, 18, 15, 35, tzinfo=z))
+    assert rec["kind"] == "wall" and not zone.active_at(wall()), rec
+
+
 def test_the_library_is_one_file_per_template_holding_only_its_own():
     """Stress Testing, Outputs: "Scenario library - YAML files (one per
     template)". experiments/scenarios.yaml lists experiments/templates/*.yaml;
