@@ -1456,13 +1456,16 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
 # the autopilot accepts the arm - the episode's start - with all six
 # whenever they can be had then (arming_manifest_fields): vla_model_hash from
 # the /vla/identity received before arming, computed as the end frame
-# computes it; sim_speedup as the autopilot answered at take-off (before
-# arming), else as the launch declared it (SIM_SPEEDUP_ENV); topology as the
-# launch declared it (TOPOLOGY_ENV). A value that is the launch's word, not
-# a reading, is named under the frame's `declared`; the end frame keeps the
-# values measured at the end (the topology from the evidence). A field still
-# not known at arming is left out and named under `not_known_yet` with the
-# reason. tools/replay_from_bag.py compares the two frames field by field
+# computes it (none from one saying the VLA is not ready); sim_speedup as
+# the autopilot answered at take-off (before arming), else as the launch
+# declared it (SIM_SPEEDUP_ENV); topology as the launch declared it
+# (TOPOLOGY_ENV). A value that is the launch's word, not a reading, is named
+# under the frame's `declared`; the end frame keeps the values measured at
+# the end (the topology from the evidence). A field still not known at
+# arming is left out and named under `not_known_yet` with the reason - the
+# code revision too, when git has not reported it within the node's bound
+# (sitl/ros2_shield_node.MANIFEST_REVISION_WAIT_S), so the frame is never
+# held back. tools/replay_from_bag.py compares the two frames field by field
 # (compare_start_end) and flags every field they disagree on.
 #
 # WHAT "FIRST" CAN MEAN. The recorder starts before the Guardrail nodes and
@@ -1531,7 +1534,8 @@ def _positive_number(value: Any) -> float | None:
 
 def arming_manifest_fields(identity: tuple[str, str | None] | None,
                            takeoff_sim_speedup: Any = None,
-                           environ: Any = None
+                           environ: Any = None, *,
+                           not_ready: str | None = None
                            ) -> tuple[dict[str, Any], dict[str, str], dict[str, str]]:
     """The start frame's ARMING_FIELDS at arming (THE START FRAME AT ARMING,
     2026-11-28): (fields, declared, not_known). Never raises.
@@ -1540,7 +1544,10 @@ def arming_manifest_fields(identity: tuple[str, str | None] | None,
                       node took from the /vla/identity it received before
                       arming, resolved as the end frame resolves it
                       (resolve_vla_hash, no weight paths); `identity` None:
-                      none received, not known;
+                      none received, not known; `not_ready` (why the
+                      identity says ready false - its digest dropped,
+                      sitl/ros2_shield_node.pilot_from_identity): not known,
+                      never "<id>@unresolved" as a value (review of 346713b);
       sim_speedup     `takeoff_sim_speedup`, the autopilot's own answer at
                       take-off (a reading); without one the launch's
                       SIM_SPEEDUP_ENV, declared; else not known;
@@ -1556,6 +1563,10 @@ def arming_manifest_fields(identity: tuple[str, str | None] | None,
     not_known: dict[str, str] = {}
     if identity is None:
         not_known["vla_model_hash"] = NOT_KNOWN_AT_START["vla_model_hash"]
+    elif not_ready is not None:
+        not_known["vla_model_hash"] = (f"the /vla/identity received by arming says the VLA "
+                                       f"is not ready ({not_ready}): no weights digest is "
+                                       f"taken from it")
     else:
         try:
             fields["vla_model_hash"] = resolve_vla_hash(identity[0], None, identity[1])[0]

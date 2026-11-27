@@ -1074,7 +1074,10 @@ STUB_IDENTITY = {"model_id": "guardrail.vla_stub.StubVLA", "kind": "stub", "host
 
 def _arm(node) -> None:
     """What bring_up does once the autopilot accepts the arm, and its thread
-    waited for."""
+    waited for. The launch's fields are computed first, as on a flown
+    episode (git status, from the node's start; the frame waits for it at
+    most MANIFEST_REVISION_WAIT_S, a slow tree's git would outlast it)."""
+    node._manifest_start.join(60)
     node.start_frame_at_arm()
     node._manifest_arm.join(60)
 
@@ -1178,6 +1181,89 @@ def test_the_start_frame_names_what_arming_did_not_know_and_what_was_declared():
     assert start["not_known_yet"] == {}, start
 
 
+def test_the_start_frame_does_not_wait_for_git_past_its_bound():
+    """Review of 346713b: the start frame waited for the code revision's git
+    status with no bound, so on a slow tree it went out after messages of
+    the episode (and episode.bag2/'s trim then left them out). Now it waits
+    at most MANIFEST_REVISION_WAIT_S and goes out with the policy hash and
+    the seed, code_revision named under `not_known_yet`; the end frame
+    carries all six. A git status that failed is named the same way, at
+    once. Fails on 346713b: the frame waited for git, and a failed one
+    published no start frame."""
+    import threading
+    import time as real_time
+    N, node, clk, out = _build(["--seed", "43"])
+    assert 0 < N.MANIFEST_REVISION_WAIT_S <= 5.0, N.MANIFEST_REVISION_WAIT_S
+    node._manifest_start.join(60)
+    node._start_fields = None
+    gate = threading.Event()
+    node._manifest_start = threading.Thread(target=gate.wait, args=(30,), daemon=True)
+    node._manifest_start.start()                  # git status, not answering
+    N.MANIFEST_REVISION_WAIT_S = 0.2
+    t0 = real_time.monotonic()
+    node.start_frame_at_arm()
+    node._manifest_arm.join(10)
+    waited = real_time.monotonic() - t0
+    assert not node._manifest_arm.is_alive() and waited < 5.0, waited
+    assert node._manifest_start.is_alive(), "git answered: the bound was not exercised"
+    frames = _frames(N, node)
+    assert [f["phase"] for f in frames] == ["start"], frames
+    man, nk = frames[0]["manifest"], frames[0]["not_known_yet"]
+    assert "code_revision" not in man and man["policy_hash"] == node.policy.policy_hash \
+        and man["random_seed"] == 43, frames[0]
+    assert "0.2 s after arming" in nk["code_revision"], nk
+    rec = node.manifest_frames["start"]
+    assert rec["published"] is True and "code_revision" in rec["not_known_yet"], rec
+    gate.set()
+    node.start_mission()
+    _fly(N, node, clk, 1)
+    node._finish("time cap")
+    frames = _frames(N, node)
+    assert [f["phase"] for f in frames] == ["start", "end"], frames
+    assert "code_revision" in frames[1]["manifest"], frames[1]
+    # a git status that failed: named at once, not waited for
+    N, node, clk, out = _build([])
+    node._manifest_start.join(60)
+    node._start_fields, node._start_fields_why = None, "CalledProcessError: git died"
+    node.start_frame_at_arm()
+    node._manifest_arm.join(10)
+    start = _frames(N, node)[0]
+    assert "code_revision" not in start["manifest"] and "random_seed" in start["manifest"]
+    assert "could not be computed: CalledProcessError: git died" in \
+        start["not_known_yet"]["code_revision"], start
+
+
+def test_an_identity_not_ready_at_arming_gives_no_vla_model_hash():
+    """Review of 346713b: a /vla/identity saying ready false at arming (the
+    bridge's warm-up refused) loses its digest (pilot_from_identity), and
+    the start frame carried "<id>@unresolved" as the model's hash. It names
+    vla_model_hash under `not_known_yet` instead, with the reason; the same
+    identity ready carries "<id>@sha256:<digest>". Fails on 346713b."""
+    ident = {"model_id": "aerialvla-lora/aero_vla@196f2f32", "kind": "vla",
+             "reported_digest": "ab" * 32, "reported_by": "10.42.0.1:5555"}
+
+    def arm_with(identity):
+        def run():
+            N, node, clk, out = _build([])
+            node._on_identity(N.String(data=json.dumps(identity)))
+            _arm(node)
+            return _frames(N, node)
+        return _with_env(run, VLAGUARD_TOPOLOGY="hil")
+
+    start = arm_with({**ident, "ready": False, "not_ready_because": "warm-up refused: slow"})
+    assert len(start) == 1, start
+    man, nk = start[0]["manifest"], start[0]["not_known_yet"]
+    assert "vla_model_hash" not in man, man
+    assert not any("unresolved" in str(v) for v in man.values()), man
+    assert "not ready" in nk["vla_model_hash"] and "warm-up refused: slow" in \
+        nk["vla_model_hash"], nk
+    assert list(nk) == ["vla_model_hash", "sim_speedup"], nk
+    start = arm_with({**ident, "ready": True})[0]
+    assert start["manifest"]["vla_model_hash"] == \
+        "aerialvla-lora/aero_vla@196f2f32@sha256:" + "ab" * 32, start
+    assert "vla_model_hash" not in start["not_known_yet"], start
+
+
 def test_an_episode_that_never_armed_publishes_no_start_frame():
     """The start frame is the episode's start, the arm: an episode the node
     ended without arming publishes the end frame alone and says why."""
@@ -1247,6 +1333,7 @@ def test_a_start_frame_still_computing_at_the_end_is_never_published_over_it():
     node._manifest_start = threading.Thread(target=gate.wait, args=(30,), daemon=True)
     node._manifest_start.start()                  # git status, still running
     N.MANIFEST_START_WAIT_S = 0.05
+    N.MANIFEST_REVISION_WAIT_S = 60.0             # the frame still waits at the end
     node.start_frame_at_arm()
     node.start_mission()
     _fly(N, node, clk, 1)

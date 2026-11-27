@@ -76,7 +76,13 @@ def _qos(latched: bool):
 
 # topic -> latched (the publisher offers transient_local)
 TOPICS = {"/mavros/state": True, "/uas1/mavlink_source": False, "/shield/fences": True,
-          "/vla/identity": True, "/vla/action_4d": False, "/guardrail/manifest": True}
+          "/vla/identity": True, "/vla/action_4d": False, "/guardrail/manifest": True,
+          "/shield/setpoint": False}
+# /mavros/state is mavros_msgs/msg/State (the trim reads its `armed`); the
+# test's text is its `mode`, and "armed" in it (not "disarmed") arms it.
+STATE_TYPE = "mavros_msgs/msg/State"
+STATE_MSG = ("std_msgs/Header header\nbool connected\nbool armed\nbool guided\n"
+             "bool manual_input\nstring mode\nuint8 system_status\n")
 START, END = T0 + 400 * MS, T0 + 2000 * MS
 MAN = {"code_revision": "418b1517da9f", "vla_model_hash": "m@src:" + "0" * 64,
        "policy_hash": "sha256:" + "a" * 64, "random_seed": 1001, "sim_speedup": 1.0,
@@ -103,20 +109,37 @@ def _recording() -> list[tuple[str, int, str]]:
     return msgs
 
 
+def _store():
+    from rosbags.typesys import Stores, get_types_from_msg, get_typestore
+    store = get_typestore(Stores.ROS2_JAZZY)
+    store.register(get_types_from_msg(STATE_MSG, STATE_TYPE))
+    return store
+
+
+def _msgtype(topic: str) -> str:
+    return STATE_TYPE if topic == "/mavros/state" else "std_msgs/msg/String"
+
+
 def _write(bag: Path, msgs, *, custom: dict | None = None) -> None:
     from rosbags.rosbag2 import StoragePlugin, Writer
-    from rosbags.typesys import Stores, get_typestore
-    from rosbags.typesys.stores.ros2_jazzy import std_msgs__msg__String as String
-    store = get_typestore(Stores.ROS2_JAZZY)
+    store = _store()
+    String, State = store.types["std_msgs/msg/String"], store.types[STATE_TYPE]
+    Header, Time = store.types["std_msgs/msg/Header"], store.types["builtin_interfaces/msg/Time"]
     with Writer(bag, version=9, storage_plugin=StoragePlugin.MCAP) as w:
-        conns = {t: w.add_connection(t, "std_msgs/msg/String", typestore=store,
+        conns = {t: w.add_connection(t, _msgtype(t), typestore=store,
                                      offered_qos_profiles=_qos(latched))
                  for t, latched in TOPICS.items()}
         for k, v in (custom or {}).items():
             w.set_custom_data(k, v)
         for topic, ts, text in msgs:
-            w.write(conns[topic], ts, store.serialize_cdr(String(data=text),
-                                                         "std_msgs/msg/String"))
+            if topic == "/mavros/state":
+                msg = State(header=Header(stamp=Time(sec=ts // 10**9, nanosec=ts % 10**9),
+                                          frame_id=""),
+                            connected=True, armed="armed" in text.replace("disarmed", ""),
+                            guided=True, manual_input=False, mode=text, system_status=3)
+            else:
+                msg = String(data=text)
+            w.write(conns[topic], ts, store.serialize_cdr(msg, _msgtype(topic)))
 
 
 def _read(bag: Path) -> list[tuple[str, int, bytes]]:
@@ -126,10 +149,12 @@ def _read(bag: Path) -> list[tuple[str, int, bytes]]:
 
 
 def _texts(bag: Path) -> list[tuple[str, int, str]]:
-    from rosbags.typesys import Stores, get_typestore
-    store = get_typestore(Stores.ROS2_JAZZY)
-    return [(t, ts, str(store.deserialize_cdr(raw, "std_msgs/msg/String").data))
-            for t, ts, raw in _read(bag)]
+    store = _store()
+    out = []
+    for t, ts, raw in _read(bag):
+        m = store.deserialize_cdr(raw, _msgtype(t))
+        out.append((t, ts, str(m.mode if t == "/mavros/state" else m.data)))
+    return out
 
 
 def _digest(d: Path) -> dict:
@@ -263,6 +288,70 @@ def test_the_rail_bundle_writes_the_trimmed_bag_or_the_alias_and_says_which():
     assert info["how"] in ("hard links", "copies", "hard links and copies"), info
     assert info["trim"]["trimmed"] is False
     assert _digest(ep2 / "episode.bag2") == _digest(run2 / "bag")
+
+
+def test_a_start_frame_after_messages_of_the_episode_is_not_trimmed_over_them():
+    """Review of 346713b: a start frame published late (its thread waited
+    for git) lies after messages of the episode, and the trim dropped them.
+    Not trimmed then, nothing left behind, and the bundle aliases bag/ and
+    says why: a Shield output before it (published only within the
+    episode); a pilot action at or after the arm /mavros/state shows (the
+    actions before the arm are the VLA node's bring-up, and are trimmed as
+    in the main test); any action before it where the recording shows no
+    arm. Fails on 346713b: each was trimmed, the messages left out."""
+    if not _have_rosbags():
+        print("      SKIP: rosbags is not installed")
+        return SKIP
+    from guardrail.episode_bag import trim_episode_bag
+    from guardrail.harness_service import EPISODE_BAG_DIR, rail_bag_and_audit
+    root = _tmp("epbag_late_")
+    armed = ("/mavros/state", T0 + 250 * MS, "state armed")
+    cases = {
+        # the arm at +250 ms, the start frame at +400 ms: action 0 (+300 ms)
+        # is the episode's
+        "action_after_arm": (sorted(_recording() + [armed], key=lambda m: m[1]),
+                             "1 on /vla/action_4d"),
+        # a Shield output before the start frame, whenever the arm
+        "shield_output": (sorted(_recording() + [("/shield/setpoint", T0 + 10 * MS, "[0, 0]")],
+                                 key=lambda m: m[1]), "1 on /shield/setpoint"),
+        # no /mavros/state: the arm cannot be read, so action 0 counts
+        "no_arm": ([m for m in _recording() if m[0] != "/mavros/state"],
+                   "no arm on /mavros/state could be read"),
+    }
+    for name, (msgs, said) in cases.items():
+        src = root / name / "bag"
+        src.parent.mkdir()
+        _write(src, msgs)
+        before = _digest(src)
+        (root / name / "ep").mkdir()
+        res = trim_episode_bag(src, root / name / "ep" / "episode.bag2")
+        assert res["trimmed"] is False and set(res) == {"trimmed", "why"}, (name, res)
+        assert "the start frame lies after 1 message(s) of the episode" in res["why"] \
+            and said in res["why"], (name, res)
+        assert list((root / name / "ep").iterdir()) == [], name
+        assert _digest(src) == before, name
+    # the arm read before the start frame, every action before it before the
+    # arm: trimmed (the main test's arm lies after the start frame, as
+    # MAVROS's armed state comes with the next heartbeat)
+    ok = root / "ok" / "bag"
+    ok.parent.mkdir()
+    _write(ok, sorted(_recording() + [("/mavros/state", T0 + 350 * MS, "state armed")],
+                      key=lambda m: m[1]))
+    res = trim_episode_bag(ok, root / "ok" / "x")
+    assert res["trimmed"] is True and res["dropped_before_start"] == 5, res
+    # the bundle: bag/ aliased, and why
+    run = root / "store" / "smX_002"
+    run.mkdir(parents=True)
+    _write(run / "bag", cases["action_after_arm"][0])
+    (run / "shield_audit.jsonl").write_text("{}\n", encoding="utf-8")
+    ep = root / "bundle"
+    ep.mkdir()
+    files, info = rail_bag_and_audit(run, ep)
+    text = files[EPISODE_BAG_DIR + "/"]
+    assert "not trimmed to its manifest start frame: the start frame lies after 1 " \
+        "message(s) of the episode (1 on /vla/action_4d)" in text, text
+    assert info["trim"]["trimmed"] is False and "/vla/action_4d" in info["trim"]["why"]
+    assert _digest(ep / "episode.bag2") == _digest(run / "bag")
 
 
 def test_a_flown_recording_is_trimmed_to_its_start_frame():

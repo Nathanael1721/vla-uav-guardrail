@@ -2831,6 +2831,14 @@ SIM_SPEEDUP_GRACE_S = 5.0
 # the node's start, and on any flown episode it finished long before.
 MANIFEST_START_WAIT_S = 30.0
 
+# How long the start frame, published at arming, waits for that git status
+# (review of 346713b, 2026-11-28). Past it the frame goes out with the
+# policy hash and the seed, code_revision named under `not_known_yet` (the
+# end frame carries it): a frame held back would lie after the episode's
+# own messages, and the bundle's episode.bag2/ begins at it
+# (guardrail/episode_bag.py, which then does not trim).
+MANIFEST_REVISION_WAIT_S = 5.0
+
 
 def fence_read_done(vals: dict, fence_complete_for_s: float,
                     grace_s: float = SIM_SPEEDUP_GRACE_S,
@@ -3427,12 +3435,15 @@ if HAVE_ROS:
             # over it.
             self._manifest_lock = threading.Lock()
             self._manifest_closed = False
-            # The launch's fields (START_FIELDS), or why they failed.
+            # The launch's fields (START_FIELDS), or why they failed; the
+            # policy hash and seed they are computed from, for a start frame
+            # that does not wait for git past MANIFEST_REVISION_WAIT_S.
             self._start_fields: dict | None = None
             self._start_fields_why: str | None = None
+            self._start_launch = (self.policy.policy_hash, self.args.seed)
             self._manifest_start = threading.Thread(
                 target=self._compute_start_fields, name="manifest-start-fields",
-                args=(self.policy.policy_hash, self.args.seed), daemon=True)
+                args=self._start_launch, daemon=True)
             self._manifest_start.start()
             # The thread that publishes the start frame, from arming on.
             self._manifest_arm: threading.Thread | None = None
@@ -3556,47 +3567,68 @@ if HAVE_ROS:
             the episode's start. What arming knows is taken here - the
             /vla/identity received so far, THE TAKE-OFF WAIT's SIM_SPEEDUP -
             and the frame is computed and published on its own thread, which
-            waits for the launch's fields (_compute_start_fields). Once per
-            episode. Never raises and never waits: a failure is recorded
-            under metrics.json `manifest_frames`, not flown on."""
+            waits for the launch's fields (_compute_start_fields) at most
+            MANIFEST_REVISION_WAIT_S. An identity that says the VLA is not
+            ready (pilot_from_identity drops its digest) gives no
+            vla_model_hash: named under `not_known_yet`. Once per episode.
+            Never raises and never waits: a failure is recorded under
+            metrics.json `manifest_frames`, not flown on."""
             try:
                 if self._manifest_arm is not None:
                     return
-                identity = None
+                identity = not_ready = None
                 if isinstance(self.vla_identity, dict):
-                    model_id, _pilot, digest = pilot_from_identity(self.vla_identity)
+                    model_id, pilot, digest = pilot_from_identity(self.vla_identity)
                     identity = (model_id, digest)
+                    not_ready = (pilot or {}).get("not_ready_because")
                 speedup = (self.takeoff_speedup or {}).get("sim_speedup")
                 self._manifest_arm = threading.Thread(
                     target=self._publish_start_frame, name="manifest-start-frame",
-                    args=(identity, speedup, round(time.time(), 3)), daemon=True)
+                    args=(identity, speedup, round(time.time(), 3), not_ready), daemon=True)
                 self._manifest_arm.start()
             except Exception as e:                               # noqa: BLE001
                 self.manifest_frames[FRAME_START] = {
                     "published": False, "at": "arming", "why": f"{type(e).__name__}: {e}"}
 
         def _publish_start_frame(self, identity, takeoff_speedup,
-                                 armed_wall_time: float) -> None:
+                                 armed_wall_time: float, not_ready=None) -> None:
             """The start frame, on the thread start_frame_at_arm starts: the
-            launch's fields once computed, and vla_model_hash, sim_speedup and
-            topology as arming knew them (guardrail.manifest.
-            arming_manifest_fields: the launch's VLAGUARD_TOPOLOGY, and its
-            VLAGUARD_SIM_SPEEDUP where the autopilot gave no SIM_SPEEDUP,
-            named under the frame's `declared`)."""
-            self._manifest_start.join()
-            if self._start_fields is None:
-                with self._manifest_lock:
-                    self.manifest_frames[FRAME_START] = {
-                        "published": False, "at": "arming",
-                        "why": str(self._start_fields_why or "no launch fields")}
-                return
+            launch's fields, and vla_model_hash, sim_speedup and topology as
+            arming knew them (guardrail.manifest.arming_manifest_fields: the
+            launch's VLAGUARD_TOPOLOGY, and its VLAGUARD_SIM_SPEEDUP where the
+            autopilot gave no SIM_SPEEDUP, named under the frame's
+            `declared`; nothing from an identity not ready). The launch's
+            fields are waited for at most MANIFEST_REVISION_WAIT_S (review of
+            346713b): a code revision git has not reported by then, or that
+            failed, is named under `not_known_yet`, beside the policy hash
+            and the seed, so the frame never lies after the episode's own
+            messages."""
+            self._manifest_start.join(timeout=MANIFEST_REVISION_WAIT_S)
+            launch, why = self._start_fields, self._start_fields_why
+            launch_not_known: dict = {}
+            if launch is None:
+                try:
+                    policy_hash, seed = self._start_launch
+                    launch = {"policy_hash": policy_hash or UNRESOLVED, "random_seed": int(seed)}
+                except Exception as e:                           # noqa: BLE001
+                    with self._manifest_lock:
+                        self.manifest_frames[FRAME_START] = {
+                            "published": False, "at": "arming",
+                            "why": f"{why or 'no launch fields'}; {type(e).__name__}: {e}"}
+                    return
+                launch_not_known["code_revision"] = (
+                    f"the code revision could not be computed: {why}" if why else
+                    f"git had not reported the code revision {MANIFEST_REVISION_WAIT_S:g} s "
+                    f"after arming; the end frame carries it")
             try:
-                late, declared, not_known = arming_manifest_fields(identity, takeoff_speedup)
+                late, declared, not_known = arming_manifest_fields(identity, takeoff_speedup,
+                                                                   not_ready=not_ready)
             except Exception as e:                               # noqa: BLE001
                 late, declared = {}, {}
                 not_known = {k: f"{type(e).__name__}: {e}" for k in ARMING_FIELDS}
-            self._publish_manifest_frame(FRAME_START, {**self._start_fields, **late},
-                                         declared=declared, not_known=not_known,
+            self._publish_manifest_frame(FRAME_START, {**launch, **late},
+                                         declared=declared,
+                                         not_known={**not_known, **launch_not_known},
                                          armed_wall_time=armed_wall_time)
 
         def _publish_manifest_frame(self, phase: str, fields: dict, *,

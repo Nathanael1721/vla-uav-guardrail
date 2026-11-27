@@ -28,6 +28,30 @@ recording's, in the same storage (mcap or sqlite3); the recording's own
 custom_data is kept beside this module's keys. The result is read back, and
 it is used only when its first message is the start frame.
 
+NO MESSAGE OF THE EPISODE IS LEFT OUT (review of 346713b, 2026-11-28).
+What is left out must be the recording's from before the episode: MAVROS's
+telemetry, the raw link, the nodes' bring-up. A start frame published late
+(its thread waited for git) would lie after messages of the episode itself,
+and the trim would drop them; then nothing is trimmed (the caller aliases
+bag/ and records why). The episode's messages, from the recorders' topic
+list (sitl/run_ros2_demo.sh, deploy/docker/entrypoint.sh):
+
+  * EPISODE_TOPICS, published only within the episode - the Shield's
+    outputs and the setpoints sent on to the autopilot, from the mission on
+    (smREL072_001/027/047, wgs01_001, x11r1125_001: none before the arm,
+    the first 12 s or more after it): any one before the start frame;
+  * FROM_NODE_START_TOPICS, published from their node's own start, before
+    the arm as well - the pilot's actions, the adapter's record of what it
+    sent, the raw MAVLink sent to the autopilot (the same five recordings:
+    27 to 58 actions and 4 to 8 adapter records before the arm): one that
+    lies at or after the arm the recording shows, the first /mavros/state
+    saying armed; where the recording shows no arm it can read, any one
+    before the start frame.
+
+MAVROS's armed state comes with the autopilot's next heartbeat (1 Hz), up
+to a second after the arm itself; a message of the second group in that
+second before a late start frame is not seen by this rule.
+
 WHAT DIFFERS FROM bag/. A message's count in episode.bag2/ is not its count
 in the recording, by the messages left out (the node's `action_seq` counts
 the actions from its own start, as bag/ does; tools/replay_from_bag.py reads
@@ -38,7 +62,8 @@ start frame; its receive time is in custom_data, not its timestamp.
 Nothing is trimmed - the caller aliases bag/ as before and says why, from
 the returned record - without `rosbags` (pure Python, optional), with a
 recording it cannot read, with no start frame on /guardrail/manifest (every
-bag before 2026-11-21), or when the destination already exists.
+bag before 2026-11-21), with a message of the episode before the start
+frame (above), or when the destination already exists.
 """
 from __future__ import annotations
 
@@ -58,6 +83,15 @@ START_NS_KEY = "episode_bag.start_frame_ns"
 DROPPED_KEY = "episode_bag.dropped_before_start"
 CARRIED_KEY = "episode_bag.latched_carried"          # "topic@receive_ns,..."
 HOW = "trimmed to begin at the manifest start frame (guardrail/episode_bag.py)"
+
+# The episode's messages (module docstring, NO MESSAGE OF THE EPISODE IS
+# LEFT OUT), non-latched topics of the recorders' list. /shield/mission is
+# latched (carried); MAVROS's telemetry and the raw link from the autopilot
+# are not the episode's.
+EPISODE_TOPICS = ("/shield/setpoint", "/shield/intercept", "/shield/mode_request",
+                  "/mavros/setpoint_raw/local", "/shield/mission_update")
+FROM_NODE_START_TOPICS = ("/vla/action_4d", "/mavlink_adapter/sent", "/uas1/mavlink_sink")
+STATE_TOPIC = "/mavros/state"
 
 
 def _latched(conn) -> bool:
@@ -80,6 +114,45 @@ def _frame_phase(store, raw: bytes, msgtype: str) -> str | None:
         return None
 
 
+def _armed_at(reader, store) -> int | None:
+    """The receive time of the first STATE_TOPIC message saying armed (the
+    arm as the recording shows it), or None where it shows none it can read.
+    The message type is read from the recording's own definition."""
+    conns = [c for c in reader.connections if c.topic == STATE_TOPIC]
+    if not conns:
+        return None
+    try:
+        from rosbags.typesys import get_types_from_msg
+        for c in conns:
+            if c.msgtype not in store.fielddefs:
+                typs = get_types_from_msg(c.msgdef.data, c.msgtype)
+                store.register({k: v for k, v in typs.items() if k not in store.fielddefs})
+        for c, ts, raw in reader.messages(connections=conns):
+            if getattr(store.deserialize_cdr(raw, c.msgtype), "armed", False) is True:
+                return int(ts)
+    except Exception:                                            # noqa: BLE001
+        return None
+    return None
+
+
+def _episode_before(reader, store, t_start: int) -> tuple[dict[str, int], int | None]:
+    """({topic: count} of the episode's messages before the start frame,
+    the arm the recording shows or None) - module docstring, NO MESSAGE OF
+    THE EPISODE IS LEFT OUT."""
+    armed = _armed_at(reader, store)
+    conns = [c for c in reader.connections if not _latched(c)
+             and c.topic in EPISODE_TOPICS + FROM_NODE_START_TOPICS]
+    before: dict[str, int] = {}
+    if conns:
+        for c, ts, _raw in reader.messages(connections=conns, stop=t_start):
+            ts = int(ts)
+            if ts >= t_start or (c.topic in FROM_NODE_START_TOPICS
+                                 and armed is not None and ts < armed):
+                continue                       # a node's bring-up, before the arm
+            before[c.topic] = before.get(c.topic, 0) + 1
+    return before, armed
+
+
 def _digests(root: Path) -> list[dict]:
     files = []
     for f in sorted(p for p in root.rglob("*") if p.is_file()):
@@ -98,8 +171,9 @@ def trim_episode_bag(src: str | Path, dst: str | Path) -> dict[str, Any]:
     `src` is only read. Returns {"trimmed": True, "start_frame_ns",
     "episode_id", "dropped_before_start", "carried" [{"topic",
     "receive_ns"}], "messages", "how", "files" [{"path", "bytes",
-    "sha256"}]} or {"trimmed": False, "why"} with nothing left at `dst`.
-    Never raises."""
+    "sha256"}]} or {"trimmed": False, "why"} with nothing left at `dst`,
+    among them a recording where a message of the episode lies before the
+    start frame. Never raises."""
     src, dst = Path(src), Path(dst)
     try:
         from rosbags.rosbag2 import Reader, StoragePlugin, Writer
@@ -128,6 +202,14 @@ def trim_episode_bag(src: str | Path, dst: str | Path) -> dict[str, Any]:
             episode_id = json.loads(str(store.deserialize_cdr(
                 start_raw, next(c for c in frames if c.id == start_id).msgtype).data)
             ).get("episode_id")
+            before, armed = _episode_before(reader, store, t_start)
+            if before:
+                return {"trimmed": False, "why": (
+                    f"the start frame lies after {sum(before.values())} message(s) of the "
+                    f"episode (" + ", ".join(f"{n} on {t}" for t, n in before.items())
+                    + ("" if armed is not None else
+                       f"; no arm on {STATE_TOPIC} could be read, so every one before "
+                       f"the start frame counts") + "), which trimming would leave out")}
             latched = {c.id for c in reader.connections
                        if c.topic != MANIFEST_TOPIC and _latched(c)}
             version = 9 if int(meta.get("version") or 9) >= 9 else 8
