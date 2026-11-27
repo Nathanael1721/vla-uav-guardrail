@@ -366,8 +366,9 @@ def test_the_replay_bundle_carries_the_record_and_a_rerun_moves_it_aside():
 
 
 def test_the_grade_does_not_read_the_record():
-    """Evidence, not a gate: is_kpi_grade takes the manifest and metrics it
-    always took, so no stored run's grade moves."""
+    """is_kpi_grade takes the manifest and metrics it always took (55 call
+    sites, none holding a run folder): the record is gated beside it, by the
+    KPI readers (stack_grade_reasons, 2026-11-27), never inside it."""
     import inspect
     assert "STACK_FILE" not in inspect.getsource(M.is_kpi_grade)
     assert "stack" not in inspect.signature(M.is_kpi_grade).parameters
@@ -613,6 +614,108 @@ def test_the_pas_rail_records_project_airsim_beside_its_manifest():
             == "ArduPilot SITL"
     finally:
         shutil.rmtree(out, ignore_errors=True)
+
+
+# ------------------------------------------------- the gate (2026-11-27)
+
+def _summary(state, **kw):
+    return {"state": state, "single_sha": {"true": True, "false": False}.get(state),
+            "problems": [], **kw}
+
+
+def test_single_sha_false_is_refused_on_every_topology():
+    """ARCH-31: the grant's "single git SHA across the entire stack". A
+    record that says false refuses the run whatever its topology, and names
+    the record's problems. Against 78b50fd this fails: guardrail.manifest
+    had no stack_grade_reasons and nothing refused the run."""
+    for topo in ("hil", "dev", "canonical-hil", "projectairsim", "sitl", None):
+        man = dict(_manifest(), topology=topo)
+        why = M.stack_grade_reasons(
+            _summary("false", problems=["desktop runs 0123456789ab"]), man, {})
+        assert len(why) == 1 and "single_sha false" in why[0], (topo, why)
+        assert "desktop runs 0123456789ab" in why[0], why
+    assert M.stack_grade_reasons(_summary("true"), _manifest(), {}) == []
+
+
+def test_on_hil_pending_and_unreadable_are_refused_elsewhere_they_are_not():
+    """On hil a record that carries no verdict one can quote (pending: a
+    host the topology needs never reported; unreadable) refuses the run. On
+    a single-host rail the same states do not: the grant's KPI rail is hil,
+    and no other rail's verdict moves because of the record beyond false."""
+    hil = _manifest()
+    for state in ("pending", "unreadable"):
+        why = M.stack_grade_reasons(_summary(state, why="schema 'x'"), hil, {})
+        assert len(why) == 1 and M.STACK_FILE in why[0], (state, why)
+        for topo in ("dev", "projectairsim", "sitl"):
+            assert M.stack_grade_reasons(_summary(state), dict(hil, topology=topo),
+                                         {}) == [], (state, topo)
+    assert "single_sha pending" in M.stack_grade_reasons(_summary("pending"), hil, {})[0]
+    assert "schema 'x'" in M.stack_grade_reasons(
+        _summary("unreadable", why="schema 'x'"), hil, {})[0]
+    assert set(M.STACK_REFUSED_ON_HIL) | {"false", "true"} == set(M.STACK_STATES)
+
+
+def test_a_missing_record_refuses_only_a_hil_run_whose_writer_writes_one():
+    """No stack_revisions.json: a hil run flown before the record (no
+    setpoint_delivery in its metrics.json, as every run before 2026-11-17)
+    keeps its grade; one whose metrics.json carries setpoint_delivery (the
+    ROS 2 Shield node writes it since 7adcbaa, after the record's writer
+    d9413cc) is refused. A summary of None reads as missing."""
+    hil = _manifest()
+    marked = {"setpoint_delivery": {"published": 10, "sent": 10}}
+    assert M.stack_grade_reasons(_summary("missing"), hil, {}) == []
+    assert M.stack_grade_reasons(None, hil, None) == []
+    why = M.stack_grade_reasons(_summary("missing"), hil, marked)
+    assert len(why) == 1 and f"no {M.STACK_FILE}" in why[0], why
+    assert M.stack_grade_reasons(None, hil, marked) == why
+    # Not hil: nothing asked of a missing record.
+    assert M.stack_grade_reasons(_summary("missing"), dict(hil, topology="dev"),
+                                 marked) == []
+
+
+def test_the_gate_reads_the_record_a_run_wrote():
+    """End to end on a run folder: the Orin's write alone is pending and
+    refused on hil; the desktop joining on the same clean commit reads true
+    and passes; on another commit false and refused."""
+    man = _manifest()
+    for desk_rev, refused in ((None, True), (REV, False), ("0123456789ab", True)):
+        d = _run(man)
+        try:
+            M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+            if desk_rev is not None:
+                M.add_host_revision(d, M.ROLE_DESKTOP, M.host_revision(
+                    host=DESKTOP, revision=desk_rev, describe=_no_describe))
+            why = M.stack_grade_reasons(M.stack_summary(d), man, {})
+            assert bool(why) is refused, (desk_rev, why)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_midterm_grade_column_refuses_a_false_record():
+    """tools/build_report_results.py's "KPI-grade today" column (2026-11-27):
+    is_kpi_grade and the stack record. A dev run that a recorded waiver would
+    let through is "no" when its record says false, "yes" when true."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import build_report_results as BRR
+    man = dict(_manifest(), topology="dev")
+    saved = M.DEV_KPI_WAIVER
+    M.DEV_KPI_WAIVER = "test waiver"
+    try:
+        for desk_rev, want in ((REV, True), ("0123456789ab", False)):
+            d = _run(man)
+            try:
+                M.write_stack_revisions(d, man, {**DESKTOP}, describe=_no_describe)
+                if desk_rev != REV:
+                    M.add_host_revision(d, M.ROLE_DESKTOP, M.host_revision(
+                        host={**DESKTOP, "hostname": "desktop-2"}, revision=desk_rev,
+                        describe=_no_describe))
+                assert M.is_kpi_grade(man, {})[0] is True
+                assert BRR.kpi_grade_today(man, {}, d) is want, (desk_rev,
+                                                                 M.stack_summary(d))
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+    finally:
+        M.DEV_KPI_WAIVER = saved
 
 
 if __name__ == "__main__":

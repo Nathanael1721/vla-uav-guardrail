@@ -214,9 +214,24 @@ record: flown before 2026-11-17) / unreadable, with the distinct companion,
 desktop, component and autopilot revisions their records name. JSON:
 `stack_revisions`, and `single_sha` on every `kpi_grade_episodes` entry;
 Markdown: "Stack revisions by campaign" under Campaign and a line under the
-KPI-grade table. REPORT ONLY: is_kpi_grade does not read the record, so no
-run's grade moves - a gate keyed on the field would regrade every run flown
-since 2026-11-17, whose records already carry it.
+KPI-grade table.
+
+SINCE 2026-11-27: ONE SHA ACROSS THE STACK, GATED (ARCH-31)
+
+The grant asks for "a single git SHA across the entire stack"
+(03-simulation/layer-requirements.md) and rejects from the KPI report a run
+that cannot produce one (data-flow.md). Every loader (load_run,
+load_bundle_log, load_stored) now judges the run's record after
+is_kpi_grade and the evidence check (stack_grade, guardrail.manifest
+.stack_grade_reasons): single_sha false refuses a run on any topology; on
+hil, a record that is pending or unreadable refuses it, and so does no
+record beside a flight whose writer writes one (its metrics.json carries
+`setpoint_delivery`, written by the ROS 2 Shield node since 2026-11-17,
+after the record's writer). A hil run flown before the record keeps its
+grade, and a harness bundle (where no rail writes the record) is judged
+only on a record that is beside it. The refusal is in
+`kpi_grade_reasons`; is_kpi_grade itself is unchanged. The stack section's
+tallies are the same, and its `gate` says the record is now a gate.
 """
 from __future__ import annotations
 
@@ -241,7 +256,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 from guardrail import kpi as K                                     # noqa: E402
 from guardrail.delivery import with_stored_delivery                # noqa: E402
 from guardrail.manifest import (STACK_FILE, STACK_STATES,           # noqa: E402
-                                code_revision, is_kpi_grade, stack_summary)
+                                code_revision, is_kpi_grade, stack_grade_reasons,
+                                stack_summary)
 import rescore_kpis as R                                           # noqa: E402
 
 DEFAULT_RUNS = ["demo/out/*", "sitl/out/*", "demo/out/stress_*/episode-*"]
@@ -684,6 +700,18 @@ def scenario_family(scenario: dict, arm: str) -> str:
             + (f"/flown-longer-{add:g}s" if add else ""))
 
 
+def stack_grade(graded: bool, reasons: list[str], stack: dict, manifest: dict,
+                metrics: dict | None) -> tuple[bool, list[str]]:
+    """The KPI grade once the run's stack record has been judged (ARCH-31,
+    since 2026-11-27; guardrail.manifest.stack_grade_reasons): single_sha
+    false refuses a run on any topology; on hil a record that is pending or
+    unreadable, or none beside a run whose writer writes one, refuses it
+    too. The reasons are added whatever the grade was, so a run refused for
+    two causes names both."""
+    why = stack_grade_reasons(stack, manifest, metrics)
+    return (graded and not why), list(reasons) + why
+
+
 def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     """Score one run folder. Returns an episode dict, or {"skipped": reason}.
 
@@ -819,6 +847,12 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
                        else (False, ["no manifest.json"]))
     manifest_grade = graded
     graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
+    # One SHA across the stack (ARCH-31, gated since 2026-11-27): the run's
+    # stack record, judged against the metrics.json the run wrote (never the
+    # delivery-filled copy above, which would read every older run as one
+    # whose writer writes the record).
+    stack = stack_summary(run)
+    graded, reasons = stack_grade(graded, reasons, stack, manifest, metrics)
     goal = k["mission_goal_status"]
     mission = ("waypoint" if goal != "undeclared" else
                "follow" if metrics.get("frac_within_30m") is not None else "other")
@@ -886,8 +920,9 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
         "code_revision": manifest.get("code_revision"),
         # The run's stack record (stack_revisions.json, ARCH-31), as written:
         # single_sha and the revisions it names (2026-11-21; reported per
-        # campaign and over the KPI-grade runs by stack_section, never a gate).
-        "stack_revisions": stack_summary(run),
+        # campaign and over the KPI-grade runs by stack_section; a gate since
+        # 2026-11-27, stack_grade above).
+        "stack_revisions": stack,
         "policy_resolved_by": how, "policy_note": note, "policy_id": pid,
         "reconstruction": recon,
         "params": {"policy_id": pid, "seed": manifest.get("random_seed"),
@@ -1202,6 +1237,10 @@ def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict,
                        else (False, ["no manifest.json"]))
     manifest_grade = graded
     graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
+    # A harness bundle is not where a rail writes its stack record (the rail
+    # run is), so a missing one says nothing here; a record that IS beside
+    # it is judged as a flight's (stack_grade, no metrics).
+    graded, reasons = stack_grade(graded, reasons, stack_summary(run), manifest, None)
     diffs = {f: {"stored": k_stored[f], "recomputed": k.get(f)} for f in _COMPARE
              if f in k_stored and k_stored[f] != k.get(f)}
     arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
@@ -1270,6 +1309,10 @@ def load_stored(run: Path, trust_store=None) -> dict:
                        else (False, ["no manifest.json"]))
     manifest_grade = graded
     graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
+    # A harness bundle is not where a rail writes its stack record (the rail
+    # run is), so a missing one says nothing here; a record that IS beside
+    # it is judged as a flight's (stack_grade, no metrics).
+    graded, reasons = stack_grade(graded, reasons, stack_summary(run), manifest, None)
     goal = k.get("reached_goal")
     arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
     k.update({
@@ -2066,6 +2109,11 @@ def revisions_on_head(revs: set[str]) -> dict[str, bool | None]:
 
 # Since when a run writes its stack record (guardrail.manifest STACK_FILE).
 STACK_SINCE = "2026-11-17"
+# What the stack section says of the gate (stack_grade, 2026-11-27).
+STACK_GATE = ("a gate since 2026-11-27 (guardrail.manifest.stack_grade_reasons, "
+              "applied beside is_kpi_grade): single_sha false is not KPI-grade on "
+              "any topology; on hil neither is a record that is pending or "
+              "unreadable, nor a missing one beside a run whose writer writes it")
 NO_CAMPAIGN = "(no --campaign)"
 
 
@@ -2112,9 +2160,11 @@ def stack_section(episodes: list[dict], camp: dict | None) -> dict | None:
     episodes (ARCH-31, 2026-11-21): stack_tally over the flown episodes of
     each campaign (stack_campaign_of), over the KPI-grade ones (today's
     grade, the campaign's acceptance and the evidence check included) and
-    over every flight read. REPORT ONLY: is_kpi_grade does not read the
-    record, so no grade here moves because of it. None when no flight was
-    read (a report of stress bundles or sweep JSON alone)."""
+    over every flight read. A GATE since 2026-11-27 (stack_grade): the
+    KPI-grade tally counts runs that passed it, so its false, pending and
+    unreadable are 0 on hil, and its missing are runs flown before the
+    record. None when no flight was read (a report of stress bundles or
+    sweep JSON alone)."""
     flights = [e for e in episodes if e.get("kind") == "flight"]
     if not flights:
         return None
@@ -2122,8 +2172,7 @@ def stack_section(episodes: list[dict], camp: dict | None) -> dict | None:
     for e in flights:
         by.setdefault(stack_campaign_of(e, camp), []).append(e)
     return {"record": STACK_FILE, "written_since": STACK_SINCE,
-            "gate": "report only: guardrail.manifest.is_kpi_grade does not read "
-                    "the record, so no run's grade moves because of it",
+            "gate": STACK_GATE,
             "by_campaign": {name: stack_tally(eps) for name, eps in sorted(by.items())},
             "kpi_grade": stack_tally([e for e in flights if e.get("kpi_grade")]),
             "all_flights": stack_tally(flights)}
@@ -5157,7 +5206,7 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                                for e in graded + at_flight],
         "revisions_on_head": revs,
         # single_sha per campaign and over the KPI-grade runs (ARCH-31,
-        # 2026-11-21): reported, never a gate (stack_section).
+        # 2026-11-21; a gate since 2026-11-27, stack_grade).
         "stack_revisions": stack_section(episodes, camp),
         "families": {"kpi_grade": fams(graded), "kpi_grade_at_flight_only": fams(at_flight),
                      "other": fams(other)},
@@ -5304,7 +5353,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(ch['superseded'])} superseded")
     st = (rep.get("stack_revisions") or {}).get("kpi_grade")
     if st and st["runs"]:
-        print(f"single_sha over the KPI-grade flights (report only): true {st['true']}, "
+        print(f"single_sha over the KPI-grade flights (gated): true {st['true']}, "
               f"false {st['false']}, pending {st['pending']}, missing {st['missing']}"
               + (f", unreadable {st['unreadable']}" if st["unreadable"] else ""))
     s = rep.get("kpi_summary") or {}

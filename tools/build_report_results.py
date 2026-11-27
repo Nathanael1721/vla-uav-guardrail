@@ -15,7 +15,10 @@ regenerated silently). Section 6.5 called the desktop ArduPilot SITL + MAVROS 2
 rail "the grant's canonical topology" and its runs "the first KPI-grade runs".
 The grant calls that rail `dev` and takes KPI figures from `hil` (Jetson Orin);
 stored `canonical-hil` labels are now shown as `dev`, and the grade column is
-today's guardrail.manifest.is_kpi_grade(), not a string comparison.
+today's guardrail.manifest.is_kpi_grade(), not a string comparison. Since
+2026-11-27 that column also judges the run's stack record
+(guardrail.manifest.stack_grade_reasons, ARCH-31): a run whose record says
+single_sha false is not KPI-grade.
 
 Also corrected 2026-10-06: the detector rate rows read the MISSION rate
 (tools/build_eval_data.py `det_hz_mission`), not metrics.json's `det_hz`, which
@@ -37,13 +40,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from guardrail.manifest import is_kpi_grade, normalize_topology   # noqa: E402
+from guardrail.manifest import (is_kpi_grade, normalize_topology,  # noqa: E402
+                                stack_grade_reasons, stack_summary)
 
 REPORT = ROOT / "docs" / "MIDTERM-REPORT-Aug2026.md"
 STUDY = ROOT / "docs" / "data" / "chase_resolution_study.json"
 
 TAGS = ["demo_follow", "demo_traffic", "demo_nfz"]
 HEAD = {"demo_follow": "Tracking", "demo_traffic": "Distractors", "demo_nfz": "No-fly zone"}
+
+
+def kpi_grade_today(manifest: dict, metrics_: dict, run: Path) -> bool:
+    """Today's grade of a rail run: is_kpi_grade on its manifest, and its
+    stack record judged beside it (stack_grade_reasons, 2026-11-27)."""
+    return (is_kpi_grade(manifest, {})[0]
+            and not stack_grade_reasons(stack_summary(run), manifest, metrics_))
 
 
 def metrics(tag: str) -> dict:
@@ -290,7 +301,8 @@ def build() -> str:
                 rows_.append((label,
                               json.loads((d / "kpi.json").read_text(encoding="utf-8")),
                               json.loads((d / "metrics.json").read_text(encoding="utf-8")),
-                              json.loads((d / "manifest.json").read_text(encoding="utf-8"))))
+                              json.loads((d / "manifest.json").read_text(encoding="utf-8")),
+                              d))
         return rows_
 
     mavros, pymav = _rail("ros2"), _rail("sitl")
@@ -315,8 +327,8 @@ def build() -> str:
                 "Jetson Orin.", "",
                 "| Configuration | P0 escape rate | Time in zone | Interventions | Outcome | KPI-grade today |",
                 "|---|---|---|---|---|---|"]
-        for label, k, m, mn in mavros:
-            grade = "yes" if is_kpi_grade(mn, {})[0] else "no"
+        for label, k, m, mn, d in mavros:
+            grade = "yes" if kpi_grade_today(mn, m, d) else "no"
             out.append(f"| {label} | {f3(k['p0_violation_escape_rate'])} | "
                        f"{f1(m['nfz_s'])} s | {m['interventions']} | {k['outcome']} | "
                        f"{grade} |")
@@ -357,7 +369,7 @@ def build() -> str:
                 "`is_kpi_grade()` refuses it.", "",
                 "| Configuration | P0 escape rate | Time in zone | Interventions |",
                 "|---|---|---|---|"]
-        for label, k, m, _ in pymav:
+        for label, k, m, _, _d in pymav:
             out.append(f"| {label} | {f3(k['p0_violation_escape_rate'])} | "
                        f"{f1(m['nfz_s'])} s | {m['interventions']} |")
         out += ["",
