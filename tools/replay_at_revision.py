@@ -207,7 +207,10 @@ SUBJECT_RULES = ("subject_standoff",)
 KNOWN_FORECAST_KEYS = {"mode", "flag", "response", "velocity_source", "velocity_topic",
                        "velocity_max_age_s", "path_repair", "note", "source",
                        "velocity_ticks", "velocity_ticks_seen", "shield_velocity_ticks",
-                       "velocity_nonfinite", "clear_response"}
+                       "velocity_nonfinite", "clear_response",
+                       # The repair selection (--repair-mode, 2026-11-27):
+                       # rebuilt as recorded.
+                       "repair_mode"}
 # Counts in metrics.json shield_forecast of ticks the Shield was GIVEN a
 # measured velocity: any above zero and the pipe was read.
 VELOCITY_USED_KEYS = ("velocity_ticks", "shield_velocity_ticks")
@@ -1474,6 +1477,19 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
         elif pr:
             raise Refused("a Shield configuration this replay does not rebuild (path_repair "
                           "recorded on, and this revision's Shield takes no such argument)")
+    # The repair selection (--repair-mode, the rails record it since
+    # 2026-11-27): as recorded; a run that records none flew "chain", the
+    # Shield's default, so nothing is passed.
+    rm = (fc or {}).get("repair_mode")
+    if rm is not None:
+        if not isinstance(rm, str):
+            raise Refused(f"metrics.json shield_forecast repair_mode {rm!r} is not a mode name")
+        if "repair_mode" in params:
+            kw["repair_mode"] = rm
+        elif rm != "chain":
+            raise Refused(f"a Shield configuration this replay does not rebuild (repair_mode "
+                          f"{rm!r} recorded, and this revision's Shield takes no such "
+                          f"argument)")
     # The clearance horizon's vehicle response (Shield clear_response, the
     # rails record it since 2026-11-19): rebuilt as recorded; a run that
     # records none flew the instant vehicle, which is this revision's default.
@@ -1529,6 +1545,8 @@ def _open_loop(run: Path, code_root: Path, dump: Path | None = None) -> dict:
                              clock=clock, **kw)
     cfg["path_repair"] = getattr(shield, "path_repair", None)
     cfg["path_repair_from"] = "metrics.json" if isinstance(pr, bool) else "revision default"
+    cfg["repair_mode"] = getattr(shield, "repair_mode", None)
+    cfg["repair_mode_from"] = "metrics.json" if rm is not None else "revision default"
     cfg["clear_response"] = cr
     cfg["pipe"] = (f"fed from the rows' {PIPE_ROW_KEY} (what the rail sent, the pipe "
                    f"clock's readings)" if piped else "none")
