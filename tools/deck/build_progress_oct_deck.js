@@ -464,7 +464,7 @@ async function main() {
     } else {
       bigStat(s, sx, 3.65, sw, "Pure Python", "signature check that runs where the cryptography library is absent (the 3.11 and SITL environments)", { size: 20 });
     }
-    source(s, `Source: docs/data/wp1_roundtrip.json (${W1.command}); guardrail/bundle.py; policies/policy.lock.json.`);
+    source(s, `Source: ${W1.source} (${W1.command}); guardrail/bundle.py; policies/policy.lock.json.`);
     H.badge(s, page);
     s.addNotes("The grant asks for a signed policy bundle with a hash and a semantic version. Each policy now has one 64-character hash " +
       "over its canonical form, a manifest with its version and issue time, and an Ed25519 signature. All " + W1.policies + " policies in the " +
