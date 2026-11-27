@@ -16,6 +16,15 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-11-27
+
+Patch release for the 27 Nov work: the policy bundles under the Lab CA
+(WP1-04, X-10), the repair-mode option, start_conflicts through the Shield,
+the single_sha gate in the KPI readers and the hot-apply generations in the
+rails' report.md: every dated entry below, back to 0.7.1, ships in it. Its
+own smoke (smREL072) flies the five matrix rows with hil requiring the Lab
+CA chain; the KPI of record stays release 0.7.0's nightly ntFIN5.
+
 ### 2026-11-27 (code, evidence and docs; integrate/1127: repair-mode selection and its A/B, start_conflicts through the Shield, the single_sha gate, hot-apply generations in report.md, the rail campaign summary fix, the pdyn1126 KPI report, the wp1 record at 21c2771) — six branches merged after an adversarial review each; no Appendix A status changed (114 DONE / 21 PARTIAL / 1 DRIFT / 0 MISSING)
 
 #### Added
