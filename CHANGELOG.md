@@ -35,6 +35,8 @@ PI's; whether the PI or ITRI accepts it is not recorded.
 
 - After an independent fact check of the report commit: the X-10 row's changelog count corrected (five first-version bundles, distance-envelope-sitl v0.1.0 among them, and 12 with a diff, not four and 13); its tests/test_bundle.py and guardrail line numbers replaced by test and field names; the WP1-04 row no longer lists the Gazebo mid-term gate (a dev run) among the KPI runs of record. docs/data/bundle_ca_20261127/README.md: the AGX rebuilt its bundles at cda127e (issued_at 00:17:47-49Z), not at 9589623, which only its record and the flight used. The lab-ca note in policies/keys/trusted_signers.json, the title, intro and section 1 of docs/RUNBOOK-bundle-ca.md, and docs/DESIGN-policy-identity.md no longer say the CA is waiting for the PI to name it.
 
+- docs/data/ci_local/3479613c52c0.json: tools/ci_local.py at 3479613, 191/191 files, 4966 of 4986 tests passed (20 skipped), headless smoke rc 0 (64 episodes); the fastapi files that skip in vla-real pass under guardrail-py312 (test_api 19/19, test_railinputs_node 25/25, test_railinputs_hotapply 6/6, test_pas_hotapply 9/9, test_harness_service 63/63). The WP1-04 Open cell in both report files now says so.
+
 #### Fixed
 - tools/bundle_ca_evidence.py `--drill` (988434b): since 909804b (26 Nov) tests/test_bundle.py imports its sibling helper wgs84_fixture, and the drill, which loads that file from the repository root, died with ModuleNotFoundError. The drill now puts tests/ on sys.path while the module loads; test_the_evidence_record_says_what_this_machine_established runs the tool as the integrator does and fails without the fix.
 
