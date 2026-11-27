@@ -28,10 +28,13 @@ All 113 ticks were flown in GUIDED, each with a fresh `state_v`.
 | All ticks, from hover to the target | 113 | 0.056 | 3.430 | 3.977 |
 | Cruise, ticks 25-109 (t 2.41-10.81 s) | 85 | 0.049 | 0.101 | 0.172 |
 
-- **Cruise speed**: the command was 4.00 m/s horizontal at bearing 315 deg.
-  The pilot asked for 6 m/s and the `kin-caps` SpeedClamp capped it to 4 m/s.
-  The measured horizontal speed averaged 4.030 m/s (min 3.828, max 4.079),
-  a ratio of 1.0075 to the command. The bearing error had a median of
+- **Cruise speed**: the command was 4.00 m/s horizontal at compass bearing
+  135 deg, south-east, toward the target at North -30, East 30 (about
+  North -2.83, East +2.83 m/s; the script's `brg`, a compass bearing from
+  North, gives 134.98 to 135.04 deg over the cruise ticks). The pilot asked
+  for 6 m/s and the `kin-caps` SpeedClamp capped it to 4 m/s. The measured
+  horizontal speed averaged 4.030 m/s (min 3.828, max 4.079), a ratio of
+  1.0075 to the command. The bearing error had a median of
   0.12 deg, a p95 of 0.16 deg and a max of 0.17 deg. The vertical error had a
   median of 0.003 m/s and a max of 0.006 m/s.
 - **Cruise window**: it starts at the first tick where the measured horizontal
@@ -63,7 +66,8 @@ topology, so it is not KPI-grade.
 
 ## Computation
 
-Python standard library only. Run it from the repository root:
+Python standard library only. No `follow_check.py` is committed: save the
+block below as `follow_check.py` and run it from the repository root with
 `python follow_check.py [run dir]`.
 
 ```python

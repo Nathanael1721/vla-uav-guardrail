@@ -29,7 +29,8 @@ still flies sitl/mavlink_adapter_node.py). What is checked here:
   * (2026-11-28) the Shield node's report.md Path row names the adapter seen
     on /shield/setpoint (the AP_DDS one: /ap/cmd_vel, no MAVROS setpoint),
     not a fixed MAVLink path: stage1_02 reported the MAVROS path it never
-    flew;
+    flew; a graph query that raises or answers a non-list leaves the
+    mission and the report running;
   * the SITL check's pure verdicts (sitl/ap_dds/verify_ap_dds.py): a missing
     topic fails rather than reading as zero, and a flown velocity off the
     command or off its bearing fails.
@@ -415,6 +416,56 @@ def test_the_shield_nodes_report_follows_the_adapter_on_its_graph():
     N, rows, sp = _shield_report(["rosbag2_recorder"])
     assert "no setpoint adapter seen subscribed (subscribers: rosbag2_recorder)" \
         in rows[0] and "MAVROS" not in rows[0], rows
+
+
+def test_a_failing_graph_query_never_stops_the_shield_node():
+    """The subscriber sample runs in start_mission, with the aircraft
+    hovering in GUIDED, and again in _finish: a graph query on
+    /shield/setpoint that raises, or answers with something that is not a
+    list of endpoints, must leave both running (review of 4b1bdd8). The row
+    then says the adapter was not identified, or names what the other sample
+    read. Other topics' queries go to the stand-in unchanged."""
+    import test_railinputs_node as RN
+
+    def flown(at_start, at_end):
+        N, node, clk, out = RN._build([])
+        real = node.get_subscriptions_info_by_topic
+        answer = {"now": at_start}
+
+        def info(topic):
+            if topic != N.TOPIC_SETPOINT:
+                return real(topic)
+            a = answer["now"]
+            if isinstance(a, BaseException):
+                raise a
+            if isinstance(a, list):
+                return [types.SimpleNamespace(node_name=n, topic_name=topic) for n in a]
+            return a
+        node.get_subscriptions_info_by_topic = info
+        node.start_mission()
+        RN._mode(N, node, "GUIDED")
+        RN._fly(N, node, clk, 2)
+        answer["now"] = at_end
+        node._finish("test over")
+        rows = [ln for ln in (out / "report.md").read_text(encoding="utf-8").splitlines()
+                if ln.startswith("| Path |")]
+        metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert len(node.rows) == 2, len(node.rows)
+        return N, rows, metrics["setpoint_path"]
+
+    for bad in (RuntimeError("rcl graph"), 42, None):
+        N, rows, sp = flown(bad, bad)
+        assert rows == [f"| Path | {N.setpoint_path(None)} |"], (bad, rows)
+        assert "adapter not identified" in rows[0], rows
+        assert sp["subscribers_seen"] is None, sp
+    # Failing at mission start, answering at the report: the report's sample.
+    N, rows, sp = flown(RuntimeError("rcl graph"), ["ap_dds_adapter"])
+    assert rows == [f"| Path | {N.setpoint_path(['ap_dds_adapter'])} |"], rows
+    assert sp["subscribers_seen"] == ["ap_dds_adapter"], sp
+    # Answering at mission start, failing at the report: the start's sample.
+    N, rows, sp = flown(["mavlink_adapter"], 42)
+    assert rows == [f"| Path | {MAVLINK_ROW} |"], rows
+    assert sp["subscribers_seen"] == ["mavlink_adapter"], sp
 
 
 # --------------------------------------------------------------------------- #
