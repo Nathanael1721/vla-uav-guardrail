@@ -16,6 +16,17 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-11-28
+
+Patch release for the 28 Nov work: the at-speed near-edge cell and the
+curfew drift cells fly with their zone in force (scenario clock pinned),
+the KPI report and the release gate require a non-vacuous cell in every
+Shield matrix row, the manifest start frame goes out at arming with all six
+fields and episode.bag2 begins with it, and the rails' report.md names the
+setpoint path actually flown: every dated entry below, back to 0.7.2, ships
+in it. Its own smoke (smREL073) flies the five matrix rows under the Lab CA;
+the KPI of record stays release 0.7.0's nightly ntFIN5.
+
 ### 2026-11-28 (code)
 
 - **The at-speed near-edge cell flies its zone on every rail** (fix/smoke-near-edge-clock; WP3-19 / WP4-14): smREL072 flew near-edge-at-12mps on Fri 27 Nov from 18:15 TST with no scenario clock, so the hil rail read the wall clock, the school-yard zone (Mon-Fri 07:30-17:30) was out of force and both cells were vacuous (no P0 tick). near-edge-at-12mps and corridor-drift-angles (the curfew fence it labels in force) now pin `mission.clock_start` to Mon 2026-09-07 09:00, passed to both rail nodes as `--clock-start`; headless every cell of both families flies tick for tick as before (24 nightly cells, ideal and rail vehicles). tools/kpi_report.py's "Shield test matrix" section (`shield_matrix`) states whether each of the five matrix rows has a non-vacuous cell and whether every near-edge-at-12mps cell is, and docs/RUNBOOK-release.md's gate requires both; re-read over smREL072 it says NOT MET (near-edge-at-12mps 0 of 2 cells).
