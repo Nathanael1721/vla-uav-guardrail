@@ -401,7 +401,8 @@ def test_a_hot_apply_over_rest_reaches_the_flying_shield_and_its_records():
     assert node.hot.live_from == {"nfz-rest": 0.1}
     # WP3-19: report.md names the generation, its mission time and source.
     report = (out / "report.md").read_text(encoding="utf-8")
-    assert "| Hot-apply generations | 1: g1 t=0.10 s (REST: spawn dynamic_nfz "            "`nfz-rest`) |" in report, report
+    assert ("| Hot-apply generations | 1: g1 t=0.10 s (REST: spawn dynamic_nfz "
+            "`nfz-rest`) |") in report, report
     # After the episode: refused before the Shield is touched (503), or the
     # listener is already gone; either way generation 1 stays the last.
     try:

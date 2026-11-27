@@ -2449,8 +2449,11 @@ def test_one_fences_publication_per_tick_after_every_generation():
 # mission time and source. On 78b50fd the "Hot-apply API" row read the REST
 # listener only and "Dynamic NFZ" the --dynamic zone only (with the LAST
 # generation, not its own), so a flight whose generations came from scenario
-# events read "not served" / "not used". Each test fails there: no
-# "Hot-apply generations" row (and "generation 3" on the Dynamic NFZ row).
+# events read "not served" / "not used". Each report test fails there: no
+# "Hot-apply generations" row. The ROS 2 case with a scenario spawn after the
+# --dynamic zone, and the pymavlink case with a REST hot-apply after it
+# (tests/test_railinputs_hotapply.py), also fail on the old Dynamic NFZ
+# expression alone: it printed "generation 3" / "generation 2", the last.
 # --------------------------------------------------------------------------- #
 
 def test_the_generations_log_merges_every_source_in_generation_order():
@@ -2517,20 +2520,35 @@ def test_the_ros2_report_lists_scenario_event_generations():
     assert gens == (f"2: g1 t={t0:.2f} s (scenario event: #0 spawn_polygon_fence `dyn-0`); "
                     f"g2 t={t1:.2f} s (scenario event: #2 spawn_polygon_fence `dyn-1`)"), gens
     assert 0.3 <= t0 < t1, (t0, t1)
-    # --dynamic and a scenario spawn on one tick, a second spawn later.
-    RN, N, node, clk, out = _dynamic_node([f"--events={_spawn_events(40)}"])
+    # --dynamic and a scenario spawn on one tick (g1 the event, g2 the zone),
+    # a second scenario spawn later (g3). The Dynamic NFZ row gives the
+    # zone's own generation, 2; on 78b50fd it printed the flight's last,
+    # "generation 3".
+    tmp = Path(tempfile.mkdtemp(prefix="wp319_dyn_events_"))
+    evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-0", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 40, "anchor": "center"}},
+           {"at_sim_t": 0.6, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-1", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 60, "anchor": "center"}}]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    RN, N, node, clk, out = _dynamic_node([f"--events={tmp / 'events.json'}"])
     _ekf_pose(RN, N, node)
     node.start_mission()
-    _fly(RN, N, node, clk, 4)
+    _fly(RN, N, node, clk, 9)
     node._finish("test")
-    assert node.policy.generation == 2
+    assert node.policy.generation == 3, node.policy.generation
+    assert node.spawn_gen == 2, node.spawn_gen
     report = (out / "report.md").read_text(encoding="utf-8")
     assert _report_value(report, "Dynamic NFZ") == \
         f"hot-applied t={node.spawn_t:.1f}s, generation 2", report
     gens = _report_value(report, "Hot-apply generations")
-    assert gens == (f"2: g1 t={node._ev_records[0]['t']:.2f} s (scenario event: "
+    t0, t1 = (r["t"] for r in node._ev_records)
+    assert abs(t0 - node.spawn_t) < 0.05 and node.spawn_t < t1, (t0, node.spawn_t, t1)
+    assert gens == (f"3: g1 t={t0:.2f} s (scenario event: "
                     f"#0 spawn_polygon_fence `dyn-0`); g2 t={node.spawn_t:.2f} s "
-                    f"(--dynamic: dynamic_nfz `nfz-dynamic`)"), gens
+                    f"(--dynamic: dynamic_nfz `nfz-dynamic`); g3 t={t1:.2f} s "
+                    f"(scenario event: #1 spawn_polygon_fence `dyn-1`)"), gens
     # The null: no hot-apply at all.
     RN, N, node, clk, out = _scenario_node(["--start=-100,0,15", "--target=0,0,15"])
     _ekf_pose(RN, N, node)

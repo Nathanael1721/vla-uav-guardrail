@@ -258,6 +258,51 @@ def test_the_pymavlink_rail_takes_a_hot_apply_between_two_ticks():
             "spawn dynamic_nfz `nfz-rest`) |") in report, report
 
 
+def test_the_pymavlink_report_gives_the_dynamic_zone_its_own_generation():
+    """WP3-19: --dynamic (g1) and a REST hot-apply after it (g2). The
+    Dynamic NFZ row names the zone's generation, 1; on 78b50fd it printed
+    the flight's last, "generation 2". The generations row lists both, in
+    order, with their times and sources."""
+    try:
+        import fastapi  # noqa: F401
+        import httpx
+        import uvicorn  # noqa: F401
+    except ImportError:
+        return SKIP
+    import test_sitl_rails as T
+    port = _free_port()
+    sent = []
+
+    def patch(R):
+        R.DYNAMIC_AT_S = 2.0
+        real_sleep = R.time.sleep
+
+        def sleep(dt):
+            real_sleep(dt)
+            if not sent and R.time.time() >= 4.0:
+                sent.append(httpx.post(f"http://127.0.0.1:{port}/dynamic_nfz",
+                                       json=_ll({**ZONE, "id": "nfz-rest", "vertices": [
+                                           {"x": 24, "y": 24}, {"x": 28, "y": 24},
+                                           {"x": 28, "y": 28}, {"x": 24, "y": 28}]}),
+                                       timeout=10))
+        R.time.sleep = sleep
+    out, metrics, rows, events, sim, R = T._fly_pymavlink_rail(
+        ["--shield", "on", "--dynamic", "--hotapply-port", str(port)], patch)
+    assert sent and sent[0].status_code == 200, sent and sent[0].text
+    ha = metrics["hot_apply"]
+    assert ha["n_applied"] == 1 and ha["events"][0]["generation"] == 2, ha
+    assert max(r["generation"] for r in rows) == 2
+    spawn = [e for e in events if e["kind"] == "policy_generation" and e["generation"] == 1]
+    assert len(spawn) == 1 and spawn[0]["t"] is not None, spawn
+    assert spawn[0]["t"] < ha["events"][0]["t"], (spawn, ha)
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert T._report_value(report, "Dynamic NFZ") == \
+        f"hot-applied t={spawn[0]['t']:.1f}s, generation 1", report
+    assert T._report_value(report, "Hot-apply generations") == (
+        f"2: g1 t={spawn[0]['t']:.2f} s (--dynamic: dynamic_nfz `{R.DYNAMIC_FENCE.id}`); "
+        f"g2 t={ha['events'][0]['t']:.2f} s (REST: spawn dynamic_nfz `nfz-rest`)"), report
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
