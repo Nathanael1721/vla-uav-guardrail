@@ -86,6 +86,12 @@ harness = ["grpcio>=1.84.0", "protobuf>=7.35.1", "cryptography"]
 # written and the tool says SKIP. Tested with pyarrow 26.0.0 (2026-10-19,
 # docs/DESIGN-episode-parquet.md).
 export = ["pyarrow"]
+# guardrail/episode_bag.py writes the episode bundle's episode.bag2/ as the
+# recording trimmed to begin at the manifest frame (ARCH-22), with rosbags (a
+# pure Python rosbag2 reader and writer) imported lazily; without it the
+# bundle keeps the recorder's bag as it is and says why. Tested with rosbags
+# 0.10.11.
+bag = ["rosbags"]
 
 [tool.setuptools]
 # Explicit, so setuptools' flat-layout discovery can never pick up demo/,

@@ -71,7 +71,7 @@ CORE = {"pydantic": "pydantic", "pydantic_core": "pydantic", "yaml": "pyyaml",
         "shapely": "shapely", "numpy": "numpy", "jinja2": "jinja2"}
 EXTRA = {"cryptography": "signing", "fastapi": "api", "uvicorn": "api",
          "tokenizers": "tokens", "transformers": "tokens", "grpc": "harness", "google": "harness",
-         "pyarrow": "export"}
+         "pyarrow": "export", "rosbags": "bag"}
 # Import name -> distribution name, where the two differ.
 DIST_OF = {"grpc": "grpcio", "google": "protobuf"}
 # Whole modules that exist only for an extra; importing them needs the extra.
