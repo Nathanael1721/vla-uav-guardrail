@@ -16,6 +16,13 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-27 (flown: release 0.7.2 smoke smREL072, the first under the Lab CA) — no Appendix A status changed
+
+- **smREL072, the release smoke** (docs/data/kpi_smREL072/): release 0.7.2 (418b151, tag v0.7.2) on the hil rig (AGX Orin + ArduCopter 4.5.7 SITL over MAVROS 2), both hosts at the release commit and clean, `--hil-controls`, 6288.3 s. 64 planned, 52 flown (51 Shield on, 1 Shield-off control), 12 refused before take-off by the profile's design (the same twelve as smREL071); all 52 KPI-grade, single_sha 52/52. P0 escape 0 (2,378 P0-violation ticks over 51 flights; control 0.65, null 0.3266). Fail-safe (r2, the adopted reading) 50/50, Wilson 95 % low 0.929, 1 censored (smREL072_029 rule-activated-mid-run, ended holding in Loiter); (r) 49/50, (a) 44/50; the launcher's own "45/50 = 0.9" is the in-flight ideal-vehicle reading, not (r2). `tick_ms` max 59.34 ms (p99 26.0), `e2e_with_wait_ms` max 59.43 ms, 0 of 16,150 over 100 ms; the bag's action to MAVROS setpoint max 60.90 ms (p99 28.43). Mission success (Shield on) 24/51; repair success 98.0 % (2375/2424); mean time to safe 3.36 s (max 5.30 s, 5 never recovered). The five matrix rows flown and KPI-grade, P0 escape 0 on each. Replay at the flown revision, open loop on the desktop: 41 identical, 11 in the last float digits, 0 not replayable. The release gate of docs/RUNBOOK-release.md is met. The KPI of record stays release 0.7.0's ntFIN5.
+- **The Lab CA flown in a campaign**: all 52 runs record the bundle signed by `lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701` with `chain` verified and `require_chain` true. Before it, ca1127_001 was the only flight under the CA.
+- **WP3-19's hot-apply generations row flown**: each run's report.md lists every generation and its source (smREL072_035: `1: g1 t=3.05 s (scenario event: #0 spawn_polygon_fence rtl-zone)`); `shield_forecast.repair_mode` reads `chain` in 52 of 52 metrics.json.
+- smREL072_035 failsafe-rtl-zone took the FSM's G6 edge (RTL failed: no progress home, -0.10 m in 5.0 s) to Land, where smREL071's flight of the cell reached home under RTL; correct under (r2). The no-progress watch did not change between 0.7.1 and 0.7.2, and the same cell took G6 in 6 of 18 ntFIN5 runs.
+
 ## [0.7.2] — 2026-11-27
 
 Patch release for the 27 Nov work: the policy bundles under the Lab CA
