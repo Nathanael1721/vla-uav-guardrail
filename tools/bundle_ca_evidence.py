@@ -164,11 +164,23 @@ def bundles(bundles_dir: Path, trust_store=None) -> dict:
 
 
 def drill() -> dict:
-    """The CA tests of tests/test_bundle.py, run here on throw-away CAs."""
+    """The CA tests of tests/test_bundle.py, run here on throw-away CAs.
+
+    tests/ goes on sys.path while the module loads: test_bundle.py imports
+    its sibling helpers (wgs84_fixture since 26 Nov, 909804b) as a test run
+    from tests/ finds them, and without it `--drill` died on the import."""
+    tests_dir = str(ROOT / "tests")
     path = ROOT / "tests" / "test_bundle.py"
     spec = importlib.util.spec_from_file_location("_bundle_ca_drill", path)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    added = tests_dir not in sys.path
+    if added:
+        sys.path.insert(0, tests_dir)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if added:
+            sys.path.remove(tests_dir)
     out = {}
     for name in DRILL_TESTS:
         try:

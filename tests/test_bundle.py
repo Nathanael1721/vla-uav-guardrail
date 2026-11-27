@@ -1891,6 +1891,22 @@ def test_the_evidence_record_says_what_this_machine_established():
         "bundles": rec["bundles"]["counts"]}, rec["summary"]
     assert rec["drill"].startswith("not run") and rec["machine"]["cryptography"]
 
+    # The drill as the integrator runs it: the tool in its own process, from
+    # the repository root, so tests/ is NOT on sys.path (27 Nov: test_bundle.py's
+    # `from wgs84_fixture import ...`, added on 26 Nov, made `--drill` die on
+    # the import while this test, run from tests/, still passed).
+    out = Path(tempfile.mkdtemp()) / "rec.json"
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "bundle_ca_evidence.py"),
+                        "--trust", str(trust), "--bundles", str(folder), "--drill",
+                        "--out", str(out)], cwd=str(ROOT), capture_output=True,
+                       text=True, timeout=300,
+                       env={**os.environ, "PYTHONPATH": "", "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, (r.stdout[-2000:], r.stderr[-2000:])
+    drilled = json.loads(out.read_text(encoding="utf-8"))["drill"]
+    assert set(drilled) == set(E.DRILL_TESTS) and \
+        all(v == "PASS" for v in drilled.values()), drilled
+    assert trust.read_bytes() == was
+
     with _no_crypto():
         there = E.collect(trust, folder)
     assert there["machine"]["cryptography"] is None
