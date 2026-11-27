@@ -33,6 +33,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -83,6 +84,14 @@ TOPICS = {"/mavros/state": True, "/uas1/mavlink_source": False, "/shield/fences"
 STATE_TYPE = "mavros_msgs/msg/State"
 STATE_MSG = ("std_msgs/Header header\nbool connected\nbool armed\nbool guided\n"
              "bool manual_input\nstring mode\nuint8 system_status\n")
+# The raw MAVLink link (the fields only, which is all the CDR layout
+# depends on; tools/replay_from_bag.py FALLBACK_MSGS), for the tests that
+# record it as mavros_msgs/msg/Mavlink rather than as text.
+MAVLINK_TYPE = "mavros_msgs/msg/Mavlink"
+MAVLINK_MSG = ("std_msgs/Header header\nuint8 framing_status\nuint8 magic\nuint8 len\n"
+               "uint8 incompat_flags\nuint8 compat_flags\nuint8 seq\nuint8 sysid\n"
+               "uint8 compid\nuint32 msgid\nuint16 checksum\nuint64[] payload64\n"
+               "uint8[] signature\n")
 START, END = T0 + 400 * MS, T0 + 2000 * MS
 MAN = {"code_revision": "418b1517da9f", "vla_model_hash": "m@src:" + "0" * 64,
        "policy_hash": "sha256:" + "a" * 64, "random_seed": 1001, "sim_speedup": 1.0,
@@ -113,33 +122,54 @@ def _store():
     from rosbags.typesys import Stores, get_types_from_msg, get_typestore
     store = get_typestore(Stores.ROS2_JAZZY)
     store.register(get_types_from_msg(STATE_MSG, STATE_TYPE))
+    store.register(get_types_from_msg(MAVLINK_MSG, MAVLINK_TYPE))
     return store
 
 
-def _msgtype(topic: str) -> str:
-    return STATE_TYPE if topic == "/mavros/state" else "std_msgs/msg/String"
+def _msgtype(topic: str, mavlink=()) -> str:
+    if topic == "/mavros/state":
+        return STATE_TYPE
+    return MAVLINK_TYPE if topic in mavlink else "std_msgs/msg/String"
 
 
-def _write(bag: Path, msgs, *, custom: dict | None = None) -> None:
+def _mavlink(store, header, msgid: int, payload: bytes):
+    """A mavros_msgs/msg/Mavlink of `payload`, trimmed of its trailing zeros
+    as MAVLink 2 sends it, in little-endian 64-bit words."""
+    import numpy as np
+    payload = payload.rstrip(b"\0") or b"\0"
+    padded = payload + b"\0" * (-len(payload) % 8)
+    return store.types[MAVLINK_TYPE](
+        header=header, framing_status=1, magic=253, len=len(payload), incompat_flags=0,
+        compat_flags=0, seq=0, sysid=1, compid=1, msgid=msgid, checksum=0,
+        payload64=np.frombuffer(padded, dtype="<u8").copy(),
+        signature=np.zeros(0, dtype=np.uint8))
+
+
+def _write(bag: Path, msgs, *, custom: dict | None = None, mavlink=()) -> None:
+    """Write `msgs` (topic, receive time, text); on a topic in `mavlink`
+    the "text" is (msgid, payload), written as mavros_msgs/msg/Mavlink."""
     from rosbags.rosbag2 import StoragePlugin, Writer
     store = _store()
     String, State = store.types["std_msgs/msg/String"], store.types[STATE_TYPE]
     Header, Time = store.types["std_msgs/msg/Header"], store.types["builtin_interfaces/msg/Time"]
+    topics = {**TOPICS, **{t: False for t in mavlink if t not in TOPICS}}
     with Writer(bag, version=9, storage_plugin=StoragePlugin.MCAP) as w:
-        conns = {t: w.add_connection(t, _msgtype(t), typestore=store,
+        conns = {t: w.add_connection(t, _msgtype(t, mavlink), typestore=store,
                                      offered_qos_profiles=_qos(latched))
-                 for t, latched in TOPICS.items()}
+                 for t, latched in topics.items()}
         for k, v in (custom or {}).items():
             w.set_custom_data(k, v)
         for topic, ts, text in msgs:
+            header = Header(stamp=Time(sec=ts // 10**9, nanosec=ts % 10**9), frame_id="")
             if topic == "/mavros/state":
-                msg = State(header=Header(stamp=Time(sec=ts // 10**9, nanosec=ts % 10**9),
-                                          frame_id=""),
+                msg = State(header=header,
                             connected=True, armed="armed" in text.replace("disarmed", ""),
                             guided=True, manual_input=False, mode=text, system_status=3)
+            elif topic in mavlink:
+                msg = _mavlink(store, header, *text)
             else:
                 msg = String(data=text)
-            w.write(conns[topic], ts, store.serialize_cdr(msg, _msgtype(topic)))
+            w.write(conns[topic], ts, store.serialize_cdr(msg, _msgtype(topic, mavlink)))
 
 
 def _read(bag: Path) -> list[tuple[str, int, bytes]]:
@@ -316,7 +346,7 @@ def test_a_start_frame_after_messages_of_the_episode_is_not_trimmed_over_them():
                                  key=lambda m: m[1]), "1 on /shield/setpoint"),
         # no /mavros/state: the arm cannot be read, so action 0 counts
         "no_arm": ([m for m in _recording() if m[0] != "/mavros/state"],
-                   "no arm on /mavros/state could be read"),
+                   "no arm could be read"),
     }
     for name, (msgs, said) in cases.items():
         src = root / name / "bag"
@@ -352,6 +382,94 @@ def test_a_start_frame_after_messages_of_the_episode_is_not_trimmed_over_them():
         "message(s) of the episode (1 on /vla/action_4d)" in text, text
     assert info["trim"]["trimmed"] is False and "/vla/action_4d" in info["trim"]["why"]
     assert _digest(ep / "episode.bag2") == _digest(run / "bag")
+
+
+SOURCE, SINK = "/uas1/mavlink_source", "/uas1/mavlink_sink"
+HEARTBEAT = (0, struct.pack("<IBBBBB", 0, 2, 3, 0, 0, 4))
+TAKEOFF = (76, struct.pack("<7fHBBB", 0, 0, 0, 0, 0, 0, 15.0, 22, 1, 1, 0))   # COMMAND_LONG
+
+
+def _ack(result: int) -> tuple[int, bytes]:
+    """COMMAND_ACK for MAV_CMD_COMPONENT_ARM_DISARM (400) with `result`."""
+    return 77, struct.pack("<HB", 400, result)
+
+
+def _with_link(msgs, extra):
+    """`msgs` with the link's heartbeats as MAVLink HEARTBEATs, and `extra`
+    added, in receive order."""
+    return sorted([(t, ts, HEARTBEAT if t == SOURCE else x) for t, ts, x in msgs] + extra,
+                  key=lambda m: m[1])
+
+
+def test_the_arm_is_the_autopilots_accepted_ack_not_the_later_armed_state():
+    """Review of 4edd3f7: MAVROS's armed state comes 1.6 to 392 ms after the
+    autopilot's accepted COMMAND_ACK for the arm (nine flown hil bags), and
+    the take-off command reached /uas1/mavlink_sink 7.5 to 15 ms after that
+    ack. With the armed state as the arm, a take-off command between the ack
+    and a start frame published later lay "before the arm", was taken for
+    bring-up and dropped without notice. The arm is now the last accepted
+    arm ack at or before the armed state and the start frame: that command
+    refuses the trim. A
+    start frame before the take-off command (the node publishes it first)
+    is trimmed with the command kept; an earlier accepted ack of the same
+    command (a disarm) and a refused one are not the arm; with no armed
+    state an accepted ack alone is, and a refused ack alone is no arm.
+    Fails on 4edd3f7: the take-off command was left out and the trim made."""
+    if not _have_rosbags():
+        print("      SKIP: rosbags is not installed")
+        return SKIP
+    from guardrail.episode_bag import trim_episode_bag
+    root = _tmp("epbag_ack_")
+
+    def trim(name, msgs):
+        src = root / name / "bag"
+        src.parent.mkdir()
+        _write(src, msgs, mavlink=(SOURCE, SINK))
+        before = _digest(src)
+        (root / name / "ep").mkdir()
+        dst = root / name / "ep" / "episode.bag2"
+        res = trim_episode_bag(src, dst)
+        assert _digest(src) == before, name
+        if not res["trimmed"]:
+            assert list(dst.parent.iterdir()) == [], name
+        return res, dst
+
+    # the arm accepted at +360 ms, the take-off command at +370 ms, the start
+    # frame at +400 ms, MAVROS's armed state only after it (+701 ms)
+    res, _ = trim("takeoff_before_frame", _with_link(_recording(), [
+        (SOURCE, T0 + 360 * MS, _ack(0)), (SINK, T0 + 370 * MS, TAKEOFF)]))
+    assert res["trimmed"] is False and set(res) == {"trimmed", "why"}, res
+    assert "the start frame lies after 1 message(s) of the episode (1 on " \
+        "/uas1/mavlink_sink)" in res["why"], res
+    # the same, with a second accepted ack after the start frame (an arm
+    # repeated): the frame went out at an arm before it, so it is not the arm
+    res, _ = trim("repeated_ack", _with_link(_recording(), [
+        (SOURCE, T0 + 360 * MS, _ack(0)), (SINK, T0 + 370 * MS, TAKEOFF),
+        (SOURCE, START + 50 * MS, _ack(0))]))
+    assert res["trimmed"] is False and "1 on /uas1/mavlink_sink" in res["why"], res
+    # the start frame before the take-off command: trimmed, the command kept
+    res, dst = trim("frame_before_takeoff", _with_link(_recording(), [
+        (SOURCE, T0 + 360 * MS, _ack(0)), (SINK, START + 10 * MS, TAKEOFF)]))
+    assert res["trimmed"] is True, res
+    got = _read(dst)
+    assert got[0][0] == "/guardrail/manifest" and got[0][1] == START, got[:2]
+    assert (SINK, START + 10 * MS) in [(t, ts) for t, ts, _ in got], got
+    # left out: two heartbeats, the ack, action 0 (+300 ms), the older state
+    assert res["dropped_before_start"] == 5, res
+    # an accepted ack of the same command long before (a disarm) and a refused
+    # one: the arm is the accepted ack at +360 ms, action 0 stays bring-up
+    res, _ = trim("earlier_disarm", _with_link(_recording(), [
+        (SOURCE, T0 + 20 * MS, _ack(0)), (SOURCE, T0 + 200 * MS, _ack(4)),
+        (SOURCE, T0 + 360 * MS, _ack(0)), (SINK, START + 10 * MS, TAKEOFF)]))
+    assert res["trimmed"] is True, res
+    # no /mavros/state: an accepted ack is the arm (action 0 before it is
+    # bring-up); a refused ack is no arm, so action 0 counts
+    no_state = [m for m in _recording() if m[0] != "/mavros/state"]
+    res, _ = trim("ack_no_state", _with_link(no_state, [(SOURCE, T0 + 350 * MS, _ack(0))]))
+    assert res["trimmed"] is True, res
+    res, _ = trim("refused_no_state", _with_link(no_state, [(SOURCE, T0 + 350 * MS, _ack(4))]))
+    assert res["trimmed"] is False and "1 on /vla/action_4d" in res["why"] \
+        and "no arm could be read" in res["why"], res
 
 
 def test_a_flown_recording_is_trimmed_to_its_start_frame():

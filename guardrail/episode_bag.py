@@ -44,13 +44,26 @@ list (sitl/run_ros2_demo.sh, deploy/docker/entrypoint.sh):
     the arm as well - the pilot's actions, the adapter's record of what it
     sent, the raw MAVLink sent to the autopilot (the same five recordings:
     27 to 58 actions and 4 to 8 adapter records before the arm): one that
-    lies at or after the arm the recording shows, the first /mavros/state
-    saying armed; where the recording shows no arm it can read, any one
-    before the start frame.
+    lies at or after the arm (below); where the recording shows no arm it
+    can read, any one before the start frame.
 
-MAVROS's armed state comes with the autopilot's next heartbeat (1 Hz), up
-to a second after the arm itself; a message of the second group in that
-second before a late start frame is not seen by this rule.
+THE ARM (review of 4edd3f7, 2026-11-28) is the autopilot's accepted
+COMMAND_ACK for the arm command (ACK_TOPIC: MAVLink COMMAND_ACK, command
+MAV_CMD_COMPONENT_ARM_DISARM, result ACCEPTED), the moment the Shield node
+learns the arm was accepted and publishes the start frame: the last such
+ack at or before both the first /mavros/state saying armed and the start
+frame (the same command answers a disarm), else that armed state; with no
+armed state, the first such ack at or before the start frame. MAVROS's
+armed state comes with the autopilot's next heartbeat,
+after the ack on EVERY flight, not only before a late start frame: 1.6 to
+392 ms on nine flown hil bags (smREL072_001/003/010/020/027/047, wgs01_001,
+x11r1125_001, pdyn1126_001), where the take-off command went out on
+/uas1/mavlink_sink 7.5 to 15 ms after the ack. Read from the armed state
+alone, a message in that lag before the start frame was taken for bring-up
+and dropped without notice; read from the ack, it refuses the trim. The
+node publishes the start frame on the thread that then asks for the
+take-off (sitl/ros2_shield_node.py start_frame_at_arm, git long finished),
+so the take-off command lies after it.
 
 WHAT DIFFERS FROM bag/. A message's count in episode.bag2/ is not its count
 in the recording, by the messages left out (the node's `action_seq` counts
@@ -71,6 +84,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -92,6 +106,12 @@ EPISODE_TOPICS = ("/shield/setpoint", "/shield/intercept", "/shield/mode_request
                   "/mavros/setpoint_raw/local", "/shield/mission_update")
 FROM_NODE_START_TOPICS = ("/vla/action_4d", "/mavlink_adapter/sent", "/uas1/mavlink_sink")
 STATE_TOPIC = "/mavros/state"
+# The autopilot's answer to the arm (module docstring, THE ARM): the raw
+# link from the autopilot, a COMMAND_ACK for MAV_CMD_COMPONENT_ARM_DISARM
+# with MAV_RESULT_ACCEPTED.
+ACK_TOPIC = "/uas1/mavlink_source"
+MAVLINK_TYPE = "mavros_msgs/msg/Mavlink"
+COMMAND_ACK, ARM_DISARM, ACCEPTED = 77, 400, 0
 
 
 def _latched(conn) -> bool:
@@ -114,19 +134,24 @@ def _frame_phase(store, raw: bytes, msgtype: str) -> str | None:
         return None
 
 
-def _armed_at(reader, store) -> int | None:
-    """The receive time of the first STATE_TOPIC message saying armed (the
-    arm as the recording shows it), or None where it shows none it can read.
-    The message type is read from the recording's own definition."""
+def _register(store, conns) -> None:
+    """Register the message types of `conns` from the recording's own
+    definitions."""
+    from rosbags.typesys import get_types_from_msg
+    for c in conns:
+        if c.msgtype not in store.fielddefs:
+            typs = get_types_from_msg(c.msgdef.data, c.msgtype)
+            store.register({k: v for k, v in typs.items() if k not in store.fielddefs})
+
+
+def _state_armed_at(reader, store) -> int | None:
+    """The receive time of the first STATE_TOPIC message saying armed, or
+    None where the recording shows none it can read."""
     conns = [c for c in reader.connections if c.topic == STATE_TOPIC]
     if not conns:
         return None
     try:
-        from rosbags.typesys import get_types_from_msg
-        for c in conns:
-            if c.msgtype not in store.fielddefs:
-                typs = get_types_from_msg(c.msgdef.data, c.msgtype)
-                store.register({k: v for k, v in typs.items() if k not in store.fielddefs})
+        _register(store, conns)
         for c, ts, raw in reader.messages(connections=conns):
             if getattr(store.deserialize_cdr(raw, c.msgtype), "armed", False) is True:
                 return int(ts)
@@ -135,11 +160,49 @@ def _armed_at(reader, store) -> int | None:
     return None
 
 
+def _arm_acks(reader, store, stop: int) -> list[int]:
+    """The receive times, before `stop`, of the autopilot's accepted
+    COMMAND_ACKs for MAV_CMD_COMPONENT_ARM_DISARM on ACK_TOPIC (an arm or a
+    disarm: the caller picks), those read before a failure where one
+    occurs. The payload is MAVLink's wire order (command uint16, result
+    uint8), which MAVLink 2 trims of trailing zeros."""
+    conns = [c for c in reader.connections
+             if c.topic == ACK_TOPIC and c.msgtype == MAVLINK_TYPE]
+    acks: list[int] = []
+    if not conns:
+        return acks
+    try:
+        _register(store, conns)
+        for c, ts, raw in reader.messages(connections=conns, stop=stop):
+            m = store.deserialize_cdr(raw, c.msgtype)
+            if int(m.msgid) != COMMAND_ACK:
+                continue
+            p = b"".join(struct.pack("<Q", int(w) & 0xFFFFFFFFFFFFFFFF)
+                         for w in m.payload64)[: int(m.len)].ljust(3, b"\0")
+            if int.from_bytes(p[0:2], "little") == ARM_DISARM and p[2] == ACCEPTED:
+                acks.append(int(ts))
+    except Exception:                                            # noqa: BLE001
+        pass
+    return acks
+
+
+def _armed_at(reader, store, t_start: int) -> int | None:
+    """The arm (module docstring, THE ARM): the last accepted arm ack at or
+    before both the first armed state and the start frame, else that state;
+    with no armed state the first accepted arm ack at or before the start
+    frame; None where the recording shows neither."""
+    state = _state_armed_at(reader, store)
+    acks = _arm_acks(reader, store, (t_start if state is None else min(state, t_start)) + 1)
+    if state is not None:
+        return max(acks, default=state)
+    return min(acks, default=None)
+
+
 def _episode_before(reader, store, t_start: int) -> tuple[dict[str, int], int | None]:
     """({topic: count} of the episode's messages before the start frame,
     the arm the recording shows or None) - module docstring, NO MESSAGE OF
     THE EPISODE IS LEFT OUT."""
-    armed = _armed_at(reader, store)
+    armed = _armed_at(reader, store, t_start)
     conns = [c for c in reader.connections if not _latched(c)
              and c.topic in EPISODE_TOPICS + FROM_NODE_START_TOPICS]
     before: dict[str, int] = {}
@@ -208,8 +271,9 @@ def trim_episode_bag(src: str | Path, dst: str | Path) -> dict[str, Any]:
                     f"the start frame lies after {sum(before.values())} message(s) of the "
                     f"episode (" + ", ".join(f"{n} on {t}" for t, n in before.items())
                     + ("" if armed is not None else
-                       f"; no arm on {STATE_TOPIC} could be read, so every one before "
-                       f"the start frame counts") + "), which trimming would leave out")}
+                       f"; no arm could be read (an accepted arm COMMAND_ACK on "
+                       f"{ACK_TOPIC} or {STATE_TOPIC} saying armed), so every one "
+                       f"before the start frame counts") + "), which trimming would leave out")}
             latched = {c.id for c in reader.connections
                        if c.topic != MANIFEST_TOPIC and _latched(c)}
             version = 9 if int(meta.get("version") or 9) >= 9 else 8

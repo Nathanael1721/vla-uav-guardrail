@@ -1073,13 +1073,14 @@ STUB_IDENTITY = {"model_id": "guardrail.vla_stub.StubVLA", "kind": "stub", "host
 
 
 def _arm(node) -> None:
-    """What bring_up does once the autopilot accepts the arm, and its thread
-    waited for. The launch's fields are computed first, as on a flown
-    episode (git status, from the node's start; the frame waits for it at
-    most MANIFEST_REVISION_WAIT_S, a slow tree's git would outlast it)."""
+    """What bring_up does once the autopilot accepts the arm. The launch's
+    fields are computed first, as on a flown episode (git status, from the
+    node's start), so the frame is published by the caller before
+    start_frame_at_arm returns, no thread of its own (review of 4edd3f7)."""
     node._manifest_start.join(60)
     node.start_frame_at_arm()
-    node._manifest_arm.join(60)
+    assert node._manifest_armed and node._manifest_arm is None, \
+        "the start frame went to a thread of its own with git finished"
 
 
 def test_the_manifest_is_published_latched_at_the_episodes_start_and_end():
@@ -1108,7 +1109,7 @@ def _check_start_and_end_frames():
     node.takeoff_speedup = {"sim_speedup": 1.0}
     _arm(node)
     node.start_frame_at_arm()                     # once per episode
-    assert node._manifest_arm is not None
+    assert node._manifest_armed and node._manifest_arm is None
     start = _frames(N, node)
     assert len(start) == 1, start
     start = start[0]
@@ -1226,7 +1227,7 @@ def test_the_start_frame_does_not_wait_for_git_past_its_bound():
     node._manifest_start.join(60)
     node._start_fields, node._start_fields_why = None, "CalledProcessError: git died"
     node.start_frame_at_arm()
-    node._manifest_arm.join(10)
+    assert node._manifest_arm is None            # git has finished: published here
     start = _frames(N, node)[0]
     assert "code_revision" not in start["manifest"] and "random_seed" in start["manifest"]
     assert "could not be computed: CalledProcessError: git died" in \
@@ -1289,6 +1290,68 @@ def test_bring_up_publishes_the_start_frame_once_the_arm_is_accepted():
     armed = body.index('log.info("armed")')
     assert armed < body.index("self.start_frame_at_arm()") < body.index("break", armed)
     assert src.count("self.start_frame_at_arm()") == 1
+
+
+def test_the_start_frame_is_published_before_bring_up_asks_for_the_take_off():
+    """Review of 4edd3f7: the start frame went out on a thread of its own
+    while bring_up went on to CommandTOL, and on nine flown hil bags the
+    take-off command reached /uas1/mavlink_sink 7.5 to 15 ms after the arm
+    was accepted - a race the frame lost from about 10 ms on, after which
+    guardrail/episode_bag.py's trim dropped the take-off command. bring_up
+    is run here on the stand-in, every step before arming answered at once:
+    by the first CommandTOL call the start frame is published, by the very
+    thread that makes that call, so the order is not a race. Fails on
+    4edd3f7: no start frame yet at the take-off call, or one published
+    from another thread."""
+    import threading
+
+    class TakeOffAsked(Exception):
+        pass
+
+    def run():
+        N, node, clk, out = _build([])
+        node._manifest_start.join(60)             # git finished, the usual case
+        for name in ("serve_hot_apply", "read_autopilot_version", "read_link",
+                     "request_extended_state", "wait_sim_speedup", "read_autopilot_fence",
+                     "read_sim_params", "read_ekf_failsafe", "read_rtl_params",
+                     "_publish_fences", "check_home", "wait_for_vla"):
+            assert callable(getattr(node, name)), name
+            setattr(node, name, lambda *a, **kw: None)
+        N.takeoff_fence_refusal = lambda *a, **kw: None
+        node.mav_connected = True
+        node.fence_status = [{"success": True}]
+        pub = node.pubs[N.MANIFEST_TOPIC]
+        published_by: list[int] = []
+        real_publish = pub.publish
+
+        def publish(msg):
+            published_by.append(threading.get_ident())
+            real_publish(msg)
+        pub.publish = publish
+        calls: list[str] = []
+        seen: dict = {}
+
+        def call(client, req, timeout=5.0):
+            name = next(k for k in ("cli_rate", "cli_mode", "cli_arm", "cli_tol")
+                        if getattr(node, k) is client)
+            calls.append(name)
+            if name == "cli_tol":
+                seen["phases"] = [f["phase"] for f in _frames(N, node)]
+                seen["by"] = list(published_by)
+                seen["caller"] = threading.get_ident()
+                raise TakeOffAsked()
+            return _Msg(success=True, mode_sent=True)
+        node._call = call
+        try:
+            node.bring_up()
+        except TakeOffAsked:
+            pass
+        return calls, seen
+    calls, seen = _with_env(run, VLAGUARD_TOPOLOGY="hil")
+    assert calls == ["cli_rate", "cli_mode", "cli_arm", "cli_tol"], calls
+    assert seen["phases"] == ["start"], f"no start frame by the take-off call: {seen}"
+    assert seen["by"] == [seen["caller"]], \
+        f"the start frame was published from another thread than the take-off's: {seen}"
 
 
 def test_a_refused_manifest_publisher_is_recorded_and_the_node_flies_on():
