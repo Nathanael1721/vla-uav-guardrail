@@ -33,6 +33,7 @@ Each test of a new behaviour fails on 4418ae0, where there was no
 AuditRecord, no body-frame key and no "time-window" category.
 """
 import json
+import os
 import sys
 import tempfile
 from datetime import datetime
@@ -421,13 +422,91 @@ def _stored_audits():
     """Every non-empty audit*.jsonl one or two folders under demo/out (a run
     folder, or a run inside a campaign folder). Not rglob: demo/out holds
     junctions to the flights' frame folders, and a review timed walking them
-    at 62 s (this glob and reading every record: about 4 s)."""
+    at 62 s (this glob: under a second; what is read is _read_stored_sample's)."""
     if not DEMO_OUT.is_dir():
         return []
     found = set()
     for pat in ("audit*.jsonl", "shield_audit*.jsonl"):
         found |= set(DEMO_OUT.glob(f"*/{pat}")) | set(DEMO_OUT.glob(f"*/*/{pat}"))
     return sorted(p for p in found if p.stat().st_size)
+
+
+def _edge_lines(path):
+    """The first and the last non-empty line of a file, read without reading
+    the middle (the last from a tail window of the file)."""
+    with open(path, "rb") as fh:
+        first = b""
+        for raw in fh:
+            if raw.strip():
+                first = raw
+                break
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - 262144))
+        tail = [ln for ln in fh.read().splitlines() if ln.strip()]
+    last = tail[-1] if tail else first
+    return [ln.decode("utf-8") for ln in (first, last) if ln]
+
+
+PER_CAMPAIGN = 8
+
+
+def _campaign(p):
+    """The campaign a stored audit belongs to: a run folder of its own, the
+    campaign folder it sits in, or under hil_smoke the run name's prefix
+    (ntFIN5_001_... -> hil_smoke/ntFIN5)."""
+    rel = p.relative_to(DEMO_OUT).parts
+    if len(rel) == 2:
+        return rel[0]
+    if rel[0] == "hil_smoke":
+        return f"hil_smoke/{rel[1].split('_')[0]}"
+    return rel[0]
+
+
+def _sample(files):
+    """Up to PER_CAMPAIGN files of each campaign, evenly spaced in path order
+    (first and last included): a campaign is flown at one revision, so its
+    files share their writer."""
+    groups = {}
+    for p in files:
+        groups.setdefault(_campaign(p), []).append(p)
+    out = []
+    for g in groups.values():
+        if len(g) <= PER_CAMPAIGN:
+            out += g
+        else:
+            step = (len(g) - 1) / (PER_CAMPAIGN - 1)
+            out += sorted({g[round(i * step)] for i in range(PER_CAMPAIGN)})
+    return out
+
+
+def _read_stored_sample(files):
+    """Bounded read of the stored audits: the first and last record of up to
+    PER_CAMPAIGN files of each campaign, and every record of the smallest of
+    those files for each record shape (the first record's key set). On 27 Nov
+    the lab checkout held 6,506 audit files (11 GB) and reading every record
+    passed the CI's 30-minute limit; the count grows with every campaign.
+    VLAGUARD_AUDIT_SCAN=all reads every record of every file instead.
+    Returns the number of records read."""
+    if os.environ.get("VLAGUARD_AUDIT_SCAN") == "all":
+        return sum(len(read_audit(p)) for p in files)
+    n, smallest = 0, {}
+    for p in _sample(files):
+        for k, line in enumerate(_edge_lines(p)):
+            try:
+                rec = json.loads(line)
+                AuditRecord.model_validate(upgrade_record(rec))
+            except Exception as e:                       # noqa: BLE001
+                raise AssertionError(f"{p} ({'first' if k == 0 else 'last'} record): {e}") from e
+            n += 1
+            if k == 0:
+                shape = tuple(sorted(rec))
+                size = p.stat().st_size
+                if shape not in smallest or (size, str(p)) < smallest[shape]:
+                    smallest[shape] = (size, str(p))
+    for _size, p in sorted(smallest.values()):
+        n += len(read_audit(p))
+    return n
 
 
 def test_the_stored_audits_read_into_the_model():
@@ -454,9 +533,11 @@ def test_the_stored_audits_read_into_the_model():
         assert again == r
     files = _stored_audits()
     if files:
-        n = sum(len(read_audit(p)) for p in files)
+        n = _read_stored_sample(files)
         assert n > 0
-        print(f"      read {n} records from {len(files)} audit files under demo/out")
+        scope = ("every file" if os.environ.get("VLAGUARD_AUDIT_SCAN") == "all"
+                 else f"a sample of {len(_sample(files))}")
+        print(f"      read {n} records from {scope} of {len(files)} audit files under demo/out")
 
 
 def test_an_old_records_derived_fields_are_what_its_writer_would_write():
