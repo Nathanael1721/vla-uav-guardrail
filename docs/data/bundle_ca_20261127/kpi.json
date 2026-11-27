@@ -1,0 +1,213 @@
+{
+  "kpi_version": "1.0",
+  "ticks": 650,
+  "shield_ticks": 34,
+  "autopilot_ticks": 616,
+  "outcome": "RTL_triggered",
+  "p0_violation_escape_rate": 0.0,
+  "p0_violation_escape_rate_status": "measured",
+  "p0_escapes": 0,
+  "p0_violation_ticks": 6,
+  "p0_ticks_not_measurable": 0,
+  "p0_ticks_blind": null,
+  "collision_contacts": null,
+  "collision_objects": null,
+  "p0_acted_tick_share": 1.0,
+  "failsafe_trigger_correctness": 1.0,
+  "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
+  "failsafe_expected_ticks": 6,
+  "failsafe_correct_ticks": 6,
+  "violation_free_ticks": 28,
+  "false_trigger_ticks": 0,
+  "false_trigger_rate": 0.0,
+  "failsafe_permitted_ticks": 0,
+  "repair_count": 6,
+  "repairs_per_episode": 6,
+  "repair_success_rate": 0.833333,
+  "repair_success_status": "measured",
+  "repair_attempt_ticks": 6,
+  "repair_success_ticks": 5,
+  "repair_unmeasured_ticks": 0,
+  "repair_outcomes": {
+    "converged": 5,
+    "converged_via_rescue": 0,
+    "converged_over_theta": 0,
+    "braked": 1,
+    "failsafe": 0,
+    "residual_p0": 0,
+    "residual_other": 0,
+    "not_measurable": 0
+  },
+  "repair_not_applied_ticks": 0,
+  "repair_not_applied_autopilot_ticks": 368,
+  "repair_floored_ticks": 0,
+  "repairs_to_standstill": 0,
+  "repairs_converged_while_unsafe": 0,
+  "repair_success_basis": "recheck_and_theta",
+  "repair_theta_unchecked_ticks": 0,
+  "repair_theta_sources": {
+    "fsm_record": 0,
+    "magnitude_m": 5,
+    "action_per_period": 0,
+    "not_governed": 0,
+    "no_magnitude": 0
+  },
+  "repair_theta_horizon_s": null,
+  "repair_theta_m": {
+    "lateral": 2.0,
+    "vertical": 0.5
+  },
+  "failsafe_instrumented": true,
+  "mean_repair_magnitude_mps": 5.6564,
+  "max_repair_magnitude_mps": 5.6569,
+  "mean_yaw_repair_dps": 0.0,
+  "repaired_ticks": 6,
+  "repair_ticks_not_measurable": 0,
+  "repair_magnitude_by_priority": {
+    "P0": {
+      "ticks": 6,
+      "sum_mps": 33.938257,
+      "mean_mps": 5.6564
+    },
+    "P1": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "P2": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    },
+    "unattributed": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+    }
+  },
+  "repair_magnitude_by_operator_class": {
+    "AltitudeClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "LateralProjection": {
+      "ticks": 6,
+      "sum_mps": 33.938257,
+      "mean_mps": 5.6564,
+      "sole_ticks": 6,
+      "sole_sum_mps": 33.938257,
+      "sole_mean_mps": 5.6564
+    },
+    "PathRepair": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "KinematicClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Recovery": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Fallback": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "Sanitise": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    },
+    "SoftRelax": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+    }
+  },
+  "repair_magnitude_breakdown_status": "measured",
+  "mean_time_to_safe_s": null,
+  "max_time_to_safe_s": null,
+  "time_to_safe_episodes": 0,
+  "time_to_safe_censored": 1,
+  "time_to_safe_not_measurable": false,
+  "mean_intervention_s": 18.699,
+  "max_intervention_s": 34.1,
+  "intervention_episodes": 2,
+  "intervention_censored": 0,
+  "intervention_not_measurable": false,
+  "mission_success": false,
+  "mission_fail_reasons": [
+    "dwell:alt_violation_s",
+    "unsafe_never_recovered",
+    "goal_missed",
+    "follow_proxy",
+    "failsafe:RTL_triggered"
+  ],
+  "unsafe_p0_ticks": 138,
+  "mission_started_unsafe": false,
+  "mission_goal_status": "missed",
+  "violations_by_risk_level": {
+    "P0": 6
+  },
+  "violations_by_type": {
+    "geofence": 6
+  },
+  "kpi_grade": true,
+  "kpi_grade_reasons": [],
+  "manifest": {
+    "code_revision": "9589623a55d6",
+    "vla_model_hash": "guardrail.vla_stub.GotoPilot@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "random_seed": 1001,
+    "sim_speedup": 1.0,
+    "topology": "hil"
+  },
+  "policy_source": {
+    "kind": "bundle",
+    "path": "bundles/fase3-sim-demo-v0.1.4.tar.gz",
+    "loaded_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "declared_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "hash_form": "sha256-canonical-v3",
+    "hashes": {
+      "sha256-canonical-v3": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reference-policy-dsl-0.1": null
+    },
+    "issued_at": "2026-11-27T00:17:47Z",
+    "signed_by": "lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701",
+    "signature": "verified",
+    "signature_detail": "Ed25519 signature by 'lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701' verified (cryptography); its certificate chains to authority 'lab-ca' (CA sha256 71d1e071d3985bc6...)",
+    "chain": "verified",
+    "signer_retired_on": null,
+    "require_chain": true,
+    "expected_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "expected_hash_ok": true
+  },
+  "episode_id": 1795739096180843191
+}

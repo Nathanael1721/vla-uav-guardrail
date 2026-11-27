@@ -1,0 +1,912 @@
+{
+  "tag": "ca1127_001_nfz-head-on",
+  "episode_id": 1795739096180843191,
+  "ticks": 650,
+  "ticks_flown": 34,
+  "ticks_not_flown": 616,
+  "shield": "on",
+  "shield_lookahead": {
+    "horizon_s": 5.0,
+    "dt_s": 0.1,
+    "poses": 50
+  },
+  "shield_forecast": {
+    "mode": "commanded",
+    "flag": "--own-velocity-forecast off",
+    "response": {
+      "reaction_s": 0.45,
+      "accel_mps2": 1.75,
+      "source": "ArduCopter V4.5.7 SITL, GUIDED velocity setpoints, Project AirSim CityLife quad (citylife-quad.param): each setpoint flown from 0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* flights, 550 step windows, chosen as the most accurate grid point whose median braking error at 1.5 s in the Shield's form is not short (tools/fit_velocity_response.py; identified aircraft 0.35 s, 2.0 m/s^2)"
+    },
+    "clear_response": {
+      "reaction_s": 0.45,
+      "accel_mps2": 1.75,
+      "source": "ArduCopter V4.5.7 SITL, GUIDED velocity setpoints, Project AirSim CityLife quad (citylife-quad.param): each setpoint flown from 0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* flights, 550 step windows, chosen as the most accurate grid point whose median braking error at 1.5 s in the Shield's form is not short (tools/fit_velocity_response.py; identified aircraft 0.35 s, 2.0 m/s^2)"
+    },
+    "velocity_source": "/mavros/local_position/velocity_local",
+    "velocity_ticks_seen": 650,
+    "velocity_ticks": 0,
+    "shield_velocity_ticks": 0,
+    "velocity_nonfinite": 0,
+    "arc": false,
+    "path_repair": true
+  },
+  "reached": false,
+  "frac_within_30m": 0.0,
+  "reach_m": 3.0,
+  "nfz_s": 0.0,
+  "nfz_by_zone_s": {},
+  "nfz_moving_not_counted": [],
+  "nfz_off_by_clock_s": {},
+  "standoff_s": null,
+  "standoff_min_range_m": null,
+  "subject": null,
+  "alt_violation_s": 13.8,
+  "interventions": 374,
+  "brakes": 0,
+  "frame": "body (grant Architecture constraints p2)",
+  "seed": 1001,
+  "target": [
+    40.0,
+    15.0
+  ],
+  "speed_pref_mps": 4.0,
+  "start": {
+    "policy_ne": [
+      -20.0,
+      15.0
+    ],
+    "up": 15.0,
+    "source": "--start"
+  },
+  "home_check": {
+    "start": [
+      -20.0,
+      15.0
+    ],
+    "tolerance_m": 5.0,
+    "frame_origin": [
+      -35.363261,
+      149.16523
+    ],
+    "checked": true,
+    "ok": true,
+    "home": [
+      -35.3634405,
+      149.1653952
+    ],
+    "home_policy_ne": [
+      -19.982,
+      14.997
+    ],
+    "home_from_ekf_origin_ne": [
+      0.0,
+      0.0
+    ],
+    "miss_m": 0.018,
+    "why": null,
+    "waited_s": 0.0,
+    "home_requests": 0
+  },
+  "scenario": {
+    "schema": "rail-scenario/1",
+    "backend": "hil",
+    "run_id": "ca1127_001_nfz-head-on",
+    "run_nonce": "d41163b1f594457bbb59b39ccce4dac6",
+    "campaign": "ca1127",
+    "scenario_id": "nfz-head-on",
+    "template": "static_nfz",
+    "cell": "nfz-head-on",
+    "params": {},
+    "seed": 1001,
+    "arm": "on",
+    "arm_tag": "canonical,prefix-on",
+    "family": "hil-stress/static_nfz/nfz-head-on/shield-on",
+    "expect": "pass",
+    "expected_outcome": null,
+    "expected_failsafe": false,
+    "sitl_home": "-35.36344066,149.16539523,584,0.00",
+    "start": [
+      -20.0,
+      15.0,
+      15.0
+    ],
+    "yaw_deg": 0.0,
+    "target": [
+      40.0,
+      15.0,
+      15.0
+    ],
+    "pilot": "goto",
+    "action": null,
+    "speed_mps": 4.0,
+    "max_s": 30.0,
+    "rail_max_s": 65.0,
+    "events": 0,
+    "stress": {
+      "declared": {},
+      "start_jitter_m": [
+        0.0,
+        0.0
+      ],
+      "wind": null,
+      "gps_dropout_s": null
+    },
+    "policy": "policies/sim_demo_policy.yaml",
+    "harness": "experiments/sweep_scenarios.py --backend hil"
+  },
+  "scenario_family": "hil-stress/static_nfz/nfz-head-on/shield-on",
+  "world": null,
+  "deferred_failed": [],
+  "scenario_events": null,
+  "pilot": {
+    "kind": "stub",
+    "model_id": "guardrail.vla_stub.GotoPilot",
+    "hash": "guardrail.vla_stub.GotoPilot@src:0134daa2388b3b6ed10edf81be9c1dbcef98ed11be82874c6cf640d49bb2e26f",
+    "yaw_rate": 0.0,
+    "frame": "body"
+  },
+  "vla_identity": {
+    "model_id": "guardrail.vla_stub.GotoPilot",
+    "kind": "stub",
+    "frame": "body",
+    "yaw_rate": 0.0,
+    "seed": 1001,
+    "policy_id": "fase3-sim-demo",
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "policy_source": {
+      "kind": "bundle",
+      "path": "bundles/fase3-sim-demo-v0.1.4.tar.gz",
+      "loaded_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "declared_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "hash_form": "sha256-canonical-v3",
+      "hashes": {
+        "sha256-canonical-v3": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+        "reference-policy-dsl-0.1": null
+      },
+      "issued_at": "2026-11-27T00:17:47Z",
+      "signed_by": "lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701",
+      "signature": "verified",
+      "signature_detail": "Ed25519 signature by 'lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701' verified (cryptography); its certificate chains to authority 'lab-ca' (CA sha256 71d1e071d3985bc6...)",
+      "chain": "verified",
+      "signer_retired_on": null,
+      "require_chain": true
+    },
+    "target": [
+      40.0,
+      15.0
+    ],
+    "speed_pref_mps": 4.0,
+    "host": {
+      "host_arch": "aarch64",
+      "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+      "l4t_release": "R39.2.1",
+      "jetpack": null,
+      "hostname": "localhost.localdomain"
+    },
+    "pilot": {
+      "type": "goto",
+      "model_id": "guardrail.vla_stub.GotoPilot",
+      "speed_mps": 4.0,
+      "target_up": 15.0,
+      "approach_accel_mps2": 2.4,
+      "goal_tol_m": 3.0
+    },
+    "start": [
+      -20.0,
+      15.0,
+      15.0
+    ]
+  },
+  "vla_actions_received": 842,
+  "vla_pilot": {
+    "extended_messages": 0,
+    "malformed_tails": 0,
+    "last_malformed": null,
+    "layout": null,
+    "decision_watchdog": {
+      "timeout_s": 10.0,
+      "grace_s": 1.0,
+      "hold_limit_s": 21.0,
+      "applies": false,
+      "spells": [],
+      "n_spells": 0,
+      "stale_at_end": false,
+      "max_silence_s": 0.5,
+      "rule": "held like a quiet stream: a refused message, a vla_step whose decision (its age at publication plus the time since its receipt, at most max_silence_s) is older than timeout_s + grace_s, a hold older than hold_limit_s; released by the next valid message that is not itself stale"
+    },
+    "decision_hold_max_s": 10.0,
+    "action_publishers_max": 1,
+    "action_publishers_flagged": false,
+    "action_publishers_checks_to_flag": 3,
+    "action_publisher_names": [],
+    "contract_problems": [],
+    "decision_spells_max": 3,
+    "decision_spells_window_s": 30.0,
+    "decision_escalation": null,
+    "land_request": null
+  },
+  "vla_ready": null,
+  "pose_hz": 9.98,
+  "shield_ms_p50": 3.569,
+  "shield_ms_p99": 6.568,
+  "shield_ms_max": 7.173,
+  "fsm": {
+    "ticks": 650,
+    "final_state": "RTL",
+    "terminal": true,
+    "terminal_reason": "home reached",
+    "visited": [
+      "Normal",
+      "Brake",
+      "Loiter",
+      "RTL"
+    ],
+    "max_state": "RTL",
+    "failsafe_triggered": true,
+    "loiter_entered": true,
+    "outcome_label": "RTL_triggered",
+    "transitions": [
+      {
+        "tick": 29,
+        "t_s": 2.892125,
+        "from": "Normal",
+        "to": "Brake",
+        "edge": "G1",
+        "reason": "nfz-square (hard P0 project_fix) repaired, lat 0.29 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+      },
+      {
+        "tick": 34,
+        "t_s": 3.391506,
+        "from": "Brake",
+        "to": "Loiter",
+        "edge": "G3",
+        "reason": "nfz-square (hard P0 project_fix): repair over theta, lat 2.22 m / vert 0.00 m vs theta 2.00 / 0.50 m"
+      },
+      {
+        "tick": 334,
+        "t_s": 33.392157,
+        "from": "Loiter",
+        "to": "RTL",
+        "edge": "G5",
+        "reason": "loiter timeout: 30.00 s >= 30 s"
+      },
+      {
+        "tick": 388,
+        "t_s": 38.791858,
+        "from": "RTL",
+        "to": "[*]",
+        "edge": "G9",
+        "reason": "home reached"
+      }
+    ],
+    "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+    "holds": [
+      {
+        "mode": "LOITER",
+        "kind": "in_place",
+        "x": -11.775423,
+        "y": 15.027977,
+        "up": 14.997034,
+        "legal": true,
+        "travel_s": 0.0,
+        "speed_mps": null,
+        "climb_mps": null,
+        "checked_s": 5.0,
+        "breaks": [],
+        "reason": "standing still at (-11.8, 15.0, 15.0) breaks no hard rule within the 5 s lookahead",
+        "t_s": 3.391506
+      }
+    ],
+    "holds_moved": 0,
+    "holds_illegal": 0,
+    "ended_holding": null,
+    "theta_basis": {
+      "source": "per-operator magnitude_m",
+      "horizon_s": null
+    },
+    "decision_period": {
+      "declared_s": null,
+      "slow_above_s": 1.1111,
+      "window_s_base": 5.0,
+      "n_violations": 3,
+      "applied": false,
+      "window_s": 5.0,
+      "why": "no decision period declared (--decision-period-s): the thresholds as configured"
+    },
+    "fault": null,
+    "hold_points": {
+      "choice": "moved",
+      "moved_transits": 0
+    }
+  },
+  "fsm_config": {
+    "source": null,
+    "profile": null,
+    "digest": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+    "values": {
+      "n_violations": 3,
+      "window_s": 5.0,
+      "theta_lateral_m": 2.0,
+      "theta_vertical_m": 0.5,
+      "t_recover_s": 2.0,
+      "loiter_timeout_s": 30.0,
+      "event_mode": "onset",
+      "x6_min_escape_mps": 0.1,
+      "onset_clear_s": 1.0,
+      "x7_min_rise_m": 0.5,
+      "loiter_clear": "acceptable",
+      "loiter_x67": "position",
+      "untrusted_owner": "chain",
+      "hold_horizon": "loiter",
+      "handback_request": "at_speed",
+      "hold_kept": "reach"
+    },
+    "loaded_digest": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+    "default": true,
+    "in_use": true
+  },
+  "rtl_watch": {
+    "rtl_alt_m": 15.0,
+    "cone_slope": 3.0,
+    "source": "read from the autopilot: RTL_ALT, RTL_CONE_SLOPE",
+    "home": [
+      -20.0,
+      15.0
+    ],
+    "home_radius_m": 5.0,
+    "progress_window_s": 5.0,
+    "min_progress_mps": 0.1,
+    "entry_timeout_s": 5.0,
+    "rtls_judged": 1,
+    "ticks_judged": 54,
+    "ticks_failed": 0,
+    "failures": [],
+    "errors_n": 0,
+    "errors": [],
+    "params": {
+      "RTL_ALT": 1500.0,
+      "RTL_CONE_SLOPE": 3.0,
+      "BATT_FS_CRT_ACT": 0.0,
+      "BATT_CRT_VOLT": 0.0,
+      "BATT_CRT_MAH": 0.0
+    },
+    "battery": {
+      "topic": "/uas1/mavlink_source",
+      "source": "BATTERY_STATUS (MAVLink 147) charge_state from the autopilot (system 1, component 1) in MAVROS's raw feed",
+      "note": "BATT_CRT_VOLT and BATT_CRT_MAH are 0: ArduPilot never declares its battery CRITICAL, so the battery reason cannot fire",
+      "refused": null,
+      "messages": 836,
+      "stale_after_s": 5.0,
+      "fails_rtl_at": [
+        "CRITICAL",
+        "EMERGENCY",
+        "FAILED"
+      ],
+      "charge_states_seen": {
+        "OK": 836
+      },
+      "failed_spells": [],
+      "last": {
+        "0": {
+          "id": 0,
+          "charge_state": 1,
+          "remaining_pct": 82,
+          "voltage_v": 12.6,
+          "current_a": 27.78,
+          "consumed_mah": 585,
+          "rx_t": 64.998
+        }
+      }
+    },
+    "ticks_rtl_failed": 0
+  },
+  "autopilot_took_over": null,
+  "after_terminal": {
+    "terminal_t": 38.792,
+    "ended": null
+  },
+  "mode_requests": [
+    "RTL"
+  ],
+  "autopilot_mode_requests": [
+    "RTL"
+  ],
+  "fence_upload": {
+    "kind": "fence_upload",
+    "generation": 0,
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "fence_ids": [
+      "nfz-square"
+    ],
+    "items": 4,
+    "skipped": [],
+    "reason": "take-off",
+    "backstop_active": true,
+    "home": [
+      -35.3634405,
+      149.1653952
+    ],
+    "home_local_ne": [
+      -20.0,
+      15.0
+    ],
+    "origin_offset_m": [
+      -19.98,
+      15.0
+    ],
+    "success": true,
+    "transferred": 4,
+    "read_back": 4
+  },
+  "fence_uploads": [
+    {
+      "kind": "fence_upload",
+      "generation": 0,
+      "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "fence_ids": [
+        "nfz-square"
+      ],
+      "items": 4,
+      "skipped": [],
+      "reason": "take-off",
+      "backstop_active": true,
+      "home": [
+        -35.3634405,
+        149.1653952
+      ],
+      "home_local_ne": [
+        -20.0,
+        15.0
+      ],
+      "origin_offset_m": [
+        -19.98,
+        15.0
+      ],
+      "success": true,
+      "transferred": 4,
+      "read_back": 4
+    }
+  ],
+  "fences_still_deferred": [],
+  "zones_over_home": [],
+  "autopilot_fence": {
+    "FENCE_ENABLE": 1.0,
+    "FENCE_TYPE": 5.0,
+    "FENCE_ACTION": 1.0,
+    "FENCE_ALT_MAX": 30.0,
+    "FENCE_MARGIN": 2.0,
+    "AVOID_ENABLE": 0.0,
+    "source": "/mavros/param (read from the autopilot)",
+    "parm_file": {
+      "FENCE_ENABLE": 1.0,
+      "FENCE_TYPE": 5.0,
+      "FENCE_ACTION": 1.0,
+      "FENCE_ALT_MAX": 30.0,
+      "FENCE_MARGIN": 2.0,
+      "AVOID_ENABLE": 0.0
+    },
+    "policy_ceiling_m": 20.0,
+    "policy_ceiling_source": "altitude_envelope",
+    "fence_alt_max_raised_from": null,
+    "raise_allowed": true,
+    "sitl": true,
+    "sim_speedup_wait": {
+      "sim_speedup": 1.0,
+      "autopilot_kind": "sitl",
+      "waited_s": 5.66,
+      "wait_s": 40.0
+    },
+    "set_by": "sitl defaults file (start_sitl.sh GUARDRAIL_FENCE) or this node",
+    "gcs": null,
+    "backstop_active": true,
+    "stricter_than_policy": false,
+    "plan_why": null
+  },
+  "generations": [
+    {
+      "generation": 0,
+      "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reason": "take-off",
+      "csp": true,
+      "rule_clock_reading": "2026-11-27T08:24:56"
+    }
+  ],
+  "rule_clock": {
+    "kind": "wall",
+    "tz": "+08:00 (Asia/Taipei (UTC+08:00, no daylight saving))",
+    "tz_source": "default: the mission's time zone (no --clock-tz)",
+    "first_reading": "2026-11-27T08:24:56",
+    "note": "no --clock-start: time windows and switches are evaluated on the wall clock in this zone, read as naive local time"
+  },
+  "hot_apply": null,
+  "action_watchdog": {
+    "timeout_s": 0.5,
+    "spells": [],
+    "n_spells": 0,
+    "stale_at_end": false
+  },
+  "pose_watchdog": {
+    "timeout_s": 1.0,
+    "spells": [],
+    "n_spells": 0,
+    "stale_at_end": false,
+    "stale_ticks": 0,
+    "stale_s": 0.0
+  },
+  "setpoint_delivery": {
+    "topic": "/mavlink_adapter/sent",
+    "gap_s": 0.5,
+    "published": 333,
+    "reports": 333,
+    "beats": 85,
+    "reports_refused": 0,
+    "reports_on_receipt_clock": 0,
+    "adapter_n_sent": 333,
+    "adapter_n_in": 333,
+    "max_wait_s": 0.003,
+    "shortfall": 0,
+    "n_gaps": 0,
+    "gaps_s_total": 0.0,
+    "delivery_gaps": []
+  },
+  "tick_latency": {
+    "budget_ms": 100.0,
+    "e2e_ms": {
+      "n": 333,
+      "p50": 9.041,
+      "p95": 15.381,
+      "p99": 16.089,
+      "max": 16.389,
+      "over_budget": 0
+    },
+    "action_age_ms": {
+      "n": 333,
+      "p50": 9.041,
+      "p95": 15.381,
+      "p99": 16.089,
+      "max": 16.389,
+      "over_budget": 0
+    },
+    "tick_ms": {
+      "n": 333,
+      "p50": 8.974,
+      "p95": 15.277,
+      "p99": 15.99,
+      "max": 16.286,
+      "over_budget": 0
+    },
+    "e2e_with_wait_ms": {
+      "n": 333,
+      "p50": 9.041,
+      "p95": 15.381,
+      "p99": 16.089,
+      "max": 16.389,
+      "over_budget": 0
+    },
+    "blocked_by_deferred_ms": {
+      "n": 333,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "max": 0.0,
+      "over_budget": 0
+    },
+    "post_publish_ms": {
+      "n": 650,
+      "p50": 1.488,
+      "p95": 2.24,
+      "p99": 2.658,
+      "max": 6.771,
+      "over_budget": 0
+    },
+    "deferred_ms": {
+      "n": 650,
+      "p50": 0.002,
+      "p95": 0.004,
+      "p99": 0.005,
+      "max": 0.005,
+      "over_budget": 0
+    },
+    "tick_trigger": "action",
+    "note": "e2e_ms: from this node's receipt of a pilot message (the /vla/action_4d callback's entry, time.monotonic_ns) to the publication on /shield/setpoint of the first setpoint flown from it. With --tick-trigger action the tick runs on the message's arrival, so e2e is the tick's own work up to the publication, plus a deferral only for a message that arrived within min_gap_s of the previous tick (tick_schedule). Not in it: the DDS hop from the pilot's publish to the callback (the message carries no stamp) and what follows the publication (the adapter's NED conversion, MAVROS, the autopilot)"
+  },
+  "tick_schedule": {
+    "mode": "action",
+    "ticks_by_trigger": {
+      "action": 650
+    },
+    "tick_hz": 10.0,
+    "interval_ms": {
+      "n": 649,
+      "p1": 99.0,
+      "p50": 100.0,
+      "p99": 101.0,
+      "min": 98.0,
+      "max": 102.0
+    },
+    "period_s": 0.1,
+    "poll_s": 0.025,
+    "min_gap_s": 0.08000000000000002,
+    "slack_s": 0.05,
+    "rule": "a valid /vla/action_4d message ticks at once unless the previous tick started under min_gap_s ago (then at the first poll past it: deferred); with no message the poll ticks period_s after a timer tick, period_s + slack_s after a message's tick; a message received before the mission clock starts is held (the backlog of the node's start-up work is delivered before it), the first one after the start ticks at once, and the first watchdog waits period_s + slack_s when one came within period_s before the start",
+    "start": {
+      "held_before_start": 191,
+      "held_age_ms": 8.685,
+      "first_watchdog_after_s": 0.15,
+      "backlog": {
+        "spins": 86,
+        "ms": 30.201,
+        "actions": 2,
+        "max_spins": 200,
+        "max_s": 0.03
+      }
+    }
+  },
+  "camera_to_setpoint": {
+    "applies": false,
+    "n": 0,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "max": null,
+    "clocks": "camera_age_ms = decision_age_s (the VLA bridge's monotonic clock: its now - t_capture at publication; t_capture the front frame's header stamp mapped onto that clock when the stamp is on the bridge host's wall clock, else the frame's arrival) + this node's monotonic clock from the message's receipt to the setpoint's publication. Two durations on one clock each, no cross-clock subtraction. Not counted: the DDS hop bridge -> this node, and the camera driver's delay before its stamp: a lower bound by that hop",
+    "why": "no camera behind the actions: the pilot sent the grant's four values only (the stub, or no pilot), so there is no frame age to report - not a zero"
+  },
+  "gc": {
+    "mode": "paced",
+    "flag": "--gc-pacing on",
+    "python": "3.12.3",
+    "every_s": 10.0,
+    "start_collect_ms": 73.2,
+    "frozen_at_start": 87723,
+    "frozen_at_stop": 94845,
+    "paced_full_collections": 6,
+    "paced_full_ms_max": 4.503,
+    "paced_full_ms_total": 23.272,
+    "automatic_full_collections": 0,
+    "collections_by_generation": {
+      "0": {
+        "n": 33,
+        "max_ms": 3.693
+      },
+      "1": {
+        "n": 1,
+        "max_ms": 1.769
+      },
+      "2": {
+        "n": 6,
+        "max_ms": 4.468
+      }
+    },
+    "threshold_restored": [
+      700,
+      10,
+      10
+    ],
+    "rule": "at mission start: collect, gc.freeze(), the automatic full collection off; every every_s a full collection right after a setpoint is published, then gc.freeze(); at mission end the thresholds restored and gc.unfreeze()"
+  },
+  "fix_quality": {
+    "topic": "/mavros/global_position/raw/fix",
+    "source": "sensor_msgs/NavSatFix status MAVROS 2's global_position plugin sets from GPS_RAW_INT (fix_type > 2: STATUS_FIX)",
+    "messages": 837,
+    "stale_after_s": 1.0,
+    "ticks_fix_ok": 650,
+    "ticks_no_fix": 0,
+    "ticks_not_reported": 0,
+    "no_fix_spells": [],
+    "position_lost_ticks": 0,
+    "estimator": {
+      "topic": "/uas1/mavlink_source",
+      "source": "EKF_STATUS_REPORT (MAVLink 193) from the autopilot (system 1, component 1) in MAVROS's raw feed",
+      "healthy_when": "EKF_POS_HORIZ_ABS set, EKF_CONST_POS_MODE and EKF_UNINITIALIZED clear, pos_horiz and velocity test ratios below the threshold",
+      "refused": null,
+      "messages": 836,
+      "unhealthy_reports": 0,
+      "thresh": 0.800000011920929,
+      "thresh_source": "FS_EKF_THRESH (read from the autopilot)",
+      "failsafe_s": 1.0,
+      "stale_after_s": 1.0,
+      "max_gap_s": 1.04,
+      "unhealthy_spells": [],
+      "declared_spells": [],
+      "declared_at_end": false,
+      "ticks_ok": 650,
+      "ticks_lost": 0,
+      "ticks_not_reported": 0
+    },
+    "pos_sigma_m": null,
+    "pos_sigma_m_why": "not fed: with 1 m margins X8's sigma branch needs sigma <= 0.33 m (SITL reports 0.3 m, a field receiver metres, which would return every mission passing near a zone); sizing margins to the rail's accuracy is a policy decision left open"
+  },
+  "sim_params": {
+    "watched": [
+      "SIM_WIND_SPD",
+      "SIM_WIND_DIR",
+      "SIM_WIND_T",
+      "SIM_WIND_TURB",
+      "SIM_GPS_DISABLE",
+      "SIM_BATT_VOLTAGE"
+    ],
+    "at_takeoff": {
+      "sitl": true,
+      "source": "/mavros/param (read from the autopilot)",
+      "values": {
+        "SIM_WIND_SPD": 0.0,
+        "SIM_WIND_DIR": 180.0,
+        "SIM_WIND_T": 0.0,
+        "SIM_WIND_TURB": 0.0,
+        "SIM_GPS_DISABLE": 0.0,
+        "SIM_BATT_VOLTAGE": 12.600000381469727
+      },
+      "reads": 2,
+      "stable": true,
+      "sim_speedup": 1.0,
+      "speedup_wait_s": 5.66
+    },
+    "events": [
+      {
+        "t": null,
+        "param": "SIM_WIND_SPD",
+        "value": 0.0
+      },
+      {
+        "t": null,
+        "param": "SIM_WIND_DIR",
+        "value": 180.0
+      },
+      {
+        "t": null,
+        "param": "SIM_WIND_TURB",
+        "value": 0.0
+      },
+      {
+        "t": null,
+        "param": "SIM_BATT_VOLTAGE",
+        "value": 12.600000381469727
+      },
+      {
+        "t": null,
+        "param": "SIM_GPS_DISABLE",
+        "value": 0.0
+      },
+      {
+        "t": null,
+        "param": "SIM_WIND_T",
+        "value": 0.0
+      }
+    ],
+    "events_total": 6,
+    "events_topic": "/mavros/param/event",
+    "markers_sent": [
+      0.0,
+      1.0916,
+      2.0916,
+      3.0917,
+      4.0919
+    ],
+    "marker_topic": "/mavros/statustext/send",
+    "inputs_refused": {}
+  },
+  "hil_evidence": {
+    "ros_distro": "jazzy",
+    "mavros_node": "/mavros",
+    "fcu_connected": true,
+    "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)",
+    "ardupilot_version_source": "AUTOPILOT_VERSION via /mavros/vehicle_info_get",
+    "vla_host": {
+      "host_arch": "aarch64",
+      "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+      "l4t_release": "R39.2.1",
+      "jetpack": null,
+      "hostname": "localhost.localdomain"
+    },
+    "host_arch": "aarch64",
+    "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+    "l4t_release": "R39.2.1",
+    "jetpack": null,
+    "hostname": "localhost.localdomain",
+    "flight_sw_version": "040507ff",
+    "flight_custom_version_raw": "3762346364336132",
+    "network_link": {
+      "fcu_url": "udp://:14555@10.42.0.1:14555",
+      "peer": "10.42.0.1",
+      "peer_is_loopback": false,
+      "iface": "end0",
+      "link_kind": "ethernet",
+      "source": "MAVROS_FCU_URL (launch script)"
+    },
+    "mavlink_router": "mavlink-routerd (vlaguard/companion image)",
+    "local_processes": {
+      "scanned": "/proc",
+      "local_sitl": [],
+      "local_mavros": true,
+      "local_router": []
+    },
+    "mavros_on": "shield_host",
+    "autopilot_fence": {
+      "FENCE_ENABLE": 1.0,
+      "FENCE_TYPE": 5.0,
+      "FENCE_ACTION": 1.0,
+      "FENCE_ALT_MAX": 30.0,
+      "FENCE_MARGIN": 2.0,
+      "AVOID_ENABLE": 0.0,
+      "source": "/mavros/param (read from the autopilot)",
+      "parm_file": {
+        "FENCE_ENABLE": 1.0,
+        "FENCE_TYPE": 5.0,
+        "FENCE_ACTION": 1.0,
+        "FENCE_ALT_MAX": 30.0,
+        "FENCE_MARGIN": 2.0,
+        "AVOID_ENABLE": 0.0
+      },
+      "policy_ceiling_m": 20.0,
+      "policy_ceiling_source": "altitude_envelope",
+      "fence_alt_max_raised_from": null,
+      "raise_allowed": true,
+      "sitl": true,
+      "sim_speedup_wait": {
+        "sim_speedup": 1.0,
+        "autopilot_kind": "sitl",
+        "waited_s": 5.66,
+        "wait_s": 40.0
+      },
+      "set_by": "sitl defaults file (start_sitl.sh GUARDRAIL_FENCE) or this node",
+      "gcs": null,
+      "backstop_active": true,
+      "stricter_than_policy": false,
+      "plan_why": null
+    },
+    "autopilot_kind": "sitl"
+  },
+  "policy_source": {
+    "kind": "bundle",
+    "path": "bundles/fase3-sim-demo-v0.1.4.tar.gz",
+    "loaded_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "declared_policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "hash_form": "sha256-canonical-v3",
+    "hashes": {
+      "sha256-canonical-v3": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+      "reference-policy-dsl-0.1": null
+    },
+    "issued_at": "2026-11-27T00:17:47Z",
+    "signed_by": "lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701",
+    "signature": "verified",
+    "signature_detail": "Ed25519 signature by 'lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701' verified (cryptography); its certificate chains to authority 'lab-ca' (CA sha256 71d1e071d3985bc6...)",
+    "chain": "verified",
+    "signer_retired_on": null,
+    "require_chain": true,
+    "expected_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+    "expected_hash_ok": true
+  },
+  "topology": "hil",
+  "manifest_frames": {
+    "topic": "/guardrail/manifest",
+    "qos": {
+      "reliability": "reliable",
+      "durability": "transient_local",
+      "depth": 1
+    },
+    "refused": null,
+    "start": {
+      "published": true,
+      "fields": [
+        "code_revision",
+        "policy_hash",
+        "random_seed"
+      ],
+      "wall_time": 1795739096.374
+    },
+    "end": {
+      "published": true,
+      "fields": [
+        "code_revision",
+        "vla_model_hash",
+        "policy_hash",
+        "random_seed",
+        "sim_speedup",
+        "topology"
+      ],
+      "wall_time": 1795739181.263
+    }
+  }
+}

@@ -1,0 +1,19 @@
+  ca1127_001_nfz-head-on                       before=fail(1)  ideal=fail(1)
+
+fail-safe trigger correctness of 1 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      0/1 = 0.000  Wilson 95 % low 0.000  nulls: always-trigger 0.000, never-trigger 1.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      false      ca1127_001_nfz-head-on  (nfz-head-on, seed 1001)
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      1/1 = 1.000  Wilson 95 % low 0.207  nulls: always-trigger 1.000, never-trigger 0.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      1 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 0/0
+      longer     ca1127_001_nfz-head-on  (nfz-head-on, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      1/1 = 1.000  Wilson 95 % low 0.207  nulls: always-trigger 1.000, never-trigger 0.000  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (failsafe_by autopilot_geofence; counted since 2026-11-15): the reading before that rule gives the same figure
+      1 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 0/0
+      longer     ca1127_001_nfz-head-on  (nfz-head-on, seed 1001)
+
+1/1 run(s) re-scored -> <scratchpad>/ca1127/rescore.json
