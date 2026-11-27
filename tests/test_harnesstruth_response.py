@@ -551,7 +551,8 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     nameless = json.loads(json.dumps(ex["ardupilot"]))
     del nameless["arm"]["response"]
     assert "arm.response" in _refused(lambda: S.rerun_from_extras(nameless))
-    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/6")
+    # "/6" is read since 2026-11-27 (a first_feasible bundle); "/7" is not.
+    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/7")
     assert "schema" in _refused(lambda: S.rerun_from_extras(unknown))
 
 

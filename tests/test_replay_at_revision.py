@@ -144,7 +144,8 @@ def _head_holds_this_code() -> str | None:
 def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
               subject: tuple | None = None, record_subject: bool = True,
               two_edits: bool = False, clear_response: dict | None = None,
-              dropout: bool = False, perception: tuple | None = None) -> None:
+              dropout: bool = False, perception: tuple | None = None,
+              repair_mode: str | None = None) -> None:
     """A run as the ROS 2 rail stores one, its Shield the rail's (no FSM
     inside), its audit written by AuditLogger as the rail writes it.
     `subject` (x, y, class): a DECLARED subject set once before the first
@@ -165,7 +166,10 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     perception stressors (2026-11-21, WP3-19), the Shield handed the pose
     the node's own PerceptionStress makes of the true one each tick, every
     row logging `shield_pose` and `pos_sigma_m` and metrics.json
-    `perception_stress`, as the node writes them."""
+    `perception_stress`, as the node writes them. `repair_mode` (2026-11-27,
+    WP3-06): the Shield's repair selection, passed and recorded in
+    metrics.json shield_forecast.repair_mode as the node's --repair-mode
+    does; None passes and records nothing (a run flown before the flag)."""
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, DynamicNFZ, State, load_policy
     from guardrail.replay import rail_shield
@@ -174,6 +178,8 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
     kw: dict = {}
     wall = [1000.0 + 1 / 3]
     pipe = None
+    if repair_mode is not None:
+        kw["repair_mode"] = repair_mode
     if dropout:
         from guardrail.replay import PipeRecorder
         pipe = kw["pipe_clock"] = PipeRecorder(lambda: wall[0])
@@ -264,7 +270,8 @@ def _rail_run(run: Path, rev: str, *, ticks: int = 80, spawn_at: int = 22,
         "shield": "on", "shield_lookahead": {"horizon_s": 5.0, "dt_s": 0.1, "poses": 50},
         "shield_forecast": {"mode": "commanded", "velocity_ticks": 0,
                             **({"clear_response": clear_response} if clear_response
-                               else {})},
+                               else {}),
+                            **({"repair_mode": repair_mode} if repair_mode else {})},
         **({"subject": {"class": subject[2], "x": subject[0], "y": subject[1],
                         "position_source": "declared"}} if subject and record_subject
            else {}),
@@ -375,6 +382,16 @@ def _replayed() -> dict | str:
     # ROS 2 node and the pymavlink SITL rail record it
     from guardrail.response import ARDUCOPTER_GUIDED
     _rail_run(root / "rail_clear_response", rev, clear_response=ARDUCOPTER_GUIDED.to_dict())
+    # the grant's repair selection, recorded as the node records it
+    # (--repair-mode, 2026-11-27); the default recorded as such; and the
+    # first_feasible flight recorded as the chain
+    _rail_run(root / "rail_first_feasible", rev, repair_mode="first_feasible")
+    _rail_run(root / "rail_chain_recorded", rev, repair_mode="chain")
+    shutil.copytree(root / "rail_first_feasible", root / "rail_first_feasible_as_chain")
+    mp = root / "rail_first_feasible_as_chain" / "metrics.json"
+    mj = json.loads(mp.read_text(encoding="utf-8"))
+    mj["shield_forecast"]["repair_mode"] = "chain"
+    mp.write_text(json.dumps(mj), encoding="utf-8")
     # a GPS dropout and an estimator loss with the pipe logged per row (the
     # ROS 2 node since 2026-11-21); the same rows without it (a run flown
     # before); and one setpoint the rail sent changed on a dropout tick
@@ -659,6 +676,29 @@ def test_a_recorded_clear_response_is_rebuilt_not_refused():
     assert r["verdict"] == "identical" and r["kind"] == "open_loop", r
     assert r["shield"]["clear_response"] == ARDUCOPTER_GUIDED.to_dict(), r["shield"]
     assert out["rail_ok"]["shield"]["clear_response"] is None, out["rail_ok"]["shield"]
+
+
+def test_a_recorded_repair_mode_is_rebuilt_not_refused():
+    """The rails record shield_forecast.repair_mode (--repair-mode,
+    2026-11-27, WP3-06), "chain" included, so without the key in
+    KNOWN_FORECAST_KEYS every rail run flown since would be refused. A
+    first_feasible flight replays identical on its own selection, and the
+    same flight recorded as the chain does not (the replay follows the
+    record, it does not fly the default)."""
+    assert "repair_mode" in RA.KNOWN_FORECAST_KEYS
+    out = _replayed()
+    if out == SKIP:
+        return SKIP
+    r = out["rail_first_feasible"]
+    assert r["verdict"] == "identical" and r["kind"] == "open_loop", r
+    assert r["shield"]["repair_mode"] == "first_feasible", r["shield"]
+    assert r["shield"]["repair_mode_from"] == "metrics.json", r["shield"]
+    c = out["rail_chain_recorded"]
+    assert c["verdict"] == "identical" and c["shield"]["repair_mode"] == "chain", c
+    assert out["rail_ok"]["shield"]["repair_mode"] == "chain", out["rail_ok"]["shield"]
+    assert out["rail_ok"]["shield"]["repair_mode_from"] == "revision default"
+    wrong = out["rail_first_feasible_as_chain"]
+    assert wrong["verdict"] != "identical", wrong
 
 
 OLD_PIPE_REFUSAL = ("the pipe the Shield read is not logged per tick: {} row(s) with no "
