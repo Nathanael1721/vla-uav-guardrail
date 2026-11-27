@@ -1635,6 +1635,92 @@ def test_the_shield_matrix_says_a_row_or_the_at_speed_cell_with_no_p0_tick():
     fun = KR.shield_matrix_section([dict(e, kpi_grade=False) for e in _matrix_eps((5, 117))])
     assert fun["basis"].startswith("all_shield_on") and fun["gate_met"], fun
     assert "functional evidence" in "\n".join(KR._render_shield_matrix(fun))
+    # A report with no matrix scenario episode (a follow flight, a CityLife
+    # or PAS run, a campaign of other families) prints one line and no gate
+    # verdict (2026-11-28 review: it printed every row NOT FLOWN, NOT MET).
+    for none in ([], [_matrix_ep("speed-cap", "x", 9)],
+                 [dict(e, arm="off") for e in _matrix_eps((5, 117))]):
+        nm = KR.shield_matrix_section(none)
+        assert nm["applies"] is False and nm["gate_met"] is None, nm
+        md = "\n".join(KR._render_shield_matrix(nm))
+        assert "Gate:" not in md and "NOT MET" not in md and "NOT FLOWN" not in md, md
+        assert "No Shield matrix scenario episode" in md, md
+    assert m["applies"] is True and m["matrix_episodes"] == 9, m
+
+
+def test_the_at_speed_gate_reads_every_cell_the_campaign_planned():
+    """REVIEW (2026-11-28). Without the campaign's plan the at-speed verdict
+    compared the non-vacuous cells with the cells in the report only: a smoke
+    that planned two near-edge-at-12mps cells, one of them missing from the
+    report (errored before flight, not accepted, or not KPI-grade), read
+    "1 of 1 cell(s) non-vacuous" and passed. With the campaign every planned
+    cell must be there, with each planned flight, and be non-vacuous."""
+    import shutil
+    KR = _report_module()
+
+    def eps_of():
+        eps = _matrix_eps((5, 117))
+        for i, e in enumerate(eps):
+            e["source"] = f"store/smX_{i:03d}_{e['scenario_id']}"
+        return eps
+
+    def campaign(eps, error=None):
+        # A sweep.json of the campaign: one Shield-on result per cell, the
+        # one named `error` errored before its flight (no mission tag).
+        res = []
+        for e in eps:
+            tag, cid = Path(e["source"]).name, e["id"].split("/")[0]
+            if cid == error:
+                res.append({"id": cid, "seed": 1001, "arm": "on", "status": "error",
+                            "error": "the rail did not start"})
+            else:
+                res.append({"id": cid, "seed": 1001, "arm": "on", "status": "pass",
+                            "mission_tag": tag, "run": f"store/{tag}"})
+        (tmp / "sweep.json").write_text(json.dumps({"results": res}), encoding="utf-8")
+        return KR.load_campaign(tmp / "sweep.json")
+
+    gone = "near-edge-at-12mps@ask_mps=20"
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        full = eps_of()
+        ok = KR.shield_matrix_section(full, campaign(full))
+        pl = ok["at_speed_near_edge"]["planned"]
+        assert [(c["cell"], c["flights"], c["planned_flights"], c["state"], c["met"])
+                for c in pl] == [("near-edge-at-12mps@ask_mps=12", 1, 1, "non-vacuous", True),
+                                 (gone, 1, 1, "non-vacuous", True)], pl
+        assert ok["gate_met"] is True, ok
+        assert "Planned by the campaign: 2 cell(s), 2 flown with every planned flight " \
+               "and non-vacuous." in "\n".join(KR._render_shield_matrix(ok))
+        # The 20 m/s cell is not in the report: the flown cells alone read
+        # 1 of 1 and met, as before the review; with the campaign, NOT MET.
+        short = [e for e in eps_of() if not e["id"].startswith(gone)]
+        assert KR.shield_matrix_section(short)["gate_met"] is True
+        for camp, why in ((campaign(eps_of()), "accepted"),
+                          (campaign(eps_of(), error=gone), "errored before flight")):
+            m = KR.shield_matrix_section(short, camp)
+            a = m["at_speed_near_edge"]
+            assert (a["cells_flown"], a["non_vacuous_cells"]) == (1, 1), a
+            assert a["non_vacuous"] is False and m["gate_met"] is False, m
+            miss = [c for c in a["planned"] if not c["met"]]
+            assert [(c["cell"], c["state"], c["flights"], c["campaign"]) for c in miss] == [
+                (gone, "missing", 0, [why])], miss
+            md = "\n".join(KR._render_shield_matrix(m))
+            assert "**A PLANNED CELL NOT MET** - 1 of 1 cell(s) non-vacuous" in md, md
+            assert (f"`{gone}` missing (0 of 1 planned flight(s) in the report; "
+                    f"campaign: {why})") in md, md
+            assert "Gate: **NOT MET**." in md
+        # Flown and accepted but not KPI-grade: out of the basis, so missing.
+        ng = [dict(e, kpi_grade=False) if e["id"].startswith(gone) else e for e in eps_of()]
+        m = KR.shield_matrix_section(ng, campaign(eps_of()))
+        assert not m["gate_met"] and [c["state"] for c in
+                                      m["at_speed_near_edge"]["planned"]] == [
+            "non-vacuous", "missing"], m
+        # A campaign that planned a matrix cell still gets a verdict when
+        # none of its matrix flights is in the report.
+        none = KR.shield_matrix_section([], campaign(eps_of()))
+        assert none["applies"] is True and none["gate_met"] is False, none
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_the_shield_matrix_families_are_the_librarys_and_the_smoke_flies_each_row():

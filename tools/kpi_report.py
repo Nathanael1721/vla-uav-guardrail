@@ -244,7 +244,10 @@ near-edge, dyn-nfz spawn, time-window switch, three simultaneous violations,
 GPS noise / latency), whether it has a non-vacuous cell, and whether every
 cell of near-edge-at-12mps is non-vacuous (JSON `shield_matrix`, Markdown
 "Shield test matrix" after the KPI summary): the release gate's line,
-docs/RUNBOOK-release.md step 5.
+docs/RUNBOOK-release.md step 5. With a campaign, every at-speed cell it
+planned must be in the report and non-vacuous (a missing one is not met); a
+report with no matrix scenario episode and no campaign planning one (a
+follow flight, a CityLife or PAS run) prints one line and no verdict.
 """
 from __future__ import annotations
 
@@ -2707,8 +2710,31 @@ SHIELD_MATRIX = (
 # other near-edge family's demo policy caps at 4 m/s). Every one of its cells
 # must see a P0 tick, not only one of the row's.
 AT_SPEED_NEAR_EDGE = "near-edge-at-12mps"
-SHIELD_MATRIX_GATE = ("each of the five matrix rows has a non-vacuous cell, and the "
-                      "at-speed near-edge cell is non-vacuous")
+SHIELD_MATRIX_GATE = ("each of the five matrix rows has a non-vacuous cell, and every "
+                      "at-speed near-edge cell the campaign planned flew and is non-vacuous")
+
+
+def _cell_scenario(cell_id) -> str:
+    """A campaign cell id's scenario: `near-edge-at-12mps@ask_mps=12,...` and
+    `nfz-head-on#pp0,prefix-on` read `near-edge-at-12mps` and `nfz-head-on`."""
+    return re.split(r"[@#]", str(cell_id), maxsplit=1)[0]
+
+
+def planned_cells(camp: dict | None, sid: str) -> dict[str, dict] | None:
+    """The Shield-on cells of scenario `sid` a campaign planned: every result
+    of its sweep.json, flown or not (load_campaign's `_episodes`, the main
+    campaign's when it has supplements), each with its planned flights (one
+    per seed) and what the campaign made of them. None without a campaign."""
+    if camp is None:
+        return None
+    out: dict[str, dict] = {}
+    for ep in camp.get("_episodes") or []:
+        cid, seed, arm = ep["key"]
+        if arm == "on" and _cell_scenario(cid) == sid:
+            c = out.setdefault(cid, {"seeds": set(), "campaign": set()})
+            c["seeds"].add(seed)
+            c["campaign"].add(str(ep.get("state")))
+    return out
 
 
 def p0_state(r: dict) -> str:
@@ -2720,7 +2746,7 @@ def p0_state(r: dict) -> str:
     return "non-vacuous" if (r.get("p0_violation_ticks") or 0) > 0 else "not measured"
 
 
-def shield_matrix_section(episodes: list[dict]) -> dict:
+def shield_matrix_section(episodes: list[dict], camp: dict | None = None) -> dict:
     """Whether each row of the Shield's test matrix has a non-vacuous cell and
     whether every cell of the at-speed near-edge family is non-vacuous (the
     release gate, docs/RUNBOOK-release.md step 5). A cell is a family row of
@@ -2728,7 +2754,13 @@ def shield_matrix_section(episodes: list[dict]) -> dict:
     tables are. Read over the KPI-grade Shield-on episodes when the report
     has any, else over every Shield-on episode (functional evidence, said
     so in `basis`); controls never count. A row or family with no cell
-    flown is not met."""
+    flown is not met. With a campaign (`camp`, load_campaigns), every
+    at-speed cell it planned must be in that basis with all its planned
+    flights, and non-vacuous (`planned`): a planned cell that is missing,
+    errored or not KPI-grade is not met, where the flown cells alone would
+    read "1 of 1". A report with no matrix scenario episode, of a campaign
+    that planned none (a follow flight, a CityLife or PAS run), is not read
+    against the gate: `applies` false, `gate_met` None."""
     on = [e for e in episodes if e.get("arm") == "on" and e.get("scenario_id")]
     graded = [e for e in on if e.get("kpi_grade")]
     basis = ("kpi_grade_shield_on" if graded else
@@ -2762,12 +2794,40 @@ def shield_matrix_section(episodes: list[dict]) -> dict:
                      "has_non_vacuous_cell": t["non_vacuous_cells"] > 0, "cells": cs})
     cs = cells({AT_SPEED_NEAR_EDGE})
     t = tally(cs)
+    # The campaign's plan (2026-11-28 review): a planned cell is matched to
+    # the basis by the run the campaign accepted for it (campaign_gate's
+    # name), so a missing one cannot hide behind the cells that flew.
+    plan = planned_cells(camp, AT_SPEED_NEAR_EDGE)
+    planned = None
+    if plan is not None:
+        acc = (camp or {}).get("accepted") or {}
+        planned = []
+        for cid, p in sorted(plan.items()):
+            g = [e for e in (graded or on)
+                 if (acc.get(Path(str(e.get("source") or e.get("id"))).name) or {})
+                 .get("cell") == cid]
+            r = K.rollup(g) if g else {}
+            st = p0_state(r) if g else "missing"
+            planned.append({"cell": cid, "planned_flights": len(p["seeds"]),
+                            "flights": len(g), "campaign": sorted(p["campaign"]),
+                            "p0_violation_ticks": r.get("p0_violation_ticks"), "state": st,
+                            "met": st == "non-vacuous" and len(g) >= len(p["seeds"])})
     at = {"scenario_id": AT_SPEED_NEAR_EDGE, **t,
-          "non_vacuous": t["cells_flown"] > 0 and t["non_vacuous_cells"] == t["cells_flown"],
-          "cells": cs}
-    return {"basis": basis, "episodes": len(graded or on), "rows": rows,
-            "at_speed_near_edge": at, "gate": SHIELD_MATRIX_GATE,
-            "gate_met": all(r["has_non_vacuous_cell"] for r in rows) and at["non_vacuous"]}
+          "non_vacuous": (t["cells_flown"] > 0 and t["non_vacuous_cells"] == t["cells_flown"]
+                          and all(c["met"] for c in planned or [])),
+          "cells": cs, "planned": planned}
+    # Whether the gate is read at all: a matrix scenario episode is in the
+    # basis, or the campaign planned one.
+    matrix = {s for _, sids in SHIELD_MATRIX for s in sids}
+    n_matrix = sum(1 for e in (graded or on)
+                   if str(e.get("scenario_id")).split("@")[0] in matrix)
+    applies = bool(n_matrix) or any(
+        _cell_scenario(ep["key"][0]) in matrix for ep in (camp or {}).get("_episodes") or [])
+    return {"basis": basis, "episodes": len(graded or on), "matrix_episodes": n_matrix,
+            "applies": applies, "rows": rows, "at_speed_near_edge": at,
+            "gate": SHIELD_MATRIX_GATE,
+            "gate_met": (all(r["has_non_vacuous_cell"] for r in rows) and at["non_vacuous"]
+                         if applies else None)}
 
 
 # The measures of the prefix A/B of a pilot that consumes the CSP
@@ -3665,6 +3725,12 @@ def _render_shield_matrix(m: dict | None) -> list[str]:
     """The Shield test matrix's non-vacuity (shield_matrix_section)."""
     if not m:
         return []
+    if not m.get("applies", True):
+        # No matrix scenario episode and none planned: no gate verdict.
+        return ["## Shield test matrix: a P0 tick in every row", "",
+                "No Shield matrix scenario episode (Shield on) is in this report, and no "
+                "campaign of it planned one: the release gate's matrix line "
+                "(docs/RUNBOOK-release.md step 5) is not read here.", ""]
     basis = ("the KPI-grade Shield-on episodes" if m["basis"] == "kpi_grade_shield_on"
              else "every Shield-on episode (no KPI-grade episode: functional evidence)")
     L = ["## Shield test matrix: a P0 tick in every row", "",
@@ -3683,13 +3749,23 @@ def _render_shield_matrix(m: dict | None) -> list[str]:
     a = m["at_speed_near_edge"]
     verdict = ("non-vacuous" if a["non_vacuous"] else
                "NOT FLOWN" if not a["cells_flown"] else "VACUOUS" if not
-               a["non_vacuous_cells"] else "PARTLY VACUOUS")
+               a["non_vacuous_cells"] else "PARTLY VACUOUS" if
+               a["non_vacuous_cells"] < a["cells_flown"] else "A PLANNED CELL NOT MET")
     L += ["", f"At-speed near-edge (`{a['scenario_id']}`): **{verdict}** - "
               f"{a['non_vacuous_cells']} of {a['cells_flown']} cell(s) non-vacuous"
           + ("" if not a["cells"] else ": " + "; ".join(
               f"`{c['family']}` {c['state']} ({c['p0_violation_ticks']} P0 tick(s))"
-              for c in a["cells"])) + ".",
-          "", f"Gate: **{'met' if m['gate_met'] else 'NOT MET'}**.", ""]
+              for c in a["cells"])) + "."]
+    pl = a.get("planned")
+    if pl is not None:
+        unmet = [c for c in pl if not c["met"]]
+        L += ["", f"Planned by the campaign: {len(pl)} cell(s), {len(pl) - len(unmet)} "
+                  f"flown with every planned flight and non-vacuous"
+              + ("" if not unmet else "; not met: " + "; ".join(
+                  f"`{c['cell']}` {c['state']} ({c['flights']} of {c['planned_flights']} "
+                  f"planned flight(s) in the report; campaign: {', '.join(c['campaign'])})"
+                  for c in unmet)) + "."]
+    L += ["", f"Gate: **{'met' if m['gate_met'] else 'NOT MET'}**.", ""]
     return L
 
 
@@ -5319,7 +5395,7 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         "kpi_summary": kpi_summary(head_eps, latency, readings),
         # Each Shield matrix row's non-vacuous cell, and the at-speed
         # near-edge family's (2026-11-28, the release gate).
-        "shield_matrix": shield_matrix_section(head_eps),
+        "shield_matrix": shield_matrix_section(head_eps, camp),
         "failsafe_readings": readings,
         "latency": latency,
         "headline": headline(head_eps),
@@ -5500,13 +5576,17 @@ def main(argv: list[str] | None = None) -> int:
               f"{fs['scored']} = {fs['failsafe_trigger_correctness']}, Wilson 95 % low "
               f"{fs.get('wilson_low_95')}" + _backstop_note(fs))
     mx = rep.get("shield_matrix")
-    if mx and mx["episodes"]:
+    if mx and mx.get("applies"):
         a = mx["at_speed_near_edge"]
+        pl = a.get("planned")
         print(f"Shield matrix ({mx['gate']}): "
               + ", ".join(f"{r['row']} {r['non_vacuous_cells']}/{r['cells_flown']}"
                           for r in mx["rows"])
               + f" cells non-vacuous; {a['scenario_id']} {a['non_vacuous_cells']}/"
-                f"{a['cells_flown']}: {'met' if mx['gate_met'] else 'NOT MET'}")
+                f"{a['cells_flown']}"
+              + ("" if pl is None else
+                 f" (planned {sum(1 for c in pl if c['met'])}/{len(pl)} met)")
+              + f": {'met' if mx['gate_met'] else 'NOT MET'}")
     if rep.get("baseline"):
         b = rep["baseline"]
         reg = sum(1 for r in b["new_failures"] if r.get("was") == "passing")
