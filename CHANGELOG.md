@@ -16,6 +16,29 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-27 (WP1-04: the policy bundles under the Lab CA; flown ca1127)
+
+The grant's Policy DSL page asks every published bundle's `signed_by` to be
+a "Lab CA or ITRI CA reference" and leaves "Lab-internal CA or ITRI CA?"
+open. On 27 Nov the user chose the Lab CA. This is a lab decision, not the
+PI's; whether the PI or ITRI accepts it is not recorded.
+
+#### Added
+- policies/keys/trusted_signers.json (7144b7f): authority `lab-ca` (CN=VLA Guardrail Lab Root CA, CA certificate SHA-256 71d1e071d3985bc6..., valid to 2036-10-30) and one codeSigning leaf per bundle key, issued with `tools/build_flight_bundles.py --issue-cert` from its public half: lab-ca:71d1e071d3985bc6:ed25519:6ec75b535ef5c533 (desktop) and lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701 (AGX Orin, whose private key never left it). The bare lab-dev identities carry retired_on 2026-11-27T00:10:37Z and superseded_by; they still verify what they signed before that instant. retired_on is compared with the signer-written issued_at, so it is a naming rule, not revocation (docs/RUNBOOK-bundle-ca.md, 9589623).
+- docs/RUNBOOK-bundle-ca.md "Later: moving to ITRI's CA" and tests/test_bundle.py `test_moving_to_another_ca_retires_the_old_ca_identity_and_keeps_its_bundles` (9589623): register ITRI's leaves, re-sign with `--authority itri-ca`, then retire the lab-ca signer entries rather than remove the authority, so every bundle and run signed under the Lab CA still verifies on replay. tools/bundle_ca_evidence.py's drill runs it (10 tests).
+- docs/data/bundle_ca_20261127/ (181f583): the tools/bundle_ca_evidence.py records of both hosts at 9589623 (clean): 1 authority, 2 certified signers with chain verified, 0 bare signers in force, 2 retired; 17 policy bundles verified with chain verified, 31 older versions with chain none (refused by `--require-chain`); the desktop drill 10/10 PASS (not run on the AGX). The README says what the folder does not show.
+
+#### Changed
+- The 17 flight bundles the hil profiles and the perception rail fly were re-signed on the desktop and rebuilt on the AGX Orin under its own lab-ca identity (bundles/ is gitignored): policy_hash, policy_id, version and IR unchanged in all 17; signed_by, signer and issued_at changed; four first-version bundles built before X-10b (msl-dem-sitl, -zone, -corridor, follow-car-citylife-people) now carry its first-version changelog text. Backups before the re-sign: bundles_pre_ca_20261127 on both hosts (56 files, SHA256SUMS). A bundle still signed by a bare key (fase3-sim-demo-v0.1.3) fails `python -m guardrail.bundle verify --require-chain` with rc 1.
+- deploy/topologies/hil.env and flight.env: VLAGUARD_REQUIRE_CHAIN=1; dev.env stays 0 (cda127e). tests/test_deploy_configs.py pins dev 0 / hil 1 / flight 1, and the perception script test checks that the caller's 0 and 1 both win over hil.env's 1. The runs flown before 27 Nov flew with 0, and their records say so (policy_source.require_chain).
+- docs/FINAL-REPORT.md and docs/FINAL-REPORT-outline.md (this commit): Appendix A WP1-04 and X-10 PARTIAL to DONE after an independent three-reviewer review against the grant's wording (3 of 3 each), their rows rewritten from the review, identical in both files, the residuals the reviewers agree on in the Open column (no PI or ITRI acceptance; the KPI runs of record flew before 27 Nov under the bare keys; CA key custody and no revocation; the KPI gate does not check the chain; layers_merged never on a flight bundle; issued_at changed by the re-sign; the bundle root not shown to be the SROS 2 root). The X-01 and WP4-17 rows name the Lab CA instead of "the CA unnamed". Report: the status block, section 1, 4.1, 5.7 (item 8, signing), section 9 decision 1 rewritten and the 22 Nov "Wait for the PI to name the CA" row kept and marked superseded, the PI/ITRI items, section 11 (done 27 Nov; the plan). Outline: header, sections 4.1, 9 and 10, the Appendix A preamble. Appendix A is now 114 DONE, 21 PARTIAL, 1 DRIFT, 0 MISSING (WP1: 23 DONE, 2 PARTIAL; cross-cutting: 14 DONE, 2 PARTIAL).
+
+#### Fixed
+- tools/bundle_ca_evidence.py `--drill` (988434b): since 909804b (26 Nov) tests/test_bundle.py imports its sibling helper wgs84_fixture, and the drill, which loads that file from the repository root, died with ModuleNotFoundError. The drill now puts tests/ on sys.path while the module loads; test_the_evidence_record_says_what_this_machine_established runs the tool as the integrator does and fails without the fix.
+
+#### Flown
+- ca1127_001_nfz-head-on (181f583's evidence; hil, AGX Orin + ArduCopter 4.5.7 SITL over MAVROS 2, 9589623 on both hosts and clean, `smoke --only nfz-head-on`, seed 1001, sim_speedup 1.0, KPI-grade): policy_source kind=bundle, bundles/fase3-sim-demo-v0.1.4.tar.gz (the Orin's copy), declared = loaded = expected policy_hash sha256:b665adba... (the hash ntFIN5 flew), issued_at 2026-11-27T00:17:47Z, signed_by lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701, signature and chain verified, require_chain true. P0 escape 0 (6 P0-violation ticks); the FSM went Normal -> Brake -> Loiter -> RTL and reached home; `tick_ms` max 16.29 ms, 0 of 333 measured ticks over 100 ms. Its replay bundle is signed by the same identity. It is the only flight under the CA: the KPI runs of record (ntFIN5, smREL070, smREL071 and before) flew bare-key bundles with the chain requirement off.
+
 ### 2026-11-26 (docs: the GitHub CI history at release 0.7.1 corrected) — no Appendix A status changed
 
 #### Corrections (earlier text was wrong; the earlier entries are left as written)
