@@ -39,4 +39,16 @@ The delivery contract is also checked without ROS:
 `tests/test_ap_dds_adapter.py`
 `test_the_shields_delivery_monitor_accepts_the_adapters_reports`.
 
+How closely the autopilot followed the DDS commands on stage1_02 (cruise
+|state velocity - emitted velocity| median 0.049 m/s, p95 0.101 m/s;
+measured 4.030 m/s against 4.00 m/s commanded) is in `follow_check.md`,
+with the script that computes it from the committed records.
+
+The `Path` row of the stage1_01 and stage1_02 `report.md` files names
+`mavlink_adapter -> /mavros/setpoint_raw/local -> MAVROS 2`. That row was a
+fixed string until 28 Nov. The records are kept as they were written; the
+setpoints went over `/ap/cmd_vel`, as the table above says. Since 28 Nov
+`sitl/ros2_shield_node.py` (`setpoint_path`) writes the row from the
+adapter it sees subscribed to `/shield/setpoint`.
+
 Local paths in the stage1_01 records are written `<repo>`.

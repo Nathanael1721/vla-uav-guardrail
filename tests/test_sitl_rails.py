@@ -342,7 +342,13 @@ def test_the_ros2_node_publishes_the_grants_setpoint_not_a_twist():
                if isinstance(n, ast.Constant) and isinstance(n.value, str)
                and n.value != ast.get_docstring(tree, clean=False)}
     assert "Twist" not in imported, "the Shield node imports Twist again"
-    assert not any("cmd_vel" in s for s in strings), "it publishes on cmd_vel"
+    # One cmd_vel string is allowed (2026-11-28): the AP_DDS adapter's topic,
+    # named in report.md's Path row (setpoint_path) - a label, defined once
+    # and used once in SETPOINT_ADAPTER_PATHS, never a topic this node uses.
+    label = "/ap/cmd_vel"
+    assert not any("cmd_vel" in s for s in strings - {label}), "it publishes on cmd_vel"
+    assert src.count(f'"{label}"') == 1 and src.count("AP_DDS_TOPIC_CMD_VEL") == 2, \
+        "the AP_DDS topic is used beyond the Path row's label"
     assert "TOPIC_SETPOINT" in src and "TOPIC_MODE_REQUEST" in src
     import mavlink_adapter_node as A
     assert A.TOPIC_SETPOINT == "/shield/setpoint"
