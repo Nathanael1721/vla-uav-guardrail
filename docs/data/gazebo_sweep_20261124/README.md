@@ -116,9 +116,11 @@ cells.
 
 ## Open
 
-- **Home-check refusals on this rail:** 11 of 143 attempts (7.7 %), MAVROS
-  never got the home position. Each was refused before arming, as designed,
-  and flown again; cause not investigated.
+- **Home-check refusals on this rail:** 11 of 143 attempts (7.7 %), the
+  Shield node never got the home position. Each was refused before arming,
+  as designed, and flown again. Read from the kept folders on 27 Nov (next
+  section): the node's home requests never reached the autopilot; why
+  MAVROS dropped them is not established.
 - **Run manifests say `unversioned`** when the rail is launched from a
   Windows git worktree: the Shield node runs in WSL, where
   `git rev-parse` fails on the worktree's `.git` file (`gitdir: D:/...`).
@@ -130,3 +132,90 @@ cells.
   this rail.
 - The grant's broad sweep (~3000 scenarios x 5 seeds at speed > 1) is not
   flown: the Shield node runs on wall time, so speed > 1 is refused.
+
+## The 11 home-check refusals, read from the kept folders (27 Nov)
+
+Read offline from the 11 folders in `refly/errored_run_folders.txt`
+(worktree flight-21c2771, `demo/out/_gz_errors_rel070/`) and, for contrast,
+the 132 flown run folders: each run's `events.jsonl` and its rosbag2 `bag/`
+(MCAP, read with `rosbags`), including the raw MAVLink MAVROS recorded
+(`/uas1/mavlink_sink` to the autopilot, `/uas1/mavlink_source` from it). The
+Shield node code is the release's, 21c2771 (`sitl/ros2_shield_node.py`,
+`check_home` and `bring_up`).
+
+| | 132 flown | 11 refused |
+|---|---|---|
+| `COMMAND_LONG` 410 (MAV_CMD_GET_HOME_POSITION) on the wire | exactly 1, 25.49-27.78 s after the node's `episode_start` | exactly 1, 2.02-2.86 s before the node's `episode_start` |
+| its `COMMAND_ACK` | ACCEPTED (132) | FAILED (11) |
+| node's `/mavros/home_position/req_update` calls (`home_check.home_requests`) | 1 | 30 (one every 3 s for 90 s) |
+| `HOME_POSITION` (242) from the autopilot | 2 (121 runs) or 3 (11 runs) | 1 |
+| `/mavros/home_position/home` messages in the bag | 2-3 | 1, published 1.47-3.65 s after the bag started |
+| node's first home request, against "EKF3 IMU0 is using GPS" | 6.90 to 10.24 s after | 11.04 s before to 6.17 s after |
+
+What the records show:
+
+- **The autopilot did send a home, once, at boot.** In every refused run
+  ArduPilot sent one `HOME_POSITION` 1.47-3.65 s into the bag, 21.4-21.9 s
+  before "EKF3 IMU0 is using GPS", and MAVROS published it (offered QoS: RELIABLE,
+  TRANSIENT_LOCAL). The Shield node subscribes to
+  `/mavros/home_position/home` with `qos_profile_sensor_data` (best effort,
+  volatile), so it never receives a sample published before it subscribed:
+  in all 132 flown runs the node's `autopilot_home` event falls -0.03 to
+  +0.06 s from the start of its own request loop (computed from
+  `waited_s`, which is rounded to 0.1 s), and the 11 refused runs have none. In 2 of the 11 the adapter (`sitl/mavlink_adapter_node.py`),
+  subscribed earlier, did take that boot-time home and uploaded the fence
+  before GPS; in the other 9 it had no home either and uploaded nothing.
+- **The node's requests never reached the autopilot.** In every flown run
+  the node's one `req_update` call put a `COMMAND_LONG` 410 on the wire,
+  ArduPilot answered ACCEPTED and sent `HOME_POSITION`, and the check passed
+  with `waited_s` 0.0 (125 runs) to 0.7 (7 runs). In every refused run the
+  node called
+  `req_update` 30 times and the wire carries no `COMMAND_LONG` 410 from any
+  of them; the only one is the request sent before the node started (the
+  node is the only code in this repository that calls `req_update`), which
+  ArduPilot answered FAILED because it held no home yet.
+- **What differs: the order of events.** The node asks for the home after
+  waiting up to 15 s for the adapter's fence upload (`bring_up`), and the
+  adapter uploads only once it has a home. In the flown runs that wait
+  timed out (15.0-15.4 s after the fences went out) 6.9-10.2 s after the
+  EKF took GPS, and the node's request was answered. In the refused runs
+  the fences went out 8.9-11.1 s before GPS (4.8-8.1 s in the flown runs),
+  the wait ran its 15 s in 9 of them and ended after 0.06-0.10 s in the 2
+  with an early upload, so the node's first request left at most 6.17 s
+  after GPS, or before it.
+- **The first request's timing does not by itself explain the refusals.**
+  The node kept calling `req_update` every 3 s (`HOME_REQUEST_EVERY_S`)
+  for its 90 s wait (`HOME_WAIT_S`), so in each refused run at least 22 of
+  its 30 calls went out later than 10.24 s after GPS, the latest point at
+  which a flown run's request was answered; none of them, early or late,
+  reached the wire.
+- **What does separate the two groups is a request before the node.** All
+  11 refused runs, and none of the 132 flown runs, carry a `COMMAND_LONG`
+  410 sent before the node's `episode_start` (2.02-2.86 s before it) and
+  answered FAILED; the flown runs' only 410 is the node's, 25.49-27.78 s
+  after `episode_start`. Whether that early, failed request is what kept
+  MAVROS from sending the node's later ones is not recorded: the bag
+  cannot say why MAVROS sent none of them (its home plugin's handling of
+  `req_update` is not in the bag), so the cause is not established.
+
+Not changed here: the node's subscription QoS and its request loop. A
+transient-local subscription would deliver the boot-time home, but that
+home predates the EKF's GPS, so the check would then rest on a home set
+before the position estimate; that change needs its own review and
+flights. No Shield decision is involved: every refusal is before arming.
+
+## Six-name bundles and the manifest revision on Gazebo
+
+Read from the run folders on 27 Nov (`manifest.json` and the six names in
+each episode folder):
+
+| Gazebo runs | Episodes | All six names | `manifest.json` `code_revision` |
+|---|---|---|---|
+| 20 Nov sweep, lab checkout (`demo/out/gzsweep_20261120/episode-*`, `../gazebo_sweep_20261120/`) | 8 | 7 (corridor-along has no `shield_audit.jsonl`: 0 repairs) | `28a594dd0c43` (8/8) |
+| 25 Nov mid-term gate, worktree midterm-demo (`demo/out/stress_gazebo_midterm/episode-*`, `../gazebo_midterm_20261125/`) | 3 | 3 | `75a6d45be758` (3/3) |
+| this sweep, worktree flight-21c2771 (`demo/out/stress_gazebo_functional/episode-*`) | 132 | 132 | `unversioned` (132/132) |
+
+The `unversioned` record is the Windows-worktree case of Open above; its
+fix, 6a78190 ("manifest.code_revision: read a Windows git worktree from
+WSL"), is an ancestor of 75a6d45 and not of 21c2771, and the mid-term runs
+at 75a6d45 record their revision from a worktree.

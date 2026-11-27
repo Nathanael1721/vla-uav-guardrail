@@ -30,8 +30,10 @@ that produced it, or re-runs the code that does:
   release      CHANGELOG.md, the dated sections from 2026-10-06 on: the newest
                one's date is the deck's status date, and the newest recorded
                suite result is the slide's test count
-  wp1          docs/data/wp1_roundtrip.json (tools/wp1_roundtrip_kpi.py),
-               policies/policy.lock.json
+  wp1          docs/data/wp1_roundtrip_4edd5d1.json (tools/wp1_roundtrip_kpi.py
+               at 4edd5d1, 6 Nov; the record this deck was built from, kept
+               under a dated name since docs/data/wp1_roundtrip.json became the
+               21c2771 record on 27 Nov), policies/policy.lock.json
   wp2          guardrail.compiler.coverage_report over policies/, counted with
                OpenVLA's own tokenizer when this machine has it; the example
                prompt is compiled here from the city no-fly-zone policy
@@ -403,7 +405,10 @@ def frac(s: str) -> tuple[int, int]:
     return int(a), int(b)
 
 
-WP1_SRC = ROOT / "docs" / "data" / "wp1_roundtrip.json"
+# The October deck quotes the 6 Nov round trip (4edd5d1, 32 policies). Since
+# 27 Nov docs/data/wp1_roundtrip.json holds the release-of-record run
+# (21c2771, 33 policies), so the deck reads the dated copy of its own record.
+WP1_SRC = ROOT / "docs" / "data" / "wp1_roundtrip_4edd5d1.json"
 LOCK_SRC = ROOT / "policies" / "policy.lock.json"
 
 

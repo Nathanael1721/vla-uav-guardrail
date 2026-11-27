@@ -409,4 +409,5 @@ code (master 30667cc): 392 directly, each to the same id@version and the
 same canonical bytes under the same hash form, and 13 through their own
 generation chain, whose base the label now names as the old version of its
 file (`corridor_survey.yaml as corridor-survey@0.1.2 -> policy_g4`).
-`tools/wp1_roundtrip_kpi.py` counts 404/404 of them (docs/data/wp1_roundtrip.json).
+`tools/wp1_roundtrip_kpi.py` counts 404/404 of them
+(docs/data/wp1_roundtrip_4edd5d1.json, the 6 Nov record).

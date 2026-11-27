@@ -609,6 +609,29 @@ def test_the_stored_run_census_finds_every_run():
         assert all(v["matched_after"] for v in five.values()), five
 
 
+def test_the_default_record_is_not_older_than_a_dated_one():
+    """Shown failing on 27 Nov at 78b50fd: docs/data/wp1_roundtrip.json (what
+    tools/kpi_report.py, tools/build_dashboard.py and the tool's own default
+    output use) was still the 6 Nov run at 4edd5d1, while the release-of-record
+    run at 21c2771 sat beside it as wp1_roundtrip_21c2771.json, so every nightly
+    KPI report printed the older round trip. A dated copy must also carry the
+    revision its name gives."""
+    data = ROOT / "docs" / "data"
+    default = data / "wp1_roundtrip.json"
+    dated = sorted(data.glob("wp1_roundtrip_*.json"))
+    if not default.is_file() or not dated:
+        return SKIP
+    d = json.loads(default.read_text(encoding="utf-8"))
+    for p in dated:
+        w = json.loads(p.read_text(encoding="utf-8"))
+        sha = p.stem.split("_")[-1]
+        assert str(w["code_revision"]).startswith(sha), (p.name, w["code_revision"])
+        # ISO-8601 UTC stamps of one format compare as strings.
+        assert d["generated"] >= w["generated"], (
+            f"{default.name} ({d['code_revision']}, {d['generated']}) is older "
+            f"than {p.name} ({w['generated']})")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
