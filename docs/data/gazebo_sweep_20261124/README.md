@@ -145,7 +145,7 @@ Shield node code is the release's, 21c2771 (`sitl/ros2_shield_node.py`,
 
 | | 132 flown | 11 refused |
 |---|---|---|
-| `COMMAND_LONG` 410 (MAV_CMD_GET_HOME_POSITION) on the wire | exactly 1, after the node started | exactly 1, before the node's `episode_start` |
+| `COMMAND_LONG` 410 (MAV_CMD_GET_HOME_POSITION) on the wire | exactly 1, 25.49-27.78 s after the node's `episode_start` | exactly 1, 2.02-2.86 s before the node's `episode_start` |
 | its `COMMAND_ACK` | ACCEPTED (132) | FAILED (11) |
 | node's `/mavros/home_position/req_update` calls (`home_check.home_requests`) | 1 | 30 (one every 3 s for 90 s) |
 | `HOME_POSITION` (242) from the autopilot | 2 (121 runs) or 3 (11 runs) | 1 |
@@ -174,19 +174,29 @@ What the records show:
   of them; the only one is the request sent before the node started (the
   node is the only code in this repository that calls `req_update`), which
   ArduPilot answered FAILED because it held no home yet.
-- **The difference is timing.** The node asks for the home after waiting
-  up to 15 s for the adapter's fence upload (`bring_up`), and the adapter
-  uploads only once it has a home. In the flown runs that wait timed out
-  (15.0-15.4 s after the fences went out) 6.9-10.2 s after the EKF took
-  GPS, and the node's request was answered. In
-  the refused runs the fences went out 8.9-11.1 s before GPS (4.8-8.1 s in
-  the flown runs), the wait ran its 15 s in 9 of them and ended after
-  0.06-0.10 s in the 2 with an early upload, so the node's first request
-  left at most 6.17 s after
-  GPS, or before it, and none of its requests, then or later, reached the
-  autopilot. The bag cannot say why MAVROS sent none of them (its home
-  plugin's handling of `req_update` is not recorded), so that step is not
-  established.
+- **What differs: the order of events.** The node asks for the home after
+  waiting up to 15 s for the adapter's fence upload (`bring_up`), and the
+  adapter uploads only once it has a home. In the flown runs that wait
+  timed out (15.0-15.4 s after the fences went out) 6.9-10.2 s after the
+  EKF took GPS, and the node's request was answered. In the refused runs
+  the fences went out 8.9-11.1 s before GPS (4.8-8.1 s in the flown runs),
+  the wait ran its 15 s in 9 of them and ended after 0.06-0.10 s in the 2
+  with an early upload, so the node's first request left at most 6.17 s
+  after GPS, or before it.
+- **The first request's timing does not by itself explain the refusals.**
+  The node kept calling `req_update` every 3 s (`HOME_REQUEST_EVERY_S`)
+  for its 90 s wait (`HOME_WAIT_S`), so in each refused run at least 22 of
+  its 30 calls went out later than 10.24 s after GPS, the latest point at
+  which a flown run's request was answered; none of them, early or late,
+  reached the wire.
+- **What does separate the two groups is a request before the node.** All
+  11 refused runs, and none of the 132 flown runs, carry a `COMMAND_LONG`
+  410 sent before the node's `episode_start` (2.02-2.86 s before it) and
+  answered FAILED; the flown runs' only 410 is the node's, 25.49-27.78 s
+  after `episode_start`. Whether that early, failed request is what kept
+  MAVROS from sending the node's later ones is not recorded: the bag
+  cannot say why MAVROS sent none of them (its home plugin's handling of
+  `req_update` is not in the bag), so the cause is not established.
 
 Not changed here: the node's subscription QoS and its request loop. A
 transient-local subscription would deliver the boot-time home, but that
