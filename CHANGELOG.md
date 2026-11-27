@@ -23,6 +23,7 @@ shipped change and recorded as one.
 - **WP3-19's hot-apply generations row flown**: each run's report.md lists every generation and its source (smREL072_035: `1: g1 t=3.05 s (scenario event: #0 spawn_polygon_fence rtl-zone)`); `shield_forecast.repair_mode` reads `chain` in 52 of 52 metrics.json.
 - smREL072_035 failsafe-rtl-zone took the FSM's G6 edge (RTL failed: no progress home, -0.10 m in 5.0 s) to Land, where smREL071's flight of the cell reached home under RTL; correct under (r2). The no-progress watch did not change between 0.7.1 and 0.7.2, and the same cell took G6 in 6 of 18 ntFIN5 runs.
 - Report text (docs-1127c): docs/FINAL-REPORT.md and docs/FINAL-REPORT-outline.md carry release 0.7.2, smREL072 and the green GitHub runs of the release push (45969020953 master, 45969019967 tag) in Appendix A rows WP1-04, X-10, WP3-06, WP3-19, WP4-06, WP4-14, ARCH-31 and X-01 (identical in both files), the report's header, sections 1, 4.1, 4.4, 5.7 (item 8), 9 (decisions 1 and 9), 9.2 (question (c)), 10 and 11 and the Appendix A note, and the outline's status note, sections 4, 9 and 10. No status changed: 114 DONE, 21 PARTIAL, 1 DRIFT, 0 MISSING.
+- CI before the merge: the worktree at 3b44cd0, 193/193 files, claims rc 0, smoke rc 0 (docs/data/ci_local/3b44cd0ef38a.json); the lab checkout at 2964bf9, 193/193 files, 4997/5018 tests passed, claims rc 0, smoke rc 0 (docs/data/ci_local/2964bf994708.json).
 
 ## [0.7.2] — 2026-11-27
 
