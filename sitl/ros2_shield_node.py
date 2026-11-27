@@ -606,6 +606,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.hold_flight import HoldFlight, HoldWatch, body_command     # noqa: E402
+from guardrail.hot_apply_log import generations_cell, hot_apply_generations  # noqa: E402
 from guardrail.response import ARDUCOPTER_GUIDED                         # noqa: E402
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
@@ -3322,6 +3323,9 @@ if HAVE_ROS:
             self.takeoff_speedup: dict | None = None
             self.n_touched = self.n_braked = 0
             self.spawn_t = self.spawn_pos = None
+            # The --dynamic zone's generation, taken when it is applied: a
+            # later hot-apply moves policy.generation on (report.md).
+            self.spawn_gen: int | None = None
             self.dynamic_fence_id: str | None = None
             self.done = False
             self.reached = False
@@ -5232,6 +5236,7 @@ if HAVE_ROS:
                                 fn, g)
                 self._queue_fences(f"hot_apply {applied.id} ({applied.type})")
                 self.spawn_t, self.spawn_pos = now, (st.x, st.y)
+                self.spawn_gen = g
                 rule_events.append(f"dynamic zone {applied.id}")
                 self._defer("console line", functools.partial(
                     self.get_logger().info,
@@ -6419,6 +6424,17 @@ if HAVE_ROS:
                 + ("" if graded else "  (" + "; ".join(why) + ")"))
             fsm_line = (f"{self.fsm.summary()['max_state']} (max state)"
                         if self.fsm else "not run (control arm)")
+            # Every hot-apply generation, whatever made it (WP3-19,
+            # 2026-11-27): the REST rows and the --dynamic row each see one
+            # source, and a scenario event's generation read "not served" /
+            # "not used" there.
+            gens_cell = generations_cell(hot_apply_generations(
+                rest=self.hot.applied if self.hot is not None else None,
+                scenario=self._ev_records,
+                dynamic=(None if self.spawn_t is None else
+                         {"t": self.spawn_t, "generation": self.spawn_gen,
+                          "rule_id": self.dynamic_fence_id}),
+                recorded=self.rec.generations))
             (self.out / "report.md").write_text(
                 f"""# ROS 2 rail report - shield {'ON' if self.shield_on else 'OFF'}
 
@@ -6431,6 +6447,7 @@ if HAVE_ROS:
 | Policy source | {self.policy_source['kind']} `{self.policy_source['path']}` - signature **{self.policy_source['signature']}**{' (--dev-yaml)' if self.policy_source.get('dev_yaml') else ''} |
 | Rule clock | {self.clock_record.get('kind')}: {self.clock_record.get('start') or self.clock_record.get('tz')} |
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}, receipt to swap max {metrics['hot_apply']['receipt_to_swap_ms_max']} ms" if self.hot is not None else 'not served'} |
+| Hot-apply generations | {gens_cell} |
 | Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
 | Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
 | GPS fix (`fix_ok`, {FIX_TOPIC}) | {f"{self.n_fix} message(s); {metrics['fix_quality']['ticks_no_fix']} tick(s) without a fix; X8 input on {self.n_position_lost} tick(s)" if self.n_fix else 'not reported (no message): fix_ok None, as before'} |
@@ -6447,7 +6464,7 @@ if HAVE_ROS:
 | Autopilot took over | {self.takeover or 'no'} |
 | Autopilot fence parameters | {self.autopilot_fence or 'not read'} |
 | Autopilot fence upload | {(self.fence_status[-1] if self.fence_status else 'no upload reported')} |
-| Dynamic NFZ | {f'hot-applied t={self.spawn_t:.1f}s, generation {self.policy.generation}' if self.spawn_t else 'not used'} |
+| Dynamic NFZ | {f'hot-applied t={self.spawn_t:.1f}s, generation {self.spawn_gen}' if self.spawn_t is not None else 'not used'} |
 | **Time inside NFZ** | **{nfz_s:.1f} s** |
 | **P0 KPI** | **{kpi}** |
 """, encoding="utf-8")

@@ -2444,6 +2444,137 @@ def test_one_fences_publication_per_tick_after_every_generation():
         "hot_apply nfz-dynamic" in fp["reason"], fp["reason"]
 
 
+# --------------------------------------------------------------------------- #
+# WP3-19 (2026-11-27): report.md lists every hot-apply generation with its
+# mission time and source. On 78b50fd the "Hot-apply API" row read the REST
+# listener only and "Dynamic NFZ" the --dynamic zone only (with the LAST
+# generation, not its own), so a flight whose generations came from scenario
+# events read "not served" / "not used". Each report test fails there: no
+# "Hot-apply generations" row. The ROS 2 case with a scenario spawn after the
+# --dynamic zone, and the pymavlink case with a REST hot-apply after it
+# (tests/test_railinputs_hotapply.py), also fail on the old Dynamic NFZ
+# expression alone: it printed "generation 3" / "generation 2", the last.
+# --------------------------------------------------------------------------- #
+
+def test_the_generations_log_merges_every_source_in_generation_order():
+    from guardrail import hot_apply_log as H
+    rest = [{"t": None, "op": "spawn", "type": "dynamic_nfz", "rule_id": "pre",
+             "generation": 1},
+            {"t": 4.25, "op": "spawn", "type": "dynamic_nfz", "rule_id": "a|b",
+             "generation": 4, "record_failed": "OSError: disk full"}]
+    scenario = [{"t": 2.0, "type": "hot_apply", "event": "spawn_polygon_fence",
+                 "index": 0, "rule_id": "dyn-0", "generation": 2},
+                {"t": 2.0, "type": "hot_apply", "event": "scale_radius", "index": 1,
+                 "refused": True, "generation": 2}]
+    dynamic = {"t": 8.0, "generation": 5, "rule_id": "nfz-dynamic"}
+    recorded = [{"generation": 0, "reason": "mission start"},
+                {"generation": 1}, {"generation": 2},
+                {"generation": 3, "reason": "hot_apply late"},
+                {"generation": 4}, {"generation": 5}]
+    rows = H.hot_apply_generations(rest=rest, scenario=scenario, dynamic=dynamic,
+                                   recorded=recorded)
+    assert [(r["generation"], r["source"]) for r in rows] == [
+        (1, H.SOURCE_REST), (2, H.SOURCE_SCENARIO), (3, H.SOURCE_UNRECORDED),
+        (4, H.SOURCE_REST), (5, H.SOURCE_DYNAMIC)], rows
+    cell = H.generations_cell(rows)
+    assert cell.startswith("5: g1 before take-off (REST: spawn dynamic_nfz `pre`); "
+                           "g2 t=2.00 s (scenario event: #0 spawn_polygon_fence `dyn-0`); "
+                           "g3 t not recorded (source not recorded: hot_apply late); "), cell
+    assert "g4 t=4.25 s (REST: spawn dynamic_nfz `a\\|b`, record write failed " \
+           "(OSError: disk full))" in cell, cell
+    assert cell.endswith("g5 t=8.00 s (--dynamic: dynamic_nfz `nfz-dynamic`)"), cell
+    assert "scale_radius" not in cell, "a refused event made no generation"
+    # The null: nothing hot-applied (generation 0 only) reads "none".
+    assert H.generations_cell(H.hot_apply_generations(recorded=recorded[:1])) == "none"
+    assert H.generations_cell(H.hot_apply_generations()) == "none"
+
+
+def test_the_ros2_report_lists_scenario_event_generations():
+    """The case WP3-19 found: generations from scenario events only. The
+    REST and --dynamic rows still say what they are about ("not served",
+    "not used"); the new row names each generation, its time and source.
+    With --dynamic on the same tick, the Dynamic NFZ row gives its own
+    generation (2), not the flight's last."""
+    tmp = Path(tempfile.mkdtemp(prefix="wp319_events_"))
+    evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-0", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 40, "anchor": "center"}},
+           {"at_sim_t": 0.3, "type": "scale_radius",
+            "payload": {"id": "no-such-zone", "factor": 2.0}},
+           {"at_sim_t": 0.5, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-1", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 60, "anchor": "center"}}]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    RN, N, node, clk, out = _scenario_node(
+        ["--start=-100,0,15", "--target=0,0,15", f"--events={tmp / 'events.json'}"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _fly(RN, N, node, clk, 7)
+    node._finish("test")
+    assert node.policy.generation == 2
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert _report_value(report, "Hot-apply API") == "not served", report
+    assert _report_value(report, "Dynamic NFZ") == "not used", report
+    gens = _report_value(report, "Hot-apply generations")
+    t0, t1 = (r["t"] for r in node._ev_records if not r.get("refused"))
+    assert gens == (f"2: g1 t={t0:.2f} s (scenario event: #0 spawn_polygon_fence `dyn-0`); "
+                    f"g2 t={t1:.2f} s (scenario event: #2 spawn_polygon_fence `dyn-1`)"), gens
+    assert 0.3 <= t0 < t1, (t0, t1)
+    # --dynamic and a scenario spawn on one tick (g1 the event, g2 the zone),
+    # a second scenario spawn later (g3). The Dynamic NFZ row gives the
+    # zone's own generation, 2; on 78b50fd it printed the flight's last,
+    # "generation 3".
+    tmp = Path(tempfile.mkdtemp(prefix="wp319_dyn_events_"))
+    evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-0", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 40, "anchor": "center"}},
+           {"at_sim_t": 0.6, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-1", "width_m": 6, "height_m": 6,
+                        "ahead_of_vehicle_m": 60, "anchor": "center"}}]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    RN, N, node, clk, out = _dynamic_node([f"--events={tmp / 'events.json'}"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _fly(RN, N, node, clk, 9)
+    node._finish("test")
+    assert node.policy.generation == 3, node.policy.generation
+    assert node.spawn_gen == 2, node.spawn_gen
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert _report_value(report, "Dynamic NFZ") == \
+        f"hot-applied t={node.spawn_t:.1f}s, generation 2", report
+    gens = _report_value(report, "Hot-apply generations")
+    t0, t1 = (r["t"] for r in node._ev_records)
+    assert abs(t0 - node.spawn_t) < 0.05 and node.spawn_t < t1, (t0, node.spawn_t, t1)
+    assert gens == (f"3: g1 t={t0:.2f} s (scenario event: "
+                    f"#0 spawn_polygon_fence `dyn-0`); g2 t={node.spawn_t:.2f} s "
+                    f"(--dynamic: dynamic_nfz `nfz-dynamic`); g3 t={t1:.2f} s "
+                    f"(scenario event: #1 spawn_polygon_fence `dyn-1`)"), gens
+    # The null: no hot-apply at all.
+    RN, N, node, clk, out = _scenario_node(["--start=-100,0,15", "--target=0,0,15"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _fly(RN, N, node, clk, 2)
+    node._finish("test")
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert _report_value(report, "Hot-apply generations") == "none", report
+
+
+def test_the_pymavlink_report_lists_its_dynamic_generation():
+    """sitl/run_sitl_demo.py (no --events): the --dynamic zone's generation
+    with its time and source; without --dynamic, none."""
+    out, metrics, rows, events, sim, R = _fly_pymavlink_rail(["--shield", "on", "--dynamic"])
+    report = (out / "report.md").read_text(encoding="utf-8")
+    spawn = [e for e in events if e["kind"] == "policy_generation" and e["generation"] == 1]
+    assert len(spawn) == 1 and spawn[0]["t"] is not None, spawn
+    assert _report_value(report, "Hot-apply generations") == (
+        f"1: g1 t={spawn[0]['t']:.2f} s (--dynamic: dynamic_nfz `{R.DYNAMIC_FENCE.id}`)"), report
+    assert "generation 1" in _report_value(report, "Dynamic NFZ"), report
+    out, _, _, _, _, _ = _fly_pymavlink_rail(["--shield", "on"])
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert _report_value(report, "Hot-apply generations") == "none", report
+    assert _report_value(report, "Dynamic NFZ") == "not used", report
+
+
 def test_the_wait_behind_the_bookkeeping_is_bounded_by_its_window():
     """deferred_wait_ms: the first action whose callback runs within
     DEFERRED_PICKUP_S of a drain's end may have waited the whole drain (the

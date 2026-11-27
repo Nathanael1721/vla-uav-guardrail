@@ -99,6 +99,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E4
                            fsm_config_record, load_fsm_config,
                            tick_input_from_decision)
 from guardrail.hold_flight import HoldFlight, body_command            # noqa: E402
+from guardrail.hot_apply_log import generations_cell, hot_apply_generations  # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa: E402
@@ -788,6 +789,7 @@ def main() -> int:
     rows: list[dict] = []
     n_touched = n_braked = 0
     spawn_t = spawn_pos = None
+    spawn_gen = None            # the --dynamic zone's generation, when applied
     t0 = time.time()
     mission_t0[0] = t0
     tick = 0
@@ -824,6 +826,7 @@ def main() -> int:
             # became a read-only property, which killed every --dynamic run at
             # exactly this line.
             spawn_t, spawn_pos = now, (state.x, state.y)
+            spawn_gen = policy.generation
             print(f"[dynamic]  t={now:.1f}s '{DYNAMIC_FENCE.id}' applied "
                   f"-> generation {policy.generation}")
 
@@ -1336,6 +1339,14 @@ def main() -> int:
         print("[plot]     matplotlib missing — skipped")
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+    # Every hot-apply generation, whatever made it (WP3-19, 2026-11-27): the
+    # Hot-apply API row sees the REST listener only, Dynamic NFZ the
+    # --dynamic zone only. This rail takes no --events.
+    gens_cell = generations_cell(hot_apply_generations(
+        rest=hot.applied if hot is not None else None,
+        dynamic=(None if spawn_t is None else
+                 {"t": spawn_t, "generation": spawn_gen, "rule_id": DYNAMIC_FENCE.id}),
+        recorded=rec.generations))
     (out / "report.md").write_text(f"""# SITL Guardrail report — shield {'ON' if shield_on else 'OFF'}
 
 | Item | Value |
@@ -1347,11 +1358,12 @@ def main() -> int:
 | Policy source | {policy_source['kind']} `{policy_source['path']}` - signature **{policy_source['signature']}**{' (--dev-yaml)' if policy_source.get('dev_yaml') else ''} |
 | Rule clock | {clock_record.get('kind')}: {clock_record.get('start') or clock_record.get('tz')} |
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}" if hot is not None else 'not served'} |
+| Hot-apply generations | {gens_cell} |
 | Target reached | {'yes' if reached else 'NO'} |
 | Ticks | {len(traj)} |
 | Shield interventions | {n_touched} |
 | Brakes | {n_braked} |
-| Dynamic NFZ | {f'hot-applied t={spawn_t:.1f}s, generation {policy.generation}' if spawn_t else 'not used'} |
+| Dynamic NFZ | {f'hot-applied t={spawn_t:.1f}s, generation {spawn_gen}' if spawn_t is not None else 'not used'} |
 | Topology | `{TOPOLOGY_ARDUPILOT_SITL}` |
 | Code revision | `{manifest['code_revision']}` |
 | Sim speedup | `{manifest['sim_speedup']}` |
