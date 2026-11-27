@@ -1387,13 +1387,17 @@ def _stack(run: Path, desktop_rev=None):
             host=_PC, revision=desktop_rev, describe=lambda repo=None: "v-test"))
 
 
-def test_single_sha_is_reported_per_campaign_and_over_the_kpi_grade_runs():
+def test_single_sha_is_reported_per_campaign_and_gates_the_kpi_grade_runs():
     """A campaign's four flights: cx_001_a one SHA across the stack (true),
     cx_002_b the Orin's write alone (pending), cx_003_ctrl no record
-    (missing: flown before 2026-11-17), cx_004_d the desktop on another
-    commit (false; the campaign did not accept it). Reported per campaign,
-    over the KPI-grade flights, in the JSON and the Markdown - and no grade
-    moves: the record is evidence, not a gate."""
+    (missing: flown before 2026-11-17, its metrics carry no
+    setpoint_delivery), cx_004_d the desktop on another commit (false; the
+    campaign did not accept it either). Reported per campaign, over the
+    KPI-grade flights, in the JSON and the Markdown - and, since 2026-11-27
+    (ARCH-31), a gate: the pending hil run and the false one are not
+    KPI-grade, the run flown before the record keeps its grade. Against
+    78b50fd this fails: cx_002_b was KPI-grade and no reason named the
+    record."""
     import shutil
     C, KR = _campaign_tests()
     root, trust, summ, _ = C._fixture()
@@ -1416,27 +1420,105 @@ def test_single_sha_is_reported_per_campaign_and_over_the_kpi_grade_runs():
         assert cx["autopilot_revisions"] == ["ArduCopter V4.5.7 (2a3dc4b7)"], cx
         kg = st["kpi_grade"]
         assert (kg["runs"], kg["true"], kg["false"], kg["pending"], kg["missing"]) \
-            == (3, 1, 0, 1, 1), kg
-        assert st["all_flights"]["runs"] == 4 and "report only" in st["gate"]
+            == (2, 1, 0, 0, 1), kg
+        assert st["all_flights"]["runs"] == 4 and st["gate"].startswith("a gate since")
         # Each episode carries its record as written; the KPI-grade list its verdict.
         assert C._ep(rep, "cx_004_d")["stack_revisions"]["state"] == "false"
         assert {e["id"]: e["single_sha"] for e in rep["kpi_grade_episodes"]} == {
-            "cx_001_a": "true", "cx_002_b": "pending", "cx_003_ctrl": "missing"}
-        # No grade moved: pending and missing stay KPI-grade, and the one not
-        # graded is refused by the campaign alone, never by its record.
-        for n in ("cx_001_a", "cx_002_b", "cx_003_ctrl"):
+            "cx_001_a": "true", "cx_003_ctrl": "missing"}
+        # The gate: true and missing-before-the-record stay KPI-grade ...
+        for n in ("cx_001_a", "cx_003_ctrl"):
             assert C._ep(rep, n)["kpi_grade"] is True, n
+            assert not any(M_STACK in r for r in C._ep(rep, n)["kpi_grade_reasons"]), n
+        # ... the pending hil run does not, though its manifest and bundle pass ...
+        b = C._ep(rep, "cx_002_b")
+        assert b["kpi_grade"] is False and b["kpi_grade_manifest"] is True, b
+        assert len(b["kpi_grade_reasons"]) == 1, b["kpi_grade_reasons"]
+        assert "single_sha pending" in b["kpi_grade_reasons"][0], b["kpi_grade_reasons"]
+        # ... and the false one names its record beside the campaign's refusal.
         d = C._ep(rep, "cx_004_d")
-        assert d["kpi_grade_manifest"] is True and len(d["kpi_grade_reasons"]) == 1, d
-        assert "single_sha" not in " ".join(d["kpi_grade_reasons"])
+        assert d["kpi_grade_manifest"] is True and len(d["kpi_grade_reasons"]) == 2, d
+        assert any("single_sha false" in r for r in d["kpi_grade_reasons"]), d
+        assert any("did not accept" in r for r in d["kpi_grade_reasons"]), d
         assert '"stack_revisions"' in json.dumps(KR.json_safe(rep), allow_nan=False)
         md = KR.render_markdown(KR.json_safe(rep))
         assert "### Stack revisions by campaign" in md, md
         assert ("- `cx`: 4 run(s): single_sha true 1, false 1, pending 1, missing 1; "
                 f"companion `{rev}`;") in md, md
         assert "Stack revisions of the KPI-grade episodes" in md
-        assert "3 run(s): single_sha true 1, false 0, pending 1, missing 1;" in md, md
+        assert "2 run(s): single_sha true 1, false 0, pending 0, missing 1;" in md, md
         assert "pending: `cx_002_b`" in md and "false: `cx_004_d`" in md, md
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+M_STACK = "stack_revisions.json"
+
+
+def test_a_hil_run_whose_writer_writes_the_record_is_refused_without_it():
+    """ARCH-31, 2026-11-27: a hil flight whose metrics.json carries
+    setpoint_delivery (the ROS 2 Shield node writes it since 2026-11-17,
+    after the stack record's writer) and has no stack_revisions.json is not
+    KPI-grade; one whose record is unreadable is not either. A run flown
+    before the record (no setpoint_delivery) keeps its grade. The marker is
+    read from the metrics.json AS WRITTEN: kpi_report's delivery-filled copy
+    for older runs must not refuse them (cx_003_ctrl in the test above)."""
+    import shutil
+    C, KR = _campaign_tests()
+    root, trust, summ, _ = C._fixture()
+    try:
+        store = root / "hil_smoke"
+        rev = json.loads((store / "cx_001_a" / "manifest.json")
+                         .read_text(encoding="utf-8"))["code_revision"]
+        for n in ("cx_001_a", "cx_002_b"):
+            mp = store / n / "metrics.json"
+            m = json.loads(mp.read_text(encoding="utf-8"))
+            m["setpoint_delivery"] = {"published": 0, "sent": 0, "gaps": []}
+            mp.write_text(json.dumps(m), encoding="utf-8")
+        _stack(store / "cx_001_a", rev)
+        (store / "cx_003_ctrl" / M_STACK).write_text("{not json", encoding="utf-8")
+        before = (store / "cx_003_ctrl" / M_STACK).read_bytes()
+        rep = C._report(summ, None, trust)
+        a, b, c = (C._ep(rep, n) for n in ("cx_001_a", "cx_002_b", "cx_003_ctrl"))
+        assert a["kpi_grade"] is True and a["stack_revisions"]["state"] == "true", a
+        assert b["stack_revisions"]["state"] == "missing", b["stack_revisions"]
+        assert b["kpi_grade"] is False and b["kpi_grade_manifest"] is True, b
+        assert any(f"no {M_STACK} beside a hil run" in r
+                   for r in b["kpi_grade_reasons"]), b["kpi_grade_reasons"]
+        assert c["stack_revisions"]["state"] == "unreadable", c["stack_revisions"]
+        assert c["kpi_grade"] is False, c
+        assert any(f"{M_STACK} is unreadable" in r for r in c["kpi_grade_reasons"]), c
+        assert (store / "cx_003_ctrl" / M_STACK).read_bytes() == before
+        st = rep["stack_revisions"]["kpi_grade"]
+        assert (st["runs"], st["true"], st["missing"], st["unreadable"]) == (1, 1, 0, 0), st
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_rescore_rechecks_the_grade_with_the_stack_record():
+    """tools/rescore_kpis.py's kpi_grade_rechecked (today's verdict beside
+    the one the flight wrote) judges the stack record too (2026-11-27): a hil
+    run stored KPI-grade whose record is pending gets a rechecked false
+    naming the record; the same run with the desktop on its commit (true)
+    gets none. Against 78b50fd the pending run got no recheck."""
+    import shutil
+    C, KR = _campaign_tests()
+    R = KR.R
+    pol = load_policy(C.W.POLICY)
+    root = Path(tempfile.mkdtemp(prefix="rs_stack_"))
+    try:
+        got = {}
+        for name, desk in (("rs_pending", None), ("rs_true", "4418ae0abcde")):
+            run = C.W._hil_run(root, name, pol)
+            kp = run / "kpi.json"
+            kp.write_text(json.dumps(dict(json.loads(kp.read_text(encoding="utf-8")),
+                                          kpi_grade=True)), encoding="utf-8")
+            _stack(run, desk)
+            got[name] = R.rescore(run, {pol.policy_hash: pol})["added"]
+        rc = got["rs_pending"].get("kpi_grade_rechecked")
+        assert rc is not None and rc["kpi_grade"] is False, got["rs_pending"]
+        assert any("single_sha pending" in r for r in rc["reasons"]), rc
+        assert "kpi_grade_rechecked" not in got["rs_true"], got["rs_true"]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
