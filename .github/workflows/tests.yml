@@ -117,6 +117,11 @@
 #          other two; also the manifest fields a
 #          launch passes into the bag's metadata, sitl/bag_custom_data.py,
 #          and their comparison with manifest.json),
+#          test_episode_bag (2026-11-28, ARCH-22: the episode bundle's
+#          episode.bag2/ trimmed to begin at the manifest start frame,
+#          guardrail/episode_bag.py; it writes real rosbag2 recordings, so
+#          it runs on the 3.11 extras job, which installs rosbags, and its
+#          tests SKIP on the other two),
 #          test_replay_q3 (2026-11-17, WP4-11: a stored rail run's logged
 #          raw actions re-run through the Shield with the generations it
 #          flew, tools/replay_q3.py; on synthetic run folders),
@@ -825,6 +830,7 @@ jobs:
               tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
               tests/test_harness_hil.py \
               tests/test_replay_from_bag.py \
+              tests/test_episode_bag.py \
               tests/test_replay_q3.py               tests/test_replay_at_revision.py \
               tests/test_stack_revisions.py \
               tests/test_sweep_resume.py \

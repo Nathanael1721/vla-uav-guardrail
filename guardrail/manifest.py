@@ -1451,10 +1451,27 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
 # tools/replay_from_bag.py reads the frames back and compares the end frame
 # with manifest.json field by field.
 #
+# THE START FRAME AT ARMING (2026-11-28). Until this date the start frame
+# went out when the node started, with three fields. It now goes out when
+# the autopilot accepts the arm - the episode's start - with all six
+# whenever they can be had then (arming_manifest_fields): vla_model_hash from
+# the /vla/identity received before arming, computed as the end frame
+# computes it; sim_speedup as the autopilot answered at take-off (before
+# arming), else as the launch declared it (SIM_SPEEDUP_ENV); topology as the
+# launch declared it (TOPOLOGY_ENV). A value that is the launch's word, not
+# a reading, is named under the frame's `declared`; the end frame keeps the
+# values measured at the end (the topology from the evidence). A field still
+# not known at arming is left out and named under `not_known_yet` with the
+# reason. tools/replay_from_bag.py compares the two frames field by field
+# (compare_start_end) and flags every field they disagree on.
+#
 # WHAT "FIRST" CAN MEAN. The recorder starts before the Guardrail nodes and
 # records MAVROS from its own start, so a MAVROS message can precede the
-# start frame in the bag; the start frame is the first message of the
-# episode's own topics. tools/replay_from_bag.py says where it lies.
+# start frame in the run's bag/; the start frame is the first message of the
+# episode's own topics. tools/replay_from_bag.py says where it lies. The
+# episode bundle's episode.bag2/ is that recording trimmed to begin at the
+# start frame (guardrail/episode_bag.py, 2026-11-28), so there the manifest
+# is the bag's first message; bag/ is kept as recorded.
 #
 # MANIFEST_FIELDS is the grant's six in the grant's order: the keys
 # build_manifest returns (a test pins that the two agree).
@@ -1471,32 +1488,118 @@ FRAME_PHASES = (FRAME_START, FRAME_END)
 # loaded (generation 0: manifest.json names the LAST generation, the same
 # one only when nothing was hot-applied) and the seed.
 START_FIELDS = ("code_revision", "policy_hash", "random_seed")
-# The others, and when each is known instead (sitl/bag_custom_data.py says
-# the same of the bag's metadata).
+# The other three, read at arming (THE START FRAME AT ARMING, 2026-11-28).
+ARMING_FIELDS = ("vla_model_hash", "sim_speedup", "topology")
+# Why one of them is still not known at arming (`not_known_yet`), unless the
+# caller says more (sitl/bag_custom_data.py says when each is known of the
+# bag's metadata).
 NOT_KNOWN_AT_START = {
-    "vla_model_hash": "resolved from /vla/identity once the pilot is up",
-    "sim_speedup": "read from the autopilot at take-off",
-    "topology": ("decided from the evidence of the flight at its end "
-                 "(detect_topology), never from a flag"),
+    "vla_model_hash": "no /vla/identity had been received by arming",
+    "sim_speedup": ("the autopilot gave no SIM_SPEEDUP at take-off and the launch "
+                    "declared none (VLAGUARD_SIM_SPEEDUP)"),
+    "topology": ("the launch declared none (VLAGUARD_TOPOLOGY); decided from the "
+                 "evidence of the flight at its end (detect_topology)"),
 }
+# The launch's declarations the start frame reads (2026-11-28): the
+# topology the companion was configured for (deploy/topologies/<name>.env;
+# sitl/run_ros2_demo.sh, the desktop rail, declares dev) and the simulator
+# rate the rail flies at (sitl/run_ros2_demo.sh's SITL_SPEEDUP, only 1).
+TOPOLOGY_ENV = "VLAGUARD_TOPOLOGY"
+SIM_SPEEDUP_ENV = "VLAGUARD_SIM_SPEEDUP"
+DECLARABLE_TOPOLOGIES = (TOPOLOGY_DEV, TOPOLOGY_HIL, TOPOLOGY_FLIGHT)
 
 
 def start_manifest_fields(policy_hash: str | None, seed: int,
                           repo: str | Path | None = None) -> dict[str, Any]:
-    """The manifest fields an episode knows at its start (START_FIELDS),
+    """The manifest fields an episode knows from its launch (START_FIELDS),
     each computed as build_manifest computes it at the end (2026-11-21)."""
     return {"code_revision": code_revision(repo),
             "policy_hash": policy_hash or UNRESOLVED,
             "random_seed": int(seed)}
 
 
-def manifest_frame(phase: str, fields: dict[str, Any],
-                   episode_id: Any = None) -> dict[str, Any]:
+def _positive_number(value: Any) -> float | None:
+    """`value` as a finite positive float (a number, or its text), else None."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if 0 < v < float("inf") else None                # NaN compares False
+
+
+def arming_manifest_fields(identity: tuple[str, str | None] | None,
+                           takeoff_sim_speedup: Any = None,
+                           environ: Any = None
+                           ) -> tuple[dict[str, Any], dict[str, str], dict[str, str]]:
+    """The start frame's ARMING_FIELDS at arming (THE START FRAME AT ARMING,
+    2026-11-28): (fields, declared, not_known). Never raises.
+
+      vla_model_hash  from `identity`, the (model_id, reported digest) the
+                      node took from the /vla/identity it received before
+                      arming, resolved as the end frame resolves it
+                      (resolve_vla_hash, no weight paths); `identity` None:
+                      none received, not known;
+      sim_speedup     `takeoff_sim_speedup`, the autopilot's own answer at
+                      take-off (a reading); without one the launch's
+                      SIM_SPEEDUP_ENV, declared; else not known;
+      topology        the launch's TOPOLOGY_ENV (dev, hil or flight),
+                      declared: the end frame's is decided from the evidence
+                      of the flight, never from it; else not known.
+
+    `declared` names each field whose value is the launch's word, with
+    where it came from; `not_known` each field left out, with why."""
+    env = os.environ if environ is None else environ
+    fields: dict[str, Any] = {}
+    declared: dict[str, str] = {}
+    not_known: dict[str, str] = {}
+    if identity is None:
+        not_known["vla_model_hash"] = NOT_KNOWN_AT_START["vla_model_hash"]
+    else:
+        try:
+            fields["vla_model_hash"] = resolve_vla_hash(identity[0], None, identity[1])[0]
+        except Exception as e:                                   # noqa: BLE001
+            not_known["vla_model_hash"] = (f"the /vla/identity received by arming did not "
+                                           f"resolve: {type(e).__name__}: {e}")
+    sp = _positive_number(takeoff_sim_speedup)
+    raw = env.get(SIM_SPEEDUP_ENV)
+    if sp is not None:
+        fields["sim_speedup"] = sp
+    elif _positive_number(raw) is not None:
+        fields["sim_speedup"] = _positive_number(raw)
+        declared["sim_speedup"] = (f"declared by the launch ({SIM_SPEEDUP_ENV}={raw}): the "
+                                   f"autopilot gave no SIM_SPEEDUP at take-off")
+    else:
+        not_known["sim_speedup"] = NOT_KNOWN_AT_START["sim_speedup"] + (
+            f"; {SIM_SPEEDUP_ENV}={raw!r} is not a positive number" if raw else "")
+    raw = env.get(TOPOLOGY_ENV)
+    label = normalize_topology(raw.strip()) if isinstance(raw, str) and raw.strip() else None
+    if label in DECLARABLE_TOPOLOGIES:
+        fields["topology"] = label
+        declared["topology"] = (f"declared by the launch ({TOPOLOGY_ENV}={raw.strip()}); the "
+                                f"end frame's is decided from the evidence of the flight")
+    else:
+        not_known["topology"] = NOT_KNOWN_AT_START["topology"] + (
+            f"; {TOPOLOGY_ENV}={raw!r} is not one of {', '.join(DECLARABLE_TOPOLOGIES)}"
+            if raw else "")
+    return fields, declared, not_known
+
+
+def manifest_frame(phase: str, fields: dict[str, Any], episode_id: Any = None, *,
+                   declared: dict[str, str] | None = None,
+                   not_known: dict[str, str] | None = None) -> dict[str, Any]:
     """One frame of MANIFEST_TOPIC (2026-11-21): the phase, the episode it
     belongs to and the manifest fields in the grant's order. An end frame
     must carry all six; a start frame carries what it has and names the
-    rest under `not_known_yet`. A key that is not one of the six is refused:
-    the frame is the manifest, not a place for anything beside it."""
+    rest under `not_known_yet` (the reason from `not_known`, else
+    NOT_KNOWN_AT_START). A key that is not one of the six is refused: the
+    frame is the manifest, not a place for anything beside it.
+
+    `declared` (2026-11-28, start frames only): {field: where the launch
+    declared it} for each carried field whose value is a declaration, not a
+    reading, kept under the frame's `declared`. An end frame declares
+    nothing: its values are the ones measured at the end."""
     if phase not in FRAME_PHASES:
         raise ValueError(f"a manifest frame is {' or '.join(FRAME_PHASES)}, not {phase!r}")
     extra = sorted(str(k) for k in fields if k not in MANIFEST_FIELDS)
@@ -1505,19 +1608,30 @@ def manifest_frame(phase: str, fields: dict[str, Any],
     missing = [k for k in MANIFEST_FIELDS if k not in fields]
     if phase == FRAME_END and missing:
         raise ValueError(f"the end frame carries all six fields; missing {missing}")
+    if declared:
+        if phase != FRAME_START:
+            raise ValueError("only a start frame names declared values; the end frame's "
+                             "are the ones measured at the end")
+        unknown = sorted(str(k) for k in declared if k not in fields)
+        if unknown:
+            raise ValueError(f"declared fields the frame does not carry: {unknown}")
     frame: dict[str, Any] = {
         "schema": MANIFEST_FRAME_SCHEMA, "phase": phase, "episode_id": episode_id,
         "manifest": {k: fields[k] for k in MANIFEST_FIELDS if k in fields}}
     if phase == FRAME_START:
-        frame["not_known_yet"] = {k: NOT_KNOWN_AT_START.get(k, "not known at the start")
-                                  for k in missing}
+        frame["not_known_yet"] = {k: (not_known or {}).get(k) or NOT_KNOWN_AT_START.get(
+            k, "not known at the start") for k in missing}
+        if declared:
+            frame["declared"] = {k: str(declared[k]) for k in MANIFEST_FIELDS
+                                 if k in declared}
     return frame
 
 
 def parse_manifest_frame(text: str) -> dict[str, Any]:
     """A MANIFEST_TOPIC message's text read back as a frame (2026-11-21);
     ValueError when it is not one: not JSON, another schema, a phase or a
-    key a frame may not have, an end frame short of the six."""
+    key a frame may not have, an end frame short of the six, a `declared`
+    that is not a mapping of carried fields of a start frame."""
     try:
         doc = json.loads(text)
     except ValueError as e:
@@ -1527,8 +1641,34 @@ def parse_manifest_frame(text: str) -> dict[str, Any]:
     man = doc.get("manifest")
     if not isinstance(man, dict):
         raise ValueError("its `manifest` is not a mapping")
-    manifest_frame(doc.get("phase"), man, doc.get("episode_id"))     # the same rules
+    declared = doc.get("declared")
+    if declared is not None and not isinstance(declared, dict):
+        raise ValueError("its `declared` is not a mapping")
+    manifest_frame(doc.get("phase"), man, doc.get("episode_id"),     # the same rules
+                   declared=declared)
     return doc
+
+
+def compare_start_end(start: dict[str, Any], end: dict[str, Any],
+                      declared: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The start frame's fields against the end frame's, field by field in
+    the grant's order (2026-11-28): {"start", "end", "equal"} for each field
+    both carry, compared as JSON reads them, type included, plus `declared`
+    true where the start frame's value was the launch's word. policy_hash
+    is left out: the start frame's is generation 0, the end frame's the
+    last generation, which a hot-apply changes (the start frame's is
+    compared with generation 0 instead)."""
+    out: dict[str, Any] = {}
+    for k in MANIFEST_FIELDS:
+        if k == "policy_hash" or k not in start or k not in end:
+            continue
+        a, b = start[k], end[k]
+        rec: dict[str, Any] = {"start": a, "end": b,
+                               "equal": a == b and type(a) is type(b)}
+        if declared and k in declared:
+            rec["declared"] = True
+        out[k] = rec
+    return out
 
 
 def compare_manifest_frame(frame_manifest: dict[str, Any],

@@ -1050,29 +1050,80 @@ def _frames(N, node) -> list[dict]:
     return [json.loads(m.data) for m in node.pubs[N.MANIFEST_TOPIC].sent]
 
 
+# The launch's declarations the start frame reads (2026-11-28), held out of
+# the tests' process environment except where a test sets them.
+_DECL_ENV = ("VLAGUARD_TOPOLOGY", "VLAGUARD_SIM_SPEEDUP")
+
+
+def _with_env(fn, **env):
+    """Run fn() with exactly `env` of _DECL_ENV in os.environ, restored after."""
+    import os
+    saved = {k: os.environ.pop(k, None) for k in _DECL_ENV}
+    os.environ.update({k: str(v) for k, v in env.items()})
+    try:
+        return fn()
+    finally:
+        for k in _DECL_ENV:
+            os.environ.pop(k, None)
+            if saved[k] is not None:
+                os.environ[k] = saved[k]
+
+
+STUB_IDENTITY = {"model_id": "guardrail.vla_stub.StubVLA", "kind": "stub", "host": None}
+
+
+def _arm(node) -> None:
+    """What bring_up does once the autopilot accepts the arm, and its thread
+    waited for."""
+    node.start_frame_at_arm()
+    node._manifest_arm.join(60)
+
+
 def test_the_manifest_is_published_latched_at_the_episodes_start_and_end():
-    """The start frame carries what is known when the node starts (the code
-    revision, generation 0's policy hash, the seed), the end frame all six
-    fields, exactly the manifest.json beside it; both latched (reliable,
-    transient_local, depth 1), on the topic both recorders record."""
-    from guardrail.manifest import MANIFEST_FIELDS, code_revision
+    """THE START FRAME AT ARMING (2026-11-28): nothing goes out before the
+    arm; at arming the start frame carries all six - the code revision,
+    generation 0's policy hash, the seed, vla_model_hash from the identity
+    received before arming, sim_speedup as the autopilot answered at
+    take-off, the topology the launch declared (named under `declared`) -
+    and the end frame all six as measured, exactly the manifest.json beside
+    it; both latched (reliable, transient_local, depth 1), on the topic both
+    recorders record. Fails on 69e9545: the start frame went out at the
+    node's start, with three fields."""
+    _with_env(_check_start_and_end_frames, VLAGUARD_TOPOLOGY="hil")
+
+
+def _check_start_and_end_frames():
+    from guardrail.manifest import (MANIFEST_FIELDS, code_revision, compare_start_end,
+                                    resolve_vla_hash)
     N, node, clk, out = _build(["--seed", "41"])
     assert N.MANIFEST_TOPIC == "/guardrail/manifest"
     q = N.MANIFEST_QOS.__dict__
     assert q == {"depth": 1, "reliability": 1, "durability": 1}, q   # the stand-in's enums
     node._manifest_start.join(60)
+    assert _frames(N, node) == [], "a start frame went out before the arm"
+    node._on_identity(N.String(data=json.dumps(STUB_IDENTITY)))
+    node.takeoff_speedup = {"sim_speedup": 1.0}
+    _arm(node)
+    node.start_frame_at_arm()                     # once per episode
+    assert node._manifest_arm is not None
     start = _frames(N, node)
     assert len(start) == 1, start
     start = start[0]
     assert start["phase"] == "start" and start["schema"] == "vlaguard-manifest-frame/1"
-    assert start["manifest"] == {"code_revision": code_revision(),
-                                 "policy_hash": node.policy.policy_hash,
-                                 "random_seed": 41}, start
-    assert set(start["not_known_yet"]) == {"vla_model_hash", "sim_speedup", "topology"}
+    assert start["manifest"] == {
+        "code_revision": code_revision(),
+        "vla_model_hash": resolve_vla_hash("guardrail.vla_stub.StubVLA")[0],
+        "policy_hash": node.policy.policy_hash, "random_seed": 41,
+        "sim_speedup": 1.0, "topology": "hil"}, start
+    assert tuple(start["manifest"]) == MANIFEST_FIELDS
+    assert start["not_known_yet"] == {}, start
+    assert list(start["declared"]) == ["topology"] and \
+        "VLAGUARD_TOPOLOGY=hil" in start["declared"]["topology"], start
     assert start["episode_id"] == node.rec.episode_id
     node.start_mission()
     _mode(N, node, "GUIDED")
     _fly(N, node, clk, 2)
+    node.sim_speedup = 1.0                        # read at mission start in bring_up
     node._finish("time cap")
     frames = _frames(N, node)
     assert [f["phase"] for f in frames] == ["start", "end"], frames
@@ -1081,12 +1132,77 @@ def test_the_manifest_is_published_latched_at_the_episodes_start_and_end():
     assert end["manifest"] == manifest and tuple(end["manifest"]) == MANIFEST_FIELDS, \
         (end, manifest)
     assert end["episode_id"] == start["episode_id"] and "not_known_yet" not in end
+    assert "declared" not in end
+    # the stand-in has no MAVROS evidence: the end frame's topology is not the
+    # declared hil, and the comparison says so; the rest agree
+    sve = compare_start_end(start["manifest"], end["manifest"], start["declared"])
+    assert [k for k, v in sve.items() if not v["equal"]] == ["topology"], sve
+    assert sve["topology"]["declared"] is True and sve["topology"]["end"] != "hil"
     rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
     assert rec["topic"] == "/guardrail/manifest" and rec["refused"] is None, rec
     assert rec["qos"] == {"reliability": "reliable", "durability": "transient_local",
                           "depth": 1}
     assert rec["start"]["published"] and rec["start"]["fields"] == list(start["manifest"])
+    assert rec["start"]["at"] == "arming" and rec["start"]["declared"] == ["topology"]
     assert rec["end"]["published"] and rec["end"]["fields"] == list(MANIFEST_FIELDS)
+
+
+def test_the_start_frame_names_what_arming_did_not_know_and_what_was_declared():
+    """No /vla/identity and no SIM_SPEEDUP at take-off, and no topology
+    declared: the start frame carries the launch's three fields and names
+    the other three under `not_known_yet` with the reason; a sim_speedup
+    the launch declared (VLAGUARD_SIM_SPEEDUP) is carried and named under
+    `declared`, as is the topology."""
+    def bare():
+        N, node, clk, out = _build([])
+        _arm(node)
+        return _frames(N, node)
+
+    start = _with_env(bare)
+    assert len(start) == 1 and list(start[0]["manifest"]) == [
+        "code_revision", "policy_hash", "random_seed"], start
+    nk = start[0]["not_known_yet"]
+    assert set(nk) == {"vla_model_hash", "sim_speedup", "topology"}, nk
+    assert "/vla/identity" in nk["vla_model_hash"] and "VLAGUARD_TOPOLOGY" in nk["topology"]
+    assert "declared" not in start[0]
+
+    def declared():
+        N, node, clk, out = _build([])
+        node._on_identity(N.String(data=json.dumps(STUB_IDENTITY)))
+        _arm(node)
+        return _frames(N, node)
+
+    start = _with_env(declared, VLAGUARD_SIM_SPEEDUP="1", VLAGUARD_TOPOLOGY="dev")[0]
+    assert start["manifest"]["sim_speedup"] == 1.0 and start["manifest"]["topology"] == "dev"
+    assert list(start["declared"]) == ["sim_speedup", "topology"], start
+    assert start["not_known_yet"] == {}, start
+
+
+def test_an_episode_that_never_armed_publishes_no_start_frame():
+    """The start frame is the episode's start, the arm: an episode the node
+    ended without arming publishes the end frame alone and says why."""
+    def run():
+        N, node, clk, out = _build([])
+        node._manifest_start.join(60)
+        node.start_mission()
+        _fly(N, node, clk, 1)
+        node._finish("time cap")
+        return N, node, out
+    N, node, out = _with_env(run)
+    assert [f["phase"] for f in _frames(N, node)] == ["end"], _frames(N, node)
+    rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
+    assert rec["start"]["published"] is False and "never armed" in rec["start"]["why"], rec
+
+
+def test_bring_up_publishes_the_start_frame_once_the_arm_is_accepted():
+    """bring_up is not run on the stand-in: its source calls
+    start_frame_at_arm right after the arm is accepted, and nowhere else."""
+    src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    body = src[src.index("        def bring_up(self)"):src.index("        def check_home(self)")]
+    assert body.count("self.start_frame_at_arm()") == 1, "not called once in bring_up"
+    armed = body.index('log.info("armed")')
+    assert armed < body.index("self.start_frame_at_arm()") < body.index("break", armed)
+    assert src.count("self.start_frame_at_arm()") == 1
 
 
 def test_a_refused_manifest_publisher_is_recorded_and_the_node_flies_on():
@@ -1104,7 +1220,7 @@ def test_a_refused_manifest_publisher_is_recorded_and_the_node_flies_on():
         N, node, clk, out = _build([])
     finally:
         _Node.create_publisher = real
-    node._manifest_start.join(60)
+    _arm(node)
     assert N.MANIFEST_TOPIC not in node.pubs
     node.start_mission()
     _mode(N, node, "GUIDED")
@@ -1118,33 +1234,28 @@ def test_a_refused_manifest_publisher_is_recorded_and_the_node_flies_on():
 
 
 def test_a_start_frame_still_computing_at_the_end_is_never_published_over_it():
-    """The start frame's git status runs on its own thread. An episode that
-    ends before it finished publishes the end frame and drops the start
-    frame, so the latched sample a late subscriber is handed stays the end
-    frame (one sample, depth 1)."""
+    """The start frame's git status runs on its own thread from the node's
+    start, and the frame waits for it from arming on. An episode that ends
+    before it finished publishes the end frame and drops the start frame, so
+    the latched sample a late subscriber is handed stays the end frame (one
+    sample, depth 1)."""
     import threading
     N, node, clk, out = _build([])
     node._manifest_start.join(60)
+    fields, node._start_fields = node._start_fields, None
     gate = threading.Event()
-    real = N.start_manifest_fields
-
-    def slow(*a, **kw):
-        gate.wait(30)
-        return real(*a, **kw)
-    N.start_manifest_fields = slow
+    node._manifest_start = threading.Thread(target=gate.wait, args=(30,), daemon=True)
+    node._manifest_start.start()                  # git status, still running
     N.MANIFEST_START_WAIT_S = 0.05
-    node.pubs[N.MANIFEST_TOPIC].sent.clear()
-    node.manifest_frames["start"] = None
-    node._manifest_start = threading.Thread(
-        target=node._publish_start_frame, args=(node.policy.policy_hash, 1), daemon=True)
-    node._manifest_start.start()
+    node.start_frame_at_arm()
     node.start_mission()
     _fly(N, node, clk, 1)
     node._finish("time cap")
     rec = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["manifest_frames"]
     assert rec["start"]["published"] is False and "still being computed" in rec["start"]["why"]
+    node._start_fields = fields                   # git status answers, too late
     gate.set()
-    node._manifest_start.join(60)
+    node._manifest_arm.join(60)
     assert [f["phase"] for f in _frames(N, node)] == ["end"], _frames(N, node)
     assert "not published over the end frame" in node.manifest_frames["start"]["why"]
 

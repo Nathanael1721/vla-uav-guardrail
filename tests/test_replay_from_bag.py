@@ -1646,6 +1646,60 @@ def test_a_start_frame_alone_is_compared_and_the_end_frame_said_absent():
     assert [r["manifest_in_bag"] for r in summary["per_run"]] == ["absent", "identical"]
 
 
+def test_a_start_frame_at_arming_is_compared_with_the_end_frame():
+    """THE START FRAME AT ARMING (2026-11-28): a start frame with all six,
+    the topology the launch's word (`declared`), is compared field by field
+    with manifest.json as before and with the end frame (`start_vs_end`,
+    policy_hash left out: generation 0 against the last). A field the two
+    frames disagree on - the launch declared hil, the evidence said dev - is
+    a difference, named as such even with no manifest.json beside the bag.
+    Fails on 69e9545: no start_vs_end, no declared."""
+    from guardrail.manifest import manifest_frame
+    man = _manifest()
+    decl = {"topology": "declared by the launch (VLAGUARD_TOPOLOGY=hil)"}
+
+    def frames(start, end):
+        return [(T0 - 10 * TICK, manifest_frame("start", start, T0, declared=decl)),
+                (T0 + 60 * TICK, manifest_frame("end", end, T0))]
+    start = dict(man, policy_hash=G0)                   # generation 0, the launch's
+    rec = _replay_with_frames(frames(start, man), man)
+    fr = rec["manifest_in_bag"]
+    assert rec["verdict"] == "identical" and fr["verdict"] == "identical", fr
+    assert fr["start_frame"]["not_known_yet"] == [] and fr["start_frame"]["declared"] == decl
+    assert fr["start_frame"]["fields"]["topology"] == {
+        "bag": "hil", "manifest_json": "hil", "equal": True, "declared": True}
+    sve = fr["start_vs_end"]
+    assert sve["mismatches"] == [] and list(sve["fields"]) == [
+        "code_revision", "vla_model_hash", "random_seed", "sim_speedup", "topology"], sve
+    assert sve["fields"]["topology"]["declared"] is True and "policy_hash" in sve
+    # the launch declared hil, the evidence said dev
+    end = dict(man, topology="dev")
+    rec = _replay_with_frames(frames(start, end), end)
+    fr = rec["manifest_in_bag"]
+    assert rec["verdict"] == "differs" and fr["verdict"] == "differs", fr
+    assert fr["start_vs_end"]["mismatches"] == ["topology"], fr["start_vs_end"]
+    assert rec["first_difference"]["field"] == "start.topology", rec["first_difference"]
+    # no manifest.json: the two frames alone say it
+    rec = _replay_with_frames(frames(start, end), None, g0=None)
+    assert rec["manifest_in_bag"]["verdict"] == "differs", rec["manifest_in_bag"]
+    assert rec["first_difference"] == {"layer": "manifest_frame",
+                                       "field": "start_vs_end.topology", "tick": None,
+                                       "bag": "hil", "log": "dev"}, rec["first_difference"]
+    # a value of another JSON type is a mismatch too; a hot-apply's policy is not
+    rec = _replay_with_frames(frames(dict(start, sim_speedup=1), dict(man, policy_hash=(
+        "sha256:" + "d" * 64))), None, g0=None)
+    assert rec["manifest_in_bag"]["start_vs_end"]["mismatches"] == ["sim_speedup"]
+    # a declaration the frame does not carry, or on an end frame, is refused
+    for bad in (lambda: manifest_frame("start", {"random_seed": 1}, 1, declared=decl),
+                lambda: manifest_frame("end", man, 1, declared=decl)):
+        try:
+            bad()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a declaration was accepted where none can be")
+
+
 def test_a_manifest_frame_is_the_six_fields_and_nothing_else():
     from guardrail.manifest import (MANIFEST_FIELDS, TOPOLOGY_ARDUPILOT_SITL, build_manifest,
                                     manifest_frame, parse_manifest_frame)

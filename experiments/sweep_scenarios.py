@@ -9714,8 +9714,10 @@ def write_rail_episode_bundle(ep_dir: Path, run_dir: Path, spec: ScenarioSpec, s
                             IR from the run's policy_g<N>.json, each
                             checked against the hash the node recorded
                             (write_policy_bundle);
-      episode.bag2/         the run's bag/, aliased (hard links on one
-                            volume), never renamed in the run folder;
+      episode.bag2/         the run's bag/ trimmed to begin at its
+                            manifest start frame (guardrail/episode_bag.py,
+                            2026-11-28), else aliased (hard links on one
+                            volume); bag/ is never changed or renamed;
       shield_audit.jsonl    the run's, byte for byte (a hard link where the
                             volume allows);
       harness_events.jsonl  rail_bundle_events, from the run's events.jsonl;
