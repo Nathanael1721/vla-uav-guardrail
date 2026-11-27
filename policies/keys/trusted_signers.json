@@ -1,19 +1,61 @@
 {
-  "_doc": "Public keys whose signatures guardrail.bundle accepts, keyed by the signed_by identity. Data, not code: swapping the signing authority (lab CA or ITRI CA, the PI's decision) means adding its key here and signing with it. Private keys never go in git.",
+  "_doc": "What guardrail.bundle trusts, as data. `authorities`: the certificate authorities (CA certificate + its SHA-256) a signer's certificate may chain to; the lab root CA today, and an ITRI CA is one more entry. An authority vouches only for keys pinned under `signers` unless its entry says `accept_unpinned: true`. `signers`: the keys whose signatures are accepted, keyed by the signed_by identity - a key certified by an authority carries its certificate and `issuer`; a bare key with `retired_on` is accepted only for what was issued before that instant. Private keys never go in git.",
+  "authorities": {
+    "lab-ca": {
+      "certificate_pem": "-----BEGIN CERTIFICATE-----\nMIIBxjCCAW2gAwIBAgIUUaPKHN4ZruLahHvFr486N5lk7mkwCgYIKoZIzj0EAwIw\nQDEaMBgGA1UECgwRVkxBIEd1YXJkcmFpbCBMYWIxIjAgBgNVBAMMGVZMQSBHdWFy\nZHJhaWwgTGFiIFJvb3QgQ0EwHhcNMjYxMTAyMTM0MjQxWhcNMzYxMDMwMTM0NzQx\nWjBAMRowGAYDVQQKDBFWTEEgR3VhcmRyYWlsIExhYjEiMCAGA1UEAwwZVkxBIEd1\nYXJkcmFpbCBMYWIgUm9vdCBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLRO\nzq5lLocxY3MhfSAyGgpZYr5zS6kUPCnj4o4o2qIHpxqJcLz/bLcKiFaaLEmhv/JO\nlP+guVfYm61U6M0Mea6jRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/\nBAQDAgGGMB0GA1UdDgQWBBRDxOJiMD1LKpXLCQP7e6k5AqS9JTAKBggqhkjOPQQD\nAgNHADBEAiAHMvYs3n+lMMfbamFcOwKdd3NQacIrsQGRtA5F5FU8KQIgdNQXFiXQ\nNQPNoMFSD8pvYLSiykJQS0Kr/1asjyqVjMI=\n-----END CERTIFICATE-----\n",
+      "not_after": "2036-10-30T13:47:41Z",
+      "note": "certificate authority whose signer certificates guardrail.bundle accepts. Which CA is the authority of a delivery is the PI's and ITRI's to name; another CA is one more entry here.",
+      "registered": "2026-11-27",
+      "sha256": "71d1e071d3985bc66ee1b310a6e12e2f2c3892ecf733e9e2aeaf6143cef718f4",
+      "subject": "CN=VLA Guardrail Lab Root CA,O=VLA Guardrail Lab"
+    }
+  },
   "signers": {
+    "lab-ca:71d1e071d3985bc6:ed25519:6ec75b535ef5c533": {
+      "algorithm": "ed25519",
+      "authority": "lab-ca:71d1e071d3985bc6",
+      "certificate_pem": "-----BEGIN CERTIFICATE-----\nMIIBzTCCAXOgAwIBAgIUR7reYMkktVabEcoioEqkAZE84RgwCgYIKoZIzj0EAwIw\nQDEaMBgGA1UECgwRVkxBIEd1YXJkcmFpbCBMYWIxIjAgBgNVBAMMGVZMQSBHdWFy\nZHJhaWwgTGFiIFJvb3QgQ0EwHhcNMjYxMTAyMTM0MjQxWhcNMzYxMDMwMTM0NzQx\nWjBFMRowGAYDVQQKDBFWTEEgR3VhcmRyYWlsIExhYjEnMCUGA1UEAwwecG9saWN5\nLXNpZ25lci02ZWM3NWI1MzVlZjVjNTMzMCowBQYDK2VwAyEAL1LgEyET/p1Ff7MH\nZrEqLpWw2QuL6xgEO8vogP3yD/6jdTBzMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/\nBAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBSZjMb6kZm1hTvZ\nujzZddzD8hmPADAfBgNVHSMEGDAWgBRDxOJiMD1LKpXLCQP7e6k5AqS9JTAKBggq\nhkjOPQQDAgNIADBFAiA2HGtvl53TxGRGAMp4vtrx58G36acDhMM1ceNcWzSHigIh\nAMz68+tE3dm1An67EgIRLF8PyChLCDdWFE0yl3TeZ6eR\n-----END CERTIFICATE-----\n",
+      "certificate_sha256": "7716f4e3fdcb9fb06dd3441d74c0ddf777f4efbc71b6e35028da756087bf720a",
+      "issuer": "lab-ca",
+      "leaf_serial": "47bade60c924b5569b11ca22a04aa401913ce118",
+      "leaf_subject": "CN=policy-signer-6ec75b535ef5c533,O=VLA Guardrail Lab",
+      "not_after": "2036-10-30T13:47:41Z",
+      "note": "bundle-signing key certified by authority 'lab-ca' (CA sha256 71d1e071d3985bc66ee1b310a6e12e2f2c3892ecf733e9e2aeaf6143cef718f4).",
+      "public_key_hex": "2f52e0132113fe9d457fb30766b12a2e95b0d90b8beb18043bcbe880fdf20ffe",
+      "registered": "2026-11-27"
+    },
+    "lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701": {
+      "algorithm": "ed25519",
+      "authority": "lab-ca:71d1e071d3985bc6",
+      "certificate_pem": "-----BEGIN CERTIFICATE-----\nMIIBzTCCAXOgAwIBAgIUC1OZHjcz/pWrxG4CROT1cw/2kGswCgYIKoZIzj0EAwIw\nQDEaMBgGA1UECgwRVkxBIEd1YXJkcmFpbCBMYWIxIjAgBgNVBAMMGVZMQSBHdWFy\nZHJhaWwgTGFiIFJvb3QgQ0EwHhcNMjYxMTAyMTM0MjQxWhcNMzYxMDMwMTM0NzQx\nWjBFMRowGAYDVQQKDBFWTEEgR3VhcmRyYWlsIExhYjEnMCUGA1UEAwwecG9saWN5\nLXNpZ25lci03MTVmNzBjNDY0N2E5NzAxMCowBQYDK2VwAyEAVVWs7g57oKB15Et8\nHfeLu1uvXbtlAaav1JFCsFPUfU2jdTBzMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/\nBAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBSD5x7C6+9Py2vr\nO2Ex23muDbM7XTAfBgNVHSMEGDAWgBRDxOJiMD1LKpXLCQP7e6k5AqS9JTAKBggq\nhkjOPQQDAgNIADBFAiEAl5H/CxBctDnAR3ibE0Z1cQCX0QY36nznVf5ohDZd4twC\nIBJO7voo23tBgNd5VC362r6Ablnu5hq65G2dAZihmZ1z\n-----END CERTIFICATE-----\n",
+      "certificate_sha256": "2c7227dec3e63c214daeb0fcd71f38458ab8acdfb54e2c6f3112c7b2d4f32fde",
+      "issuer": "lab-ca",
+      "leaf_serial": "b53991e3733fe95abc46e0244e4f5730ff6906b",
+      "leaf_subject": "CN=policy-signer-715f70c4647a9701,O=VLA Guardrail Lab",
+      "not_after": "2036-10-30T13:47:41Z",
+      "note": "bundle-signing key certified by authority 'lab-ca' (CA sha256 71d1e071d3985bc66ee1b310a6e12e2f2c3892ecf733e9e2aeaf6143cef718f4).",
+      "public_key_hex": "5555acee0e7ba0a075e44b7c1df78bbb5baf5dbb6501a6afd49142b053d47d4d",
+      "registered": "2026-11-27"
+    },
     "lab-dev:ed25519:6ec75b535ef5c533": {
       "algorithm": "ed25519",
       "authority": "lab-dev",
-      "note": "lab DEVELOPMENT key - not a CA. Replace with the CA the PI names (lab or ITRI) before final delivery.",
+      "note": "RETIRED 2026-11-27T00:10:37Z: this key is certified by authority 'lab-ca' and signs as lab-ca:71d1e071d3985bc6:ed25519:6ec75b535ef5c533 from then on. The bare identity stays listed only so that what it signed before that instant still verifies.",
+      "note_before_retirement": "lab DEVELOPMENT key - not a CA. Replace with the CA the PI names (lab or ITRI) before final delivery.",
       "public_key_hex": "2f52e0132113fe9d457fb30766b12a2e95b0d90b8beb18043bcbe880fdf20ffe",
-      "registered": "2026-10-06"
+      "registered": "2026-10-06",
+      "retired_on": "2026-11-27T00:10:37Z",
+      "superseded_by": "lab-ca:71d1e071d3985bc6:ed25519:6ec75b535ef5c533"
     },
     "lab-dev:ed25519:715f70c4647a9701": {
       "algorithm": "ed25519",
       "authority": "lab-dev",
-      "note": "lab DEVELOPMENT key of the AGX Orin hil machine (10.42.0.3): signs the run bundles of hil missions packed there. Generated on the Orin (python -m guardrail.bundle keygen), its private key never left it. Not a CA: replace with the CA the PI names (lab or ITRI) before final delivery.",
+      "note": "RETIRED 2026-11-27T00:10:37Z: this key is certified by authority 'lab-ca' and signs as lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701 from then on. The bare identity stays listed only so that what it signed before that instant still verifies.",
+      "note_before_retirement": "lab DEVELOPMENT key of the AGX Orin hil machine (10.42.0.3): signs the run bundles of hil missions packed there. Generated on the Orin (python -m guardrail.bundle keygen), its private key never left it. Not a CA: replace with the CA the PI names (lab or ITRI) before final delivery.",
       "public_key_hex": "5555acee0e7ba0a075e44b7c1df78bbb5baf5dbb6501a6afd49142b053d47d4d",
-      "registered": "2026-11-06"
+      "registered": "2026-11-06",
+      "retired_on": "2026-11-27T00:10:37Z",
+      "superseded_by": "lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701"
     }
   }
 }
