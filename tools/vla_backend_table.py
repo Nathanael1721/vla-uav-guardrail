@@ -670,8 +670,16 @@ BACKENDS = {
                         "page (source/pages/cognitivedrone.html) links a dataset "
                         "(huggingface ArtemLykov/cognitiveDrone_dataset) and a data-collector "
                         "repository, no model weights, and Hugging Face lists no CognitiveDrone "
-                        "model (checked 2026-11-17); the paper is arXiv 2503.01378. The "
-                        "adapter (serve --model cognitivedrone) refuses until weights exist"),
+                        "model (checked 2026-11-17); the paper is arXiv 2503.01378. Checked "
+                        "again 2026-11-27: the project page still links no weights; the "
+                        "Hugging Face model search for 'cognitivedrone' returns none and "
+                        "author ArtemLykov has no model; GitHub's repository search for "
+                        "'cognitivedrone' finds the data collector and two copies of the "
+                        "project site; the one Hugging Face model named for it, "
+                        "kingJulio/pi0_cognitive_drone (2026-04-06, no model card), is a "
+                        "third party's pi0 checkpoint trained on a LeRobot copy of the "
+                        "dataset, not the authors' OpenVLA weights. The adapter (serve "
+                        "--model cognitivedrone) refuses until weights exist"),
         "c1": "not flown: weights not obtained", "c2": "weights not obtained",
     },
     "bitvla": {
@@ -684,7 +692,13 @@ BACKENDS = {
         "unavailable": ("no checkpoint on this machine (the desktop that builds this table); "
                         "the published ones are LIBERO arm fine-tunes "
                         "(hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), none for a "
-                        "drone. On 22 Nov 2026 the LIBERO-Spatial one was downloaded to the "
+                        "drone (checked again 2026-11-27: the 15 models Hugging Face lists "
+                        "for 'bitvla' are the two hongyuw VLMs, the four hongyuw LIBERO "
+                        "fine-tunes, lxsy/bitvla-bf16 and GGUF / Core AI conversions of "
+                        "those, none tagged or named for a drone; GitHub's 3 'bitvla' "
+                        "repositories are ustcwhy/BitVLA, the manipulation code, and two "
+                        "without a description). On 22 Nov 2026 the LIBERO-Spatial one was "
+                        "downloaded to the "
                         "AGX Orin and loaded there by BitVLA's own model code through the "
                         "adapter (serve --model bitvla): load 5.94 s (warm page cache), "
                         "5,585 MiB GPU after load, median 1.479 s per answer (n = 20, about "
