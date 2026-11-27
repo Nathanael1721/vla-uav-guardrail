@@ -1040,6 +1040,10 @@ CHAIN_LOOP = ("ClearanceProjection", "StandoffProjection", "CorridorProjection",
 FIRST_FEASIBLE = ("KinematicClamp", "AltitudeClamp", "LateralProjection",
                   "CorridorProjection", "StandoffProjection", "ClearanceProjection")
 REPAIR_MODES = ("chain", "first_feasible")
+# Shield(repair_mode=...)'s default, named for the harnesses that offer the
+# choice (--repair-mode, 2026-11-27, WP3-06). Every flight and library run
+# before that flew it; tests/test_repair_mode_harness.py pins the two.
+DEFAULT_REPAIR_MODE = "chain"
 
 
 def with_path_repair(stack: tuple) -> tuple:

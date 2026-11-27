@@ -283,10 +283,16 @@ reads as `desktop`) is kept as `desktop#2` beside the first and named in
 `manifest.json` itself stays the grant's six fields. A run is read with
 `guardrail.manifest.load_run_manifest`: run manifest schema 1 is
 `manifest.json` alone (every run before 2026-11-17, unchanged), schema 2 is
-`manifest.json` plus `stack_revisions.json`. The record is evidence, not a
-gate: `is_kpi_grade()` does not read it, so no stored run's grade moves, and
-a run whose hosts ran different commits still counts toward its KPI; the
-mismatch is recorded, not enforced.
+`manifest.json` plus `stack_revisions.json`. `is_kpi_grade()` does not read
+the record; since 2026-11-27 the KPI readers gate on it beside that call
+(`guardrail.manifest.stack_grade_reasons`, applied by `tools/kpi_report.py`,
+`tools/rescore_kpis.py` and `tools/build_report_results.py`). A run whose
+record says single_sha `false` is not KPI-grade on any topology. On hil, a
+record that is pending or unreadable is refused too, and so is no record
+beside a run whose writer writes one (its `metrics.json` carries
+`setpoint_delivery`, which the ROS 2 Shield node writes since 2026-11-17,
+after the record's writer). A hil run flown before the record keeps its
+grade.
 
 ### 7. The label comes from evidence; the topology file only selects configuration
 

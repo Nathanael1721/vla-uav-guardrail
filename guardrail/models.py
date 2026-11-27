@@ -2315,23 +2315,25 @@ class Policy(BaseModel):
 
         Conservative: schedules and altitude bands are ignored, because a
         vehicle that takes off there climbs through every height of the
-        column and the clock at take-off is not known here. Pure Python, like
-        polygon_problem. The flight loaders record it in `runtime_notes`, and
-        tools/geo_to_policy.py refuses a stated take-off point inside a zone
-        it creates.
+        column and the clock at take-off is not known here; the boundary and
+        the margin ring count. The verdict is the Shield's
+        (shield.zone_footprint_reached, the closed form of zone_breached's
+        footprint half); until 2026-11-27 this method made the test itself
+        (X-13), with the arithmetic that verdict now makes. The import is
+        lazy because guardrail/shield.py imports this module. The flight
+        loaders record it in `runtime_notes`, and tools/geo_to_policy.py
+        refuses a stated take-off point inside a zone it creates.
 
         A dynamic_nfz is checked at its declared position (since 2026-10-08,
         when a policy file carrying one became flyable): a moving zone starts
         there at the Shield's first tick."""
+        from .shield import zone_footprint_reached
         out = []
         for c in self.constraints:
             if not isinstance(c, (PolygonFence, DynamicNFZ)) or c.constraint_type != "hard":
                 continue
-            ring = _dedupe_ring([(v.x, v.y) for v in c.vertices])
-            if len(ring) < 3:
-                continue
             m = max(c.margin_m, 0.0)
-            if _point_in_ring(0.0, 0.0, ring) or _dist_to_ring(0.0, 0.0, ring) <= m:
+            if zone_footprint_reached(c, 0.0, 0.0):
                 out.append(
                     f"{c.id}: the frame origin (0, 0) lies inside this hard "
                     f"keep-out zone's footprint (margin {m:g} m, band "

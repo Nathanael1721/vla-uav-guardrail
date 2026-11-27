@@ -135,7 +135,9 @@ for (2026-10-07 review). Now:
 
 - `Policy.start_conflicts()` names every hard keep-out zone whose footprint
   (polygon plus margin ring, any height, any schedule) holds the frame origin,
-  and `load_for_flight` records each in the run's `runtime_notes`;
+  and `load_for_flight` records each in the run's `runtime_notes`; since
+  2026-11-27 it asks the Shield's `zone_footprint_reached`
+  (guardrail/shield.py) rather than testing the point itself (X-13);
 - `tools/geo_to_policy.py convert --origin` refuses a take-off point inside a
   zone it creates;
 - the tests use a take-off point ~100 m south of the yard and assert the start

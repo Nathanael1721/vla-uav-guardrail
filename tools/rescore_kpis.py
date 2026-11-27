@@ -51,7 +51,10 @@ day the run was flown. `guardrail.manifest.is_kpi_grade` has tightened since
 while today's rule says no. The stored field is never rewritten - it is what
 the flight wrote - but where today's verdict differs, `kpi_grade_rechecked`
 is ADDED beside it (the verdict, its reasons, the date), so no reader can take
-the old `true` for today's (follow-up #5).
+the old `true` for today's (follow-up #5). Since 2026-11-27 today's verdict
+also judges the run's stack record (guardrail.manifest.stack_grade_reasons,
+ARCH-31): single_sha false, or on hil a record that is pending, unreadable or
+missing beside a run whose writer writes one, is not KPI-grade.
 
 POLICY RESOLUTION
 
@@ -591,10 +594,15 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
     # differ (module docstring). Added once; a later disagreement is reported.
     if isinstance(stored.get("kpi_grade"), bool) and manifest:
         from guardrail.delivery import with_stored_delivery
-        from guardrail.manifest import is_kpi_grade
+        from guardrail.manifest import (is_kpi_grade, stack_grade_reasons,
+                                        stack_summary)
         # With the setpoint delivery record its logs give, for a run flown
         # before the Shield wrote one (guardrail.delivery.stored_record).
         today, why = is_kpi_grade(manifest, with_stored_delivery(metrics, run))
+        # The run's stack record (ARCH-31, 2026-11-27), judged against the
+        # metrics.json the run wrote, not the delivery-filled copy.
+        stack_why = stack_grade_reasons(stack_summary(run), manifest, metrics)
+        today, why = (today and not stack_why), list(why) + stack_why
         if today != stored["kpi_grade"] and "kpi_grade_rechecked" not in stored:
             added["kpi_grade_rechecked"] = {
                 "kpi_grade": today, "reasons": why,

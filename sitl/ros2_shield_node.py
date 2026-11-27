@@ -606,6 +606,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.hold_flight import HoldFlight, HoldWatch, body_command     # noqa: E402
+from guardrail.hot_apply_log import generations_cell, hot_apply_generations  # noqa: E402
 from guardrail.response import ARDUCOPTER_GUIDED                         # noqa: E402
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
@@ -618,6 +619,7 @@ from guardrail.models import AltitudeEnvelope, PolygonFence, XY          # noqa:
 from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.shield import (altitude_out_of_band, standoff_breached,       # noqa: E402
                               standoff_ring_m, standoff_rules)
+from guardrail.repair import DEFAULT_REPAIR_MODE, REPAIR_MODES           # noqa: E402
 from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.people import declared_subject_source                     # noqa: E402
 from guardrail.terrain import (TerrainReference, ground_from_args,       # noqa: E402
@@ -3085,6 +3087,11 @@ if HAVE_ROS:
             # mode it detours round a --subject's stand-off ring only); off is
             # the chain every run before 2026-11-17 flew.
             self.path_repair = getattr(args, "path_repair", "on") == "on"
+            # --repair-mode (2026-11-27, WP3-06): chain (default, what every
+            # flight before this flag flew) or first_feasible, the grant's
+            # selection (guardrail/repair.py THE MODES; ungated, off by
+            # default). Recorded in metrics.json shield_forecast.repair_mode.
+            self.repair_mode = getattr(args, "repair_mode", None) or DEFAULT_REPAIR_MODE
             # clear_response (2026-11-19): the clearance horizon covers the
             # ArduPilot vehicle's stop (0.45 s reaction, 1.75 m/s^2), not an
             # instant 3 m/s^2 one; the de_hil1 flights entered both
@@ -3100,6 +3107,7 @@ if HAVE_ROS:
                                       pipe_clock=self.pipe_rec, **self.world_kw,
                                       **self.ground_kw,
                                       path_repair=self.path_repair,
+                                      repair_mode=self.repair_mode,
                                       clear_response=ARDUCOPTER_GUIDED,
                                       **({"arc_forecast": True} if self.arc else {}))
             self._ev_state = SE.EventState(shields=[self.shield])
@@ -3322,6 +3330,9 @@ if HAVE_ROS:
             self.takeoff_speedup: dict | None = None
             self.n_touched = self.n_braked = 0
             self.spawn_t = self.spawn_pos = None
+            # The --dynamic zone's generation, taken when it is applied: a
+            # later hot-apply moves policy.generation on (report.md).
+            self.spawn_gen: int | None = None
             self.dynamic_fence_id: str | None = None
             self.done = False
             self.reached = False
@@ -5232,6 +5243,7 @@ if HAVE_ROS:
                                 fn, g)
                 self._queue_fences(f"hot_apply {applied.id} ({applied.type})")
                 self.spawn_t, self.spawn_pos = now, (st.x, st.y)
+                self.spawn_gen = g
                 rule_events.append(f"dynamic zone {applied.id}")
                 self._defer("console line", functools.partial(
                     self.get_logger().info,
@@ -6032,7 +6044,10 @@ if HAVE_ROS:
                     # forecast along its arc (Shield.filter_body).
                     "arc": bool(getattr(self.shield, "arc_forecast", False)),
                     # --path-repair (WP3-06, 2026-11-17).
-                    "path_repair": bool(getattr(self.shield, "path_repair", False))},
+                    "path_repair": bool(getattr(self.shield, "path_repair", False)),
+                    # --repair-mode (WP3-06, 2026-11-27): the selection the
+                    # Shield flew; "chain" is every flight before the flag.
+                    "repair_mode": getattr(self.shield, "repair_mode", DEFAULT_REPAIR_MODE)},
                 # None with no target (--no-target): no goal was declared,
                 # so none was missed either.
                 "reached": self.reached if self.has_target else None,
@@ -6419,6 +6434,17 @@ if HAVE_ROS:
                 + ("" if graded else "  (" + "; ".join(why) + ")"))
             fsm_line = (f"{self.fsm.summary()['max_state']} (max state)"
                         if self.fsm else "not run (control arm)")
+            # Every hot-apply generation, whatever made it (WP3-19,
+            # 2026-11-27): the REST rows and the --dynamic row each see one
+            # source, and a scenario event's generation read "not served" /
+            # "not used" there.
+            gens_cell = generations_cell(hot_apply_generations(
+                rest=self.hot.applied if self.hot is not None else None,
+                scenario=self._ev_records,
+                dynamic=(None if self.spawn_t is None else
+                         {"t": self.spawn_t, "generation": self.spawn_gen,
+                          "rule_id": self.dynamic_fence_id}),
+                recorded=self.rec.generations))
             (self.out / "report.md").write_text(
                 f"""# ROS 2 rail report - shield {'ON' if self.shield_on else 'OFF'}
 
@@ -6431,6 +6457,7 @@ if HAVE_ROS:
 | Policy source | {self.policy_source['kind']} `{self.policy_source['path']}` - signature **{self.policy_source['signature']}**{' (--dev-yaml)' if self.policy_source.get('dev_yaml') else ''} |
 | Rule clock | {self.clock_record.get('kind')}: {self.clock_record.get('start') or self.clock_record.get('tz')} |
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}, receipt to swap max {metrics['hot_apply']['receipt_to_swap_ms_max']} ms" if self.hot is not None else 'not served'} |
+| Hot-apply generations | {gens_cell} |
 | Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
 | Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
 | GPS fix (`fix_ok`, {FIX_TOPIC}) | {f"{self.n_fix} message(s); {metrics['fix_quality']['ticks_no_fix']} tick(s) without a fix; X8 input on {self.n_position_lost} tick(s)" if self.n_fix else 'not reported (no message): fix_ok None, as before'} |
@@ -6447,7 +6474,7 @@ if HAVE_ROS:
 | Autopilot took over | {self.takeover or 'no'} |
 | Autopilot fence parameters | {self.autopilot_fence or 'not read'} |
 | Autopilot fence upload | {(self.fence_status[-1] if self.fence_status else 'no upload reported')} |
-| Dynamic NFZ | {f'hot-applied t={self.spawn_t:.1f}s, generation {self.policy.generation}' if self.spawn_t else 'not used'} |
+| Dynamic NFZ | {f'hot-applied t={self.spawn_t:.1f}s, generation {self.spawn_gen}' if self.spawn_t is not None else 'not used'} |
 | **Time inside NFZ** | **{nfz_s:.1f} s** |
 | **P0 KPI** | **{kpi}** |
 """, encoding="utf-8")
@@ -6556,6 +6583,13 @@ def make_parser() -> argparse.ArgumentParser:
                          "runs PathRepair after LateralProjection, the grant's order; "
                          "in chain mode it detours round a --subject's stand-off ring "
                          "only. off: the chain every run before 2026-11-17 flew")
+    ap.add_argument("--repair-mode", choices=list(REPAIR_MODES), default=DEFAULT_REPAIR_MODE,
+                    help="the Shield's repair selection (2026-11-27, WP3-06; guardrail/"
+                         "repair.py THE MODES): chain (default, every flight before this "
+                         "flag) is the iterated chain; first_feasible is the grant's rule, "
+                         "the first operator whose action clears the earliest violation "
+                         "within theta wins (UNGATED, detours round zones too; off by "
+                         "default). Recorded in metrics.json shield_forecast.repair_mode")
     ap.add_argument("--arc-forecast", choices=["on", "off"], default="off",
                     help="on: the Shield forecasts a body action with a yaw rate along "
                          "the arc it flies (velocity held in the body frame while the "

@@ -20,6 +20,7 @@ ArduCopter V4.5.7 2a3dc4b7).
 |---|---|
 | `kpi_report_ntFIN5_2026-11-24.md` / `.json` | `tools/kpi_report.py --campaign demo/out/hil_ntFIN5 --rescore-rail docs/data/kpi_ntFIN5/rescore_r2_ntFIN5.json --baseline docs/data/kpi_ntFIN4/kpi_report_ntFIN4_2026-11-23.json`, made from a clean tree at b171c57 |
 | `kpi_report_stdout.txt` | that command's console output |
+| `kpi_report_ntFIN5_2026-11-27_wp1_21c2771.md` / `.json`, `kpi_report_stdout_2026-11-27_wp1_21c2771.txt` | the same command with `--out docs/data/kpi_ntFIN5/kpi_report_ntFIN5_2026-11-27_wp1_21c2771`, from a clean tree at d75ddc9, where `docs/data/wp1_roundtrip.json` is the 21c2771 record (below, "Re-rendered 27 Nov") |
 | `rescore_r2_ntFIN5.json` / `.txt` | `experiments/sweep_scenarios.py --profile nightly --rescore-rail` over the 654 runs |
 | `replay_at_revision_ntFIN5.json` / `.per_run.jsonl.gz` | `tools/replay_at_revision.py --root demo/out/hil_smoke --only ntFIN5_` |
 
@@ -52,6 +53,40 @@ deferred post-setpoint work counted (`e2e_with_wait_ms`, an upper bound).
 
 The report's "against the baseline" section matches episodes by run name, so
 it lists every run as new or gone; its per-family table is the comparison.
+
+## Re-rendered 27 Nov: the WP1 round trip at the release's own revision
+
+The report of 24 Nov printed the WP1 round trip of 6 Nov (4edd5d1, 32
+policies), because `tools/kpi_report.py` reads `docs/data/wp1_roundtrip.json`
+and that file still held the 6 Nov run. Since d75ddc9 it holds the run at
+21c2771 (25 Nov, 33 policies; the 6 Nov one is
+`docs/data/wp1_roundtrip_4edd5d1.json`), and the report was made again from
+the same inputs. The 24 Nov files are kept as they were.
+
+What changed, `kpi_report_ntFIN5_2026-11-24` against
+`kpi_report_ntFIN5_2026-11-27_wp1_21c2771` (md and JSON compared):
+
+- The WP1 section (md lines 1777-1796): generated 2026-11-25T13:08:08Z at
+  `21c277170001`, was 2026-11-06T14:25:21Z at `4edd5d137573`. Round trip,
+  tamper refusal, grant-form round trip, both hashes recorded and verified,
+  forged reference hash refused: 33/33 (were 32/32); their nulls 0/33;
+  `reference_hash_representable` 0/33 (was 0/32); negative corpus 39/39 and
+  the reference figures (3/3, 1/1) unchanged; cold start p95 483 ms (was
+  581 ms), whole process p95 594 ms (was 692 ms), with the certified
+  signer's chain check.
+- The tick-budget table has one more stored profile,
+  `deploy/evidence/hil/shield_tick_profile_20261125.json` (committed in
+  f2217d7, after b171c57), read by the default glob.
+- The header: date 2026-11-27, revision d75ddc95e4ad, the new `--out`.
+- Nothing else: the episodes, the KPI summary, the per-family tables, the
+  baseline comparison and the WP2 section are the same values. The WP2
+  section still reads `docs/data/csp_kpis.json` of 2026-11-06 (52ac56c, 32
+  policies); it is not at 21c2771 and was not regenerated here.
+
+The campaign was read from the lab checkout's `demo/out/hil_ntFIN5` (the
+report was rendered in a worktree); the local prefix was then removed from
+the stored paths, as "How the files were made" below describes, so they
+read as in the 24 Nov files.
 
 ## Replay at the flown revision
 

@@ -30,7 +30,13 @@ arm and an A/A arm; its figures cannot be compared one to one with pab3's.
   CSP text and the code (bfb4973) are the same in every arm. The largest A/A
   gap in repairs per episode (433) comes from pair 2, flown in one sitting,
   not from the split pair 1 (277).
-- **12 of 12 arms flown, all KPI-grade.**
+- **12 of 12 arms flown, all KPI-grade as flown.** Since 27 Nov (9e493a2)
+  the KPI readers also gate on the stack record (ARCH-31,
+  guardrail/manifest.py stack_grade_reasons). Under that gate these 12 read
+  0 KPI-grade: each run's single_sha is pending, because the PAS script
+  outside the harness never added the desktop's revision. Re-running this
+  folder's command gives "12 episodes (0 KPI-grade)". The figures below
+  stay as flown, and the committed report and stdout are not rewritten.
 
 ## Files
 

@@ -3222,15 +3222,17 @@ class _FakeRig:
         return local_parent / tag
 
 
-def _hil_campaign(argv, td: Path, **rig_kw):
-    """main() --backend hil on a fake rig; (rc, results doc, the rig)."""
+def _hil_campaign(argv, td: Path, rig_cls=None, **rig_kw):
+    """main() --backend hil on a fake rig (`rig_cls`, default _FakeRig);
+    (rc, results doc, the rig)."""
+    rig_cls = rig_cls or _FakeRig
     cfg = td / "hil.json"
     cfg.write_text(json.dumps({"store": str(td / "store"),
                                "bundles_dir": str(_signed_like_bundles(td))}),
                    encoding="utf-8")
     rigs = []
     saved = S.make_hil_transport
-    S.make_hil_transport = lambda c: rigs.append(_FakeRig(c, **rig_kw)) or rigs[-1]
+    S.make_hil_transport = lambda c: rigs.append(rig_cls(c, **rig_kw)) or rigs[-1]
     try:
         rc = _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
                      "--out", str(td / "s.json"), "--no-bundles"] + argv)
@@ -5515,6 +5517,67 @@ def test_the_sitl_rail_flies_a_signed_bundle_only_when_the_profile_asks():
     profs = {p.stem: load_profile(p) for p in
              sorted((ROOT / "experiments" / "profiles").glob("*.yaml"))}
     assert [k for k, v in profs.items() if v.rail_signed_bundle] == ["gazebo_midterm"]
+
+
+class _ManifestRig(_FakeRig):
+    """The fake rig, with the Shield node's own manifest.json in each run
+    folder (the six fields, topology `hil`), as every flown hil run has."""
+
+    NODE_PILOT = "guardrail.prefix_consumer.PrefixConsumer@src:" + "ab" * 32
+
+    def run_mission(self, args, tag, shield, timeout_s):
+        rc, out = super().run_mission(args, tag, shield, timeout_s)
+        (self.remote / "demo" / "out" / tag / "manifest.json").write_text(json.dumps({
+            "code_revision": "a3d616ec6ec8", "vla_model_hash": self.NODE_PILOT,
+            "policy_hash": "sha256:" + "0" * 64, "random_seed": 1001,
+            "sim_speedup": 1.0, "topology": "hil"}), encoding="utf-8")
+        return rc, out
+
+
+def test_a_hil_campaign_summary_names_the_rails_topology_not_the_headless_one():
+    """WP4-19 (2026-11-27): pdyn1126's sweep.json said `_backend` "hil" and
+    `_manifest_common.topology` "headless-kinematic", with the headless
+    pilot's hash, beside 12 per-run manifests that said topology `hil`. The
+    summary carried manifest_base() - the headless sweep's - on every
+    backend. A rail campaign's shared fields now come from its runs' own
+    manifest.json; a field no run recorded is None, never the headless
+    value; the headless sweep keeps its base unchanged."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, _ = _hil_campaign(["--only", "speed-cap", "--hil-campaign", "tstmc1"], td,
+                                   rig_cls=_ManifestRig)
+        assert doc["_backend"] == "hil" and doc["results"][0]["status"] == "pass", doc["results"]
+        mc = doc["_manifest_common"]
+        assert mc["topology"] == "hil", mc
+        assert mc["vla_model_hash"] == _ManifestRig.NODE_PILOT, mc
+        assert mc["sim_speedup"] == 1.0 and mc["runs_code_revision"] == "a3d616ec6ec8", mc
+        assert mc["code_revision"] == S.manifest_base()["code_revision"], mc
+        assert "1 of 1 episodes read" in mc["source"], mc
+        assert S.TOPOLOGY_HEADLESS not in json.dumps(mc), mc
+        assert doc["results"][0]["manifest"]["topology"] == "hil", doc["results"][0]
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, _ = _hil_campaign(["--only", "speed-cap", "--hil-campaign", "tstmc2"], td)
+        mc = doc["_manifest_common"]
+        # The plain fake rig writes no manifest.json: nothing to read, and
+        # nothing made up.
+        assert mc["topology"] is None and mc["vla_model_hash"] is None, mc
+        assert "0 of 1 episodes read" in mc["source"], mc
+    base = {"code_revision": "c0ffee", "vla_model_hash": "h", "topology": S.TOPOLOGY_HEADLESS}
+    assert S.campaign_manifest_common("headless", base, [None]) is base
+    two = S.campaign_manifest_common("hil", base, [
+        {"topology": "hil", "vla_model_hash": "p1", "sim_speedup": 1.0, "code_revision": "r"},
+        {"topology": "hil", "vla_model_hash": "p2", "sim_speedup": 1.0, "code_revision": "r"},
+        None])
+    assert two["topology"] == "hil" and two["vla_model_hash"] == ["p1", "p2"], two
+    assert two["code_revision"] == "c0ffee" and "2 of 3" in two["source"], two
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "s.json"
+        assert _sweep(["--only", "speed-cap", "--out", str(out), "--no-bundles",
+                       "--seed", "1001"]) == 0
+        mc = json.loads(out.read_text(encoding="utf-8"))["_manifest_common"]
+        assert mc == S.manifest_base(), mc
+        assert mc["topology"] == S.TOPOLOGY_HEADLESS, mc
 
 
 if __name__ == "__main__":

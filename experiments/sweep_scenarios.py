@@ -407,6 +407,7 @@ from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
                                      legacy_pins_read_as_before, load_profile)
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, RECOVERY_LAWS,  # noqa: E402
                               DR_DRIFT_MPS, Shield, recurrence_active)
+from guardrail.repair import DEFAULT_REPAIR_MODE, REPAIR_MODES           # noqa: E402
 
 LIB = ROOT / "experiments" / "scenarios.yaml"
 PROFILES = ROOT / "experiments" / "profiles"
@@ -472,6 +473,20 @@ DEFAULT_AUTOPILOT_HOLD = "moved_points"
 #   lookahead  the band in one lookahead, every bundle flown before
 #              2026-10-29 (an exponential approach with time constant L).
 DEFAULT_RECOVERY_LAW = "cap_all"
+# How the flying Shield selects its repair (Shield's repair_mode,
+# guardrail/repair.py THE MODES; --repair-mode, 2026-11-27, WP3-06), recorded
+# per episode (`repair_mode`, also in episode_start) and, on a non-default
+# run, in a bundle's `arm.repair_mode` (EXTRAS_SCHEMA_REPAIR):
+#   chain           the iterated chain, the default: every run before the
+#                   option flew it.
+#   first_feasible  the grant's selection (the first operator whose action
+#                   clears the earliest violation within theta wins). Ungated
+#                   (guardrail/repair.py PathRepair: none of chain mode's
+#                   gates runs there) and it detours round zones too. A
+#                   comparison arm, never the headline.
+# The judging Shields (oracle, checker, vehicle judge) stay on the default:
+# what counts as a breach does not move with the arm.
+
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -1483,7 +1498,8 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 recovery: str = DEFAULT_RECOVERY_LAW,
                 entry: str | None = None,
                 gps_dropout: str = DEFAULT_GPS_DROPOUT,
-                action_frame: str = "world") -> EpisodeRun:
+                action_frame: str = "world",
+                repair_mode: str = DEFAULT_REPAIR_MODE) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
     text - unless it names a prefix consumer (`pilot_reads_prefix`, module
@@ -1509,11 +1525,17 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     yaw, so the heading stays the start's and every pilot here commands no
     yaw rate. Against the world-frame hand-over flown before wf21 the
     episodes differ by the rotations' rounding only, at headings that are
-    not a whole number of quarter turns (tests/test_frame_boundary.py)."""
+    not a whole number of quarter turns (tests/test_frame_boundary.py).
+
+    `repair_mode` (REPAIR_MODES, 2026-11-27, WP3-06): the flying Shield's
+    repair selection, "chain" (the default, every run before it) or the
+    grant's "first_feasible"; recorded in the episode_start event and in the
+    run's extra (`repair_mode`). The judging Shields keep the default."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
                          response=response, recovery=recovery, entry=entry,
-                         gps_dropout=gps_dropout, action_frame=action_frame).finish()
+                         gps_dropout=gps_dropout, action_frame=action_frame,
+                         repair_mode=repair_mode).finish()
 
 
 class EpisodeRunner:
@@ -1555,11 +1577,12 @@ class EpisodeRunner:
                  recovery: str = DEFAULT_RECOVERY_LAW,
                  entry: str | None = None,
                  gps_dropout: str = DEFAULT_GPS_DROPOUT,
-                 action_frame: str = "world"):
+                 action_frame: str = "world",
+                 repair_mode: str = DEFAULT_REPAIR_MODE):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
                              autopilot_hold, response, recovery, entry, gps_dropout,
-                             action_frame)
+                             action_frame, repair_mode)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1649,7 +1672,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              recovery: str = DEFAULT_RECOVERY_LAW,
              entry: str | None = None,
              gps_dropout: str = DEFAULT_GPS_DROPOUT,
-             action_frame: str = "world"):
+             action_frame: str = "world",
+             repair_mode: str = DEFAULT_REPAIR_MODE):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1670,6 +1694,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         raise ValueError(f"recovery law {recovery!r}: one of {list(RECOVERY_LAWS)}")
     if action_frame not in ACTION_FRAMES:
         raise ValueError(f"action frame {action_frame!r}: one of {list(ACTION_FRAMES)}")
+    if repair_mode not in REPAIR_MODES:
+        raise ValueError(f"repair mode {repair_mode!r}: one of {list(REPAIR_MODES)}")
     body_frame = action_frame == "body"
     # Every Shield of the episode on the same recovery law; passed only when
     # it is not the default, as the hold model is below, so a caller's own
@@ -1768,9 +1794,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # vehicle obeys at once and keeps the horizon it always had. The judges
     # below keep theirs, so what counts as a breach does not move.
     clr_kw = {} if rsp is None else {"clear_response": ARDUCOPTER_GUIDED}
+    # The repair selection (DEFAULT_REPAIR_MODE): the flying Shield only,
+    # passed only when it is not the default, as the hold model is.
+    rm_kw = {} if repair_mode == DEFAULT_REPAIR_MODE else {"repair_mode": repair_mode}
     shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
                     **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
-                       else {"hold_points": False}), **rec_kw, **clr_kw)
+                       else {"hold_points": False}), **rec_kw, **clr_kw, **rm_kw)
     from guardrail.audit import AuditLogger
     auditor = AuditLogger.in_memory(shield.policy)
     audit: list[dict] = []
@@ -1780,6 +1809,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                   if esc else None)
     # The recovery law the flying Shield holds (a caller's factory may set it).
     recovery_law = getattr(shield, "recovery_law", recovery)
+    # The repair selection the flying Shield holds (likewise).
+    repair_mode = getattr(shield, "repair_mode", repair_mode)
 
     stress = spec.stress
     # Ground truth under degraded perception comes from a SECOND Shield kept in
@@ -1883,7 +1914,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
         "lint_warnings": lint_warnings,
         "autopilot_hold_model": hold_model,
-        "recovery_law": recovery_law}]
+        "recovery_law": recovery_law,
+        "repair_mode": repair_mode}]
     if stress.degrades_perception:
         # What the modelled rail tells the Shield about its position and the
         # dead reckoning's drift allowance (2026-11-06): only where perception
@@ -2781,6 +2813,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # How the Shield recovered from outside an altitude band
         # (DEFAULT_RECOVERY_LAW): "cap" since 2026-10-29, "lookahead" before.
         "recovery_law": recovery_law,
+        # How the flying Shield selected its repairs (DEFAULT_REPAIR_MODE).
+        "repair_mode": repair_mode,
         "terminated_s": terminated_s,
         # Events the scenario expected the Shield to refuse: None when there
         # were none, else whether every one was refused (and nothing else).
@@ -3330,10 +3364,16 @@ def prefix_flight_record(metrics: dict, meta: dict, rows=None) -> dict | None:
 #     on /4). A /4 reader would re-fly a /5 sensor bundle with the Shield
 #     blind to the report, so it refuses "/5"; a /1-/4 bundle was flown blind
 #     and is re-flown so (`fix_quality_reported` False).
+# /6  since 2026-11-27 (WP3-06), written ONLY by a run on a non-default
+#     repair selection (`--repair-mode first_feasible`): the arm names
+#     `arm.repair_mode` (DEFAULT_REPAIR_MODE). Every default-mode bundle stays
+#     /5, byte for byte, and was flown on "chain". A /5 reader would re-fly a
+#     first_feasible bundle on the chain under its id, so it refuses "/6".
 EXTRAS_SCHEMA = "sweep-episode-extras/5"
+EXTRAS_SCHEMA_REPAIR = "sweep-episode-extras/6"
 READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", "sweep-episode-extras/2",
                            "sweep-episode-extras/3", "sweep-episode-extras/4",
-                           EXTRAS_SCHEMA)
+                           EXTRAS_SCHEMA, EXTRAS_SCHEMA_REPAIR)
 EXTRAS_SCHEMAS_READ = READABLE_EXTRAS_SCHEMAS       # the T1b branch's name
 
 
@@ -3385,7 +3425,8 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
                    wind_model: str = DEFAULT_WIND_MODEL, episode=None,
                    autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                    response: str = DEFAULT_RESPONSE_ARM,
-                   recovery: str = DEFAULT_RECOVERY_LAW) -> dict:
+                   recovery: str = DEFAULT_RECOVERY_LAW,
+                   repair_mode: str = DEFAULT_REPAIR_MODE) -> dict:
     """The keys that make an episode bundle self-contained (manifest_extras.json,
     beside the grant's six-field manifest): the expanded ScenarioSpec cell
     with every parameter bound, its events, the library defaults it relied
@@ -3407,8 +3448,14 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     `fix_quality_reported`. Every bundle is EXTRAS_SCHEMA ("/5", which has
     the history): a reader that does not know a key refuses it rather than
     re-fly it on the ideal vehicle, with the wrong hold, on the wrong
-    recovery law or with the Shield blind to the rail's fix report."""
+    recovery law or with the Shield blind to the rail's fix report.
+
+    A bundle flown on a non-default repair selection (`repair_mode`, the
+    run's own `repair_mode` when it has one; 2026-11-27) also names
+    `arm.repair_mode` and is EXTRAS_SCHEMA_REPAIR ("/6"), which a /5 reader
+    refuses; a default-mode bundle is /5 exactly as before."""
     dfl = _as_defaults(defaults)
+    rmode = run.extra.get("repair_mode") or repair_mode
     out: dict[str, Any] = {
         "extras_schema": EXTRAS_SCHEMA,
         "scenario_id": spec.scenario_id,
@@ -3428,6 +3475,9 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "generations": policy_generations(run.events),
         "rerun": "experiments/sweep_scenarios.py rerun_from_extras(<this JSON>)",
     }
+    if rmode != DEFAULT_REPAIR_MODE:
+        out["extras_schema"] = EXTRAS_SCHEMA_REPAIR
+        out["arm"]["repair_mode"] = rmode
     if episode is not None:
         out.update(episode_id=episode.episode_id, run_id=episode.run_id,
                    params=episode.cell.params, arm_tag=episode.arm_tag)
@@ -3480,7 +3530,10 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     `arm.recovery` contradicts itself and is refused); /4 and /5 name their
     law, or are refused. /1-/4 were flown with no fix-quality report (the
     Shield blind on a degraded pose) and are re-flown so; /5 records its
-    drift allowance, and one flown with another is refused."""
+    drift allowance, and one flown with another is refused. /6 names its
+    `arm.repair_mode` (or is refused) and is otherwise read as /5; every
+    earlier schema was flown on "chain" (one naming a repair mode contradicts
+    itself and is refused)."""
     schema = extras.get("extras_schema")
     if schema not in READABLE_EXTRAS_SCHEMAS:
         raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
@@ -3513,8 +3566,19 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
         if rsp_named is None:
             raise ValueError(f"manifest_extras schema {schema!r} names no "
                              f"arm.response: which vehicle flew it is unknown")
+    repair_mode = arm.get("repair_mode")
+    if schema == EXTRAS_SCHEMA_REPAIR:
+        if repair_mode not in REPAIR_MODES:
+            raise ValueError(f"manifest_extras schema {schema!r} names arm.repair_mode "
+                             f"{repair_mode!r}: which repair selection was flown is "
+                             f"unknown (one of {list(REPAIR_MODES)})")
+    elif repair_mode is not None:
+        raise ValueError(f"manifest_extras schema {schema!r} predates arm.repair_mode but "
+                         f"names {repair_mode!r}: no harness wrote that under {schema!r}")
+    else:
+        repair_mode = DEFAULT_REPAIR_MODE
     recovery = arm.get("recovery")
-    if schema in ("sweep-episode-extras/4", EXTRAS_SCHEMA):
+    if schema in ("sweep-episode-extras/4", EXTRAS_SCHEMA, EXTRAS_SCHEMA_REPAIR):
         if recovery is None:
             raise ValueError(f"manifest_extras schema {schema!r} names no arm.recovery: "
                              f"which recovery law was flown is unknown")
@@ -3528,7 +3592,7 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
     body = legacy_pins_read_as_before(extras["scenario_spec"])
-    if schema != EXTRAS_SCHEMA:
+    if schema not in (EXTRAS_SCHEMA, EXTRAS_SCHEMA_REPAIR):
         # /1-/4 were flown before the rail's fix-quality report existed: the
         # Shield flew blind on a degraded pose, and is re-flown so. One that
         # names a drift allowance contradicts itself.
@@ -3581,7 +3645,8 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
                            wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
-                           autopilot_hold=hold, response=response, recovery=recovery)
+                           autopilot_hold=hold, response=response, recovery=recovery,
+                           repair_mode=repair_mode)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -3762,6 +3827,13 @@ RAIL_HOTAPPLY_FLAGS = ("--hotapply-port", "--hotapply-host", "--hotapply-pki",
 # arc_forecast_problems refuses a run whose record disagrees - a node from an
 # older bundle would drop the flag without a word (parse_known_args).
 RAIL_FORECAST_FLAGS = {"--arc-forecast": ("on", "off")}
+# The Shield node's repair selection (--rail-repair-mode, 2026-11-27, WP3-06):
+# handed through the same `extra_args`, with the values it may take. Opt-in:
+# a campaign without the option sends none and flies the node's default
+# (chain). The node records what it flew (metrics.json
+# shield_forecast.repair_mode), and repair_mode_problems refuses a run whose
+# record disagrees.
+RAIL_REPAIR_FLAGS = {"--repair-mode": REPAIR_MODES}
 # The literal LOITER's flags (--rail-hold loiter, 2026-11-21, WP3-07;
 # RAIL_HOLDS): what every mission's Shield node is handed through the same
 # `extra_args`, with the values each may take (only the literal hold's: the
@@ -4735,9 +4807,9 @@ def check_rail_flags(args: list[str]) -> None:
 
 def rail_extra_args(extra_args) -> list[str]:
     """`extra_args` of run_hil / run_sitl, checked: `--flag=value` tokens of
-    RAIL_HOTAPPLY_FLAGS, RAIL_FORECAST_FLAGS or (since 2026-11-21)
-    RAIL_HOLD_FLAGS (the last two with one of that flag's values, at most
-    once) or RAIL_FSM_FLAGS (at most once each, a file in the checkout and a
+    RAIL_HOTAPPLY_FLAGS, RAIL_FORECAST_FLAGS, (since 2026-11-21)
+    RAIL_HOLD_FLAGS or (since 2026-11-27) RAIL_REPAIR_FLAGS (the last three
+    with one of that flag's values, at most once) or RAIL_FSM_FLAGS (at most once each, a file in the checkout and a
     profile it defines: rail_fsm_config) only, each declared by the Shield node
     (it reads its arguments with parse_known_args, so an undeclared flag
     would vanish without a word). [] for None. Raises UnsupportedScenario
@@ -4745,7 +4817,7 @@ def rail_extra_args(extra_args) -> list[str]:
     out = [str(a) for a in (extra_args or ())]
     if not out:
         return []
-    valued = {**RAIL_FORECAST_FLAGS, **RAIL_HOLD_FLAGS}
+    valued = {**RAIL_FORECAST_FLAGS, **RAIL_HOLD_FLAGS, **RAIL_REPAIR_FLAGS}
     allowed = set(RAIL_HOTAPPLY_FLAGS) | set(valued) | set(RAIL_FSM_FLAGS)
     bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in allowed]
     if bad:
@@ -4796,6 +4868,33 @@ def arc_forecast_problems(metrics: dict, extra_args) -> list[str]:
     if not asked and flown is True:
         return ["metrics.json shield_forecast.arc is true but no --arc-forecast=on was "
                 "asked: not the arm this mission is named for"]
+    return []
+
+
+def rail_repair_mode_asked(extra_args) -> str:
+    """The repair selection `extra_args` asked the Shield node for
+    (`--repair-mode=<mode>`), else the default (chain)."""
+    for a in (str(x) for x in (extra_args or ())):
+        if a.startswith("--repair-mode="):
+            return a.split("=", 1)[1]
+    return DEFAULT_REPAIR_MODE
+
+
+def repair_mode_problems(metrics: dict, extra_args) -> list[str]:
+    """Fail closed on the repair selection (2026-11-27, WP3-06): the node's
+    own record (metrics.json shield_forecast.repair_mode; absent on a node
+    older than the flag, which flew the chain) must be the mode `extra_args`
+    asked for. A node from an older bundle parses with parse_known_args and
+    would drop --repair-mode without a word, flying the chain under the
+    first_feasible arm's name. [] when they agree."""
+    asked = rail_repair_mode_asked(extra_args)
+    flown = (metrics.get("shield_forecast") or {}).get("repair_mode")
+    if flown is None and asked == DEFAULT_REPAIR_MODE:
+        return []
+    if flown != asked:
+        return [f"--repair-mode={asked} was asked (or implied) but metrics.json "
+                f"shield_forecast.repair_mode is {flown!r}: not the selection this "
+                f"mission is named for (an older node drops the flag)"]
     return []
 
 
@@ -6618,6 +6717,11 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         raise RuntimeError(f"{tag}: not the arc arm's flight: " + "; ".join(arc_problems))
+    rm_problems = repair_mode_problems(metrics, extra_args)
+    if rm_problems:
+        # Fail closed (--rail-repair-mode): never scored under the wrong selection.
+        raise RuntimeError(f"{tag}: not the repair selection's flight: "
+                           + "; ".join(rm_problems))
     loiter_problems = literal_loiter_problems(metrics, extra_args)
     if loiter_problems:
         # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
@@ -7261,6 +7365,10 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     if arc_problems:
         # Fail closed (--rail-arc-forecast): never scored under the wrong arm.
         problems.append("not the arc arm's flight: " + "; ".join(arc_problems))
+    rm_problems = repair_mode_problems(metrics, extra_args)
+    if rm_problems:
+        # Fail closed (--rail-repair-mode): never scored under the wrong selection.
+        problems.append("not the repair selection's flight: " + "; ".join(rm_problems))
     loiter_problems = literal_loiter_problems(metrics, extra_args)
     if loiter_problems:
         # Fail closed (--rail-hold loiter): never counted as a literal LOITER.
@@ -9353,6 +9461,59 @@ def manifest_base() -> dict:
             "vla_model_hash": m["vla_model_hash"], "topology": TOPOLOGY_HEADLESS}
 
 
+# The manifest fields a campaign's episodes share by construction (one sweep,
+# one pilot, one rail); policy_hash and random_seed are each episode's own.
+MANIFEST_COMMON_FIELDS = ("code_revision", "vla_model_hash", "sim_speedup", "topology")
+
+
+def read_run_manifest(run_dir: Path | str | None) -> dict | None:
+    """A flown rail run's own manifest.json (the Shield node's six fields), or
+    None when the folder has none readable. Never made up."""
+    if run_dir is None:
+        return None
+    try:
+        doc = json.loads((Path(run_dir) / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def campaign_manifest_common(backend: str, base: dict,
+                             manifests: list[dict | None]) -> dict:
+    """The summary's `_manifest_common`.
+
+    Headless: `base`, the manifest every episode of the sweep is built from
+    (manifest_base), as before. A rail campaign (sitl, hil): its episodes'
+    manifests are the Shield node's, so the shared fields are read from the
+    flown runs' own manifest.json files. Until 2026-11-27 the summary of every
+    rail campaign carried the headless base - topology `headless-kinematic`
+    and the headless pilot's hash - beside per-run manifests that said `hil`
+    (pdyn1126's sweep.json: `_backend` "hil", `_manifest_common.topology`
+    "headless-kinematic"). `code_revision` stays the revision that drove and
+    scored the campaign (what tools/kpi_report.py's merge check compares);
+    the runs' own revisions are in `runs_code_revision`. A field the runs
+    disagree on is the sorted list of their values; one no run recorded is
+    None, never the headless value."""
+    if backend == "headless":
+        return base
+    got = [m for m in manifests if isinstance(m, dict)]
+
+    def shared(field):
+        vals = sorted({json.dumps(m.get(field), sort_keys=True) for m in got
+                       if m.get(field) is not None})
+        vals = [json.loads(v) for v in vals]
+        return None if not vals else vals[0] if len(vals) == 1 else vals
+
+    out = {"code_revision": base["code_revision"]}
+    for field in MANIFEST_COMMON_FIELDS[1:]:
+        out[field] = shared(field)
+    out["runs_code_revision"] = shared("code_revision")
+    out["source"] = (f"the flown runs' own manifest.json ({len(got)} of "
+                     f"{len(manifests)} episodes read); code_revision is the "
+                     f"campaign driver's")
+    return out
+
+
 def episode_manifest(base: dict, policy_hash: str, seed: int,
                      sim_s: float, wall_s: float) -> dict:
     """The grant's six fields, in its order, for one episode.
@@ -9526,6 +9687,14 @@ def rail_bundle_events(run_dir: Path, spec: ScenarioSpec, seed: int, *, backend:
                    "policy_hash": hash_of(last) if last is not None else None,
                    "mission_rc": rc, "mission_end": end is not None})
     return events, gens
+
+
+def rail_run_dir(hil_run: dict | None, sitl_run_tag: str | None) -> Path | None:
+    """Where a rail episode's run folder is: the fetched hil run, or the
+    sitl rail's demo/out/<tag>; None when neither is known."""
+    if hil_run is not None:
+        return Path(hil_run["run_dir"])
+    return ROOT / "demo" / "out" / sitl_run_tag if sitl_run_tag else None
 
 
 def write_rail_episode_bundle(ep_dir: Path, run_dir: Path, spec: ScenarioSpec, seed: int,
@@ -9968,7 +10137,8 @@ def published_view(doc: dict) -> dict:
 def comparison_tag(forecast_arms, response_arms,
                    wind_model: str = DEFAULT_WIND_MODEL,
                    autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
-                   recovery: str = DEFAULT_RECOVERY_LAW) -> str | None:
+                   recovery: str = DEFAULT_RECOVERY_LAW,
+                   repair_mode: str = DEFAULT_REPAIR_MODE) -> str | None:
     """The comparison configuration(s) a run flies, as the labels its KPI rows
     carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
     "_"), or None for a run of the headline configuration alone. It names the
@@ -9978,13 +10148,17 @@ def comparison_tag(forecast_arms, response_arms,
     as the run's `autopilot_hold_model`, not in their key, and until then
     such a run wrote into stress_<profile> beside the headline bundles.
     "recovery-lookahead" (2026-10-29) is a run on the Shield's old recovery
-    law (`--recovery-law lookahead`), carried the same way (`recovery_law`)."""
+    law (`--recovery-law lookahead`), carried the same way (`recovery_law`).
+    "repair-first_feasible" (2026-11-27, WP3-06) is a run on the grant's
+    repair selection (`--repair-mode first_feasible`), carried the same way
+    (`repair_mode`)."""
     tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
             + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
             + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM]
             + ([f"hold-{autopilot_hold}"] if autopilot_hold != DEFAULT_AUTOPILOT_HOLD
                else [])
-            + ([f"recovery-{recovery}"] if recovery != DEFAULT_RECOVERY_LAW else []))
+            + ([f"recovery-{recovery}"] if recovery != DEFAULT_RECOVERY_LAW else [])
+            + ([f"repair-{repair_mode}"] if repair_mode != DEFAULT_REPAIR_MODE else []))
     return "_".join(tags) or None
 
 
@@ -10131,6 +10305,13 @@ def main(argv: list[str] | None = None) -> int:
                          "error, never scored (a node from an older bundle drops the "
                          "flag). off (default): nothing is added. Recorded in sweep.json; "
                          "a separate campaign, never merged with a straight-forecast one")
+    ap.add_argument("--rail-repair-mode", choices=REPAIR_MODES, default=DEFAULT_REPAIR_MODE,
+                    help="--backend sitl / hil (2026-11-27, WP3-06): first_feasible hands "
+                         "every mission's Shield node --repair-mode=first_feasible (the "
+                         "grant's selection, ungated), and a run whose metrics.json "
+                         "shield_forecast.repair_mode is not that is an error, never "
+                         "scored. chain (default): nothing is added. Recorded in "
+                         "sweep.json; a separate campaign, never merged with a chain one")
     ap.add_argument("--rail-hold", choices=RAIL_HOLDS, default=DEFAULT_RAIL_HOLD,
                     help="--backend sitl / hil (2026-11-21, WP3-07): how the FSM's Loiter "
                          "is flown. guided (default): held in GUIDED by the Shield node, "
@@ -10206,6 +10387,13 @@ def main(argv: list[str] | None = None) -> int:
                          "cap (the altitude band only, 2026-10-29 to 2026-11-06) or "
                          "lookahead (the band in one lookahead, before; for "
                          "comparison)")
+    ap.add_argument("--repair-mode", choices=REPAIR_MODES, default=DEFAULT_REPAIR_MODE,
+                    help="headless (2026-11-27, WP3-06): the flying Shield's repair "
+                         "selection, chain (the default, every run before) or "
+                         "first_feasible (the grant's: the first operator whose action "
+                         "clears the earliest violation within theta wins; ungated, "
+                         "detours round zones too). A comparison arm with its own "
+                         "default folder; the rails take --rail-repair-mode")
     ap.add_argument("--resume", default=None, metavar="DIR",
                     help="headless only: save each finished episode as a checkpoint in "
                          "DIR and replay DIR's checkpoints instead of flying them again "
@@ -10259,7 +10447,8 @@ def main(argv: list[str] | None = None) -> int:
                          or args.wind_model != DEFAULT_WIND_MODEL
                          or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD
                          or args.response_arms is not None
-                         or args.recovery_law != DEFAULT_RECOVERY_LAW):
+                         or args.recovery_law != DEFAULT_RECOVERY_LAW
+                         or args.repair_mode != DEFAULT_REPAIR_MODE):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
         # The response arm is not published either: docs/data/
@@ -10267,7 +10456,7 @@ def main(argv: list[str] | None = None) -> int:
         # would need a CHANGELOG entry for a comparison nobody asked to ship.
         print("REFUSED: --publish writes the full library run; it takes no "
               "--out, --profile, --only, --seed, --forecast-arms, --wind-model "
-              "--autopilot-hold, --response-arms or --recovery-law")
+              "--autopilot-hold, --response-arms, --recovery-law or --repair-mode")
         return 2
 
     t_run = time.perf_counter()
@@ -10312,6 +10501,11 @@ def main(argv: list[str] | None = None) -> int:
         # Likewise: the rail's node builds its own Shield, on the default law.
         print(f"REFUSED: --recovery-law chooses the headless harness's Shield; the "
               f"{args.backend} rail flies the node's own Shield")
+        return 2
+    if args.backend in RAIL_BACKENDS and args.repair_mode != DEFAULT_REPAIR_MODE:
+        # Likewise: the rail's node takes its own flag (--rail-repair-mode).
+        print(f"REFUSED: --repair-mode chooses the headless harness's Shield; the "
+              f"{args.backend} rail's node takes --rail-repair-mode")
         return 2
     if args.backend in RAIL_BACKENDS and any(a != "ideal" for a in eff_rsp):
         # The rail flies ArduPilot itself: its vehicle response is the real
@@ -10391,6 +10585,10 @@ def main(argv: list[str] | None = None) -> int:
             print("REFUSED: --rail-hold chooses what a campaign flies; "
                   "--rescore-rail reads runs already flown")
             return 2
+        if args.rail_repair_mode != DEFAULT_REPAIR_MODE:
+            print("REFUSED: --rail-repair-mode chooses what a campaign flies; "
+                  "--rescore-rail reads runs already flown")
+            return 2
         if args.rail_fsm_config is not None or args.rail_fsm_profile is not None:
             print("REFUSED: --rail-fsm-config / --rail-fsm-profile choose what a "
                   "campaign flies; --rescore-rail reads runs already flown")
@@ -10419,6 +10617,24 @@ def main(argv: list[str] | None = None) -> int:
         info["rail_arc_forecast"] = "on"
         print("ARC-FORECAST CAMPAIGN: every mission's Shield node flies --arc-forecast=on; "
               "a separate campaign, never merged with a straight-forecast one\n")
+    # The repair selection on the rail's Shield node (--rail-repair-mode,
+    # 2026-11-27, WP3-06): the flag every mission's node is handed, checked
+    # the same way; after each flight repair_mode_problems.
+    rail_repair_args: list[str] = []
+    if args.rail_repair_mode != DEFAULT_REPAIR_MODE:
+        if args.backend not in RAIL_BACKENDS:
+            print("REFUSED: --rail-repair-mode is for a rail's flights (--backend sitl / "
+                  "hil); the headless harness takes --repair-mode")
+            return 2
+        try:
+            rail_repair_args = rail_extra_args([f"--repair-mode={args.rail_repair_mode}"])
+        except UnsupportedScenario as e:
+            print(f"REFUSED: {e}")
+            return 2
+        info["rail_repair_mode"] = args.rail_repair_mode
+        print(f"REPAIR-MODE CAMPAIGN: every mission's Shield node flies --repair-mode="
+              f"{args.rail_repair_mode}; a separate campaign, never merged with a chain "
+              f"one\n")
     # The literal LOITER (--rail-hold loiter, 2026-11-21, WP3-07): the
     # node's flags, checked as above, and the adapter's environment
     # (rail_adapter_env, derived from these flags by run_sitl / run_hil).
@@ -10459,7 +10675,7 @@ def main(argv: list[str] | None = None) -> int:
               + (f" profile {args.rail_fsm_profile}" if args.rail_fsm_profile else "")
               + f" ({fsm_cfg.digest[:19]}); a separate campaign, never merged with "
               "one on the default thresholds\n")
-    rail_args = (rail_arc_args + rail_hold_args + rail_fsm) or None
+    rail_args = (rail_arc_args + rail_repair_args + rail_hold_args + rail_fsm) or None
     if args.rail_gates != "ideal" and profile is not None and profile.prefix_consumer:
         # The derived bounds come from a headless flight of the cell's own
         # pilot; a consuming pilot flies another flight.
@@ -10473,6 +10689,10 @@ def main(argv: list[str] | None = None) -> int:
     info["autopilot_hold_model_flown_by_a_rail"] = args.autopilot_hold == "in_place"
     # The Shield's recovery law behind every recovery of this run (WP3-17).
     info["recovery_law"] = args.recovery_law
+    # The flying Shield's repair selection (DEFAULT_REPAIR_MODE, WP3-06): the
+    # headless Shield's, or on a rail the one its node was handed.
+    info["repair_mode"] = (args.repair_mode if args.backend == "headless"
+                           else args.rail_repair_mode)
     tag = profile.profile if profile else None
     # A run that flies a comparison configuration gets its own default folder
     # (run_folder), outside the stress_* glob the KPI report reads; --publish
@@ -10480,7 +10700,8 @@ def main(argv: list[str] | None = None) -> int:
     # published run, and that folder is outside the glob already).
     cmp_tag = None if args.publish else comparison_tag(
         fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
-        eff_rsp, args.wind_model, args.autopilot_hold, args.recovery_law)
+        eff_rsp, args.wind_model, args.autopilot_hold, args.recovery_law,
+        info["repair_mode"])
     out = results_path(args.out, args.publish, tag, cmp_tag)
     runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -10550,6 +10771,9 @@ def main(argv: list[str] | None = None) -> int:
             # mission's Shield node; only then, so every other campaign's
             # record is as it was.
             info["hil"]["arc_forecast"] = "on"
+        if rail_repair_args:
+            # --rail-repair-mode (2026-11-27): only then, as above.
+            info["hil"]["repair_mode"] = args.rail_repair_mode
         if rail_hold_args:
             # --rail-hold loiter (2026-11-21): only then, as above.
             info["hil"]["rail_hold"] = args.rail_hold
@@ -10580,6 +10804,8 @@ def main(argv: list[str] | None = None) -> int:
             base, lib_path, _profile_path(args.profile) if args.profile else None,
             {"seed": args.seed, "only": args.only, "wind_model": args.wind_model,
              "autopilot_hold": args.autopilot_hold, "recovery_law": args.recovery_law,
+             **({"repair_mode": args.repair_mode}
+                if args.repair_mode != DEFAULT_REPAIR_MODE else {}),
              "forecast_arms": list(eff_fc), "response_arms": list(eff_rsp),
              "keep_logs": args.keep_logs, "no_bundles": args.no_bundles,
              "runs": _show(runs)},
@@ -10716,6 +10942,7 @@ def main(argv: list[str] | None = None) -> int:
         run = None
         arm_record = None
         hil_run = None
+        sitl_run_tag = None
         try:
             if args.backend == "hil":
                 # Refused before a mission number is spent, so the tags match
@@ -10782,7 +11009,8 @@ def main(argv: list[str] | None = None) -> int:
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
                                   forecast=ep.forecast, wind_model=args.wind_model,
                                   autopilot_hold=args.autopilot_hold,
-                                  response=ep.response, recovery=args.recovery_law)
+                                  response=ep.response, recovery=args.recovery_law,
+                                  repair_mode=args.repair_mode)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
                 sim_s, wall_s, consumed = run.sim_s, run.wall_s, run.seed_consumed
@@ -10885,7 +11113,8 @@ def main(argv: list[str] | None = None) -> int:
                                             wind_model=args.wind_model, episode=ep,
                                             autopilot_hold=args.autopilot_hold,
                                             response=ep.response,
-                                            recovery=args.recovery_law)}
+                                            recovery=args.recovery_law,
+                                            repair_mode=args.repair_mode)}
             # The grant's policy_bundle.tar.gz beside it: the policy file
             # and every generation's IR (write_episode_policy_bundle).
             files = write_episode_policy_bundle(ep_dir, spec, run)
@@ -10905,8 +11134,7 @@ def main(argv: list[str] | None = None) -> int:
             # A flown rail episode's bundle under the grant's six names
             # (write_rail_episode_bundle, 2026-11-18), beside the campaign's
             # summary; the run folder keeps its own names and files.
-            rail_dir = (Path(hil_run["run_dir"]) if hil_run is not None
-                        else ROOT / "demo" / "out" / sitl_run_tag)
+            rail_dir = rail_run_dir(hil_run, sitl_run_tag)
             ep_dir = runs / ep.dir_name(stamp)
             write_rail_episode_bundle(
                 ep_dir, rail_dir, spec, ep.seed, {
@@ -10928,6 +11156,10 @@ def main(argv: list[str] | None = None) -> int:
                                      else sitl_run_tag),
                         "rail_run_path": rail_dir.as_posix(), **(extras or {})})
             bundle = _show(ep_dir)
+        if args.backend in RAIL_BACKENDS:
+            # The node's own manifest (the bundle's manifest.json, byte for
+            # byte), for `_manifest_common` (campaign_manifest_common).
+            manifest = read_run_manifest(rail_run_dir(hil_run, sitl_run_tag))
 
         item = {**common, "status": status, "gates_failed": bad, "kpi": res,
                 "seed_consumed": consumed,
@@ -11095,7 +11327,9 @@ def main(argv: list[str] | None = None) -> int:
                     "symmetric copies"},
         "_runtime_s": runtime,
         "_runner": runner_facts(),
-        "_manifest_common": base,
+        "_manifest_common": campaign_manifest_common(
+            args.backend, base, [r.get("manifest") for r in rows_out + cmp_rows + rsp_rows
+                                 if "kpi" in r]),
         "_seeds": {"episodes_consuming_seed": sum(1 for r in scored
                                                   if r.get("seed_consumed")),
                    "episodes_deterministic": sum(1 for r in scored

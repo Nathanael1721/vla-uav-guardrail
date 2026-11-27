@@ -148,7 +148,7 @@
   "suite_section": "2026-10-13"
  },
  "wp1": {
-  "source": "docs/data/wp1_roundtrip.json",
+  "source": "docs/data/wp1_roundtrip_4edd5d1.json",
   "command": "python tools/wp1_roundtrip_kpi.py",
   "code_revision": "4edd5d137573",
   "hash_scheme": "sha256-canonical-v3",

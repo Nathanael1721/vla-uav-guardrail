@@ -99,6 +99,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E4
                            fsm_config_record, load_fsm_config,
                            tick_input_from_decision)
 from guardrail.hold_flight import HoldFlight, body_command            # noqa: E402
+from guardrail.hot_apply_log import generations_cell, hot_apply_generations  # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa: E402
@@ -565,6 +566,13 @@ def main() -> int:
                          "response (default off on this rail: that response was "
                          "measured on the Project AirSim quad, not on ArduPilot's "
                          "own SITL physics; the velocity is logged either way)")
+    ap.add_argument("--repair-mode", choices=["chain", "first_feasible"], default="chain",
+                    help="the Shield's repair selection (2026-11-27, WP3-06; guardrail/"
+                         "repair.py THE MODES): chain (default, every run before this "
+                         "flag) or first_feasible, the grant's rule (the first operator "
+                         "whose action clears the earliest violation within theta wins; "
+                         "ungated, off by default). Recorded in metrics.json "
+                         "shield_forecast.repair_mode")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
@@ -686,9 +694,15 @@ def main() -> int:
     # clear_response (2026-11-19): the clearance horizon covers the ArduPilot
     # vehicle's stop (0.45 s reaction, 1.75 m/s^2), as on the ROS 2 rail.
     from guardrail.response import ARDUCOPTER_GUIDED
+    # --repair-mode (2026-11-27, WP3-06): chain (default, every run before
+    # the flag) or the grant's first_feasible; recorded in metrics.json
+    # shield_forecast.repair_mode.
+    from guardrail.repair import DEFAULT_REPAIR_MODE
+    repair_mode = getattr(args, "repair_mode", None) or DEFAULT_REPAIR_MODE
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          clock=clock, pipe_clock=lambda: time.time(),
                          clear_response=ARDUCOPTER_GUIDED, **gkw,
+                         repair_mode=repair_mode,
                          path_repair=FOLLOW_RAIL_PATH_REPAIR, **ppl_kw)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
@@ -788,6 +802,7 @@ def main() -> int:
     rows: list[dict] = []
     n_touched = n_braked = 0
     spawn_t = spawn_pos = None
+    spawn_gen = None            # the --dynamic zone's generation, when applied
     t0 = time.time()
     mission_t0[0] = t0
     tick = 0
@@ -824,6 +839,7 @@ def main() -> int:
             # became a read-only property, which killed every --dynamic run at
             # exactly this line.
             spawn_t, spawn_pos = now, (state.x, state.y)
+            spawn_gen = policy.generation
             print(f"[dynamic]  t={now:.1f}s '{DYNAMIC_FENCE.id}' applied "
                   f"-> generation {policy.generation}")
 
@@ -1175,7 +1191,11 @@ def main() -> int:
             "velocity_source": "LOCAL_POSITION_NED vx/vy/vz (pymavlink)",
             "velocity_ticks": n_vel_used,
             "shield_velocity_ticks": shield.n_velocity_ticks,
-            "velocity_nonfinite": shield.n_velocity_nonfinite},
+            "velocity_nonfinite": shield.n_velocity_nonfinite,
+            # PathRepair (FOLLOW_RAIL_PATH_REPAIR) and the repair selection
+            # (--repair-mode, 2026-11-27, WP3-06) the Shield flew.
+            "path_repair": bool(getattr(shield, "path_repair", False)),
+            "repair_mode": getattr(shield, "repair_mode", repair_mode)},
         # The action frame at the Shield's boundary (WP3-04 / ARCH-04):
         # body, at the heading ATTITUDE gave (0 on the ticks counted here).
         "action_frame": {"shield_input": "body", "heading_source": "ATTITUDE.yaw",
@@ -1336,6 +1356,14 @@ def main() -> int:
         print("[plot]     matplotlib missing — skipped")
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+    # Every hot-apply generation, whatever made it (WP3-19, 2026-11-27): the
+    # Hot-apply API row sees the REST listener only, Dynamic NFZ the
+    # --dynamic zone only. This rail takes no --events.
+    gens_cell = generations_cell(hot_apply_generations(
+        rest=hot.applied if hot is not None else None,
+        dynamic=(None if spawn_t is None else
+                 {"t": spawn_t, "generation": spawn_gen, "rule_id": DYNAMIC_FENCE.id}),
+        recorded=rec.generations))
     (out / "report.md").write_text(f"""# SITL Guardrail report — shield {'ON' if shield_on else 'OFF'}
 
 | Item | Value |
@@ -1347,11 +1375,12 @@ def main() -> int:
 | Policy source | {policy_source['kind']} `{policy_source['path']}` - signature **{policy_source['signature']}**{' (--dev-yaml)' if policy_source.get('dev_yaml') else ''} |
 | Rule clock | {clock_record.get('kind')}: {clock_record.get('start') or clock_record.get('tz')} |
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}" if hot is not None else 'not served'} |
+| Hot-apply generations | {gens_cell} |
 | Target reached | {'yes' if reached else 'NO'} |
 | Ticks | {len(traj)} |
 | Shield interventions | {n_touched} |
 | Brakes | {n_braked} |
-| Dynamic NFZ | {f'hot-applied t={spawn_t:.1f}s, generation {policy.generation}' if spawn_t else 'not used'} |
+| Dynamic NFZ | {f'hot-applied t={spawn_t:.1f}s, generation {spawn_gen}' if spawn_t is not None else 'not used'} |
 | Topology | `{TOPOLOGY_ARDUPILOT_SITL}` |
 | Code revision | `{manifest['code_revision']}` |
 | Sim speedup | `{manifest['sim_speedup']}` |

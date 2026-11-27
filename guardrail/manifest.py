@@ -1721,10 +1721,20 @@ def is_kpi_grade(manifest: dict, metrics: dict,
 #      revision is the manifest's, of the host that wrote it.
 #   2  manifest.json (unchanged) + stack_revisions.json beside it.
 #
-# The record is EVIDENCE, not a gate: is_kpi_grade is unchanged, so no run's
-# grade moves because of it. Since 2026-11-21 tools/kpi_report.py reads it
-# (stack_summary) and reports single_sha true / false / pending / missing
-# per campaign and over the KPI-grade runs - reported, never gated.
+# is_kpi_grade does not read the record: it judges the manifest and metrics
+# and has 55 call sites, flight-time code among them, none holding a run
+# folder. Since 2026-11-21 tools/kpi_report.py reads it (stack_summary) and
+# reports single_sha true / false / pending / missing per campaign and over
+# the KPI-grade runs. Since 2026-11-27 the KPI READERS also gate on it
+# (stack_grade_reasons, applied beside is_kpi_grade by tools/kpi_report.py
+# and tools/rescore_kpis.py, and by tools/build_report_results.py's grade
+# column): the grant's "single git SHA across the entire stack"
+# (03-simulation/layer-requirements.md) and its rejection of a run that
+# cannot produce one (data-flow.md). A run whose record says single_sha
+# false is refused on any topology; a hil run that carries the record, or
+# was flown by a writer that writes it, is refused when the record is
+# pending, missing or unreadable. A run flown before the record (no
+# stack_revisions.json, written before 2026-11-17) keeps its grade.
 
 STACK_FILE = "stack_revisions.json"
 STACK_SCHEMA = "vlaguard-stack-revisions/1"
@@ -2161,9 +2171,8 @@ def stack_summary(run_dir: str | Path) -> dict[str, Any]:
 
     Read only: the record is never rewritten and single_sha is never
     recomputed here - a report says what the run recorded. is_kpi_grade does
-    not read it either (the record is evidence, not a gate): a gate keyed on
-    single_sha would regrade every run flown since 2026-11-17, whose records
-    already carry the field."""
+    not read it; the KPI readers gate on this summary since 2026-11-27
+    (stack_grade_reasons), beside is_kpi_grade."""
     p = Path(run_dir) / STACK_FILE
     out: dict[str, Any] = {"state": "missing", "single_sha": None,
                            "companion": [], "desktop": [], "components": {},
@@ -2205,6 +2214,59 @@ def stack_summary(run_dir: str | Path) -> dict[str, Any]:
     out["autopilot"] = (auto.get("firmware") if isinstance(auto, dict) else None)
     out["problems"] = list(doc.get("problems") or [])
     return out
+
+
+# The stack-record states a hil run is refused in, beside "false" (refused on
+# every topology): the record is there but names no verdict one can quote, or
+# the run's writer writes the record and none is beside it.
+STACK_REFUSED_ON_HIL = ("pending", "missing", "unreadable")
+
+
+def stack_grade_reasons(summary: dict | None, manifest: dict | None,
+                        metrics: dict | None = None) -> list[str]:
+    """Why a run's stack record keeps it from KPI grade (ARCH-31, since
+    2026-11-27); [] when it does not. The KPI READERS apply it beside
+    is_kpi_grade (tools/kpi_report.py, tools/rescore_kpis.py,
+    tools/build_report_results.py), which stays the manifest-and-metrics
+    gate it was: it has no run folder to read the record from.
+
+    `summary` is stack_summary(run) (None reads as "missing"). Refused:
+      - state "false" on ANY topology: a host or component that reported ran
+        another commit, or a dirty tree, so no single git SHA describes the
+        stack that flew (the grant's 03-simulation/layer-requirements.md,
+        and data-flow.md's rejection of a run that cannot produce one);
+      - on hil (normalize_topology), state "pending" or "unreadable": the
+        run carries the record and it names no verdict one can quote;
+      - on hil, state "missing" when the run was flown by a writer that
+        writes the record. The marker is metrics.json `setpoint_delivery`,
+        which the ROS 2 Shield node writes on every run since 7adcbaa
+        (2026-11-17 15:47), after the record's writer landed (d9413cc,
+        2026-11-17 11:15). Pass the run's metrics.json AS WRITTEN, never
+        guardrail.delivery.with_stored_delivery's copy, which fills the key
+        for runs flown before.
+    A hil run flown before the record (no stack_revisions.json, no
+    `setpoint_delivery`) keeps its grade: its writer could not produce one,
+    and no earlier verdict moves."""
+    s = summary if isinstance(summary, dict) else {"state": "missing"}
+    state = s.get("state") or "missing"
+    probs = "; ".join(str(p) for p in (s.get("problems") or []))
+    if state == "false":
+        return [f"{STACK_FILE} says single_sha false: no single git SHA describes "
+                f"the stack that flew" + (f" ({probs})" if probs else "")]
+    if normalize_topology((manifest or {}).get("topology")) != TOPOLOGY_HIL:
+        return []
+    if state == "pending":
+        return [f"{STACK_FILE} says single_sha pending: a host the hil topology "
+                f"needs never reported its revision, so one SHA across the stack "
+                f"is not shown" + (f" ({probs})" if probs else "")]
+    if state == "unreadable":
+        return [f"{STACK_FILE} is unreadable ({s.get('why') or 'no verdict'}): "
+                f"one SHA across the stack is not shown"]
+    if state == "missing" and isinstance((metrics or {}).get("setpoint_delivery"), dict):
+        return [f"no {STACK_FILE} beside a hil run whose writer writes one "
+                f"(metrics.json carries setpoint_delivery, written since "
+                f"2026-11-17): one SHA across the stack is not shown"]
+    return []
 
 
 def policy_source_record(kind: str, path: str | None, policy_hash: str,
