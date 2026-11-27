@@ -41,3 +41,14 @@ green. Exported the same way on 26 Nov:
 
 So the `tests` workflow was green per push from 24 to 25 Nov, red on the
 release 0.7.1 push, and green again from 220be42.
+
+## Release 0.7.2 (27 Nov)
+
+Exported the same way on 27 Nov (`gh run view <id> --json
+conclusion,createdAt,databaseId,displayTitle,event,headBranch,headSha,jobs,status,updatedAt`):
+
+- `run_45969020953.json` (master) and `run_45969019967.json` (tag v0.7.2):
+  the release 0.7.2 push of 418b151, 27 Nov 08:52 UTC (master done 09:24,
+  tag done 09:43). Conclusion success on all three jobs of each run;
+  "Standalone test files" and "Smoke profile (stress harness, headless)"
+  succeeded in each job.
