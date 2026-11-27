@@ -354,16 +354,22 @@ def test_flight_has_no_link_until_someone_sets_it_and_never_arms_by_default():
     assert f["FCU_URL"] == "", "flight must not ship a guessed autopilot link"
 
 
-def test_the_chain_requirement_reaches_the_companion_and_ships_switched_off():
+def test_the_chain_requirement_reaches_the_companion_and_is_on_for_hil_and_flight():
     """VLAGUARD_REQUIRE_CHAIN (WP1-04, 2026-11-16): with 1 the companion flies
     only a bundle whose signer's certificate chained to a listed authority
     there. Every companion service gets the variable, so the rig turns it on
-    without editing a launch file; and the topology files ship 0, because
-    until the bundle keys are certified every bundle is signed by a bare key
-    and 1 would ground the rig (the stored runs flew with it unset)."""
+    without editing a launch file. Until 27 Nov 2026 every topology file
+    shipped 0, because every bundle was signed by a bare key and 1 would have
+    grounded the rig. On 27 Nov both bundle keys were certified by the lab
+    root CA and the flight bundles re-signed (docs/RUNBOOK-bundle-ca.md), so
+    hil (the KPI rig) and flight (the deployment) ship 1; dev, the
+    development topology, keeps 0. The compose default stays 0: a companion
+    started without a topology file is not a KPI or flight run."""
     from guardrail.bundle import REQUIRE_CHAIN_ENV
+    want = {"dev": "0", "hil": "1", "flight": "1"}
+    assert set(TOPOLOGIES) == set(want), TOPOLOGIES
     for t in TOPOLOGIES:
-        assert read_env(t)[REQUIRE_CHAIN_ENV] == "0", t
+        assert read_env(t)[REQUIRE_CHAIN_ENV] == want[t], t
     for f in ("docker-compose.orin.yml", "docker-compose.dev.yml"):
         doc = load_compose(COMPOSE_DIR / f)
         assert doc["x-companion-env"][REQUIRE_CHAIN_ENV] == "${%s:-0}" % REQUIRE_CHAIN_ENV, f
@@ -2596,7 +2602,8 @@ def test_the_perception_rail_hil_script_hands_on_the_chain_requirement():
     guardrail.bundle.load_for_flight - but nothing handed it
     VLAGUARD_REQUIRE_CHAIN, so turning the requirement on in hil.env (or for
     the compose companion) left this rail flying without it. The script now
-    reads it from hil.env (0 there), lets the caller's value win (as
+    reads it from hil.env (1 there since 27 Nov 2026, when the bundle keys
+    were certified by the lab root CA), lets the caller's value win (as
     compose's ${...:-0} does), and exports it to the node."""
     if not find_bash():
         return SKIP
@@ -2608,7 +2615,8 @@ def test_the_perception_rail_hil_script_hands_on_the_chain_requirement():
         return dict(line[len("ENV: "):].split("=", 1) for line in r.stdout.splitlines()
                     if line.startswith("ENV: "))
     hil = read_env("hil")
-    assert env_of(**{REQUIRE_CHAIN_ENV: None})[REQUIRE_CHAIN_ENV] == hil[REQUIRE_CHAIN_ENV] == "0"
+    assert env_of(**{REQUIRE_CHAIN_ENV: None})[REQUIRE_CHAIN_ENV] == hil[REQUIRE_CHAIN_ENV] == "1"
+    assert env_of(**{REQUIRE_CHAIN_ENV: "0"})[REQUIRE_CHAIN_ENV] == "0"
     assert env_of(**{REQUIRE_CHAIN_ENV: "1"})[REQUIRE_CHAIN_ENV] == "1"
     exports = [ln for ln in RUN_PAS_PERCEPTION.read_text(encoding="utf-8").splitlines()
                if ln.startswith("export ")]
