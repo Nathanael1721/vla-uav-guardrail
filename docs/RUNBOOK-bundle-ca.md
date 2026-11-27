@@ -17,8 +17,14 @@ command below exists at the time of writing; the flags are those of
 issue-cert --help`, `python -m guardrail.bundle register-cert --help` and
 `tools/bundle_ca_evidence.py --help`.
 
-**Do not start it before the PI has named the CA.** Nothing here may invent
-an authority: the lab root CA is used only if the PI names the Lab CA.
+**Applied on 27 Nov 2026 with the Lab CA** (a lab decision, taken by the user
+on 27 Nov; the PI has not named a CA): steps 1-7 ran on both hosts; the
+record is docs/data/bundle_ca_20261127/. The grant's Policy DSL page lists
+"Lab-internal CA or ITRI CA?" as an open question and accepts either as the
+`signed_by` reference. What remains is the move to ITRI's CA if the PI or
+ITRI asks for it: section "Later: moving to ITRI's CA" below. Nothing here
+may invent an authority: an ITRI CA entry is added only from the CA
+certificate and leaves ITRI issues.
 
 ## 0. Before you start
 
@@ -135,8 +141,10 @@ changed in the same commit, with the reason:
 `tests/test_deploy_configs.py` `test_the_chain_requirement_reaches_the_companion_and_ships_switched_off`
 (every topology file reads 0) and
 `test_the_perception_rail_hil_script_hands_on_the_chain_requirement`
-(hil.env reads 0). Keep `dev.env` and `flight.env` at 0 unless the PI's
-answer covers them. Run `python tests/test_deploy_configs.py`, commit, and
+(hil.env reads 0). On 27 Nov `flight.env` was set to 1 as well (the real
+aircraft is the deployment a signed bundle is for, and no flight run exists
+yet) and `dev.env` kept 0 (development topology); the two tests now pin
+dev 0 / hil 1 / flight 1. Run `python tests/test_deploy_configs.py`, commit, and
 bring that commit to the Orin as in step 4.
 
 The compose companion reads the value from the topology file
@@ -203,3 +211,70 @@ Revert the step-1/2 and step-5 commits on both hosts and rebuild the bundles
 its `retired_on` (tests/test_bundle.py,
 `test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before`);
 `--keep-legacy` on either command does not retire it.
+
+## What ran on 27 Nov 2026 (Lab CA)
+
+- Step 1-2 on the desktop: `python tools/build_flight_bundles.py --issue-cert`
+  (authority `lab-ca`, CA sha256 `71d1e071d3985bc6...`, valid to 2036-10-30;
+  leaves for both keys; the bare `lab-dev` identities retired at
+  2026-11-27T00:10:37Z), then the bundles the hil profiles and the perception
+  rail fly that are not in the tool's default list:
+  `policies/sitl_pedestrian.yaml`,
+  `experiments/policies/follow_car_citylife_people.yaml`, and the three
+  `experiments/policies/msl_dem_*.yaml` with
+  `--ground experiments/worlds/dem_cmac_wgs84.json` (section 11a of
+  docs/RUNBOOK-orin-hil.md). 17 flight bundles in all; which policies the hil
+  profiles fly was read from a dry run of each (smoke, nightly, fsm_edges,
+  distance_envelope, msl_dem, grant_example, prefix_ab, prefix_dyn).
+- Every bundle was copied first: `<store>/bundles_pre_ca_20261127` on the
+  desktop and `~/bundles_pre_ca_20261127` on the AGX, each with SHA256SUMS.
+  In all 17 the policy_hash, policy_id, version and IR are unchanged; the
+  signer, its certificate and issued_at changed.
+- Step 4 on the AGX at the same commit, the same 17 bundles signed by its own
+  key under `lab-ca:71d1e071d3985bc6:ed25519:715f70c4647a9701`.
+- Step 3/4 checks: 17/17 pass `verify --require-chain` on each host; a bundle
+  still signed by a bare key fails it (rc 1); the 8 replay bundles still
+  verify.
+- Step 5: hil.env and flight.env 1, dev.env 0.
+- Step 6-7: docs/data/bundle_ca_20261127/README.md.
+
+## Later: moving to ITRI's CA
+
+No code changes. ITRI receives the two PUBLIC keys
+(`public_key_hex` of the two `lab-ca:...` entries in
+policies/keys/trusted_signers.json) and returns its CA certificate and one
+codeSigning leaf per key, as PEM. Then, on a branch, with nothing flying:
+
+1. Register both leaves (section 1 above, "If the PI names ITRI's CA"). Each
+   key is then certified twice (lab-ca and itri-ca), and the tools refuse to
+   choose between them by file order.
+2. Re-sign the same bundle list as on 27 Nov on both hosts with
+   `--authority itri-ca` (or `VLAGUARD_SIGNING_AUTHORITY=itri-ca`), then
+   step 3-4's checks.
+3. Stop the Lab CA from vouching for new bundles while keeping what it signed
+   verifiable: give each of the two `lab-ca:...` signer entries a
+   `retired_on` (the instant of the re-sign) and a `superseded_by` (its
+   `itri-ca:...` identity). guardrail.bundle applies `retired_on` to any
+   signer entry: a lab-ca bundle issued before that instant still verifies,
+   one issued after is refused, and the key signs only as itri-ca from then
+   on. Do NOT remove the `lab-ca` authority: every run and bundle signed
+   between 27 Nov and the move would then be refused on replay
+   (tests/test_bundle.py, test_swapping_the_authority_is_one_registry_entry_and_a_re_sign).
+4. Step 6-7 again (one verification mission, evidence), and the report rows
+   WP1-04 / X-10.
+
+`retired_on` compares against the bundle's own `issued_at`, which the signer
+writes: it is a naming rule for honest tools, not a cryptographic revocation.
+A key whose private half may have leaked is handled by removing its signer
+entries and re-keying, not by retirement.
+
+## The Lab CA's private key
+
+`ca.key.pem` in the lab PKI folder (`%LOCALAPPDATA%\vla-guardrail\harness_pki\`
+on the lab desktop) is not encrypted, and the same root also issues the
+harness's mutual-TLS certificates (the grant's Stress Testing page reuses one
+root CA across the control plane). Whoever holds that file can certify new
+bundle signers. At hand-over the lab should move it to storage it controls
+(offline media or a password-protected keystore) and keep only the public
+`ca.cert.pem` on the desktop; nothing in the flight path needs the CA's
+private key, only `issue-cert` does.

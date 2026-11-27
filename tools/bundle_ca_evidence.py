@@ -56,6 +56,7 @@ DRILL_TESTS = (
     "test_a_key_under_a_ca_signs_as_a_ca_reference_and_its_chain_verifies",
     "test_the_manifest_carries_the_five_grant_fields_with_a_ca_reference",
     "test_swapping_the_authority_is_one_registry_entry_and_a_re_sign",
+    "test_moving_to_another_ca_retires_the_old_ca_identity_and_keeps_its_bundles",
     "test_a_certificate_that_does_not_chain_to_a_listed_authority_is_refused",
     "test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before",
     "test_without_cryptography_the_chain_is_recorded_as_not_checked_never_as_verified",

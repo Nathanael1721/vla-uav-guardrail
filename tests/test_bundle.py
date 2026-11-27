@@ -1261,6 +1261,60 @@ def test_swapping_the_authority_is_one_registry_entry_and_a_re_sign():
     assert worn.signature == B.SIG_UNTRUSTED and "not the CA" in worn.detail, worn.detail
 
 
+def test_moving_to_another_ca_retires_the_old_ca_identity_and_keeps_its_bundles():
+    """The move docs/RUNBOOK-bundle-ca.md ("Later: moving to ITRI's CA")
+    prescribes since the Lab CA signed the flight bundles (27 Nov 2026): the
+    second CA's leaf is registered, the bundles are re-signed under it, and the
+    lab-ca identity of the key gets `retired_on` / `superseded_by` - its
+    authority is NOT removed. Then a lab-ca bundle issued before the instant
+    still verifies with its chain (the stored runs replay), one issued after
+    is refused, and the key signs under the new CA without being told."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import guardrail.harness_service as H
+    signer, trust, _, _, _ = _certified()
+    key = trust.parent / "k.pem"
+    pol = load_policy(DEMO)
+    before = write_bundle(pol, _tmp("lab-before.tar.gz"), signer=signer, issued_at=ISSUED)
+
+    pki2, ca2_pem = _ca("ITRI Test Root CA")
+    leaf = Path(tempfile.mkdtemp()) / "leaf.cert.pem"
+    leaf.write_bytes(H.issue_policy_signer(pki2, signer.public_raw))
+    ca2 = leaf.parent / "itri-ca.cert.pem"
+    ca2.write_text(ca2_pem, encoding="ascii")
+    assert B._main(["register-cert", "--authority", "itri-ca", "--ca-cert", str(ca2),
+                    "--cert", str(leaf), "--identity", signer.identity,
+                    "--trust", str(trust)]) == 0
+    itri = B.load_signer(key, trust, authority="itri-ca")
+
+    retired = "2026-12-01T00:00:00Z"
+    doc = _store(trust)
+    doc["signers"][signer.identity].update(retired_on=retired, superseded_by=itri.identity)
+    trust.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    assert "lab-ca" in _store(trust)["authorities"]
+
+    old = check_bundle(before, trust)
+    assert (old.signed_by, old.signature, old.chain, old.authority) == \
+        (signer.identity, B.SIG_VERIFIED, B.CHAIN_VERIFIED, "lab-ca"), old.detail
+    assert old.retired_on == retired, old
+    _, src = B.load_for_flight(before, trust_store=trust, require_chain=True)
+    assert (src["chain"], src["signer_retired_on"]) == ("verified", retired), src
+
+    late = write_bundle(pol, _tmp("lab-after.tar.gz"), signer=signer,
+                        issued_at="2026-12-02T00:00:00Z")
+    chk = check_bundle(late, trust)
+    assert chk.signature == B.SIG_UNTRUSTED and "retired" in chk.detail, chk.detail
+    assert itri.identity in chk.detail, chk.detail
+    _refused_as(lambda: B.load_for_flight(late, trust_store=trust), "untrusted-signer")
+
+    with _env(**{B.SIGNING_AUTHORITY_ENV: None}):
+        assert B.load_signer(key, trust).identity == itri.identity
+    new = check_bundle(write_bundle(pol, _tmp("itri.tar.gz"), signer=itri,
+                                    issued_at="2026-12-02T00:00:00Z"), trust)
+    assert (new.signature, new.chain, new.authority) == \
+        (B.SIG_VERIFIED, B.CHAIN_VERIFIED, "itri-ca"), new.detail
+
+
 def test_a_certificate_that_does_not_chain_to_a_listed_authority_is_refused():
     """What a CA adds over a pinned key is only worth having if a certificate
     it did not issue is refused. Each bundle below is consistent and carries a
