@@ -650,6 +650,7 @@ from sitl_stressors import (MARKER_TIMES_S, WATCHED_SIM_PARAMS,          # noqa:
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
                                   FENCE_MARGIN_M, ORIGIN_TOLERANCE_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
+                                  TOPIC_RAW_LOCAL,
                                   TOPIC_SENT, TOPIC_SETPOINT, TOPIC_STATUS,
                                   ModeRequests,
                                   XYArgumentParser, fence_alt_plan,
@@ -1146,6 +1147,48 @@ def adapter_listening(node_names) -> bool:
     the mission-end LAND went to the bag alone while events.jsonl said
     `via: adapter`, and the direct-MAVROS fallback could never run."""
     return ADAPTER_NODE_NAME in node_names
+
+
+# THE SETPOINT PATH IN report.md (ARCH-08, 2026-11-28). The Path row was one
+# fixed string naming the MAVLink adapter and MAVROS, so the AP_DDS stage-1
+# flight (docs/data/ap_dds_20261126/ap_dds_stage1_02), whose setpoints went
+# through sitl/ap_dds_adapter_node.py onto /ap/cmd_vel with no MAVLink
+# setpoint adapter running, reported a path it never flew. The row now names
+# the adapter(s) seen subscribed to /shield/setpoint, by ROS node name, at
+# mission start and when the report is written. The AP_DDS adapter's node
+# name and topic are written here, not imported: this node does not load
+# that module (tests/test_ap_dds_adapter.py checks that they match it).
+SETPOINT_PATH_HEAD = (f"vla node -> {VLA_ACTION_TOPIC} (body) -> safety_shield -> "
+                      f"{TOPIC_SETPOINT} (body)")
+AP_DDS_ADAPTER_NODE_NAME = "ap_dds_adapter"
+AP_DDS_TOPIC_CMD_VEL = "/ap/cmd_vel"
+SETPOINT_ADAPTER_PATHS = {
+    ADAPTER_NODE_NAME: (f"{ADAPTER_NODE_NAME} -> {TOPIC_RAW_LOCAL} -> MAVROS 2 "
+                        f"-> ArduPilot"),
+    AP_DDS_ADAPTER_NODE_NAME: (f"{AP_DDS_ADAPTER_NODE_NAME} -> {AP_DDS_TOPIC_CMD_VEL} "
+                               f"-> micro-ROS agent -> ArduPilot (AP_DDS)"),
+}
+
+
+def setpoint_path(subscribers) -> str:
+    """report.md's Path row for the node names seen subscribed to
+    /shield/setpoint (None: the ROS stack never said). One known adapter:
+    its path. Both: both paths, flagged - each adapter flies the same
+    setpoints. None known: the subscribers seen, so a missing adapter is
+    visible instead of an assumed MAVROS path."""
+    if subscribers is None:
+        return (f"{SETPOINT_PATH_HEAD} -> adapter not identified (the subscribers of "
+                f"{TOPIC_SETPOINT} were not read)")
+    names = {str(n) for n in subscribers}
+    seen = [n for n in SETPOINT_ADAPTER_PATHS if n in names]
+    if len(seen) == 1:
+        return f"{SETPOINT_PATH_HEAD} -> {SETPOINT_ADAPTER_PATHS[seen[0]]}"
+    if seen:
+        return (f"{SETPOINT_PATH_HEAD} -> MORE THAN ONE ADAPTER subscribed, each "
+                f"flying the same setpoints: "
+                + "; ".join(SETPOINT_ADAPTER_PATHS[n] for n in seen))
+    return (f"{SETPOINT_PATH_HEAD} -> no setpoint adapter seen subscribed "
+            f"(subscribers: {', '.join(sorted(names)) or 'none'})")
 
 
 def literal_loiter_refusal(args) -> str | None:
@@ -3274,6 +3317,9 @@ if HAVE_ROS:
             self._multi_pub_streak = 0
             self.action_publishers_flagged = False
             self.action_publisher_names: set[str] = set()
+            # The node names seen subscribed to /shield/setpoint (None until
+            # the ROS stack has said): report.md's Path row (setpoint_path).
+            self.setpoint_subscribers: set[str] | None = None
             self.decision_hold_max_s = float(getattr(args, "decision_hold_max_s",
                                                      DECISION_HOLD_MAX_S))
             # Review of 339f23a (P1-A): why the latest message was refused
@@ -4770,6 +4816,9 @@ if HAVE_ROS:
                 warm.filter_body(self._shield_pose(self.state), self.raw_body)
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
+            # Who takes /shield/setpoint (report.md's Path row); read again
+            # when the report is written. Before the mission clock starts.
+            self._sample_setpoint_subscribers()
             # THE GARBAGE COLLECTOR: everything alive now is collected once
             # and frozen, before the mission clock starts (a full walk of the
             # whole heap, which must not land in a tick); its mission-time
@@ -5247,6 +5296,20 @@ if HAVE_ROS:
                 onset = self._hold("decision", "the VLA's action is not flown: "
                                    + self.decision_watchdog.spells[-1]["why"])
             return self.decision_watchdog.stale, onset
+
+        def _sample_setpoint_subscribers(self) -> None:
+            """Add the node names subscribed to /shield/setpoint now to
+            those seen (report.md's Path row, setpoint_path). Never raises:
+            a ROS stack that cannot say leaves the record as it was."""
+            info = getattr(self, "get_subscriptions_info_by_topic", None)
+            if info is None:
+                return
+            try:
+                names = {str(getattr(i, "node_name", "?"))
+                         for i in info(TOPIC_SETPOINT)}
+            except Exception:                                    # noqa: BLE001
+                return
+            self.setpoint_subscribers = (self.setpoint_subscribers or set()) | names
 
         def _check_publishers(self) -> None:
             """One check of the publishers on /vla/action_4d (count, and
@@ -6133,6 +6196,10 @@ if HAVE_ROS:
             # A VLA bridge's identity carries the server's weights digest
             # (pilot_from_identity); the stub's is filed as before.
             model_id, pilot, reported_digest = pilot_from_identity(self.vla_identity)
+            # The setpoint path flown (report.md's Path row): the adapter(s)
+            # seen on /shield/setpoint at mission start and now.
+            self._sample_setpoint_subscribers()
+            path_cell = setpoint_path(self.setpoint_subscribers)
 
             metrics = {
                 "tag": self.out.name,
@@ -6334,6 +6401,14 @@ if HAVE_ROS:
                 "setpoint_delivery": {
                     "topic": TOPIC_SENT,
                     **self.delivery.summary(lambda v: v - (self.mission_t0 or 0.0))},
+                # Who took /shield/setpoint (THE SETPOINT PATH IN report.md):
+                # node names seen at mission start and at the report; None
+                # when the ROS stack never said.
+                "setpoint_path": {
+                    "topic": TOPIC_SETPOINT,
+                    "subscribers_seen": (None if self.setpoint_subscribers is None
+                                         else sorted(self.setpoint_subscribers)),
+                    "path": path_cell},
                 "tick_latency": latency_summary(self.rows, trigger=self.tick_trigger),
                 # What ran the ticks and how often (THE TICK SCHEDULE).
                 "tick_schedule": tick_schedule_summary(self.rows, self.tick_trigger,
@@ -6579,7 +6654,7 @@ if HAVE_ROS:
 
 | Item | Value |
 |------|-------|
-| Path | vla node -> /vla/action_4d (body) -> safety_shield -> /shield/setpoint (body) -> mavlink_adapter -> /mavros/setpoint_raw/local -> MAVROS 2 -> ArduPilot |
+| Path | {path_cell} |
 | Autopilot | {self.hil_evidence.get('ardupilot_version')} ({self.hil_evidence.get('ardupilot_version_source')}) |
 | Pilot | `{model_id}` |
 | Policy | `{self.policy.policy_id}` `{self.policy.policy_hash}` |

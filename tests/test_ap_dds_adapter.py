@@ -26,6 +26,11 @@ still flies sitl/mavlink_adapter_node.py). What is checked here:
     report and beat go out on /mavlink_adapter/sent, a second publisher on
     /shield/setpoint stops forwarding, a mode request becomes a ModeSwitch
     call (only with --forward-modes), and every send is logged;
+  * (2026-11-28) the Shield node's report.md Path row names the adapter seen
+    on /shield/setpoint (the AP_DDS one: /ap/cmd_vel, no MAVROS setpoint),
+    not a fixed MAVLink path: stage1_02 reported the MAVROS path it never
+    flew; a graph query that raises or answers a non-list leaves the
+    mission and the report running;
   * the SITL check's pure verdicts (sitl/ap_dds/verify_ap_dds.py): a missing
     topic fails rather than reading as zero, and a flown velocity off the
     command or off its bearing fails.
@@ -331,6 +336,136 @@ def test_the_shields_delivery_monitor_accepts_the_adapters_reports():
     assert s["shortfall"] == 0 and s["n_gaps"] == 0 and s["delivery_gaps"] == [], s
     assert s["adapter_n_sent"] == 30 and s["adapter_n_in"] == 30, s
     assert grade_reasons(s) == [], grade_reasons(s)
+
+
+# --------------------------------------------------------------------------- #
+# The Shield node's report.md Path row (2026-11-28)
+# --------------------------------------------------------------------------- #
+
+# The row every ROS 2 rail report.md carried until 2026-11-28, whatever the
+# adapter: the MAVLink rail's path, which stays byte for byte its row.
+MAVLINK_ROW = ("vla node -> /vla/action_4d (body) -> safety_shield -> /shield/setpoint "
+               "(body) -> mavlink_adapter -> /mavros/setpoint_raw/local -> MAVROS 2 "
+               "-> ArduPilot")
+
+
+def _shield_report(at_start, at_end=None):
+    """(node module, report.md's Path rows, metrics.json `setpoint_path`) of
+    the Shield node flown two ticks on the stand-in ROS stack
+    (tests/test_railinputs_node.py) with the node names `at_start`
+    subscribed to /shield/setpoint, and `at_end` (default: the same) when
+    the report is written."""
+    import test_railinputs_node as RN
+    N, node, clk, out = RN._build([])
+    node.subscribers = tuple(at_start)
+    node.start_mission()
+    RN._mode(N, node, "GUIDED")
+    RN._fly(N, node, clk, 2)
+    if at_end is not None:
+        node.subscribers = tuple(at_end)
+    node._finish("test over")
+    rows = [ln for ln in (out / "report.md").read_text(encoding="utf-8").splitlines()
+            if ln.startswith("| Path |")]
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    return N, rows, metrics["setpoint_path"]
+
+
+def test_the_shields_path_row_names_the_adapter_and_its_topic():
+    """setpoint_path: one row per adapter, from the adapters' own names."""
+    import test_railinputs_node as RN
+    N = RN._node_module()
+    # The Shield node writes the AP_DDS names down rather than importing the
+    # adapter: they must be the adapter's own.
+    assert N.AP_DDS_ADAPTER_NODE_NAME == D.ADAPTER_NODE_NAME == "ap_dds_adapter"
+    assert N.AP_DDS_TOPIC_CMD_VEL == D.TOPIC_CMD_VEL == "/ap/cmd_vel"
+    assert N.ADAPTER_NODE_NAME == A.ADAPTER_NODE_NAME
+    assert N.TOPIC_RAW_LOCAL == A.TOPIC_RAW_LOCAL
+    head = "vla node -> /vla/action_4d (body) -> safety_shield -> /shield/setpoint (body)"
+    assert N.setpoint_path(["mavlink_adapter", "vla_bridge"]) == MAVLINK_ROW
+    ap = N.setpoint_path(["ap_dds_adapter", "rosbag2_recorder"])
+    assert ap == (head + " -> ap_dds_adapter -> /ap/cmd_vel -> micro-ROS agent "
+                  "-> ArduPilot (AP_DDS)"), ap
+    assert "mavros" not in ap.lower(), ap
+    both = N.setpoint_path({"mavlink_adapter", "ap_dds_adapter"})
+    assert "MORE THAN ONE ADAPTER" in both, both
+    assert "/ap/cmd_vel" in both and "/mavros/setpoint_raw/local" in both, both
+    nobody = N.setpoint_path(["rosbag2_recorder"])
+    assert nobody == (head + " -> no setpoint adapter seen subscribed "
+                      "(subscribers: rosbag2_recorder)"), nobody
+    assert N.setpoint_path([]).endswith("(subscribers: none)")
+    assert N.setpoint_path(None).endswith("were not read)")
+
+
+def test_the_shield_nodes_report_follows_the_adapter_on_its_graph():
+    """ap_dds_stage1_02 (26 Nov) flew /shield/setpoint -> ap_dds_adapter ->
+    /ap/cmd_vel with no MAVLink setpoint adapter running, and its report.md
+    said '... -> mavlink_adapter -> /mavros/setpoint_raw/local -> MAVROS 2'.
+    The node now writes the path of the adapter it saw subscribed."""
+    N, rows, sp = _shield_report(["ap_dds_adapter"])
+    assert rows == [f"| Path | {N.setpoint_path(['ap_dds_adapter'])} |"], rows
+    assert "/ap/cmd_vel" in rows[0] and "mavros" not in rows[0].lower(), rows
+    assert sp == {"topic": "/shield/setpoint", "subscribers_seen": ["ap_dds_adapter"],
+                  "path": N.setpoint_path(["ap_dds_adapter"])}, sp
+    # The MAVLink rail (every KPI campaign): the row it always had.
+    N, rows, sp = _shield_report(["mavlink_adapter"])
+    assert rows == [f"| Path | {MAVLINK_ROW} |"], rows
+    # Seen at mission start, gone by the report: still the path flown.
+    N, rows, sp = _shield_report(["ap_dds_adapter"], [])
+    assert "/ap/cmd_vel" in rows[0] and sp["subscribers_seen"] == ["ap_dds_adapter"], sp
+    # Nothing that forwards setpoints: said so, not assumed to be MAVROS.
+    N, rows, sp = _shield_report(["rosbag2_recorder"])
+    assert "no setpoint adapter seen subscribed (subscribers: rosbag2_recorder)" \
+        in rows[0] and "MAVROS" not in rows[0], rows
+
+
+def test_a_failing_graph_query_never_stops_the_shield_node():
+    """The subscriber sample runs in start_mission, with the aircraft
+    hovering in GUIDED, and again in _finish: a graph query on
+    /shield/setpoint that raises, or answers with something that is not a
+    list of endpoints, must leave both running (review of 4b1bdd8). The row
+    then says the adapter was not identified, or names what the other sample
+    read. Other topics' queries go to the stand-in unchanged."""
+    import test_railinputs_node as RN
+
+    def flown(at_start, at_end):
+        N, node, clk, out = RN._build([])
+        real = node.get_subscriptions_info_by_topic
+        answer = {"now": at_start}
+
+        def info(topic):
+            if topic != N.TOPIC_SETPOINT:
+                return real(topic)
+            a = answer["now"]
+            if isinstance(a, BaseException):
+                raise a
+            if isinstance(a, list):
+                return [types.SimpleNamespace(node_name=n, topic_name=topic) for n in a]
+            return a
+        node.get_subscriptions_info_by_topic = info
+        node.start_mission()
+        RN._mode(N, node, "GUIDED")
+        RN._fly(N, node, clk, 2)
+        answer["now"] = at_end
+        node._finish("test over")
+        rows = [ln for ln in (out / "report.md").read_text(encoding="utf-8").splitlines()
+                if ln.startswith("| Path |")]
+        metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert len(node.rows) == 2, len(node.rows)
+        return N, rows, metrics["setpoint_path"]
+
+    for bad in (RuntimeError("rcl graph"), 42, None):
+        N, rows, sp = flown(bad, bad)
+        assert rows == [f"| Path | {N.setpoint_path(None)} |"], (bad, rows)
+        assert "adapter not identified" in rows[0], rows
+        assert sp["subscribers_seen"] is None, sp
+    # Failing at mission start, answering at the report: the report's sample.
+    N, rows, sp = flown(RuntimeError("rcl graph"), ["ap_dds_adapter"])
+    assert rows == [f"| Path | {N.setpoint_path(['ap_dds_adapter'])} |"], rows
+    assert sp["subscribers_seen"] == ["ap_dds_adapter"], sp
+    # Answering at mission start, failing at the report: the start's sample.
+    N, rows, sp = flown(["mavlink_adapter"], 42)
+    assert rows == [f"| Path | {MAVLINK_ROW} |"], rows
+    assert sp["subscribers_seen"] == ["mavlink_adapter"], sp
 
 
 # --------------------------------------------------------------------------- #
