@@ -86,6 +86,12 @@ The release's smoke passes when, under the adopted reading (r2):
   limit);
 - no ERROR result in the campaign;
 - every one of the five matrix rows flew and is KPI-grade;
+- each of the five matrix rows has a non-vacuous cell, and every at-speed
+  near-edge cell the campaign planned flew and is non-vacuous (a cell with
+  no P0 tick tested nothing, a missing one nothing at all; the
+  KPI report's "Shield test matrix" section states both, `shield_matrix` in
+  its JSON; since 2026-11-28, after smREL072 flew near-edge-at-12mps with its
+  zone out of force);
 - no tick over 100 ms end to end (`e2e_with_wait_ms`).
 
 The fail-safe reading of a ~50-mission smoke cannot show 0.99 with any error

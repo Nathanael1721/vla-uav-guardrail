@@ -57,11 +57,19 @@ scenarios:
       policies/wgs84_taipei.yaml caps at 12 m/s, so a pilot asking 8, 12 or
       20 m/s really flies 8-12 m/s - 1.2 m per 0.1 s tick - past the
       school-yard zone's north face (y 40.3) on a line 0.2, 0.5 or 0.8 m
-      inside its 1 m margin ring, or exactly on it (41.3). No scenario clock,
-      so the zone's weekday curfew is in force (absent clock = every rule
-      active). It must never enter the ring, never exceed 12 m/s, and still
-      get past. One face only: the zone is not square (78 x 80.6 m), so a
-      rotation would move the line relative to the face it meets.
+      inside its 1 m margin ring, or exactly on it (41.3). The scenario clock
+      is pinned inside the zone's weekday curfew (Mon-Fri 07:30-17:30): Monday
+      2026-09-07 09:00, so the zone is in force on every backend. It must
+      never enter the ring, never exceed 12 m/s, and still get past. One face
+      only: the zone is not square (78 x 80.6 m), so a rotation would move
+      the line relative to the face it meets.
+
+      CLOCK PINNED 2026-11-28. Until then the cell had no clock: headless that
+      puts every rule in force (ConstraintBase.active_at), but a rail without
+      --clock-start reads the wall clock, so the release smoke smREL072 flew
+      both cells on Fri 27 Nov from 18:15 TST, out of the curfew: no zone, no
+      P0 tick, a vacuous escape rate. Headless the pinned flight is the
+      unpinned one, tick for tick.
 
       40.8 m at 12 m/s was a known failure from 2026-10-07 to 2026-10-12
       (the edge flicker below). Since the FSM counts at most one onset per
@@ -94,6 +102,7 @@ scenarios:
       start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
       target: { x: 70.0, y: "$pass_y", up: 15.0 }
       pilot: { type: goto, speed: "$ask_mps" }
+      clock_start: "2026-09-07T09:00:00"     # Monday, inside the zone's 07:30-17:30
     policy: { path: policies/wgs84_taipei.yaml }
     ticks: 400
     parameter_sweep:
