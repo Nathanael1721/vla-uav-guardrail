@@ -16,6 +16,13 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-28 (docs: the Final Report v1.0 single final build) — 20 rows to DONE: 134 DONE, 2 PARTIAL, 0 DRIFT, 0 MISSING
+
+- **The report built once, after the work** (docs/FINAL-REPORT.md, docs/FINAL-REPORT-outline.md): the 22 open Appendix A rows re-assessed against the grant's wording and the readings the project applies (section 9.2), each rewritten from its evidence and checked against its cited files; ARCH-06, ARCH-14, ARCH-15 (from DRIFT), ARCH-19, ARCH-31, WP1-05, WP1-07, WP3-06, WP3-07, WP3-13, WP3-19, WP4-01, WP4-04, WP4-06, WP4-11, WP4-14, WP4-17, WP4-19, X-01 and X-13 to DONE; ARCH-08 (AP_DDS at stage 1, reading (m)) and ARCH-22 (no image topic in any bag; the start frame first in 49 of 52 smREL073 bundles) stay PARTIAL. The policy-artefact KPI rows (WP1-17, WP1-19, WP2-02, WP2-03) cite the records at c44a360.
+- **The body for the final build**: a short status block, the summary led by the KPI figures of record and the delivered release 0.7.3, section 9 as the decisions and the readings applied, section 10's limits as delivered scope, section 11 a delivery record, the Approval block naming both releases.
+- **An independent review of the build** in three lenses (numbers against their files, status against the grant, prose and consistency), every finding put to a skeptic: 25 confirmed and applied, among them the Orin replay coverage (the 22 and 25 Nov runs replayed, now 1,660 episodes), the time to safe counted in spells, the nightly cadence as docs/RUNBOOK-release.md section 7 words it, and stale Open cells of DONE rows.
+- tests/test_final_report_counts.py: ARCH-15 may be DONE when its row states the SIM_AirSim transport and the section 7.1 deviation.
+
 ### 2026-11-28 (flown and measured at release 0.7.3: smREL073, the Orin replays, the offline KPIs at the delivered revision, Gazebo at 0.7.2; CI)
 
 - **smREL073, the release 0.7.3 smoke on hil** (docs/data/kpi_smREL073/): 52 missions flown, 12 refused by design, all 52 KPI-grade, single_sha 52/52, the Lab CA chain verified 52/52. The release gate is met with its new Shield-matrix line: near-edge-at-12mps 2 of 2 cells non-vacuous (smREL073_041 10 and _042 13 P0-violation ticks, escape 0 on both). P0 escape 0 on 2393 P0-violation ticks (control 0.65), fail-safe (r2) 50/50, tick_ms max 55.73 ms (0 of 16,047 over 100 ms). The manifest start frame went out at arming with its six fields on 52 of 52 runs, the bag's start frame equals manifest.json on 52 of 52, episode.bag2 begins with it in 49 of 52 episode bundles (the other 3 keep the recorder's bag, the reason in their kpi.json: one pilot action lay between the arm acknowledgement and the frame), and report.md names the setpoint path flown on 52 of 52.
