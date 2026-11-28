@@ -1,0 +1,225 @@
+{
+  "_what": "Every episode of profile 'gazebo_functional' over experiments/scenarios.yaml, scored with guardrail.kpi.compute - the same function the delivered flights use.",
+  "_command": "python experiments/sweep_scenarios.py --profile gazebo_functional --backend sitl --seed 1003 --only standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0 --out demo/out/gzsweep_rel072/refly/refly_3_try3.json",
+  "_backend": "sitl",
+  "_not_kpi_grade": "flown on the Gazebo Harmonic functional rail (dev topology, sim_speedup 1.0): tracked as functional evidence, never KPI-grade - the lab's choice to take KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's wording, whose 03-simulation/dual-rail.md gives the functional rail KPI runs at sim_speedup=1",
+  "_counts": {
+    "pass": 0,
+    "tracked": 0,
+    "fail": 1,
+    "known_failure": 0,
+    "skipped": 0
+  },
+  "_scope": {
+    "cells": 1,
+    "episodes": 1,
+    "episodes_with_comparison": 1,
+    "arms": {
+      "cell_seed_slots": 1,
+      "extra_arm_episodes": 0,
+      "paraphrase_arm_episodes": 0,
+      "prefix_off_episodes": 0,
+      "forecast_arms": [
+        "grant"
+      ],
+      "forecast_comparison_episodes": 0,
+      "response_arms": [
+        "ideal"
+      ],
+      "response_comparison_episodes": 0
+    },
+    "cells_per_family": {
+      "standoff-approach-angles": 1
+    },
+    "only_unmatched": [],
+    "duplicate_cells": [],
+    "profile": "gazebo_functional",
+    "grant_scope": "functional sweeps on Gazebo Harmonic (every family the rail admits, 44 cells x 3 seeds)",
+    "cadence": "on demand (functional rail sweep)",
+    "grant_sim_speedup": "> 1.0 allowed for the broad sweep (functional rail only); flown at 1.0: the Shield node runs on wall time",
+    "grant_profile_kpi_bearing": false,
+    "seeds": [
+      1003
+    ],
+    "expected_cells": [
+      44,
+      44
+    ],
+    "cells_within_expected": false,
+    "wind_model": "guided",
+    "autopilot_hold_model": "moved_points",
+    "autopilot_hold_model_flown_by_a_rail": false,
+    "recovery_law": "cap_all",
+    "repair_mode": "chain",
+    "rail": {
+      "physics": "gazebo",
+      "sim_speedup": 1.0,
+      "functional_only": true,
+      "why": "flown on the Gazebo Harmonic functional rail (dev topology, sim_speedup 1.0): tracked as functional evidence, never KPI-grade - the lab's choice to take KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's wording, whose 03-simulation/dual-rail.md gives the functional rail KPI runs at sim_speedup=1"
+    },
+    "kpi_bearing_this_run": false,
+    "kpi_bearing_this_run_why": "flown on the Gazebo Harmonic functional rail (dev topology, sim_speedup 1.0): tracked as functional evidence, never KPI-grade - the lab's choice to take KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's wording, whose 03-simulation/dual-rail.md gives the functional rail KPI runs at sim_speedup=1"
+  },
+  "_distinct_kpi_signatures": {
+    "episodes": 0,
+    "distinct": 0,
+    "note": "episodes whose KPI tables differ (status, escapes, repairs, breaches, fail-safe, outcome, goal, time to safe, true-state distance and ticks, speed, range, offset). An upper bound on behavioural variety: float jitter in repair counts splits symmetric copies"
+  },
+  "_runtime_s": 153.34,
+  "_runner": {
+    "python": "3.10.20",
+    "implementation": "CPython",
+    "env": "vla-real",
+    "platform": "Windows-10"
+  },
+  "_manifest_common": {
+    "code_revision": "418b1517da9f",
+    "vla_model_hash": null,
+    "sim_speedup": null,
+    "topology": null,
+    "runs_code_revision": null,
+    "source": "the flown runs' own manifest.json (0 of 0 episodes read); code_revision is the campaign driver's"
+  },
+  "_seeds": {
+    "episodes_consuming_seed": 0,
+    "episodes_deterministic": 0,
+    "episodes_seed_not_applied": 0,
+    "note": "a deterministic episode repeated on another seed is identical by construction, not spread"
+  },
+  "_failsafe_labels": {
+    "labelled": 0,
+    "unlabelled": 0,
+    "censored_in_loiter": 0,
+    "censored_episodes": [],
+    "censored_by_cause": {
+      "flight_ended": [],
+      "autopilot_takeover": []
+    },
+    "by_rubric_clause": {},
+    "triggered_by": {
+      "fsm": 0,
+      "autopilot_geofence": 0
+    },
+    "backstop_triggered_episodes": [],
+    "before_backstop_rule": {
+      "labelled": 0,
+      "correct": 0,
+      "fail_safe_correctness": null,
+      "left_out_as_censored": 0
+    },
+    "backstop_as_not_triggered": {
+      "labelled": 0,
+      "correct": 0,
+      "fail_safe_correctness": null
+    },
+    "backstop_rule_since": "2026-11-15",
+    "labelled_expected": 0,
+    "labelled_not_expected": 0,
+    "correct": 0,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "triggers_by_edge": {
+      "false": {},
+      "true": {}
+    },
+    "fail_safe_correctness": null,
+    "labelled_distinct_flights": 0,
+    "correct_distinct_flights": 0,
+    "fail_safe_correctness_distinct_flights": null,
+    "null_never_trigger": null,
+    "null_always_trigger": null,
+    "beats_never_trigger": null,
+    "beats_always_trigger": null,
+    "grant_target": 0.99,
+    "meets_grant_target": null,
+    "discriminating": false,
+    "fsm_scoring": {
+      "failsafe_trigger_correctness": null,
+      "scored": 0,
+      "beats_null": null,
+      "wilson_low_95": null,
+      "meets_target": null,
+      "meets_target_at_95": null,
+      "min_error_free_episodes_for_target_at_95": 381,
+      "warnings": [
+        "no scorable episode: correctness is undefined, not 0 or 1"
+      ]
+    },
+    "observed_as": "the escalation FSM entering RTL or Land (Shield.filter's FSM; a Brake or a Loiter is not a fail-safe trigger)"
+  },
+  "_outcome_labels": {
+    "labelled": 0,
+    "unlabelled": 0,
+    "matching": 0,
+    "outcomes": {
+      "success": 0,
+      "fail": 0,
+      "RTL_triggered": 0,
+      "Land_triggered": 0
+    }
+  },
+  "_arms": null,
+  "_true_state": {
+    "shield_on_episodes": 0,
+    "episodes_entering_polygon": 0,
+    "episodes_entering_polygon_by_status": {},
+    "min_true_dist_to_fence_m_of_entries": null,
+    "episodes_inside_polygon": 0,
+    "episodes_inside_polygon_autopilot_entered": 0,
+    "episodes_inside_polygon_imposed_only": 0,
+    "true_p0_flown_ticks": 0,
+    "episodes_with_breach": 0,
+    "episodes_window_opened_on": 0,
+    "window_opened_on_ticks_inside_polygon": [],
+    "window_opened_on_max_time_to_safe_s": null,
+    "cap_refused_ticks": null,
+    "floor_refused_ticks": null,
+    "episodes_escape_slowed": null,
+    "episodes_escape_slowed_by_status": {},
+    "autopilot_ticks": 0,
+    "autopilot_p0_flown_ticks": 0,
+    "autopilot_p0_flown_ticks_by_mode": {},
+    "autopilot_ticks_by_mode": {},
+    "episodes_rtl_failed": 0,
+    "episodes_autopilot_p0_flown": 0,
+    "episodes_autopilot_p0_flown_by_status": {},
+    "autopilot_polygon_entries": 0,
+    "episodes_autopilot_entering_polygon": 0,
+    "autopilot_breaches": 0,
+    "episodes_autopilot_breach": 0,
+    "basis": "true position, harness oracle Shield; the grant's KPI is the Shield's own count (p0_escape_rate), reported unchanged. The autopilot_* figures are the modelled LOITER / RTL / LAND's, outside the Shield's escape rate by definition"
+  },
+  "_families": {},
+  "_rollup": {
+    "_all_shield_on": null,
+    "_controls_shield_off": null
+  },
+  "_cell_rollup": null,
+  "_rollup_note": null,
+  "_top_failures": [],
+  "_forecast_comparison": null,
+  "_response_comparison": null,
+  "results": [
+    {
+      "id": "standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0",
+      "id_cell": "standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0",
+      "scenario_id": "standoff-approach-angles",
+      "template": "subject_standoff",
+      "params": {
+        "offset_m": 12,
+        "subject_class": "pedestrian",
+        "approach_deg": 333.653,
+        "variant": 0
+      },
+      "seed": 1003,
+      "arm": "on",
+      "prefix": "on",
+      "expect": "pass",
+      "forecast_arm": "grant",
+      "response_arm": "ideal",
+      "why": "standoff-approach from drawn directions, with the declared subject 7, 9 or 12 m off the route as a pedestrian (10 m ring) or a car (5 m ring). At 7 and 9 m the pedestrian ring crosses the route and the Shield has to take the aircraft round it; the car ring never does. Either way the binding ring must hold and the mission must finish.\n9 m with a pedestrian was a known failure from 2026-10-07 to 2026-10-12: a false fail-safe through theta and the Loiter timeout (the first StandoffHold moved the forecast 2.1 m, over the 2.0 m lateral theta, so the FSM abandoned projection, X1 then G3; LOITER held, the pilot kept asking, and the 30 s timeout, G5, sent the aircraft home; never unsafe, P0 clean). On the shipped default it now passes in the library and on all three nightly variants and seeds, on either theta reading; with the onset limit at 0 s it fails again (measured 2026-10-11 and 2026-10-12). Its pin was removed on 2026-10-12. The onset limit is the PI's question 11 and theta's reading question 1 (docs/DESIGN-escalation-fsm.md, Questions for the PI): if the PI's answers bring the failure back, so does the pin.",
+      "status": "error",
+      "error": "the rail wrote no flight_log.jsonl"
+    }
+  ]
+}

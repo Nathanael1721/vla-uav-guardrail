@@ -1,0 +1,9 @@
+1 scenarios, 1 episodes, backend=sitl, profile=gazebo_functional
+
+  note: --only narrowed the profile to 1 of its 44-44 scenarios
+
+  ERROR standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0 RuntimeError: the rail wrote no flight_log.jsonl
+
+0 passed, 0 tracked, 1 failed, 0 known failures, 0 skipped in 152.89 s -> demo/out/gzsweep_rel072/refly/refly_3_try2.json
+0 episodes scored, 0 distinct KPI signatures
+outcomes: success 0, fail 0, RTL_triggered 0, Land_triggered 0
