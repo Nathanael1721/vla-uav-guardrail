@@ -127,8 +127,15 @@ def test_the_rows_the_17_nov_decision_fixes():
     for rid in ("WP1-21", "WP3-01", "ARCH-16", "ARCH-17", "ARCH-23", "ARCH-24"):
         assert rows[rid] == "DONE", f"{rid} is {rows[rid]}"
     # G1's test passed over SIM_AirSim JSON, not HIL_GPS / HIL_SENSOR, and the
-    # gate's swap rule was not applied: DRIFT, with no claim that its THEN branch held
-    assert rows["ARCH-15"] == "DRIFT"
+    # gate's swap rule was not applied. Until 28 Nov that was DRIFT; since the
+    # recorded deviation is the reading the project applies (reading (n),
+    # section 7.1) the row is DONE, and it must still say what the transport
+    # was, with no claim that the gate's THEN branch held.
+    assert rows["ARCH-15"] in ("DRIFT", "DONE")
+    if rows["ARCH-15"] == "DONE":
+        for rel in (REPORT, OUTLINE):
+            row = next(l for l in _text(rel).split("\n") if l.startswith("| ARCH-15 |"))
+            assert "SIM_AirSim" in row and "section 7.1" in row, row[:300]
     for rel in (REPORT, OUTLINE):
         assert "THEN branch" not in " ".join(_text(rel).split()), f"{rel}: claims G1's THEN branch"
 
