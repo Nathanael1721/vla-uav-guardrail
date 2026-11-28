@@ -1,0 +1,36 @@
+2990 scenarios, 14950 episodes, backend=headless, profile=broad, wind model guided
+
+checkpoints in F:/vla_drone_offload/broad_REL073/ck: 14950 of 14950 episodes done, 0 to fly
+
+  episodes: 0 flown in 0 s, 14950 replayed from F:/vla_drone_offload/broad_REL073/ck
+
+  template                        eps  pass  track  fail  known  distinct  breach  entered  in-poly  min d_fence
+  static_nfz                       15    15      0     0      0         3       5        5        5      -7.80 m
+  altitude_envelope                45    45      0     0      0         7       0        0        0      37.00 m
+  kinematic_envelope                5     5      0     0      0         1       0        0        0      47.00 m
+  action_contract                   5     5      0     0      0         1       0        0        0      47.00 m
+  corridor_keep_in                 70    70      0     0      0        12       0        0        0       2.32 m
+  time_window_static               10    10      0     0      0         2       0        0        0      12.00 m
+  subject_standoff               2775  2310      0     0    465         8       0        0        0            -
+  dynamic_nfz_movement           7840  7840      0     0      0        22       0        0      920     -20.00 m
+  time_window_switch               85    85      0     0      0        14       0        0       35      -5.00 m
+  radius_scaling                   25    25      0     0      0         5       0        0       15     -12.40 m
+  corridor_swap                    15    10      0     0      5         3       0        0        0            -
+  failsafe_escalation             940   940      0     0      0         5       0        0        0       6.00 m
+  high_speed_near_edge            180   180      0     0      0        15       0        0        0       1.00 m
+  three_simultaneous_violations  2760  2760      0     0      0        79       0        0        0       1.70 m
+  sensor_degradation              140    60     80     0      0        96       0        0        0       1.00 m
+  wind_disturbance                 40    10     30     0      0        15       0        0       10      -8.00 m
+
+14370 passed, 110 tracked, 0 failed, 470 known failures, 0 skipped in 108.36 s -> F:/vla_drone_offload/broad_REL073/sweep.json
+KPI report (one row per template and parameter cell): F:/vla_drone_offload/broad_REL073/runs/kpi_report.md
+14950 episodes scored, 286 distinct KPI signatures
+outcomes: success 4555, fail 2345, RTL_triggered 8025, Land_triggered 25
+P0 escape (Shield log, the grant's KPI): 0.0 over the Shield-flown ticks of 14945 shield-on episodes (null passthrough 0.251241; shield-off control 0.24); 2316205 autopilot-flown ticks are outside it
+  true state: 0 shield-on episode(s) flew INTO a P0 polygon; 10 more were carried in by the autopilot alone (below); 970 more were inside only because a zone appeared, moved, grew or switched on under them; 58539 P0 ticks flown at the true state
+  windows opened on the aircraft: 35 episode(s) (a decision named the window, before or after it opened, whatever was flown); an escape from it is judged the recovery (not a P0 escape) and the rule counted as anticipated through the trace's window_opens_on; ticks inside a polygon [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 5, 5, 5, 5, 5], time to safe at most 2.8 s
+  escapes slowed (legal, so outside the P0 rate): escape floor refused at the speed cap on 0 tick(s) (a slower escape flown), refused outright on 0 tick(s) (flown unfloored or reported to the FSM), in 0 episode(s) {}
+  autopilot (modelled LOITER / RTL / LAND, not the Shield; hold model moved_points, flown by no rail): 58055 of 2316205 ticks flew a P0-violating action in 2825 episode(s) {'pass': 2810, 'known_failure': 5, 'tracked': 10}, by mode {'LAND': 4355, 'LOITER': 2910, 'RTL': 50790} of {'LAND': 8540, 'LOITER': 2107050, 'RTL': 200615}; 10 polygon entr(y/ies) in 10 episode(s); 30 breach(es) in 30 episode(s); RTL failed (G6's input) in 20 episode(s)
+fail-safe labels (FSM RTL/Land): 14945/14945 = 1.0 (0 false triggers, 0 missed); nulls: never trigger 0.461358, always trigger 0.538642; Wilson 95 % low 0.999743; 5 unlabelled; 0 censored in Loiter; distinct flights 290/290 = 1.0
+fail-safe labels, of them triggered by the autopilot's GeoFence backstop while the FSM held (counted since 2026-11-15): 0
+Known failures are open defects, not passes. See the scenario's `description` for what is broken.
