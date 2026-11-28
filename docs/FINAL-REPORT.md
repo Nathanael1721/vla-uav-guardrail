@@ -1630,7 +1630,7 @@ filled in on the PI's behalf, and the report is not signed until it is.
 |---|---|
 | Report | Final Report v1.0, docs/FINAL-REPORT.md, with Appendix A (the contract map) and Appendix B |
 | Release | KPI figures of record: release 0.7.0, annotated tag v0.7.0, commit 21c2771 (ntFIN5, smREL070). Delivered release: 0.7.3, annotated tag v0.7.3, commit c44a360 (its smoke smREL073) |
-| Report body | names the master commit the signed copy is built from (written here when the signed DOCX/PDF is built) |
+| Report body | master 6ebff0c, the commit whose text this copy is built from (full local CI in the lab checkout: 194/194 files, claims rc 0, smoke rc 0; docs/data/ci_local/6ebff0c29d11.json); this field and that CI record are committed after it, as a commit cannot name itself |
 | Name | |
 | Role | |
 | Date | |
