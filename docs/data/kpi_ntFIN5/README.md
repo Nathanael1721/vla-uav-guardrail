@@ -21,6 +21,7 @@ ArduCopter V4.5.7 2a3dc4b7).
 | `kpi_report_ntFIN5_2026-11-24.md` / `.json` | `tools/kpi_report.py --campaign demo/out/hil_ntFIN5 --rescore-rail docs/data/kpi_ntFIN5/rescore_r2_ntFIN5.json --baseline docs/data/kpi_ntFIN4/kpi_report_ntFIN4_2026-11-23.json`, made from a clean tree at b171c57 |
 | `kpi_report_stdout.txt` | that command's console output |
 | `kpi_report_ntFIN5_2026-11-27_wp1_21c2771.md` / `.json`, `kpi_report_stdout_2026-11-27_wp1_21c2771.txt` | the same command with `--out docs/data/kpi_ntFIN5/kpi_report_ntFIN5_2026-11-27_wp1_21c2771`, from a clean tree at d75ddc9, where `docs/data/wp1_roundtrip.json` is the 21c2771 record (below, "Re-rendered 27 Nov") |
+| `kpi_report_ntFIN5_2026-11-28_offline_c44a360.md` / `.json`, `kpi_report_stdout_ntFIN5_2026-11-28_offline_c44a360.txt` | the same command with `--out docs/data/kpi_ntFIN5/kpi_report_ntFIN5_2026-11-28_offline_c44a360.md`, from a clean tree at f9cab68, where the WP1 round trip and the Prefix Compiler KPIs are the records at c44a360, release 0.7.3, the delivered release (below, "Re-rendered 28 Nov"): **the KPI report of record** |
 | `rescore_r2_ntFIN5.json` / `.txt` | `experiments/sweep_scenarios.py --profile nightly --rescore-rail` over the 654 runs |
 | `replay_at_revision_ntFIN5.json` / `.per_run.jsonl.gz` | `tools/replay_at_revision.py --root demo/out/hil_smoke --only ntFIN5_` |
 
@@ -87,6 +88,38 @@ The campaign was read from the lab checkout's `demo/out/hil_ntFIN5` (the
 report was rendered in a worktree); the local prefix was then removed from
 the stored paths, as "How the files were made" below describes, so they
 read as in the 24 Nov files.
+
+## Re-rendered 28 Nov: the policy-artefact KPIs at the delivered release
+
+The policy-artefact KPIs (DSL acceptance and load round trip, WP1; P0
+coverage and token budget, WP2) are measured by the offline tools at the
+delivered revision. On 28 Nov `docs/data/wp1_roundtrip.json` (a copy of
+`docs/data/wp1_roundtrip_c44a360.json`) and `docs/data/csp_kpis.json` were
+regenerated at c44a360 (release 0.7.3), and the report was made again from
+the same flight inputs. The 24 and 27 Nov files are kept as they were.
+
+What changed, `kpi_report_ntFIN5_2026-11-27_wp1_21c2771` against
+`kpi_report_ntFIN5_2026-11-28_offline_c44a360` (md compared):
+
+- The WP1 section: generated 2026-11-28T00:52:53Z at `c44a360618e1`; every
+  ratio as before (33/33, 39/39, 3/3, 1/1, 0/33 representable); cold start
+  p95 477 ms (was 483 ms), whole process p95 601 ms (was 594 ms), with the
+  certified signer's chain check.
+- The WP2 section: generated 2026-11-28 at `c44a360618e1`, 33 policies (was
+  32 at 52ac56c): P0 coverage 124/124 at every budget from 256 down to 144
+  tokens, the naive cut 122/124 at 144; largest CSP 149 tokens.
+- The tick-budget table has one more stored profile,
+  `deploy/evidence/hil/shield_tick_profile_20261128.json` (the AGX Orin at
+  c44a360: `_check` p99 1.05 ms, filter p99 27.98 ms).
+- A section the 0.7.3 report adds: the Shield test matrix over the 651
+  KPI-grade Shield-on episodes. Every row has a non-vacuous cell (high-speed
+  near-edge 30/30 cells, dyn-nfz spawn 36/42, time-window switch 7/13, three
+  simultaneous violations 18/18, gps noise / latency 16/20), and the 12
+  planned near-edge-at-12mps cells all flew non-vacuous: gate met.
+- The header: date 2026-11-28, revision f9cab68c5ad2, the new `--out`; the
+  stack-revisions note now says the gate of 27 Nov.
+- Nothing else: the episodes, the KPI summary, the per-family tables and the
+  baseline comparison are the same values.
 
 ## Replay at the flown revision
 

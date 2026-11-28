@@ -52,7 +52,7 @@ adopted reading (r2) below.
 
 | File | What |
 |---|---|
-| `kpi_report_smREL073_2026-11-28.md` / `.json` | `tools/kpi_report.py --campaign <store>/hil_campaigns/hil_smREL073 --rescore-rail docs/data/kpi_smREL073/rescore_r2_smREL073.json --baseline docs/data/kpi_smREL072/kpi_report_smREL072_2026-11-27.json`, from a clean tree at 5379b2a |
+| `kpi_report_smREL073_2026-11-28.md` / `.json` | `tools/kpi_report.py --campaign <store>/hil_campaigns/hil_smREL073 --rescore-rail docs/data/kpi_smREL073/rescore_r2_smREL073.json --baseline docs/data/kpi_smREL072/kpi_report_smREL072_2026-11-27.json`, from a clean tree at f9cab68, where the WP1 round trip (`docs/data/wp1_roundtrip.json`) and the Prefix Compiler KPIs (`docs/data/csp_kpis.json`) are the records at c44a360, this release |
 | `kpi_report_stdout.txt` | that command's console output |
 | `rescore_r2_smREL073.json` / `.txt` | `experiments/sweep_scenarios.py --profile smoke --rescore-rail` over the 52 runs |
 | `replay_at_revision_smREL073.json` / `.per_run.jsonl.gz` | `tools/replay_at_revision.py --root <store>/hil_runs --only smREL073_` on the desktop |
@@ -101,7 +101,8 @@ gps noise / latency 2/3).
 ## How the files were made
 
 Re-score and replay after the flight; the inputs committed (5379b2a); the KPI
-report from that clean tree. Local paths repo-relative or `<store>`, the temp
+report from a clean tree after them (f9cab68, which also holds the WP1 and
+WP2 records at c44a360). Local paths repo-relative or `<store>`, the temp
 folder of the desktop replay written `~/AppData/...`. The campaign command
 quoted in the KPI report (.md and .json) had its rig config's local path
 replaced by `<rigplan>/hil_rig_F.json`, and the report's own `--out` path by

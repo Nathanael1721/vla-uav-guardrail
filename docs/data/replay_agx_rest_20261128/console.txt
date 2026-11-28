@@ -1,0 +1,33 @@
+876
+3.5G	~/vla-drone/demo/out/replay_src_rest
+59e19a5e3b19: 706 episode(s) {'identical': 706, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+a3d616ec6ec8: 65 episode(s) {'identical': 65, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+21c277170001: 52 episode(s) {'identical': 52, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+418b1517da9f: 52 episode(s) {'identical': 52, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+9589623a55d6: 1 episode(s) {'identical': 1, 'differs': 0, 'not_replayable': 0, 'refused': 0} worktree removed True
+{
+ "episodes": 876,
+ "verdicts": {
+  "identical": 876,
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 876,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "worktrees_left_behind": [],
+ "seconds": 315.7
+}

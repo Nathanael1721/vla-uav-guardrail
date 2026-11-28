@@ -1,0 +1,144 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --repo <repo> --root /opt/vlaguard/demo/out/replay_src_rest --jobs 6 --out <out>",
+ "seconds": 315.7,
+ "replayed_on": {
+  "python": "3.12.3",
+  "machine": "aarch64",
+  "system": "Linux",
+  "platform": "Linux-6.8.12-1021-tegra-aarch64-with-glibc2.39"
+ },
+ "tool_revision": "c44a360618e1",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 876,
+ "verdicts": {
+  "identical": 876,
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 876,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "21c277170001": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 52,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "418b1517da9f": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 52,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "59e19a5e3b19": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 706,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "9589623a55d6": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 1,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "a3d616ec6ec8": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 65,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "audit_records_compared": 258396,
+ "ticks_compared": 412139,
+ "differs_by_class": {},
+ "differs": [],
+ "worktrees": [
+  {
+   "sha": "59e19a5e3b1940a6d259866b085009b1ddfd54eb",
+   "path": "/tmp/replay_at_rev_zui4_pfs/59e19a5e3b19",
+   "created_s": 0.57,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 706,
+   "seconds": 241.5
+  },
+  {
+   "sha": "a3d616ec6ec8f400c9936f6b24dd16b3bc4fb710",
+   "path": "/tmp/replay_at_rev_zui4_pfs/a3d616ec6ec8",
+   "created_s": 0.77,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 65,
+   "seconds": 24.6
+  },
+  {
+   "sha": "21c2771700015cabdb9ee554149f006a37fe1a5b",
+   "path": "/tmp/replay_at_rev_zui4_pfs/21c277170001",
+   "created_s": 0.68,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 52,
+   "seconds": 22.7
+  },
+  {
+   "sha": "418b1517da9f7f58d9eeec767cdf9427fa4c0b65",
+   "path": "/tmp/replay_at_rev_zui4_pfs/418b1517da9f",
+   "created_s": 0.8,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 52,
+   "seconds": 22.7
+  },
+  {
+   "sha": "9589623a55d6eb1f2e64b5469fac228f836653ee",
+   "path": "/tmp/replay_at_rev_zui4_pfs/9589623a55d6",
+   "created_s": 0.79,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 1,
+   "seconds": 3.7
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_rest_agx.per_run.jsonl.gz"
+}
