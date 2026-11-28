@@ -1,0 +1,47 @@
+Note: switching to 'c44a360618e112277135c928f2a6fb810561b368'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+c44a3606 Release 0.7.3: non-vacuous near-edge matrix row (pinned scenario clock) and its gate, manifest start frame at arming with episode.bag2 beginning with it, the flown setpoint path in report.md
+ "episodes": 52,
+ "verdicts": {
+  "identical": 52,
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 52,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "worktrees_left_behind": [],
+ "seconds": 23.0
+}
+
+real	0m23.180s
+user	1m34.685s
+sys	0m1.647s
