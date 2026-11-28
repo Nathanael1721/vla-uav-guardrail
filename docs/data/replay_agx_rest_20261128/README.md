@@ -1,4 +1,4 @@
-# Every other KPI-grade hil campaign replayed on the AGX Orin (WP4-11), 28 Nov 2026
+# Every other KPI-grade hil run since 22 Nov replayed on the AGX Orin (WP4-11), 28 Nov 2026
 
 `tools/replay_at_revision.py` (at c44a360, release 0.7.3) over the KPI-grade
 hil episodes not yet replayed on the Orin, run inside the hil companion
@@ -17,13 +17,24 @@ at the revision it flew and run open loop on the episode's logged inputs.
 | pdyn1126 (four components, dynamic cells) | a3d616e | 12 | 12 | 0 | 0 |
 | wgs01_001 (harness WGS84 bundle) | a3d616e | 1 | 1 | 0 | 0 |
 | ca1127_001 (Lab CA verification flight) | 9589623 | 1 | 1 | 0 | 0 |
-| **All** | | **876** | **876** | **0** | **0** |
+| sk1122a (shakedown, 22 Nov) | 59e19a5 | 72 | 72 | 0 | 0 |
+| sk1122b (shakedown, literal LOITER, 22 Nov) | 59e19a5 | 2 | 2 | 0 | 0 |
+| x11r1125 (MSL zone ridge, 25 Nov) | 21c2771 | 2 | 2 | 0 | 0 |
+| bat1125 (G6 battery reason, 25 Nov) | 21c2771 | 1 | 1 | 0 | 0 |
+| fsmp1125 (selected FSM profile, 25 Nov) | 21c2771 | 1 | 1 | 0 | 0 |
+| **All** | | **954** | **954** | **0** | **0** |
 
 With ntFIN5 (654 of 654, `../replay_agx_ntFIN5/`) and smREL073 (52 of 52
 from the run folders and 52 of 52 from the episode bundles,
-`../replay_agx_smREL073/`), every KPI-grade hil campaign from ntFIN4 on is
-reproduced bit for bit by its own revision on the runtime it flew on: 1,582
-episodes, 0 differences.
+`../replay_agx_smREL073/`), every KPI-grade hil run flown from 22 Nov on
+is reproduced bit for bit by its own revision on the runtime it flew on:
+1,660 episodes, 0 differences (a scan of the lab checkout's
+`demo/out/hil_smoke` and the offload store's `hil_runs` on 28 Nov for
+runs whose kpi.json says KPI-grade on topology `hil` found none left out).
+The first eight rows (876 episodes) were one batch (`replay_at_revision_rest_agx.*`, 315.7 s);
+the 25 Nov campaigns (`replay_at_revision_1125_agx.*`, 3.3 s) and the 22 Nov
+shakedowns (`replay_at_revision_sk1122_agx.*`, 20.6 s) were two more, run the
+same way from `demo/out/replay_src_1125` and `demo/out/replay_src_sk1122`.
 
 How it was run: the run folders (logs and replay tarballs, without bags,
 videos and frames; 3.5 GB) were copied from the lab checkout's
@@ -41,4 +52,6 @@ The replay is open loop on the logged inputs; it does not re-fly the hil
 episode closed loop (SITL and the network are not bit-reproducible).
 
 Files: `replay_at_revision_rest_agx.json` (summary),
-`replay_at_revision_rest_agx.per_run.jsonl.gz` (per episode), `console.txt`.
+`replay_at_revision_rest_agx.per_run.jsonl.gz` (per episode), `console.txt`;
+the same three for the 25 Nov batch (`*_1125_agx.*`, `console_1125.txt`) and
+the shakedowns (`*_sk1122_agx.*`, `console_sk1122.txt`).

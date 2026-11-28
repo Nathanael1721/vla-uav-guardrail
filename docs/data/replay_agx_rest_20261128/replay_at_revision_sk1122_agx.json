@@ -1,0 +1,68 @@
+{
+ "what": "each episode replayed at the code_revision its manifest records, in a temporary detached git worktree at that SHA (tools/replay_at_revision.py; refly: the headless episode re-flown closed loop by that revision's tools/rerun_episode.py; open_loop: that revision's Shield on the episode's logged inputs)",
+ "command": "python tools/replay_at_revision.py --repo <repo> --root /opt/vlaguard/demo/out/replay_src_sk1122 --jobs 6 --out <out>",
+ "seconds": 20.6,
+ "replayed_on": {
+  "python": "3.12.3",
+  "machine": "aarch64",
+  "system": "Linux",
+  "platform": "Linux-6.8.12-1021-tegra-aarch64-with-glibc2.39"
+ },
+ "tool_revision": "c44a360618e1",
+ "compared": {
+  "refly": "shield_audit.jsonl records except `ts`; flight_log.jsonl bytes; harness_events.jsonl except policy_source.path; kpi.json `kpi`; the policy hash at t = 0",
+  "open_loop": "shield_audit.jsonl records except `ts` and the node's fsm_* fields; per flight-log row raw, violations, repairs, touched, braked, emitted (bit for bit)"
+ },
+ "episodes": 74,
+ "verdicts": {
+  "identical": 74,
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 74,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "verdicts_by_selection": {},
+ "by_revision": {
+  "59e19a5e3b19": {
+   "kind": [
+    "open_loop"
+   ],
+   "identical": 74,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "audit_records_compared": 4659,
+ "ticks_compared": 25910,
+ "differs_by_class": {},
+ "differs": [],
+ "worktrees": [
+  {
+   "sha": "59e19a5e3b1940a6d259866b085009b1ddfd54eb",
+   "path": "/tmp/replay_at_rev_c7727aaj/59e19a5e3b19",
+   "created_s": 0.55,
+   "removed": true,
+   "git_remove_rc": 0,
+   "reparse_points_unlinked": 0,
+   "episodes": 74,
+   "seconds": 20.6
+  }
+ ],
+ "worktrees_left_behind": [],
+ "per_run_file": "replay_at_revision_sk1122_agx.per_run.jsonl.gz"
+}

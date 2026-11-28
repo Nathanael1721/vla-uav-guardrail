@@ -1,0 +1,23 @@
+4
+  "differs": 0,
+  "not_replayable": 0,
+  "refused": 0
+ },
+ "verdicts_by_kind": {
+  "refly": {
+   "identical": 0,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  },
+  "open_loop": {
+   "identical": 4,
+   "differs": 0,
+   "not_replayable": 0,
+   "refused": 0
+  }
+ },
+ "not_replayed_by_reason": {},
+ "worktrees_left_behind": [],
+ "seconds": 3.3
+}
