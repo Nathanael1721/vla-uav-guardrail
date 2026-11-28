@@ -1,0 +1,4 @@
+wrote docs/data/gazebo_sweep_20261128/kpi_report_gz_2026-11-28.md and docs/data/gazebo_sweep_20261128/kpi_report_gz_2026-11-28.json
+131 episodes (0 KPI-grade), 2 inputs skipped
+Shield matrix (each of the five matrix rows has a non-vacuous cell, and every at-speed near-edge cell the campaign planned flew and is non-vacuous): high-speed near-edge 2/4, dyn-nfz spawn 2/2, time-window switch 3/5, three simultaneous violations 0/0, gps noise / latency 3/3 cells non-vacuous; near-edge-at-12mps 0/2: NOT MET
+reproduce: python tools/kpi_report.py --runs '.claude/worktrees/flight-418b151/demo/out/gzsweep_*' --no-sweep --rescore-rail docs/data/gazebo_sweep_20261128/rescore_rail_gz.json --out docs/data/gazebo_sweep_20261128/kpi_report_gz_2026-11-28.md
