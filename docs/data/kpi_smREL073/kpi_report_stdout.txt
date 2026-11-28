@@ -1,0 +1,8 @@
+wrote docs/data/kpi_smREL073/kpi_report_smREL073_2026-11-28.md and docs/data/kpi_smREL073/kpi_report_smREL073_2026-11-28.json
+52 episodes (52 KPI-grade), 0 inputs skipped
+single_sha over the KPI-grade flights (gated): true 52, false 0, pending 0, missing 0
+P0 escape rate: 0.0 Shield on (0 escapes, 51 flights) vs 0.65 Shield-off control
+fail-safe trigger correctness (adopted reading (r2) of docs/data/kpi_smREL073/rescore_r2_smREL073.json): 50/50 = 1.0, Wilson 95 % low 0.928652; 0 of the scored fail-safes triggered by the autopilot's GeoFence backstop while the FSM held (counted since 2026-11-15)
+Shield matrix (each of the five matrix rows has a non-vacuous cell, and every at-speed near-edge cell the campaign planned flew and is non-vacuous): high-speed near-edge 4/4, dyn-nfz spawn 1/2, time-window switch 3/5, three simultaneous violations 1/1, gps noise / latency 2/3 cells non-vacuous; near-edge-at-12mps 2/2 (planned 2/2 met): met
+against docs/data/kpi_smREL072/kpi_report_smREL072_2026-11-27.json: 36 new failures (0 regressions), 0 fixed, 36 gone
+reproduce: python tools/kpi_report.py --campaign F:/vla_drone_offload/hil_campaigns/hil_smREL073 --rescore-rail docs/data/kpi_smREL073/rescore_r2_smREL073.json --baseline docs/data/kpi_smREL072/kpi_report_smREL072_2026-11-27.json --out docs/data/kpi_smREL073/kpi_report_smREL073_2026-11-28.md
