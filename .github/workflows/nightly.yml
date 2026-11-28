@@ -38,9 +38,24 @@
 # before that change (240 scenarios, 789 episodes) and 1251 s after (221, 732;
 # measured 2026-10-13, one process). The smoke step ran faster on GitHub's
 # runners than on the desktop at 4418ae0 (20-29 s against 33 s), but nothing
-# guarantees that, so the timeout leaves a wide margin. The broad profile (an
-# estimated 7.1 h on the desktop) does not fit one GitHub-hosted job and is
-# not scheduled here.
+# guarantees that, so the timeout leaves a wide margin.
+#
+# THE BROAD SWEEP (grant: "Broad sweep | nightly | ~3000 scenarios x 5
+# seeds"; since 2026-11-28). experiments/profiles/broad.yaml is 2,990 cells x
+# 5 seeds = 14,950 headless episodes: 29,570 s of episode time on the
+# desktop at release 0.7.2 (docs/data/broad_REL072/README.md), more than one
+# GitHub-hosted job may run (6 h). The `broad` job splits it into 12 shards
+# (`--shard I/12`, about 1,250 episodes and 41 min each on the desktop),
+# each writing only its checkpoints (`--resume broad/ck`, episodes/<id>.json
+# plus checkpoint.json, the sweep's identity) with `--no-bundles` (14,950
+# bundles would not fit a runner's disk), uploaded as `broad-ck-<shard>`.
+# `broad-merge` downloads the twelve into one folder and runs `--merge-only`
+# with the shards' options (checkpoint.json pins them, `--no-bundles` and
+# `--runs` among them), which refuses while any episode has no checkpoint or
+# a checkpoint of another configuration, then keeps sweep.json
+# and kpi_report.md as `broad-<run number>`. Headless, so never KPI-grade:
+# the grant keeps the broad sweep out of the final KPI numbers. Like the
+# nightly job, it fires only from the default branch.
 
 name: nightly
 
@@ -78,5 +93,76 @@ jobs:
         with:
           name: nightly-${{ github.run_number }}
           path: nightly/
+          retention-days: 30
+          if-no-files-found: warn
+
+  broad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the guardrail's dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Broad sweep shard (stress harness, headless)
+        run: >
+          python experiments/sweep_scenarios.py --profile broad
+          --shard ${{ matrix.shard }}/12 --resume broad/ck --runs broad/runs
+          --no-bundles
+
+      - name: Keep the shard's checkpoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: broad-ck-${{ matrix.shard }}
+          path: broad/ck/
+          retention-days: 7
+          if-no-files-found: warn
+
+  broad-merge:
+    needs: broad
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the guardrail's dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Collect the twelve shards' checkpoints
+        uses: actions/download-artifact@v4
+        with:
+          pattern: broad-ck-*
+          path: broad/ck/
+          merge-multiple: true
+
+      - name: Merge the broad sweep (refused while an episode is missing)
+        run: >
+          python experiments/sweep_scenarios.py --profile broad
+          --resume broad/ck --merge-only --runs broad/runs --no-bundles
+          --out broad/sweep.json
+
+      - name: Keep the broad sweep's results and KPI report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: broad-${{ github.run_number }}
+          path: |
+            broad/sweep.json
+            broad/runs/kpi_report.md
           retention-days: 30
           if-no-files-found: warn

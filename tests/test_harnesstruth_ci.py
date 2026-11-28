@@ -50,17 +50,58 @@ def test_the_nightly_profile_runs_on_a_schedule_headless_and_keeps_its_results()
     sched = _on(doc).get("schedule") or []
     assert sched and all(re.fullmatch(r"[\d*/,\- ]+", s["cron"]) for s in sched), sched
     assert "workflow_dispatch" in _on(doc)
-    runs = [s.get("run", "") for s in _steps(doc)]
+    steps = doc["jobs"]["nightly"]["steps"]
+    runs = [s.get("run", "") for s in steps]
     sweep = [r for r in runs if "sweep_scenarios.py" in r]
     assert len(sweep) == 1, runs
     assert "--profile nightly" in sweep[0] and "--backend sitl" not in sweep[0], sweep[0]
     assert "--out nightly/" in sweep[0] and "--runs nightly/" in sweep[0], sweep[0]
     assert "--no-bundles" not in sweep[0], "the bundles are what makes an episode re-runnable"
     assert any("-r requirements.txt" in r for r in runs), "the pinned requirements"
-    up = [s for s in _steps(doc) if "upload-artifact" in str(s.get("uses", ""))]
+    up = [s for s in steps if "upload-artifact" in str(s.get("uses", ""))]
     assert up and up[0].get("if") == "always()" and up[0]["with"]["path"] == "nightly/", up
     for job in doc["jobs"].values():
         assert int(job["timeout-minutes"]) <= 360, "GitHub-hosted jobs stop at 6 h"
+
+
+def test_the_broad_sweep_runs_nightly_in_shards_that_one_merge_completes():
+    """Grant, Stress Testing, "Test scheduling": "Broad sweep | nightly |
+    ~3000 scenarios x 5 seeds" (2026-11-28). The profile is too long for one
+    GitHub-hosted job, so the `broad` job's matrix flies every shard 1..N of
+    `--shard I/N` into checkpoints, and `broad-merge`, after all of them,
+    collects every shard's checkpoints into one folder and merges with the
+    shards' own options (checkpoint.json pins `--no-bundles` and `--runs`; a
+    merge with other options is refused). Shown failing first at c44a360:
+    nightly.yml had no broad job."""
+    doc = _yaml(WF / "nightly.yml")
+    jobs = doc["jobs"]
+    assert {"broad", "broad-merge"} <= set(jobs), sorted(jobs)
+    shards = jobs["broad"]["strategy"]["matrix"]["shard"]
+    run = next(s["run"] for s in jobs["broad"]["steps"] if "sweep_scenarios.py" in str(s.get("run", "")))
+    m = re.search(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", run)
+    assert m, run
+    n = int(m.group(1))
+    assert sorted(shards) == list(range(1, n + 1)), (shards, n)
+    assert jobs["broad"]["strategy"].get("fail-fast") is False, "one shard's failure must not cancel the rest"
+    opts = ("--profile broad", "--resume broad/ck", "--runs broad/runs", "--no-bundles")
+    for o in opts:
+        assert o in run, (o, run)
+    up = next(s for s in jobs["broad"]["steps"] if "upload-artifact" in str(s.get("uses", "")))
+    assert up.get("if") == "always()" and up["with"]["path"] == "broad/ck/", up
+    assert up["with"]["name"].startswith("broad-ck-") and "matrix.shard" in up["with"]["name"], up
+    merge = jobs["broad-merge"]
+    assert merge.get("needs") == "broad" and merge.get("if") == "always()", merge
+    dl = next(s for s in merge["steps"] if "download-artifact" in str(s.get("uses", "")))
+    assert dl["with"]["pattern"] == "broad-ck-*" and dl["with"]["path"] == "broad/ck/", dl
+    assert dl["with"].get("merge-multiple") is True, "the shards' checkpoints into ONE folder"
+    mrun = next(s["run"] for s in merge["steps"] if "sweep_scenarios.py" in str(s.get("run", "")))
+    assert "--merge-only" in mrun and "--shard" not in mrun, mrun
+    for o in opts:
+        assert o in mrun, (o, mrun)
+    keep = next(s for s in merge["steps"] if "upload-artifact" in str(s.get("uses", "")))
+    assert keep.get("if") == "always()" and "broad/sweep.json" in keep["with"]["path"], keep
+    prof = (ROOT / "experiments" / "profiles" / "broad.yaml").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^seeds:\s*\[1001, 1002, 1003, 1004, 1005\]", prof), "the grant's 5 seeds"
 
 
 def test_the_nightly_job_runs_the_profile_the_repository_defines():
