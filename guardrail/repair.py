@@ -507,9 +507,14 @@ class PathRepair:
     First-feasible mode (off by default) is UNGATED: none of the chain-mode
     gates below (no fix, a recovery under way, the projection over theta,
     a detour that deepens the request's forecast, the zone clearance) runs
-    there, and it has not been measured since this redesign. Its theta sum
-    reads this magnitude (depth basis) in place of the superseded
-    projections, as in chain mode."""
+    there. Measured on the scenario library after this redesign (27 Nov
+    2026, abff166, docs/data/repair_mode_ab_20261127/): P0 escape 0 in both
+    modes; first-feasible 149 pass / 6 fail where chain passes 155 / 0, with
+    fail-safe trigger correctness 177/179 against 179/179 (two missed RTLs
+    on corridor-drift-angles at -60 deg, and time-window-opens-on-vehicle
+    held inside the zone with no repair). Its theta sum reads this magnitude
+    (depth basis) in place of the superseded projections, as in chain
+    mode."""
 
     name = "PathRepair"
     categories = ("geofence", "standoff")
